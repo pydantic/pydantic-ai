@@ -94,9 +94,12 @@ async def test_a_paused_conversation_keeps_what_it_is_waiting_on_and_its_scope()
     requests = DeferredToolRequests(metadata={'call': {'reason': 'approval'}})
     conversation = Conversation(deferred_tool_requests=requests)
 
-    first = await store.save(conversation, scope='user-1')
-    second = await store.save(conversation)
+    await store.save(conversation, scope='user-1')
+    first = await store.read_record(conversation.conversation_id)
+    await store.save(conversation)
+    second = await store.read_record(conversation.conversation_id)
 
+    assert first is not None and second is not None
     assert (first.scope, second.scope) == ('user-1', 'user-1')
     assert first.revision != second.revision == conversation.revision
     loaded = await store.load(conversation.conversation_id)
@@ -410,9 +413,8 @@ async def test_a_fork_keeps_an_empty_conversation_id_it_is_given() -> None:
 async def test_a_history_missing_an_entry_of_an_unchanged_record_fails_to_load() -> None:
     store = InMemoryConversationStore()
     conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
-    record = await store.save(conversation)
-    assert record.head_id is not None
-    del store._entries[record.head_id]  # pyright: ignore[reportPrivateUsage]
+    (entry,) = await store.save(conversation)
+    del store._entries[entry.id]  # pyright: ignore[reportPrivateUsage]
 
     with pytest.raises(KeyError):
         await store.load(conversation.conversation_id)
@@ -582,3 +584,27 @@ async def test_rewinding_a_conversation_deleted_while_it_is_read_conflicts() -> 
 async def test_loading_with_a_negative_limit_raises() -> None:
     with pytest.raises(UserError, match='`limit` must not be negative'):
         await InMemoryConversationStore().load('any', limit=-1)
+
+
+async def test_a_save_returns_the_entries_it_stored_and_they_load_with_their_ids() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+    result = await agent.run('one')
+    conversation = result.conversation
+
+    first = await store.save(conversation)
+    assert [entry.message for entry in first] == conversation.messages
+    result = await agent.run('two', conversation=conversation)
+    conversation = result.conversation
+    second = await store.save(conversation)
+    assert [entry.message for entry in second] == result.new_messages()
+    assert second[0].parent_id == first[-1].id
+    assert await store.save(conversation) == []
+
+    entries = await store.load_entries(conversation.conversation_id)
+    assert entries is not None
+    assert [entry.id for entry in entries] == [entry.id for entry in [*first, *second]]
+    window = await store.load_entries(conversation.conversation_id, limit=1)
+    assert window is not None
+    assert [entry.id for entry in window] == [second[-1].id]
+    assert await store.load_entries('unknown') is None

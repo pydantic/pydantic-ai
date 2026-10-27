@@ -114,6 +114,8 @@ The stored conversation only ever grows. `load` records where the stored message
 
 To regenerate a reply or edit an earlier turn, [`rewind`][pydantic_ai.conversation_store.ConversationStore.rewind] the conversation to the message before it, then run and save as usual. The new turn branches off the kept history, and the messages after it stay stored as a branch the conversation no longer loads.
 
+Each stored message is a [`ConversationEntry`][pydantic_ai.conversation_store.ConversationEntry] with an [`id`][pydantic_ai.conversation_store.ConversationEntry.id] of its own, which is what to tie a rating or a billing row to. `save` returns the entries it stored, and [`load_entries`][pydantic_ai.conversation_store.ConversationStore.load_entries] loads a conversation's history with them.
+
 [`InMemoryConversationStore`][pydantic_ai.conversation_store.InMemoryConversationStore] is for tests and examples. For a real database, subclass `ConversationStore`: it implements the loading, saving and forking on five storage primitives, so a backend only reads and writes records and entries.
 
 ## Not writing that code yourself

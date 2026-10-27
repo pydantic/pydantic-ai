@@ -155,15 +155,10 @@ class ConversationStore(ABC):
         Raises:
             UserError: If `limit` is negative.
         """
-        if limit is not None and limit < 0:
-            raise UserError('`limit` must not be negative.')
-        while True:
-            record = await self.read_record(conversation_id)
-            if record is None:
-                return None
-            history = await self._history_of(record, limit=limit)
-            if history is not None:
-                break
+        loaded = await self._read(conversation_id, limit=limit)
+        if loaded is None:
+            return None
+        record, history = loaded
         messages = [entry.message for entry in history]
         return Conversation(
             messages=messages,
@@ -174,7 +169,37 @@ class ConversationStore(ABC):
             new_message_index=len(messages),
         )
 
-    async def save(self, conversation: Conversation, *, scope: str | None = None) -> ConversationRecord:
+    async def load_entries(self, conversation_id: str, *, limit: int | None = None) -> list[ConversationEntry] | None:
+        """Load a conversation's history with each message's entry, or `None` if the store doesn't have it.
+
+        An entry's [`id`][pydantic_ai.conversation_store.ConversationEntry.id] identifies its message
+        in the store, so it's what to tie a rating or a billing row to. `save` returns the entries it
+        stored.
+
+        Args:
+            conversation_id: The conversation to load.
+            limit: Load only its last `limit` messages.
+
+        Raises:
+            UserError: If `limit` is negative.
+        """
+        loaded = await self._read(conversation_id, limit=limit)
+        return None if loaded is None else loaded[1]
+
+    async def _read(
+        self, conversation_id: str, *, limit: int | None
+    ) -> tuple[ConversationRecord, list[ConversationEntry]] | None:
+        if limit is not None and limit < 0:
+            raise UserError('`limit` must not be negative.')
+        while True:
+            record = await self.read_record(conversation_id)
+            if record is None:
+                return None
+            history = await self._history_of(record, limit=limit)
+            if history is not None:
+                return record, history
+
+    async def save(self, conversation: Conversation, *, scope: str | None = None) -> list[ConversationEntry]:
         """Save a conversation, storing only the messages the store doesn't have yet.
 
         When the conversation knows its
@@ -200,6 +225,11 @@ class ConversationStore(ABC):
                 [`AgentRunResult.conversation`][pydantic_ai.agent.AgentRunResult.conversation].
             scope: Whose or where the conversation is, to list it by. Defaults to the scope it was
                 saved with before.
+
+        Returns:
+            The entries this save stored, in order, so their
+            [`id`][pydantic_ai.conversation_store.ConversationEntry.id]s can be recorded next to the
+            messages, say with a billing row or a rating. Empty when there was nothing new.
 
         Raises:
             ConversationConflict: If the conversation was saved or deleted since it was loaded, or
@@ -241,7 +271,7 @@ class ConversationStore(ABC):
         await self.write_record(updated, new_entries=new_entries, expected_revision=expected_revision)
         conversation.revision = updated.revision
         conversation.new_message_index = len(conversation.messages)
-        return updated
+        return new_entries
 
     async def rewind(self, conversation_id: str, *, at: int, expected_revision: str | None) -> Conversation:
         """Move a conversation back to an earlier message, to regenerate or edit what came after it.
