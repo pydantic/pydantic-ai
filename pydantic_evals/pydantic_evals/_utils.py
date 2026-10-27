@@ -54,11 +54,12 @@ def content_hash(value: Any) -> str | None:
     """
     try:
         canonical = _canonical_json(_sort_sets(value))
+        # A lone surrogate survives `json.dumps(ensure_ascii=False)` and only fails here, at the UTF-8 encode.
+        return hashlib.sha256(canonical.encode()).hexdigest()
     except (TypeError, ValueError, RecursionError):
         # `PydanticSerializationError` and `UnicodeEncodeError` are both `ValueError`s; a dict key that
         # can't become a JSON object key (such as a `frozenset`) raises `TypeError`.
         return None
-    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def _canonical_json(value: Any) -> str:
