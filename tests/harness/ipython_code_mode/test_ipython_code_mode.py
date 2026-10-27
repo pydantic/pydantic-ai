@@ -557,6 +557,35 @@ class TestIPythonCodeModeKernelLifecycle:
         assert scope.cancelled_caught
         _assert_process_gone(pids[0])
 
+    async def test_a_cancelled_cell_that_ignores_the_interrupt_gets_its_kernel_stopped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._INTERRUPT_GRACE_SECS', 0.2)
+        pids: list[int] = []
+        started = anyio.Event()
+
+        async def begin(pid: int) -> None:
+            pids.append(pid)
+            started.set()
+
+        async with IPythonKernel() as kernel:
+            agent = Agent(
+                _scripted(
+                    'import os, signal\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\nbegin(pid=os.getpid())\n'
+                    'while True:\n    pass'
+                ),
+                capabilities=[IPythonCodeMode(kernel=kernel, timeout=None)],
+                tools=[Tool(begin)],
+            )
+            with anyio.CancelScope() as scope:
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(agent.run, 'Run the code')
+                    await started.wait()
+                    scope.cancel()
+            _assert_process_gone(pids[0])
+            # The next call is not stuck behind the abandoned cell: it gets a new kernel.
+            assert await _run(IPythonCodeMode(kernel=kernel), "'fresh'") == ['fresh']
+
     async def test_a_shared_kernel_stops_when_its_context_is_cancelled(self) -> None:
         pids: list[int] = []
         with anyio.CancelScope() as scope:

@@ -424,7 +424,9 @@ class IPythonKernel:
                         client.input(reply)
                 if iopub in events:
                     message = await client.get_iopub_msg(timeout=0)
-                    if message['parent_header'].get('msg_id') == msg_id:
+                    # Skips other requests' messages, such as startup `kernel_info` replies; whether any arrive
+                    # during a given cell depends on timing.
+                    if message['parent_header'].get('msg_id') == msg_id:  # pragma: no branch
                         collector.add(message['msg_type'], message['content'])
         except BaseException:
             # The run was cancelled mid-cell: stop the cell so a kernel that outlives the run is free.
@@ -432,7 +434,7 @@ class IPythonKernel:
                 # Unset only when stopping the kernel itself failed.
                 if self._manager is not None:  # pragma: no branch
                     if await manager.is_alive():
-                        await manager.interrupt_kernel()
+                        await self._interrupt_abandoned_cell(msg_id)
                     else:
                         # `shutdown()` killed it while this cell waited on a tool call; close the channels.
                         await self._stop()
@@ -442,3 +444,24 @@ class IPythonKernel:
             # Also when the code caught the `KeyboardInterrupt` and finished: it ran past the timeout.
             cell.outcome = 'interrupted'
         return cell
+
+    async def _interrupt_abandoned_cell(self, msg_id: str) -> None:
+        """Interrupt a cell whose run was cancelled, and stop the kernel if the cell keeps running.
+
+        The lock is released right after, so a cell still running would leave the next one queued
+        behind it with nothing to stop it.
+        """
+        manager, client = self._manager, self._client
+        assert manager is not None and client is not None, 'only called while the kernel is running'
+        await manager.interrupt_kernel()
+        with anyio.move_on_after(_INTERRUPT_GRACE_SECS):
+            while True:
+                message = await client.get_iopub_msg()
+                content = message['content']
+                if (
+                    message['parent_header'].get('msg_id') == msg_id
+                    and message['msg_type'] == 'status'
+                    and content['execution_state'] == 'idle'
+                ):
+                    return
+        await self._stop()
