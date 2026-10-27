@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 import os
 import re
@@ -56,6 +55,9 @@ _LIVENESS_POLL_SECS = 1.0
 
 _INTERRUPT_GRACE_SECS = 5.0
 """How long an interrupted cell gets to stop before the kernel is shut down."""
+
+_SHUTDOWN_WAIT_SECS = 5.0
+"""How long `shutdown()` waits for a running cell, before interrupting it and again before killing its kernel."""
 
 _ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;?]*[A-Za-z]')
 
@@ -180,10 +182,7 @@ def _decode_image(data: Mapping[str, Any]) -> BinaryImage | None:
     for mime in _IMAGE_MIMES:
         encoded = data.get(mime)
         if isinstance(encoded, str):
-            try:
-                return BinaryImage(data=base64.b64decode(encoded), media_type=mime)
-            except binascii.Error:
-                return None
+            return BinaryImage(data=base64.b64decode(encoded), media_type=mime)
     return None
 
 
@@ -277,11 +276,29 @@ class IPythonKernel:
     async def shutdown(self) -> None:
         """Stop the kernel process. A later `start()` or cell starts a fresh one.
 
-        Shielded, so a run ending in cancellation still stops the process. Waits for a running cell.
+        Shielded, so a run ending in cancellation still stops the process. A cell another run is still
+        running gets 5 seconds to finish, is then interrupted, and 5 seconds later its kernel is killed.
         """
         with anyio.CancelScope(shield=True):
+            for escalate in (self._interrupt, self._kill):
+                with anyio.move_on_after(_SHUTDOWN_WAIT_SECS):
+                    async with self._lock:
+                        await self._stop()
+                        return
+                await escalate()
+            # The running cell finds the process gone within a liveness poll, and releases the lock.
             async with self._lock:
                 await self._stop()
+
+    async def _interrupt(self) -> None:
+        # Unset only while the run holding the lock is still starting the kernel.
+        if self._manager is not None:  # pragma: no branch
+            await self._manager.interrupt_kernel()
+
+    async def _kill(self) -> None:
+        # Unset only while the run holding the lock is still starting the kernel.
+        if self._manager is not None:  # pragma: no branch
+            await self._manager.shutdown_kernel(now=True)
 
     @cached_property
     def _lock(self) -> anyio.Lock:
@@ -383,7 +400,8 @@ class IPythonKernel:
                     continue
                 if stdin in events:
                     request = await client.get_stdin_msg(timeout=0)
-                    if request['parent_header'].get('msg_id') == msg_id:
+                    # A request from an earlier, interrupted cell can't arrive: interrupting it ends its wait.
+                    if request['parent_header'].get('msg_id') == msg_id:  # pragma: no branch
                         prompt: str = request['content']['prompt']
                         reply = ''
                         if call_function is not None and prompt.startswith(self._token):
@@ -399,7 +417,8 @@ class IPythonKernel:
         except BaseException:
             # The run was cancelled mid-cell: stop the cell so a kernel that outlives the run is free.
             with anyio.CancelScope(shield=True):
-                if self._manager is not None:
+                # Unset only when stopping the kernel itself failed.
+                if self._manager is not None:  # pragma: no branch
                     await manager.interrupt_kernel()
             raise
         cell = collector.finish()

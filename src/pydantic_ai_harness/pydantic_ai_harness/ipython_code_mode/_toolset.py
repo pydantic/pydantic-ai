@@ -131,7 +131,8 @@ class _Cell:
         """Run the tool behind one function call from the kernel and return the JSON reply."""
         try:
             call = _FUNCTION_CALL_ADAPTER.validate_json(request)
-        except ValidationError:
+        # Only code that forges a request with the kernel's private token gets here.
+        except ValidationError:  # pragma: no cover
             return json.dumps({'error': 'Malformed function call.'})
         name = call['name']
         if name not in self.tool.callable_defs:

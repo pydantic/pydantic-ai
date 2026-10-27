@@ -11,12 +11,14 @@ import base64
 import json
 import os
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 import anyio
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext, Tool, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ToolSearch
@@ -32,6 +34,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.usage import UsageLimits
 from tests.conftest import try_import
 from tests.harness.conftest import IsDatetime, IsStr
@@ -47,6 +50,19 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='jupyter-client
 _PNG = base64.b64decode(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 )
+
+
+@dataclass
+class _NewEachStep(WrapperToolset[None]):
+    """A toolset that is a new instance every step, like one whose tools depend on the step."""
+
+    async def for_run_step(self, ctx: RunContext[None]) -> AbstractToolset[None]:
+        return replace(self)
+
+
+class Trip(BaseModel):
+    city: str
+    nights: int
 
 
 @pytest.fixture(scope='module')
@@ -71,12 +87,9 @@ def _scripted(*codes: str | dict[str, Any], seen: list[AgentInfo] | None = None)
     return FunctionModel(respond)
 
 
-def _process_exists(pid: int) -> bool:
-    try:
+def _assert_process_gone(pid: int) -> None:
+    with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
 
 
 def _returns(messages: Sequence[ModelMessage]) -> list[Any]:
@@ -124,7 +137,8 @@ class TestIPythonCodeMode:
     async def test_stderr_and_displayed_text_are_part_of_the_output(self, kernel: IPythonKernel) -> None:
         assert await _run(
             IPythonCodeMode(kernel=kernel),
-            "import sys\nprint('out')\nprint('err', file=sys.stderr)\nfrom IPython.display import display\ndisplay([1, 2])",
+            "import sys\nprint('out')\nprint('err', file=sys.stderr)\nfrom IPython.display import display\ndisplay([1, 2])\n"
+            "display({'text/html': '<b>only html</b>'}, raw=True)",
         ) == snapshot([{'output': 'out\nerr\n[1, 2]\n'}])
 
     async def test_state_persists_between_calls_in_a_run(self, kernel: IPythonKernel) -> None:
@@ -239,11 +253,15 @@ class TestIPythonCodeModeTools:
             """Get the weather for a city."""
             return f'Sunny in {city}'  # pragma: no cover
 
+        def book(trip: Trip, travellers: int) -> str:
+            """Book a trip."""
+            return f'Booked {trip.city}'  # pragma: no cover
+
         seen: list[AgentInfo] = []
         agent = Agent(
             _scripted(seen=seen),
             capabilities=[IPythonCodeMode(kernel=kernel)],
-            tools=[Tool(get_weather, name='get-weather')],
+            tools=[Tool(get_weather, name='get-weather'), Tool(book)],
         )
         await agent.run('Hi')
         (run_code,) = seen[0].function_tools
@@ -262,8 +280,18 @@ Returns a non-`None` last expression's value directly when nothing is printed or
 The following functions are already defined in the kernel; call them by name without redefining or importing them. All parameters are keyword-only. They are synchronous, so call them directly, e.g. `tool_name(arg=value)`, without `await`. Calls run one at a time. A failed call raises `ToolCallError` with the tool's error message.
 
 ```python
+class Trip(TypedDict):
+    city: str
+    nights: int
+```
+
+```python
 def get_weather(*, city: str) -> str:
     """Get the weather for a city."""
+    ...
+
+def book(*, trip: Trip, travellers: int) -> str:
+    """Book a trip."""
     ...
 ```\
 ''')
@@ -444,7 +472,7 @@ def get_weather(*, city: str) -> str:
     async def test_cancelling_a_run_interrupts_its_cell(self, kernel: IPythonKernel) -> None:
         started = asyncio.Event()
 
-        def begin() -> None:
+        async def begin() -> None:
             started.set()
 
         agent = Agent(
@@ -488,14 +516,14 @@ class TestIPythonCodeModeKernelLifecycle:
         assert first[0] == first[1]
         assert second[0] == second[1]
         assert first[0] != second[0]
-        assert not _process_exists(first[0])
-        assert not _process_exists(second[0])
+        _assert_process_gone(first[0])
+        _assert_process_gone(second[0])
 
     async def test_a_cancelled_run_stops_its_kernel(self) -> None:
         pids: list[int] = []
         started = anyio.Event()
 
-        def begin(pid: int) -> None:
+        async def begin(pid: int) -> None:
             pids.append(pid)
             started.set()
 
@@ -510,7 +538,7 @@ class TestIPythonCodeModeKernelLifecycle:
                 await started.wait()
                 scope.cancel()
         assert scope.cancelled_caught
-        assert not _process_exists(pids[0])
+        _assert_process_gone(pids[0])
 
     async def test_a_shared_kernel_stops_when_its_context_is_cancelled(self) -> None:
         pids: list[int] = []
@@ -520,7 +548,38 @@ class TestIPythonCodeModeKernelLifecycle:
                 scope.cancel()
                 await anyio.sleep(0)
         assert scope.cancelled_caught
-        assert not _process_exists(pids[0])
+        _assert_process_gone(pids[0])
+
+    @pytest.mark.parametrize(
+        'code',
+        [
+            pytest.param('time.sleep(30)', id='interrupted'),
+            pytest.param('signal.signal(signal.SIGINT, signal.SIG_IGN)\nwhile True:\n    pass', id='killed'),
+        ],
+    )
+    async def test_shutdown_stops_a_cell_another_run_is_still_running(
+        self, code: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Long enough for an interrupted cell to format its traceback and finish within the first escalation.
+        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._SHUTDOWN_WAIT_SECS', 1.0)
+        pids: list[int] = []
+        started = anyio.Event()
+
+        async def begin(pid: int) -> None:
+            pids.append(pid)
+            started.set()
+
+        kernel = IPythonKernel()
+        agent = Agent(
+            _scripted(f'import os, signal, time\nbegin(pid=os.getpid())\n{code}'),
+            capabilities=[IPythonCodeMode(kernel=kernel, timeout=None)],
+            tools=[Tool(begin)],
+        )
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(agent.run, 'Run the code')
+            await started.wait()
+            await kernel.shutdown()
+        _assert_process_gone(pids[0])
 
     async def test_restart_clears_the_state(self) -> None:
         async with IPythonKernel() as kernel:
@@ -540,17 +599,36 @@ class TestIPythonCodeModeKernelLifecycle:
 
     async def test_a_kernel_that_exits_between_calls_is_found_before_the_next(self) -> None:
         def ping() -> str:
-            return 'pong'
+            return 'pong'  # pragma: no cover
+
+        async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            turn = sum(isinstance(message, ModelResponse) for message in messages)
+            if turn == 0:
+                code = 'import os, threading\nthreading.Timer(0.1, os._exit, args=(1,)).start()'
+                return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+            if turn == 1:
+                # Gives the timer time to end the kernel before the next call reaches it.
+                await anyio.sleep(1)
+                return ModelResponse(parts=[ToolCallPart('run_code', {'code': 'ping()'})])
+            return ModelResponse(parts=[TextPart('done')])
 
         async with IPythonKernel() as kernel:
-            (exited, after) = await _run(
-                IPythonCodeMode(kernel=kernel),
-                'import os, threading, time\nthreading.Timer(0.2, os._exit, args=(1,)).start()',
-                'time.sleep(1)\nping()',
-                tools=[Tool(ping)],
-            )
+            agent = Agent(FunctionModel(respond), capabilities=[IPythonCodeMode(kernel=kernel)], tools=[Tool(ping)])
+            (exited, after) = _returns((await agent.run('Run the code')).all_messages())
         assert exited == {}
         assert after.startswith('The kernel process exited')
+
+    async def test_a_run_keeps_its_kernel_when_the_toolset_changes_between_steps(self) -> None:
+        def ping() -> int:
+            return 1
+
+        agent = Agent(
+            _scripted('step_value = 1', 'step_value + ping()'),
+            deps_type=type(None),
+            capabilities=[IPythonCodeMode()],
+            toolsets=[_NewEachStep(FunctionToolset([Tool(ping)]))],
+        )
+        assert _returns((await agent.run('Run the code')).all_messages()) == [{}, 2]
 
     async def test_code_that_ignores_the_interrupt_gets_a_new_kernel(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._INTERRUPT_GRACE_SECS', 0.2)
@@ -561,7 +639,7 @@ class TestIPythonCodeModeKernelLifecycle:
                 'import signal\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\nwhile True:\n    pass',
                 "'lost_on_restart' in dir()",
             )
-            assert not _process_exists(pid)
+            _assert_process_gone(pid)
         assert retry.startswith('The code ran longer than the 0.3-second timeout and did not stop when interrupted')
         assert after is False
 
