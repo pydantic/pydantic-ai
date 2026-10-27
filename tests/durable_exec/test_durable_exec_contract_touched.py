@@ -95,8 +95,8 @@ class _Sources:
         return self.sources[path]
 
 
-def _touched(*files: ChangedFile, base: dict[str, str], head: dict[str, str]) -> dict[str, list[str]]:
-    touched = generator.touched_entries(MANIFEST, files, _Sources(base), _Sources(head))
+def _touched(*files: ChangedFile, base: _Sources, head: _Sources) -> dict[str, list[str]]:
+    touched = generator.touched_entries(MANIFEST, files, base, head)
     return {core_file: list(entries) for core_file, entries in touched.items()}
 
 
@@ -134,9 +134,9 @@ def test_a_changed_line_touches_the_entries_of_the_definitions_around_it(head: s
         ChangedFile('tests/models/test_model.py', 'modified', patch='@@ -1 +1 @@\n-a\n+b'),
     ]
 
-    result = generator.touched_entries(MANIFEST, files, base_sources, head_sources)
+    result = _touched(*files, base=base_sources, head=head_sources)
 
-    assert {core_file: list(entries) for core_file, entries in result.items()} == ({MODELS: touched} if touched else {})
+    assert result == ({MODELS: touched} if touched else {})
     assert set(base_sources.read + head_sources.read) <= {MODELS}
 
 
@@ -161,7 +161,7 @@ def test_a_changed_line_touches_the_entries_of_the_definitions_around_it(head: s
 )
 def test_a_core_file_whose_lines_cannot_be_placed_touches_all_its_gating_entries(changed: ChangedFile, head: str):
     """A removed or renamed core file leaves the path the engines import it from; an unplaced change could be anywhere."""
-    assert _touched(changed, base={MODELS: MODELS_SOURCE}, head={MODELS: head}) == snapshot(
+    assert _touched(changed, base=_Sources({MODELS: MODELS_SOURCE}), head=_Sources({MODELS: head})) == snapshot(
         {MODELS: ['Model', 'Model.label', 'Model.profile', 'infer_model']}
     )
 
@@ -192,8 +192,8 @@ def test_a_no_newline_marker_belongs_to_neither_side():
 
     touched = _touched(
         ChangedFile(SETTINGS, 'modified', patch=patch),
-        base={SETTINGS: SETTINGS_SOURCE},
-        head={SETTINGS: SETTINGS_SOURCE.replace('= 1', '= 2')},
+        base=_Sources({SETTINGS: SETTINGS_SOURCE}),
+        head=_Sources({SETTINGS: SETTINGS_SOURCE.replace('= 1', '= 2')}),
     )
 
     assert touched == {SETTINGS: ['ModelSettings']}
