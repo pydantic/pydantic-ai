@@ -6683,14 +6683,9 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         if not self._should_compact(request_context.messages):
             return request_context
 
-        from .wrapper import WrapperModel
-
-        model = request_context.model
-        while isinstance(model, WrapperModel):
-            model = model.wrapped
-        if not isinstance(model, OpenAIResponsesModel):
+        if _unwrapped_responses_model(request_context.model) is None:
             raise UserError(
-                f'OpenAICompaction requires OpenAIResponsesModel, got {type(model).__name__}. '
+                f'OpenAICompaction requires OpenAIResponsesModel, got {type(_unwrapped(request_context.model)).__name__}. '
                 f'Use the provider-specific compaction capability for your model.'
             )
         ctx.request_compaction(reason='threshold')
@@ -6704,12 +6699,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
     async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
         if not self.stateless:
             return None
-        from .wrapper import WrapperModel
-
-        model = request.model
-        while isinstance(model, WrapperModel):
-            model = model.wrapped
-        if not isinstance(model, OpenAIResponsesModel):
+        if _unwrapped_responses_model(request.model) is None:
             # Another model serves this attempt, like a `ModelFallback` candidate: not OpenAI's to compact.
             return None
         # Unlike `NativeCompaction`, whatever the profile's `supports_compaction_on_demand` says: you chose an
@@ -6721,6 +6711,21 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
     @classmethod
     def get_serialization_name(cls) -> str | None:
         return 'OpenAICompaction'
+
+
+def _unwrapped(model: Model) -> Model:
+    """`model` without the `WrapperModel`s around it."""
+    from .wrapper import WrapperModel
+
+    while isinstance(model, WrapperModel):
+        model = model.wrapped
+    return model
+
+
+def _unwrapped_responses_model(model: Model) -> OpenAIResponsesModel | None:
+    """The `OpenAIResponsesModel` `model` wraps or is, or `None` when it's another model."""
+    unwrapped = _unwrapped(model)
+    return unwrapped if isinstance(unwrapped, OpenAIResponsesModel) else None
 
 
 def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any] | None], dict[str, Any]]:

@@ -7,6 +7,7 @@ hooks outside a run. The provider calls themselves are recorded in `tests/models
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -27,6 +28,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CompactionRequest,
@@ -34,6 +36,7 @@ from pydantic_ai.capabilities import (
     ModelFallback,
     NativeCompaction,
     WrapModelRequestHandler,
+    WrapRunHandler,
     on_event,
 )
 from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest, UnexpectedModelBehavior, UserError
@@ -374,6 +377,43 @@ async def test_agent_compact_runs_the_hooks_and_events_outside_a_run():
     assert continued.output == 'answered by primary'
 
 
+async def test_agent_compact_through_a_wrapper_agent():
+    """`compact()` is on every agent: a `WrapperAgent` compacts through the agent it wraps."""
+    model = CompactingModel('primary')
+    agent = WrapperAgent(Agent(model, capabilities=[NativeCompaction()]))
+
+    result = await agent.compact(history())
+
+    assert result is not None
+    assert model.compacted == [(history(), None)]
+
+
+async def test_agent_compact_run_lifecycle():
+    """`before_run` and `wrap_run` fire, and the run ends without a result: `after_run` doesn't fire."""
+    calls: list[str] = []
+
+    @dataclass
+    class Lifecycle(AbstractCapability[Any]):
+        async def before_run(self, ctx: RunContext[Any]) -> None:
+            calls.append('before_run')
+
+        async def wrap_run(self, ctx: RunContext[Any], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+            calls.append('wrap_run')
+            try:
+                return await handler()
+            except asyncio.CancelledError:
+                calls.append('wrap_run cancelled')
+                raise
+
+        async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            calls.append('after_run')  # pragma: no cover
+            return result  # pragma: no cover
+
+    agent = Agent(CompactingModel('primary'), capabilities=[Lifecycle(), NativeCompaction()])
+    assert await agent.compact(history()) is not None
+    assert calls == ['wrap_run', 'before_run', 'wrap_run cancelled']
+
+
 async def test_agent_compact_keeps_a_trailing_request():
     """A history that ends with a request compacts for answering it, and keeps it."""
     model = CompactingModel('primary')
@@ -493,9 +533,7 @@ async def test_agent_compact_rejects_a_history_it_cannot_compact(messages: list[
 async def test_stateful_openai_compaction_leaves_requested_compaction_to_the_next_capability():
     """Only `OpenAICompaction`'s stateless mode compacts on request: the stateful one leaves it to OpenAI."""
     summarize = Summarize()
-    capability = OpenAICompaction()
-    assert not capability._has_compact_history  # pyright: ignore[reportPrivateUsage]
-    agent = Agent(CompactingModel('primary'), capabilities=[RequestOnce(), capability, summarize])
+    agent = Agent(CompactingModel('primary'), capabilities=[RequestOnce(), OpenAICompaction(), summarize])
     result = await agent.run('hi', message_history=history())
 
     assert result.compactions[0].handler == 'summarize'

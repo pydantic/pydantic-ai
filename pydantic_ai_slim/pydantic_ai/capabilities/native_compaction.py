@@ -24,7 +24,7 @@ class NativeCompaction(AbstractCapability[Any]):
 
     When compaction is requested, for example with
     [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction] or
-    [`Agent.compact`][pydantic_ai.agent.Agent.compact], it calls
+    [`Agent.compact`][pydantic_ai.agent.AbstractAgent.compact], it calls
     [`compact_messages`][pydantic_ai.models.Model.compact_messages] on the
     [model the request is for][pydantic_ai.capabilities.CompactionRequest.model], if its profile has
     [`supports_compaction_on_demand`][pydantic_ai.profiles.ModelProfile.supports_compaction_on_demand]: the OpenAI

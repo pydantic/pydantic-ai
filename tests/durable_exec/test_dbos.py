@@ -27,6 +27,7 @@ from pydantic_ai import (
     AgentStreamEvent,
     CancellationToken,
     CapabilityEvent,
+    CompactionPart,
     CustomEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -57,6 +58,7 @@ from pydantic_ai.capabilities import (
     DynamicCapability,
     Hooks,
     ModelFallback,
+    NativeCompaction,
     WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -87,6 +89,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
@@ -6120,9 +6123,6 @@ async def test_dbos_durability_compaction_runs_model_calls_as_steps(dbos: DBOS) 
 
 async def test_dbos_agent_compact_runs_the_compaction_as_a_step(dbos: DBOS) -> None:
     """`Agent.compact()` in a workflow compacts through the durable model, so the provider call is a DBOS step."""
-    from pydantic_ai import CompactionPart
-    from pydantic_ai.capabilities import NativeCompaction
-    from pydantic_ai.profiles import ModelProfile
 
     class CompactingModel(FunctionModel):
         async def compact_messages(

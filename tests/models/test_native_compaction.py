@@ -8,7 +8,7 @@ question only the compacted history can answer. The `FunctionModel` tests in
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -17,7 +17,7 @@ from pydantic_ai.capabilities import AbstractCapability, NativeCompaction
 from pydantic_ai.models import Model
 
 from .._inline_snapshot import snapshot
-from ..conftest import try_import
+from ..conftest import RequestCapture, try_import
 
 with try_import() as openai_available:
     from pydantic_ai.models.openai import OpenAICompaction, OpenAIResponsesModel
@@ -26,6 +26,9 @@ with try_import() as openai_available:
 with try_import() as anthropic_available:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
+
+if TYPE_CHECKING:
+    from .conftest import AnthropicModelFactory
 
 pytestmark = [
     pytest.mark.vcr,
@@ -134,3 +137,36 @@ async def test_stateless_openai_compaction_without_the_profile_flag(allow_model_
     assert 'teal' in second.output.lower()
     assert compaction_part(second.all_messages()).provider_name == 'openai'
     assert [record.handler for record in second.compactions] == ['native']
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+async def test_agent_compact_sends_the_conversations_own_request(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """The compaction request has the conversation's system prompt and tools, so it can read its cache.
+
+    A focus reaches Anthropic as the compaction's `instructions`, inside a full summarization prompt.
+    """
+    agent = Agent(
+        anthropic_model('claude-haiku-5-5', capture=True),
+        instructions='Answer in one short sentence.',
+        capabilities=[NativeCompaction()],
+    )
+
+    @agent.tool_plain
+    def favorite_color() -> str:
+        """Look up the user's favorite color."""
+        return 'teal'  # pragma: no cover
+
+    first = await agent.run('My name is Bob and my favorite color is teal.')
+    compaction = await agent.compact(first.all_messages(), focus='the favorite color')
+
+    assert compaction is not None
+    conversation_body, compaction_body = request_capture.bodies('/v1/messages')
+    assert 'compaction' not in conversation_body
+    assert compaction_body['system'] == conversation_body['system']
+    assert compaction_body['tools'] == conversation_body['tools']
+    compaction_config = compaction_body['compaction']
+    assert isinstance(compaction_config, dict)
+    assert compaction_config['type'] == 'summarize'
+    assert 'the favorite color' in str(compaction_config['instructions'])

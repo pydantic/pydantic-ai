@@ -110,7 +110,7 @@ class CompactionResult:
     """
 
     record: CompactionRecord | None = None
-    """What a run keeps about the compaction, on the result [`Agent.compact`][pydantic_ai.agent.Agent.compact] returns.
+    """What a run keeps about the compaction, on the result [`Agent.compact`][pydantic_ai.agent.AbstractAgent.compact] returns.
 
     It's the [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] a run lists on
     [`AgentRunResult.compactions`][pydantic_ai.agent.AgentRunResult.compactions], so a compaction made outside a

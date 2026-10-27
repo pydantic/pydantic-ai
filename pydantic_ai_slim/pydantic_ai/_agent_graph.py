@@ -2192,7 +2192,7 @@ def _record_carried_attempts(
 
 
 class _NotCompacted(Exception):
-    """Ends the `wrap_model_request` chain of [`Agent.compact`][pydantic_ai.agent.Agent.compact] when no capability compacted.
+    """Ends the `wrap_model_request` chain of [`Agent.compact`][pydantic_ai.agent.AbstractAgent.compact] when no capability compacted.
 
     No model request was made, so there's no response for the handler to return.
     """
@@ -2204,7 +2204,7 @@ async def compact_outside_run(
     reason: _messages.CompactionReason,
     focus: str | None,
 ) -> CompactionResult | None:
-    """Compact a run's message history before its first step, for [`Agent.compact`][pydantic_ai.agent.Agent.compact].
+    """Compact a run's message history before its first step, for [`Agent.compact`][pydantic_ai.agent.AbstractAgent.compact].
 
     The `compact_history` hooks are asked to compact for the request the run's first step would make, which is never
     sent. A history that ends with a response gets an empty request to stand for the next one, which is left out of
@@ -2258,7 +2258,7 @@ async def compact_outside_run(
 async def deliver_buffered_events(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
     """Hand the run's buffered events to the capabilities, as a node's event stream would.
 
-    For [`Agent.compact`][pydantic_ai.agent.Agent.compact], which runs no node whose stream carries them.
+    For [`Agent.compact`][pydantic_ai.agent.AbstractAgent.compact], which runs no node whose stream carries them.
     """
     buffer = ctx.state.event_stream_buffer
 
@@ -3301,7 +3301,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         what the `compact_history` hooks did for this attempt, which the caller commits or discards with it, and the
         request as the `prepare_model_request` hooks left it, which a retry after a context overflow starts from. When
         compacting failed, the rest of the preparation is skipped: the attempt fails with that error. So it is without
-        `send`, for [`Agent.compact`][pydantic_ai.agent.Agent.compact], which only compacts.
+        `send`, for [`Agent.compact`][pydantic_ai.agent.AbstractAgent.compact], which only compacts.
         """
         root_capability = ctx.deps.root_capability
         processed_context = await root_capability.prepare_model_request(run_context, request_context)

@@ -89,7 +89,6 @@ from ..capabilities import (
     AgentCapability,
     AgentModel,
     CombinedCapability,
-    CompactionResult,
     ModelSelection,
     ModelSelector,
     ToolSearch as ToolSearchCap,
@@ -1619,87 +1618,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         async with prepared.open() as agent_run:
             yield agent_run
-
-    async def compact(
-        self,
-        message_history: Sequence[_messages.ModelMessage],
-        *,
-        focus: str | None = None,
-        reason: _messages.CompactionReason = 'manual',
-        model: models.Model | models.KnownModelName | str | None = None,
-        deps: AgentDepsT = None,
-        instructions: AgentInstructions[AgentDepsT] = None,
-        model_settings: AgentModelSettings[AgentDepsT] | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-    ) -> CompactionResult | None:
-        """Compact a conversation's message history now, outside a run, such as for a `/compact` command.
-
-        The agent's capabilities compact it with their
-        [`compact_history`](../capabilities/compaction.md#the-compaction-hook) hooks, as they would during a run, with
-        the same [compaction events](../capabilities/compaction.md#compaction-events): for example
-        [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction], with the model's own compaction API. They
-        compact for the request a run with this history would make next, with the agent's model, settings, tools
-        and instructions, so a provider's compaction can read the prompt cache the conversation's last request wrote.
-        Nothing else is sent.
-
-        Example:
-        ```python {test="skip"}
-        from pydantic_ai import Agent
-        from pydantic_ai.capabilities import NativeCompaction
-
-        agent = Agent('anthropic:claude-sonnet-5', capabilities=[NativeCompaction()])
-
-
-        async def main():
-            result = await agent.run('What is the capital of France?')
-            compaction = await agent.compact(result.all_messages(), focus='the cities discussed')
-            if compaction is not None:
-                result = await agent.run('And of Italy?', message_history=compaction.messages)
-        ```
-
-        Under durable execution, call it from workflow code with an agent that has the durability capability, so the
-        compaction request runs as a durable model operation, like during a run.
-
-        Args:
-            message_history: The history to compact. It can't end with a response whose tool calls haven't been
-                answered, or that a provider suspended: run the agent with it first.
-            focus: What the compaction should keep, like the argument to a `/compact` command.
-            reason: Why the history is compacted, reported on the compaction events and the result's record.
-            model: The model to compact for, if not the agent's.
-            deps: Dependencies for the capabilities and the instructions.
-            instructions: Additional instructions, as the run the history continues in would have them.
-            model_settings: Settings for the compaction request, as the run would have them.
-            toolsets: Additional toolsets, as the run would have them.
-            capabilities: Additional capabilities, such as one that compacts.
-
-        Returns:
-            The compacted history, with its [`record`][pydantic_ai.capabilities.CompactionResult.record], or `None`
-                when no capability compacted, or a [`CompactionStartEvent`][pydantic_ai.messages.CompactionStartEvent]
-                listener cancelled the compaction. Continue the conversation with its
-                [`messages`][pydantic_ai.capabilities.CompactionResult.messages].
-        """
-        if not message_history:
-            raise exceptions.UserError('There is no message history to compact.')
-        last = message_history[-1]
-        if isinstance(last, _messages.ModelResponse) and (last.state == 'suspended' or last.tool_calls):
-            raise exceptions.UserError(
-                'Cannot compact a message history that ends with a suspended response or unprocessed tool calls. '
-                'Run the agent with this message history and no new prompt first.'
-            )
-        async with self.iter(
-            message_history=message_history,
-            model=model,
-            deps=deps,
-            instructions=instructions,
-            model_settings=model_settings,
-            toolsets=toolsets,
-            capabilities=capabilities,
-            infer_name=False,
-        ) as agent_run:
-            result = await _agent_graph.compact_outside_run(agent_run.ctx, reason=reason, focus=focus)
-            await _agent_graph.deliver_buffered_events(agent_run.ctx)
-            return result
 
     async def _prepare_run(  # noqa: C901
         self,

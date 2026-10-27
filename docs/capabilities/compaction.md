@@ -53,7 +53,7 @@ To compact without either, call [`Model.compact_messages`][pydantic_ai.models.Mo
 
 ### Compacting outside a run
 
-[`Agent.compact()`][pydantic_ai.agent.Agent.compact] compacts a conversation's message history without a run, for example for a `/compact` command or to compact a stored conversation. The agent's capabilities compact it with their [`compact_history`](#the-compaction-hook) hooks, with the same [events](#compaction-events), for the request a run with this history would make next: with the agent's model, settings, tools and instructions, or the ones you pass. Nothing else is sent. It returns a [`CompactionResult`][pydantic_ai.capabilities.CompactionResult], or `None` when no capability compacted or a listener cancelled the compaction:
+[`Agent.compact()`][pydantic_ai.agent.AbstractAgent.compact] compacts a conversation's message history without a run, for example for a `/compact` command or to compact a stored conversation. The agent's capabilities compact it with their [`compact_history`](#the-compaction-hook) hooks, with the same [events](#compaction-events), for the request a run with this history would make next: with the agent's model, settings, tools and instructions, or the ones you pass. Nothing else is sent. It returns a [`CompactionResult`][pydantic_ai.capabilities.CompactionResult], or `None` when no capability compacted or a listener cancelled the compaction:
 
 ```python {title="agent_compact.py" test="skip"}
 from pydantic_ai import Agent
@@ -73,6 +73,8 @@ async def main():
 ```
 
 Continue the conversation with the result's [`messages`][pydantic_ai.capabilities.CompactionResult.messages]. If compacting fails, the error is raised: unlike a run, it doesn't move on to a [fallback model](model-fallback.md). Its [`record`][pydantic_ai.capabilities.CompactionResult.record] is the [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] a run would keep on its [`compactions`](#storing-the-full-conversation), so a store saves it the same way. A history that ends with a response whose tool calls haven't been answered can't be compacted: run the agent with it first.
+
+The history is compacted as you pass it: outside a run, there are no request-only changes, such as those a `before_model_request` hook makes for a single request, to leave out of it. `compact()` runs on an agent run that ends before its first request is sent, so the capabilities' `before_run` and `wrap_run` hooks fire as for any run, and set up per-run state, durability and instrumentation. The run then ends the way an [`iter()`][pydantic_ai.agent.AbstractAgent.iter] run you stop iterating does: `after_run` doesn't fire, and the handler `wrap_run` awaits is cancelled.
 
 Under [durable execution](../durable_execution/overview.md), call it from workflow code with an agent that has the durability capability, and the compaction request runs as a durable model operation, as it does during a run. Without one, the request is made inline.
 
