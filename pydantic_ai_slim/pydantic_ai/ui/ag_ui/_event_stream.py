@@ -260,8 +260,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if self._error:
             return
 
-        # A field is passed only when this SDK has it and the client accepts it, so callers that `model_dump` the
-        # event themselves don't see keys an older SDK or client doesn't know.
+        # A key is passed only when the installed SDK defines it and, for the 1.0 keys, the client is on 1.0, so an
+        # older SDK never serializes a key it doesn't know.
         extra: dict[str, Any] = {}
         if self._cancelled_run:
             # Sent only to clients that declared 1.0; older client schemas reject it (ag-ui#880).
