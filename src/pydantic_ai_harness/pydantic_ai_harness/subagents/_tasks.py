@@ -60,6 +60,8 @@ class DelegationTask:
     conversation_id: str
     parent_id: str | None = None
     model: str | None = None
+    working_directory: str | None = None
+    """Resolved directory selected for this task, or `None` to inherit the parent workspace."""
     background: bool = False
     backgroundable: bool = True
     resumable: bool = True
@@ -353,6 +355,7 @@ class DelegationTasks:
         backgroundable: bool = True,
         task_id: str | None = None,
         resumable: bool = True,
+        working_directory: str | None = None,
     ) -> str:
         """Start or resume a child; foreground waiting can be released by `background`.
 
@@ -368,6 +371,8 @@ class DelegationTasks:
             conversation_id = self.records[parent_id].conversation_id
         if resume is not None:
             record = self.check_resume(resume, conversation_id=conversation_id, agent_name=agent_name)
+            if working_directory != record.working_directory:
+                raise ModelRetry('A resumed task cannot change its working directory.')
             record.prompt, record.model = prompt, model
             record.background, record.status = background, 'running'
             record.outcome, record.output, record.finished_at = None, '', None
@@ -387,6 +392,7 @@ class DelegationTasks:
                 conversation_id=conversation_id,
                 parent_id=_CHILD.get(),
                 model=model,
+                working_directory=working_directory,
                 background=background,
                 resumable=resumable and agent_name not in self.one_shot,
                 backgroundable=backgroundable,
