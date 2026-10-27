@@ -9,12 +9,13 @@ the two by object identity tells those edits apart:
 - a *substitution* is a hook's copy of something the history holds, standing in for it in this request, like a
   file described for a model that can't read it, or a redacted tool result;
 - an *insertion* is something only this request adds, like a reminder appended to a copy of the last request;
-- a *removal* is something the history holds that this request leaves out.
+- a *removal* is something the history holds that this request leaves out, like content filtered out of it.
 
-A compaction is made from the history as this request shows it, without what it only adds: substitutions applied,
-insertions and removals left out of it as they are in the history. What's committed is the compacted history with
-the persistent originals of everything it kept, so nothing request-only becomes persistent, unless the summary
-itself absorbed it. What's sent is the compacted history with this request's edits applied to what it kept.
+A compaction is made from the history as this request shows it, without what it only adds: substitutions applied, and
+insertions and removals left out, so a compaction never sees what this request doesn't send. What's committed is the
+compacted history with the persistent originals of everything it kept, removals among them, so nothing request-only
+becomes persistent, unless the summary itself absorbed it. What's sent is the compacted history with this request's
+edits applied to what it kept.
 """
 
 from __future__ import annotations
@@ -103,21 +104,13 @@ def _message_parts(message: object) -> Sequence[object]:
 
 
 def _without_insertions(original: ModelMessage, copy: ModelMessage) -> ModelMessage:
-    """`original` with the parts `copy` substitutes for it, without the parts `copy` only adds or leaves out.
+    """`copy` without the parts it only adds to `original`: the original's parts as this request shows them.
 
-    Returns `original` itself when `copy` only added parts or left some out.
+    Returns `original` itself when `copy` only added parts.
     """
     if type(original) is not type(copy):
         return copy
-    parts: list[object] = []
-    position = 0
-    for part, aligned in zip(copy.parts, _align(original.parts, copy.parts)):
-        if aligned.kind == 'insert':
-            continue
-        parts.extend(original.parts[position : aligned.start])
-        parts.append(part)
-        position = max(position, aligned.end)
-    parts.extend(original.parts[position:])
+    parts = [part for part, aligned in zip(copy.parts, _align(original.parts, copy.parts)) if aligned.kind != 'insert']
     if len(parts) == len(original.parts) and all(a is b for a, b in zip(parts, original.parts)):
         return original
     if isinstance(original, ModelRequest):
@@ -154,17 +147,14 @@ class CompactionView:
         origins: list[tuple[int, int]] = []
         persistent: dict[int, ModelMessage] = {}
         sent: dict[int, ModelMessage] = {}
-        position = 0
+        # What this request leaves out isn't given to the compaction either, as this request doesn't send it. It's
+        # still history: committed if the compaction keeps the messages around it.
         index = 0
         while index < len(view):
             item = aligned[index]
             if item.kind == 'insert':
                 index += 1
                 continue
-            # What this request leaves out is still history: the compaction is made from it as it is.
-            for left_out in range(position, item.start):
-                messages.append(history[left_out])
-                origins.append((left_out, left_out + 1))
             run_end = index + 1
             while run_end < len(view) and aligned[run_end] == item and item.kind == 'substitute':
                 run_end += 1
@@ -183,18 +173,20 @@ class CompactionView:
                 for substitute in view[index:run_end]:
                     messages.append(substitute)
                     origins.append((item.start, item.end))
-            position = max(position, item.end)
             index = run_end
-        for left_out in range(position, len(history)):
-            messages.append(history[left_out])
-            origins.append((left_out, left_out + 1))
         return cls(history, view, messages, origins, aligned, persistent, sent)
 
     def _kept_start(self, kept: int) -> int:
-        """Where in `history` the originals of the last `kept` of `messages` start."""
-        if kept == 0:
-            return len(self.history)
-        return self._origins[len(self.messages) - kept][0]
+        """Where in `history` the originals of the last `kept` of `messages` start.
+
+        What this request left out right before them is kept with them: only the messages it showed were compacted.
+        """
+        first_kept = len(self.messages) - kept
+        start = self._origins[first_kept - 1][1] if first_kept > 0 else 0
+        if kept:
+            # A substitution standing in for several messages is kept whole if any of it is.
+            start = min(start, self._origins[first_kept][0])
+        return start
 
     def committed(self, compacted: Sequence[ModelMessage], kept_from: int) -> list[ModelMessage]:
         """The history to commit: `compacted`, with the persistent originals of everything it kept.

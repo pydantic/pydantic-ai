@@ -39,7 +39,7 @@ class CompactionRequest:
     """The run's history, ending with the request being answered, as this request shows it.
 
     The model request hooks' substitutions for this request are applied, like a file described for a model that can't
-    read it, and what they only add for this request, like a reminder, is left out: see
+    read it, and what they only add for this request, like a reminder, or leave out of it is left out: see
     [request-only changes and compaction](../capabilities/custom.md#request-only-changes-and-compaction). The history
     gets the persistent originals of the messages you keep, and the request sent after the compaction gets this
     request's additions again. A [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] prompt is here with its

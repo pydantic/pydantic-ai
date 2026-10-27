@@ -1430,6 +1430,34 @@ async def test_prepare_model_request_redactions_of_kept_messages_are_sent_not_co
     assert '[redacted]' not in texts(result.all_messages())
 
 
+async def test_what_a_request_leaves_out_is_never_given_to_the_compaction():
+    """Content a hook filters out of the request stays out of the compaction, and in the history."""
+
+    async def filter_secrets(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        request_context.messages = [m for m in request_context.messages if 'secret' not in ' '.join(texts([m]))]
+        return request_context
+
+    seen: list[list[ModelMessage]] = []
+    summarize = Summarize()
+    agent = Agent(no_files(seen), capabilities=[RequestOnce(), Hooks(before_model_request=filter_secrets), summarize])
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('the secret is 42')]),
+        ModelResponse(parts=[TextPart('noted')]),
+    ]
+    result = await agent.run('hi', message_history=history)
+
+    [request] = summarize.calls
+    assert texts(request.messages) == ['noted', 'hi']
+    assert 'the secret is 42' not in texts(seen[0])
+    assert texts(result.all_messages()) == [
+        'summarize for function:respond:',
+        'the secret is 42',
+        'noted',
+        'hi',
+        'done',
+    ]
+
+
 async def test_request_scoped_prompts_keep_their_meaning_through_compaction():
     """A request-scoped prompt kept by a compaction stays in history as one, and isn't shown to later requests."""
     seen: list[list[ModelMessage]] = []
@@ -1490,7 +1518,7 @@ async def test_substitutes_are_sent_when_anything_they_stand_for_is_kept():
 
 
 def test_compaction_view_splits_removals_substitutions_and_insertions():
-    """What a request leaves out is still compacted, a substitute stands in for its original, an insertion is sent only."""
+    """A compaction sees what this request sends, without its insertions; the history keeps its own originals."""
     first = ModelRequest(parts=[UserPromptPart('first')])
     answer = ModelResponse(parts=[TextPart('a'), TextPart('b')])
     second = ModelRequest(parts=[UserPromptPart('second')])
@@ -1501,15 +1529,16 @@ def test_compaction_view_splits_removals_substitutions_and_insertions():
     # `first` and `second` are left out, `answer` is substituted in part, `note` is inserted after the last request.
     view = CompactionView.of(history, [edited, last, note])
 
-    assert texts(view.messages) == ['first', 'a', 'B', 'second', 'third']
-    assert view.messages[0] is first and view.messages[2] is second
+    # Like this request, the compaction doesn't see what it leaves out.
+    assert texts(view.messages) == ['a', 'B', 'third']
     summary = ModelRequest(parts=[CompactionPart(content='summary')])
-    # Keeping only the last request.
-    assert view.committed([summary, last], 1) == [summary, last]
+    # Keeping only the last request: `second`, left out between what was summarized and what was kept, stays history,
+    # while `first`, left out ahead of what was summarized, goes with it.
+    assert view.committed([summary, last], 1) == [summary, second, last]
     assert view.sent([summary, last], 1) == [summary, last, note]
-    # Keeping the substituted answer verbatim ahead of the summary's kept tail: committed as the original, sent edited.
-    kept_answer = view.messages[1]
-    assert view.committed([kept_answer, summary, last], 2) == [answer, summary, last]
+    # Keeping the substituted answer verbatim ahead of the summary: committed as the original, sent edited.
+    kept_answer = view.messages[0]
+    assert view.committed([kept_answer, summary, last], 2) == [answer, summary, second, last]
     assert view.sent([kept_answer, summary, last], 2) == [edited, summary, last, note]
     # Keeping nothing: only what's inserted after the last message is still sent.
     assert view.committed([summary, last], 2) == [summary, last]
@@ -1525,5 +1554,6 @@ def test_compaction_view_substitute_of_another_kind():
     assert view.messages == [stand_in, last]
     assert view.committed([stand_in, last], 0) == [answer, last]
 
-    # What's left out at the end is compacted too.
-    assert CompactionView.of([answer, last], [answer]).messages == [answer, last]
+    # A part this request leaves out isn't compacted either.
+    redacted = replace(last, parts=[])
+    assert CompactionView.of([answer, last], [answer, redacted]).messages == [answer, redacted]
