@@ -52,8 +52,7 @@ If a gate fails, do the alternative and **stop** — don't file:
      Return to the originating PR. Do not start local implementation of the follow-up.
    - **Immediate work:** create with `--assignee <maintainer-login> --label pydanty:skip`.
      Assign the human maintainer who owns the work. The label suppresses Pydanty triage and `retry-pr` triggers.
-     Record the issue URL, immediate-work route, and maintainer login in the implementing branch's `issue-brief.md` during initialization.
-     The [PR skill](../pushing-commits-to-the-repo/SKILL.md#carry-maintainer-ownership-onto-the-pr) uses that context for PR assignment.
+     The [PR skill](../pushing-commits-to-the-repo/SKILL.md#carry-maintainer-ownership-onto-the-pr) reads the issue's assignee and label when creating its PR.
 
    Do not apply these maintainer routes for an external contributor. External contributors cannot
    apply repository labels, so leave their follow-up issues in normal triage.
@@ -61,6 +60,7 @@ If a gate fails, do the alternative and **stop** — don't file:
    Confirm labels against the [checked-in catalog](../pushing-commits-to-the-repo/labels.tsv) before using them; a missing label fails the command.
 
 4. **Log the deferral** in `pr-decisions.md` so the current PR's reviewers see *why* this was parked rather than fixed:
+   For a newly created maintainer issue, include the selected route and human owner (or no local owner) in the decision.
    Bind contributor-derived fields with quoted heredocs, as in [adopt-pr](../adopt-pr/SKILL.md#step-5--backfill-pr-decisionsmd-from-resolved-threads).
    This also applies when deduplication skipped issue creation and Step 3 has no bound title.
    Never paste contributor text into double-quoted command arguments.

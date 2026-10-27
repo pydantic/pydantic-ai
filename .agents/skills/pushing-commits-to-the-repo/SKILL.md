@@ -60,10 +60,11 @@ A human approval does not substitute for douwebot.
 ### Carry maintainer ownership onto the PR
 
 For [immediate maintainer work](../../../AGENTS.md#filing-issues-for-maintainers), assign the PR to the maintainer who owns the issue.
-Read the selected route, issue URL, and maintainer login from the session or the implementing branch's `issue-brief.md`.
-Persist that context in the brief during initialization so later PR creation retains the ownership choice.
-Honor an explicit selection without asking again. If required ownership context is missing, confirm the route and owner before assigning.
-Do not infer immediate work from issue assignment alone.
+Read the selected route, issue URL, and maintainer login from the session or existing branch context.
+If the route or owner is missing, inspect the linked issue with `gh issue view <number> --json assignees,labels`.
+Recover immediate-work ownership when the issue has both `pydanty:skip` and exactly one human maintainer assignee.
+Issue assignment alone does not establish the route. Do not change issue ownership or routing labels during this lookup.
+Honor known details without asking again. Ask only for route or owner details still missing or ambiguous before assigning.
 
 Use `gh pr create --assignee <maintainer-login>` or `gh pr edit <number> --add-assignee <maintainer-login>` for an existing PR.
 Assign the human maintainer, not an agent account. Issue assignment does not automatically assign a PR.
