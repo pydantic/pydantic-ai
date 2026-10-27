@@ -2599,9 +2599,8 @@ def _thinking_rejects_tool_forcing(
 
     Extended thinking and thinking on the non-Anthropic variants do, except three. xAI Grok always reasons, and Converse
     accepts a forced `toolChoice` with Grok 4.6 while it reasons (Grok 4.7 is assumed to match). Z.AI GLM and DeepSeek
-    V3.2 accept a forced `toolChoice` while they reason, as live Bedrock runs showed; those models don't always call the
-    forced tool, which a caller handles by choosing another output mode. OpenAI GPT-5.6 and GPT-6 accept output tools
-    while they think, offered without a forced `toolChoice` as their profile doesn't enable forcing.
+    V3.2 accept a forced `toolChoice` while they reason, but don't always call the forced tool. OpenAI GPT-5.6 and
+    GPT-6 accept output tools while they think, offered without a forced `toolChoice` as their profile doesn't enable forcing.
     """
     return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') not in (
         'deepseek',
