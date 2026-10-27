@@ -195,7 +195,7 @@ class ConversationStore(ABC):
             deferred_tool_requests=record.deferred_tool_requests,
             revision=record.revision,
         )
-        mark_stored(conversation, len(conversation.messages))
+        mark_stored(conversation, conversation.messages)
         return conversation
 
     async def load_entries(
@@ -278,8 +278,10 @@ class ConversationStore(ABC):
         else:
             result = None
         conversation_id = conversation.conversation_id
-        # Read once: a concurrent save of the same object advances it while this one awaits the store.
+        # Read once: a concurrent save of the same object advances it, and messages can be added to
+        # it, while this one awaits the store.
         expected_revision = conversation.revision
+        messages = list(conversation.messages)
         record = await self.read_record(conversation_id)
         if (record.revision if record is not None else None) != expected_revision or not _in_scope(record, scope):
             raise ConversationConflict(conversation_id)
@@ -287,18 +289,18 @@ class ConversationStore(ABC):
         boundary = stored_boundary(conversation)
         if record is not None and boundary is not None:
             parent_id = record.head_id
-            unsaved = conversation.messages[boundary:]
+            unsaved = messages[boundary:]
         else:
             history = await self._history_of(record) if record is not None else []
             if history is None:
                 raise ConversationConflict(conversation_id)
             shared = 0
-            for entry, message in zip(history, conversation.messages):
+            for entry, message in zip(history, messages):
                 if entry.message != message:
                     break
                 shared += 1
             parent_id = history[shared - 1].id if shared else None
-            unsaved = conversation.messages[shared:]
+            unsaved = messages[shared:]
             if shared < len(history):
                 # A rewritten history leaves the stored one as a branch.
                 branches = _left(branches, history[-1].id)
@@ -318,7 +320,7 @@ class ConversationStore(ABC):
         )
         await self.write_record(updated, new_entries=new_entries, expected_revision=expected_revision)
         conversation.revision = updated.revision
-        mark_stored(conversation, len(conversation.messages))
+        mark_stored(conversation, messages)
         if result is not None:
             result._conversation_saved(updated.revision)  # pyright: ignore[reportPrivateUsage]
         return new_entries
@@ -379,7 +381,7 @@ class ConversationStore(ABC):
             deferred_tool_requests=branched.deferred_tool_requests,
             revision=branched.revision,
         )
-        mark_stored(conversation, len(conversation.messages))
+        mark_stored(conversation, conversation.messages)
         return conversation
 
     async def _kept_history(
@@ -461,7 +463,7 @@ class ConversationStore(ABC):
             deferred_tool_requests=fork.deferred_tool_requests,
             revision=fork.revision,
         )
-        mark_stored(forked, len(kept))
+        mark_stored(forked, forked.messages)
         return forked
 
     async def list_conversations(

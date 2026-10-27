@@ -639,6 +639,60 @@ async def test_a_loaded_conversation_edited_before_its_stored_end_is_compared_in
     assert reloaded.messages == loaded.messages
 
 
+async def test_a_run_from_a_loaded_conversation_edited_before_its_stored_end_saves_the_edit() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+    saved = (await agent.run('one')).conversation
+    await store.save(saved)
+    loaded = await store.load(saved.conversation_id)
+    assert loaded is not None
+    loaded.messages[0] = ModelRequest(parts=[UserPromptPart('one, edited')])
+
+    result = await agent.run('two', conversation=loaded)
+    await store.save(result)
+
+    reloaded = await store.load(saved.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == result.all_messages()
+
+
+async def test_messages_added_to_a_conversation_while_it_is_saved_are_saved_next_time() -> None:
+    store = _WriteRacingStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    added = ModelResponse(parts=[TextPart('two')])
+
+    async def add() -> None:
+        conversation.messages.append(added)
+
+    store.race = add
+    await store.save(conversation)
+    assert [entry.message for entry in await store.save(conversation)] == [added]
+
+    reloaded = await store.load(conversation.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == conversation.messages
+
+
+class _WriteRacingStore(InMemoryConversationStore):
+    """Runs `race` once, right after a record is written."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.race: Callable[[], Awaitable[None]] | None = None
+
+    async def write_record(
+        self,
+        record: ConversationRecord,
+        *,
+        new_entries: Sequence[ConversationEntry] = (),
+        expected_revision: str | None,
+    ) -> None:
+        await super().write_record(record, new_entries=new_entries, expected_revision=expected_revision)
+        race, self.race = self.race, None
+        if race is not None:
+            await race()
+
+
 async def test_a_conversation_copied_after_loading_is_compared_instead() -> None:
     store = InMemoryConversationStore()
     await store.save(Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])], conversation_id='c'))

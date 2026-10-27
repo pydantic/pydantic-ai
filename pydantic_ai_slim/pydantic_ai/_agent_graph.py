@@ -79,6 +79,7 @@ from . import (
 )
 from ._cancel import RunCancellation
 from ._context_size import context_input_tokens
+from ._conversation_marks import stored_boundary
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
     parse_loaded_capabilities,
@@ -371,7 +372,7 @@ def resolve_conversation(
             f'Pass the conversation on its own, or pass its pieces yourself.'
         )
 
-    index = conversation.new_message_index
+    index = stored_boundary(conversation)
     unsaved = None if index is None else conversation.messages[index:]
     return (
         conversation.messages,

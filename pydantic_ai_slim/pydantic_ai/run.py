@@ -1104,7 +1104,7 @@ class AgentRunResult(Generic[OutputDataT]):
             revision=self._state.conversation_revision,
         )
         if (index := self._conversation_new_message_index()) is not None:
-            mark_stored(conversation, index)
+            mark_stored(conversation, conversation.messages[:index])
         return conversation
 
     def _conversation_saved(self, revision: str) -> None:
