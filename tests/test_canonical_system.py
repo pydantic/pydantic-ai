@@ -489,8 +489,13 @@ def test_model_without_provider_uses_its_system():
 
 
 def test_canonical_system_stamp_round_trips():
-    """Only a model whose canonical system differs from its name stamps its responses, and the stamp is stored."""
+    """A model stamps its responses when its canonical system differs from its name, and the stamp is stored.
+
+    `GoogleModel` always does, as either Google provider name covers both transports.
+    """
     assert RECEIVERS['openai']()._canonical_system_stamp is None  # pyright: ignore[reportPrivateUsage]
+    assert gemini_api_model()._canonical_system_stamp == 'google'  # pyright: ignore[reportPrivateUsage]
+    assert google_cloud_model()._canonical_system_stamp == 'google-cloud'  # pyright: ignore[reportPrivateUsage]
     assert RECEIVERS['openai-codex']()._canonical_system_stamp == 'openai'  # pyright: ignore[reportPrivateUsage]
     assert RECEIVERS['claude-code']()._canonical_system_stamp == 'anthropic'  # pyright: ignore[reportPrivateUsage]
     assert vertex_client_google_model()._canonical_system_stamp == 'google-cloud'  # pyright: ignore[reportPrivateUsage]
@@ -1067,6 +1072,45 @@ async def test_anthropic_replays_web_search_citations_by_canonical_system():
             ),
             b'skip_thought_signature_validator',
             id='gemini-api-into-vertex',
+        ),
+        # A Gemini API response through a proxy: its URL says nothing, but the stamp `GoogleModel` always sets does.
+        pytest.param(
+            vertex_client_google_model,
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        'get',
+                        {},
+                        tool_call_id='1',
+                        provider_name='google',
+                        provider_details={'thought_signature': SIGNATURE},
+                    )
+                ],
+                provider_name='google',
+                canonical_system='google',
+                provider_url='https://proxy.example.com/google',
+            ),
+            b'skip_thought_signature_validator',
+            id='proxied-gemini-api-into-vertex',
+        ),
+        pytest.param(
+            gemini_api_model,
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        'get',
+                        {},
+                        tool_call_id='1',
+                        provider_name='google',
+                        provider_details={'thought_signature': SIGNATURE},
+                    )
+                ],
+                provider_name='google',
+                canonical_system='google',
+                provider_url='https://proxy.example.com/google',
+            ),
+            b'signature',
+            id='proxied-gemini-api-into-gemini-api',
         ),
         pytest.param(
             gemini_api_model,

@@ -4520,11 +4520,12 @@ class ModelResponse:
     """The base URL of the LLM provider that generated the response."""
 
     canonical_system: str | None = None
-    """The system whose keys verify the stateless signed or encrypted data in this response, when it isn't `provider_name`.
+    """The system whose keys verify the stateless signed or encrypted data in this response, when it isn't evident from `provider_name`.
 
-    Set by the model from its provider's [`canonical_system`][pydantic_ai.providers.Provider.canonical_system],
-    only when that differs from `provider_name`: an `openai-codex` response is `'openai'`, and a `google` response
-    from Google Cloud is `'google-cloud'`. It applies to the parts whose `provider_name` is this response's.
+    Set by the model from its provider's [`canonical_system`][pydantic_ai.providers.Provider.canonical_system]
+    when that differs from `provider_name`, such as `'openai'` for an `openai-codex` response, and always by
+    [`GoogleModel`][pydantic_ai.models.google.GoogleModel], whose `google` and `google-cloud` providers each serve
+    both the Gemini API (`'google'`) and Google Cloud (`'google-cloud'`). It applies to the parts whose `provider_name` is this response's.
     Models read it to decide whether they can send that data, such as encrypted reasoning and thinking signatures,
     back to their own provider: see
     [`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts].

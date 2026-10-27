@@ -23,6 +23,7 @@ from pydantic_ai._model_request_attempts import AttemptStart, failed_attempt, re
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import PeekableAsyncStream, await_maybe, get_first_param_type
 
+from .._canonical_system import stateless_artifact_system
 from .._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelRequestAttempt, ModelResponse, ModelResponsePart
@@ -267,11 +268,15 @@ class FallbackModel(Model):
         # one provider, so one that trims before compaction parts is preferred: the window it gives tool dispatch
         # errs toward refusing a call rather than admitting a tool the request didn't show.
         candidates = [model._model_for_response(response) for model in self.models]
+        provider_name = response.provider_name
         matching = [
             candidate
             for candidate in candidates
-            if candidate.system == response.provider_name
-            and candidate._canonical_system_stamp == response.canonical_system
+            if provider_name is not None
+            and candidate.system == provider_name
+            # A response recorded before it carried `canonical_system` is judged as its stateless data would be.
+            and candidate.canonical_system
+            == (response.canonical_system or stateless_artifact_system(response, provider_name)[0])
         ]
         return next(
             (candidate for candidate in matching if candidate._honors_compaction_boundaries),

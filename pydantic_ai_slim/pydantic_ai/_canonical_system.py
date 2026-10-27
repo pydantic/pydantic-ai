@@ -6,7 +6,7 @@ redacted thinking, Gemini thought signatures, xAI encrypted reasoning and tool r
 or Snowflake reasoning details. The system that verifies it is the producing provider's
 [`canonical_system`][pydantic_ai.providers.Provider.canonical_system], which the response records in
 [`ModelResponse.canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system] when it differs
-from `provider_name`.
+from `provider_name`, and always for a Google response.
 
 Stateful data (response, item, file, container and conversation ids) keeps matching `provider_name`
 exactly, and doesn't go through this module.
