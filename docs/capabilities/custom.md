@@ -762,7 +762,7 @@ From `before_model_request`, where a change goes decides two things: whether the
 !!! warning "Request-only changes and the prompt cache"
     A request-only change that drops or alters content an earlier request already sent moves the cached prefix: the provider re-processes everything from that point on, every time. On models that tie their reasoning to the exact conversation, such as Claude Opus 5.5, Sonnet 5.5 and Fable 5.1 with [preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking), it also invalidates the model's earlier reasoning. That's why a reminder added on every request should be enqueued, so it stays in history and every later request sends it unchanged, and request-scoped when it's a one-off, so providers that can clear it do.
 
-The [`StayTerse` capability](../message-history.md#request-scoped-system-prompts) is a complete reminder capability built this way.
+The [`ShowRequestsLeft` capability](../message-history.md#request-scoped-system-prompts) is a complete reminder capability built this way.
 
 !!! note "Skip and chain behavior"
     A skip exception ([`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest], [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation], or [`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution]) raised from `before_*` stops the remaining `before_*` hooks, the core operation, and `after_*`, then propagates outward through the already-entered wrapper chain. A wrapper that raises a skip without calling its handler bypasses all inner wrappers and the entire `before_*`/core/`after_*` lifecycle. If its handler returns before the wrapper raises, that lifecycle has already completed.
