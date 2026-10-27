@@ -210,6 +210,7 @@ class TestPeers:
         returns = [part for msg in result.all_messages() for part in msg.parts if isinstance(part, ToolReturnPart)]
         assert len(returns) == 3
         assert 'queued' in str(returns[0].content)
+        assert 'user sees it' not in str(returns[0].content)
         assert 'already sent' in str(returns[1].content)
         assert 'limit reached' in str(returns[2].content)
         assert len(await inbox.pending()) == 1

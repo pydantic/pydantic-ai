@@ -135,6 +135,6 @@ class _PeerTools(FunctionToolset[AgentDepsT]):
         if result.status == 'queued':
             return (
                 f'{recipient.handle} is idle: message queued ({result.pending} pending). '
-                f'Its user sees it, and its model reads it on its next turn. id {result.message_id}'
+                f'Its model reads it on its next turn. id {result.message_id}'
             )
         return f'Delivered to {recipient.handle}: its model reads it at its next request. id {result.message_id}'
