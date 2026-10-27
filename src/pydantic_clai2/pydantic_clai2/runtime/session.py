@@ -325,7 +325,6 @@ def fork_summary(source: ConversationSummary) -> ConversationSummary:
         title_source=source.title_source,
         model=source.model,
         checkout=source.checkout,
-        forked_from=source.id,
     )
 
 
@@ -352,7 +351,11 @@ def busy_elsewhere(summary: ConversationSummary) -> bool:
     return summary.owner_pid != os.getpid() and busy_conflict(summary) is not None
 
 
-@dataclass(frozen=True)
+def _first_idle(forks: Sequence[ConversationSummary]) -> ConversationSummary | None:
+    return next((fork for fork in forks if not busy_elsewhere(fork)), None)
+
+
+@dataclass(frozen=True, kw_only=True)
 class Continuation:
     """The saved conversation `Session.resume` restores for the one asked for."""
 
@@ -363,19 +366,24 @@ class Continuation:
 
 
 async def continuing_fork(conversations: SqliteConversationStore, source: ConversationSummary) -> Continuation | None:
-    """When a live process runs `source`, its newest listed fork no other process runs, to continue in instead.
+    """When a live process runs `source`, the newest copy CLAI made to continue it that no other process runs.
 
-    `None` when nothing runs `source`, or it has no such fork, so continuing it here saves a new fork.
-    Checking a process can spawn a program (`tasklist` on Windows), so that runs off the event loop.
+    Only those copies record `forked_from`; a fork the user asked for is theirs to open. `None` when nothing
+    runs `source`, or it has no such copy, so continuing it here saves a new one. Checking a process can spawn
+    a program (`tasklist` on Windows), so that runs off the event loop.
     """
     if stale_fork_mark(source):
         return None
     busy = await to_thread.run_sync(busy_conflict, source)
     if busy is None:
         return None
-    forks = await conversations.listing(forked_from=source.id, archived=False)
-    fork = await to_thread.run_sync(lambda: next((fork for fork in forks if not busy_elsewhere(fork)), None))
-    return None if fork is None else Continuation(fork.id, busy)
+    offset = 0
+    fork: ConversationSummary | None = None
+    # Each page is checked before the next is read, so the newest copy nothing runs is found without listing all.
+    while fork is None and (forks := await conversations.listing(forked_from=source.id, archived=False, offset=offset)):
+        fork = await to_thread.run_sync(_first_idle, forks)
+        offset += len(forks)
+    return None if fork is None else Continuation(conversation_id=fork.id, busy=busy)
 
 
 def _stale_local_workspace(messages: Sequence[ModelMessage], workspace: str) -> bool:
@@ -663,12 +671,12 @@ class Session(Generic[DepsT, OutputT]):
         A caller that claims the conversation before resuming it claims this one, since `resume` does.
         """
         if self.conversations is None:
-            return Continuation(conversation_id)
+            return Continuation(conversation_id=conversation_id)
         try:
             saved = await self.conversations.get(conversation_id=conversation_id)
         except LookupError:
-            return Continuation(conversation_id)  # `resume` raises it.
-        return await continuing_fork(self.conversations, saved.summary) or Continuation(conversation_id)
+            return Continuation(conversation_id=conversation_id)  # `resume` raises it.
+        return await continuing_fork(self.conversations, saved.summary) or Continuation(conversation_id=conversation_id)
 
     def record_resumed(self) -> None:
         """Record the `conversation resumed` UI event for the last restore."""
@@ -723,7 +731,9 @@ class Session(Generic[DepsT, OutputT]):
                 await self.conversations.set_archived(conversation_id=summary.id, archived=False)
                 summary = replace(summary, archived_at=None)
             if forking is not None:
-                summary = await self.conversations.save(summary=fork_summary(saved.summary), messages=messages)
+                # Recording the source makes this copy the one resuming the source continues next time.
+                copy = replace(fork_summary(saved.summary), forked_from=saved.summary.id)
+                summary = await self.conversations.save(summary=copy, messages=messages)
                 self._copy_repl(saved.summary.id, summary.id)
                 notice = (
                     f'{forking} Resumed a fork of it instead: {summary.title} ({summary.id}). '

@@ -7,6 +7,7 @@ import hashlib
 import html
 import io
 import json
+import os
 import re
 import shutil
 import sys
@@ -869,8 +870,6 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
     """A live session's turn shows as running; one another live process runs, as busy; a dead one, as cancelled."""
     web_ = make_web(Agent(TestModel()))
     store = web_.shell.sessions.store
-    import os
-
     for title, pid in (('Live', os.getppid()), ('Mine', os.getpid()), ('Dead', 2**22 + 12345)):
         web_.portal.call(
             lambda title=title, pid=pid: store.save(
@@ -892,8 +891,6 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
 
 def test_a_session_another_process_runs_shows_read_only_until_forked(make_web: 'MakeWeb') -> None:
     """Viewing it saves nothing; opening it, the banner's explicit fork, continues one copy, reused thereafter."""
-    import os
-
     web_ = make_web(Agent(TestModel()))
     store = web_.shell.sessions.store
     busy = web_.portal.call(
@@ -907,6 +904,8 @@ def test_a_session_another_process_runs_shows_read_only_until_forked(make_web: '
     transcript = web_.get(f'/api/sessions/{busy.id}').json()
     assert (transcript['openable'], transcript['missing'], transcript['busy']) == (False, False, os.getppid())
     assert [entry.id for entry in web_.portal.call(store.listing)] == [busy.id]
+    # A fork the user made from the row menu is theirs; continuing the busy session does not take it over.
+    mine = web_.portal.call(web_.shell.sessions.fork, busy.id).id
 
     with web_.client.websocket_connect(
         f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
@@ -915,7 +914,8 @@ def test_a_session_another_process_runs_shows_read_only_until_forked(make_web: '
         running = web_.run()
         assert web_.post(f'/api/sessions/{busy.id}/open').status_code == 200
         copy = receive_until(socket, Snapshot)[1].session
-        assert (copy.id != busy.id, copy.title) == (True, 'Busy (fork)')
+        assert copy.id not in (busy.id, mine)
+        assert copy.title == 'Busy (fork)'
         assert web_.get(f'/api/sessions/{copy.id}').json()['busy'] is None
         web_.post('/api/input', {'text': '/new'})
         receive_until(socket, Snapshot)
@@ -923,7 +923,7 @@ def test_a_session_another_process_runs_shows_read_only_until_forked(make_web: '
         assert receive_until(socket, Snapshot)[1].session.id == copy.id, 'the fork is continued, not forked again'
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)
-    assert sorted(entry.id for entry in web_.portal.call(store.listing)) == sorted([busy.id, copy.id])
+    assert sorted(entry.id for entry in web_.portal.call(store.listing)) == sorted([busy.id, mine, copy.id])
 
 
 def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', tmp_path: Path) -> None:

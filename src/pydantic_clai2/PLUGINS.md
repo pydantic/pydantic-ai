@@ -3349,8 +3349,8 @@ when either changes. `await resume(conversation_id)` switches to a saved convers
 model or replays a tool. Call it between turns, for example from `on_session_start`; it raises
 `RuntimeError` during a run, `LookupError` for an unknown ID, and `ValueError` for a
 conversation saved in another directory or when persistence is not configured. A conversation
-still running in another process is not taken over: its newest unarchived fork that no
-other process runs is resumed, else a new fork of it, and the notice says which. When the conversation or its title changed, every loaded plugin, the caller included,
+still running in another process is not taken over: the newest unarchived copy CLAI made
+to continue it that no other process runs is resumed, else a new copy, and the notice says which. When the conversation or its title changed, every loaded plugin, the caller included,
 then receives `on_conversation_changed`; when the ID changed, the status row starts afresh.
 Resuming the conversation already held changes nothing. An in-memory `Transcript` has nothing
 saved, so its `resume` raises `LookupError`.
