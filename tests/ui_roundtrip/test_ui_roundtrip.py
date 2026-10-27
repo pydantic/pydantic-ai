@@ -638,6 +638,11 @@ def _gaps(reason: str, *keys: GapKey) -> dict[GapKey, str]:
 _ALL_WIRE: tuple[tuple[Property, Path, Protocol], ...] = tuple(
     ('wire', path, protocol) for path in PATHS for protocol in PROTOCOLS
 )
+_UNANSWERED_STORED_TAIL = (
+    "a stored history that ends with an unanswered request, as a failed run's saved history does, gets it again "
+    "from the client, which merges it with its new message into one request carrying only the new message's UI "
+    "id, so `manage_message_history='server'` can't tell it was resubmitted; open decision on #11431"
+)
 _ALL_SERVER_WIRE: tuple[tuple[Property, Path, Protocol], ...] = tuple(
     ('server_wire', path, protocol) for path in PATHS for protocol in PROTOCOLS
 )
@@ -837,7 +842,10 @@ SCENARIOS = [
         id='withdrawn_settings_change',
         script=_text_script,
         agent_kwargs={'model_settings': ModelSettings(thinking='low')},
-        gaps=_gaps(_AGUI_ACTIVITY, ('load', 'dump', 'agui'), ('load', 'stream', 'agui')),
+        gaps={
+            **_gaps(_AGUI_ACTIVITY, ('load', 'dump', 'agui'), ('load', 'stream', 'agui')),
+            **_gaps(_UNANSWERED_STORED_TAIL, *_ALL_SERVER_WIRE),
+        },
         # A run that failed after recording a raise to `'high'`, so no response answered it. The next turn is
         # back at `'low'`, so it records the change back.
         seed=[
@@ -1256,8 +1264,10 @@ def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
 
     The records a client can't be trusted to send back (#11184) never leave the server in that mode: append-mode
     instruction records, `no_output` feedback in the system voice, and activity records `@ag-ui/client` drops. So
-    no scenario records a `server_wire` gap except the earlier-run enqueued system prompt, which the adapter's own
-    `ReinjectSystemPrompt(replace_existing=True)` replaces even in the stored history (tracked on #11184).
+    no scenario records a `server_wire` gap except two that the stored history itself causes: the earlier-run
+    enqueued system prompt, which the adapter's own `ReinjectSystemPrompt(replace_existing=True)` replaces even in
+    the stored history (tracked on #11184), and an unanswered request the stored history ends with, which the client
+    sends again.
     `test_server_held_history_wire_request` holds every other scenario to the server-only requests.
     """
     client_wire_gaps = {scenario.id for scenario in SCENARIOS for key in scenario.gaps if key[0] == 'wire'}
@@ -1267,7 +1277,10 @@ def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
         for key, reason in scenario.gaps.items()
         if key[0] == 'server_wire'
     }
-    assert server_wire_gaps == {'enqueued_system_prompt': _REINJECTED_SYSTEM_PROMPT}
+    assert server_wire_gaps == {
+        'enqueued_system_prompt': _REINJECTED_SYSTEM_PROMPT,
+        'withdrawn_settings_change': _UNANSWERED_STORED_TAIL,
+    }
     assert sorted(client_wire_gaps - server_wire_gaps.keys()) == snapshot(
         [
             'appended_instructions',
