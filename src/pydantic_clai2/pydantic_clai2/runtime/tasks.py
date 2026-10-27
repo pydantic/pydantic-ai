@@ -39,6 +39,7 @@ from pydantic_ai_harness.subagents import (
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
+    DelegationWorkspaceRequest,
     SubAgent,
     TaskQuestionEvent,
 )
@@ -51,6 +52,9 @@ from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 PromptTask = Callable[[DelegationTask, str], Coroutine[object, object, object]]
 """Runs a finished task again with the user's message, apart from the conversation, for `Tasks.prompt`."""
+
+REVIEW_AGENT_NAME = 'Review'
+"""The isolated, opt-in specialist allowed to select another working directory."""
 
 
 def specialists() -> dict[str, SubAgent[object]]:
@@ -73,15 +77,16 @@ def specialists() -> dict[str, SubAgent[object]]:
     }
 
 
-async def review_workspace(ctx: RunContext[object], name: str, directory: str) -> Workspace:
+async def review_workspace(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
     """Only the isolated Review specialist may leave a local session's directory."""
-    if name != 'Review':
+    if request.agent_name != REVIEW_AGENT_NAME:
         raise ModelRetry('Only Review accepts `working_directory`; omit it for other delegates.')
     # `backend` unwraps policy layers; replacing it must not discard a sandbox.
     if any(layer not in (LocalWorkspaceBackend, ReadOnlyWorkspace) for layer in workspace_layers(ctx.workspace)):
         raise ModelRetry(
             'Review directory selection requires a local parent workspace without sandbox or custom policy wrappers.'
         )
+    directory = request.directory
     if not directory.strip() or '\x00' in directory:
         raise ModelRetry('Choose an existing directory for Review.')
     path = Path(directory).expanduser()

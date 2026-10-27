@@ -42,7 +42,7 @@ from pydantic_clai2.models.profiles import parse_model
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
 from pydantic_clai2.runtime.session import ModelDefaults, SessionModels, resolve_model_name, supports_local_workspace
-from pydantic_clai2.runtime.tasks import review_workspace
+from pydantic_clai2.runtime.tasks import REVIEW_AGENT_NAME, review_workspace
 from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
@@ -453,7 +453,7 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             if settings.review_agent:
                 reviewer = Agent(
                     deps_type=object,
-                    name='Review',
+                    name=REVIEW_AGENT_NAME,
                     description='Review code and proposed changes with read-only file tools.',
                     instructions=(
                         'Read the repository instructions in your workspace. '

@@ -17,7 +17,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapWorkspace
-from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks
+from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, DelegationWorkspaceRequest
 from pydantic_clai2.builtin_plugins.coder import CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -133,7 +133,7 @@ async def test_directory_override_is_review_only(tmp_path: Path, name: str) -> N
         deps=object(), model=TestModel(), usage=RunUsage(), workspace=Workspace(LocalWorkspaceBackend(tmp_path))
     )
     with pytest.raises(ModelRetry, match='Only Review'):
-        await review_workspace(ctx, name, str(tmp_path))
+        await review_workspace(ctx, DelegationWorkspaceRequest(agent_name=name, directory=str(tmp_path)))
 
 
 @pytest.mark.parametrize('directory', ['', 'missing', 'file', 'bad\x00path'])
@@ -143,15 +143,17 @@ async def test_review_rejects_invalid_directories(tmp_path: Path, directory: str
         deps=object(), model=TestModel(), usage=RunUsage(), workspace=Workspace(LocalWorkspaceBackend(tmp_path))
     )
     with pytest.raises(ModelRetry, match='directory'):
-        await review_workspace(ctx, 'Review', directory)
+        await review_workspace(ctx, DelegationWorkspaceRequest(agent_name='Review', directory=directory))
 
 
 async def test_review_rejects_missing_parent_workspace_and_keeps_read_only(tmp_path: Path) -> None:
     ctx = RunContext(deps=object(), model=TestModel(), usage=RunUsage())
     with pytest.raises(ModelRetry, match='local parent workspace'):
-        await review_workspace(ctx, 'Review', str(tmp_path))
+        await review_workspace(ctx, DelegationWorkspaceRequest(agent_name='Review', directory=str(tmp_path)))
     ctx.workspace = ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
-    assert await (await review_workspace(ctx, 'Review', '.')).working_dir() == str(tmp_path)
+    assert await (
+        await review_workspace(ctx, DelegationWorkspaceRequest(agent_name='Review', directory='.'))
+    ).working_dir() == str(tmp_path)
 
 
 @pytest.mark.parametrize('read_only', [False, True])
@@ -166,7 +168,7 @@ async def test_review_rejects_sandbox_wrappers_over_local_backends(tmp_path: Pat
         parent = ReadOnlyWorkspace(parent)
     ctx = RunContext(deps=object(), model=TestModel(), usage=RunUsage(), workspace=parent)
     with pytest.raises(ModelRetry, match='policy wrappers'):
-        await review_workspace(ctx, 'Review', str(hidden))
+        await review_workspace(ctx, DelegationWorkspaceRequest(agent_name='Review', directory=str(hidden)))
 
 
 @pytest.mark.parametrize('sub_agents', [False, True])
