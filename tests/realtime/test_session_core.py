@@ -290,7 +290,10 @@ def test_a_provider_reported_cut_records_what_was_heard() -> None:
 
 def timed(response_id: str, item_id: str, *words: tuple[str, int, int]) -> OutputSpeechTimestamps:
     return OutputSpeechTimestamps(
-        [SpeechTimestamp(text, start_ms, duration_ms) for text, start_ms, duration_ms in words],
+        [
+            SpeechTimestamp(text=text, start_ms=start_ms, duration_ms=duration_ms)
+            for text, start_ms, duration_ms in words
+        ],
         response_id=response_id,
         item_id=item_id,
     )

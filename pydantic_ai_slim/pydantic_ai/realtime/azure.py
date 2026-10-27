@@ -498,7 +498,11 @@ def _map_voice_live_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     if event_type == 'response.audio_timestamp.delta':
         timestamp = _VoiceLiveAudioTimestampDelta.model_validate(data)
         return OutputSpeechTimestamps(
-            [SpeechTimestamp(timestamp.text, timestamp.audio_offset_ms, timestamp.audio_duration_ms)],
+            [
+                SpeechTimestamp(
+                    text=timestamp.text, start_ms=timestamp.audio_offset_ms, duration_ms=timestamp.audio_duration_ms
+                )
+            ],
             item_id=timestamp.item_id or None,
             response_id=timestamp.response_id or None,
         )

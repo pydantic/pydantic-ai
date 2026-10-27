@@ -3796,7 +3796,7 @@ class FilePart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class SpeechTimestamp:
     """When a piece of the model's speech is heard in its audio, as the provider reports it.
 
@@ -3817,8 +3817,6 @@ class SpeechTimestamp:
 
     duration_ms: int
     """How long the text takes to speak, in milliseconds."""
-
-    _: KW_ONLY
 
     granularity: Literal['word', 'segment'] = 'word'
     """How much text one timestamp covers: a single `'word'`, or a `'segment'` of one or more words, which is
