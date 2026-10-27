@@ -667,9 +667,10 @@ async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) 
     )
     assert await badge.json_value() == 'none'
 
-    # A value edit still says it saved.
+    # A value edit still says it saved. Each edit waits for the last badge to clear, so the next one shows its own.
     channel = settings.locator('.setting').filter(has=page.locator('.setting-label', has_text='Update channel'))
     for value in ('main', 'stable'):
+        await expect(channel.locator('.setting-state')).to_have_count(0)
         await channel.get_by_role('combobox').select_option(value)
         await expect(channel.locator('.setting-state.saved')).to_be_visible()
 
@@ -677,6 +678,7 @@ async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) 
     await page.evaluate("location.hash = '#settings/system-prompt'")
     instructions = settings.locator('.setting').filter(has=page.locator('.setting-label', has_text='Your instructions'))
     for text, toast in (('Answer briefly.', 'Saved your instructions.'), ('', 'Removed your instructions.')):
+        await expect(instructions.locator('.setting-state')).to_have_count(0)
         await instructions.get_by_role('button', name='Edit Your instructions').click()
         dialog = page.get_by_role('dialog', name='Edit your instructions')
         await dialog.get_by_role('textbox').fill(text)
