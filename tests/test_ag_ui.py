@@ -9406,7 +9406,7 @@ async def test_run_finished_usage_drops_counts_outside_the_wire_range() -> None:
     """A count `TokenUsage` cannot encode is left absent rather than failing the run at `RUN_FINISHED`.
 
     The bound applies to a `(provider, model)` pair's sum, so two responses that only overflow together
-    are caught too, and `totalTokens` is the sum of the counts actually sent.
+    are caught too, and `totalTokens` is left absent when either count is, since it would be wrong.
     """
     agent = _three_response_agent()
 
@@ -9432,8 +9432,8 @@ async def test_run_finished_usage_drops_counts_outside_the_wire_range() -> None:
     run_finished = next(event for event in events if event['type'] == 'RUN_FINISHED')
     assert run_finished['usage'] == snapshot(
         [
-            {'provider': 'provider-a', 'model': 'model-a', 'outputTokens': 10, 'totalTokens': 10},
-            {'provider': 'provider-b', 'model': 'model-b', 'outputTokens': 2, 'totalTokens': 2},
+            {'provider': 'provider-a', 'model': 'model-a', 'outputTokens': 10},
+            {'provider': 'provider-b', 'model': 'model-b', 'outputTokens': 2},
         ]
     )
 

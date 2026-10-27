@@ -265,6 +265,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if self._error:
             return
 
+        # Only fields this SDK and client support are passed: an SDK without the field would still serialize
+        # an explicit `None` as an extra key that older clients don't expect.
         extra: dict[str, Any] = {}
         if self._cancelled_run:
             # Below 1.0 there is no cancelled outcome (ag-ui#880).
