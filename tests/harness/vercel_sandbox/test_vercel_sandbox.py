@@ -17,7 +17,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import WorkspaceRef
+from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef
 from pydantic_ai_harness.vercel_sandbox import VercelSandbox, VercelSandboxBackend
 
 from .fake_vercel import FakeVercel
@@ -191,6 +191,30 @@ async def test_backend_used_outside_a_run_closes_its_client_after_each_operation
     first, second = await asyncio.gather(attached.run(['true']), attached.working_dir())
     assert (first.exit_code, second) == (0, str(fake_vercel.host_root))
     assert (fake_vercel.opened_clients, fake_vercel.closed_clients) == (2, 2)
+
+
+async def test_a_client_closed_during_a_direct_get_sandbox_skips_the_sandbox_lookup(fake_vercel: FakeVercel) -> None:
+    """A direct `get_sandbox()` is not counted as an operation, so the last operation ending while it
+    makes the working directory closes the client. A signal exit then goes without the sandbox lookup."""
+    backend = VercelSandbox[None](working_dir=str(fake_vercel.host_root / 'project')).get_workspace(_ctx(), ref=None)
+    assert isinstance(backend, VercelSandboxBackend)
+    # `mkdir` dies by a signal, so its exit would be checked against the sandbox.
+    fake_vercel.rewrite = lambda argv: ['sh', '-c', 'kill -TERM $$'] if argv[0] == 'mkdir' else argv
+    fake_vercel.process_gate = asyncio.Event()
+    acquiring = asyncio.create_task(backend.get_sandbox())
+    await fake_vercel.process_requested.wait()
+    # An operation waiting for the sandbox, cancelled: it is the only one in flight, so ending it closes the client.
+    waiting = asyncio.create_task(backend.run(['true']))
+    for _ in range(3):
+        await asyncio.sleep(0)
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    assert fake_vercel.closed_clients == 1
+    fake_vercel.process_gate.set()
+    with pytest.raises(WorkspaceError, match=r"^Could not create working_dir '.*/project' in Vercel sandbox "):
+        await acquiring
+    assert fake_vercel.get_calls == []
 
 
 async def test_cancelled_run_closes_owned_client_after_killing_the_command(fake_vercel: FakeVercel) -> None:

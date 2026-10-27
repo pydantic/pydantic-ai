@@ -52,7 +52,8 @@ class TestFakeVercelSandboxBackend(WorkspaceBackendSuite):
         return _destroy
 
 
-async def _destroy_if_live(name: str) -> None:  # pragma: no cover - live tier runs without coverage
+# The live tier runs without coverage.
+async def _destroy_if_live(name: str) -> None:  # pragma: no cover
     # Quiet when the destroy rule already deleted it, and closes the client it opens.
     await VercelSandbox().destroy(WorkspaceRef(provider='vercel', id=name))
 

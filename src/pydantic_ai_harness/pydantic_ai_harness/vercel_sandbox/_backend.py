@@ -238,7 +238,8 @@ class _Command:
         finally:
             # Closing both readers closes the log stream they share; each close is shielded.
             for reader in (process.stdout, process.stderr):
-                if reader is not None:  # pragma: no branch - both streams are piped
+                # Both streams are piped, so neither reader is ever `None`.
+                if reader is not None:  # pragma: no branch
                     await reader.aclose()
 
     async def _read(self, reader: TextReader | None, chunks: list[str], group: TaskGroup) -> None:
@@ -449,6 +450,7 @@ class VercelSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             try:
                 return await client.get_sandbox(name=name)
             except Exception:
+                # Any failure, a 404 or a transport error, means no sandbox to adopt; the caller raises its own error.
                 pass
         return None
 
@@ -498,7 +500,8 @@ class VercelSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             # Under the lock, so a sandbox still being created is recorded before its client closes.
             async with self._lock:
                 client, self._client, self._sandbox = self._client, None, None
-            if client is not None:  # pragma: no branch - only a concurrent `aclose` clears it first
+            # Only a concurrent `aclose` clears it first.
+            if client is not None:  # pragma: no branch
                 await _close_quietly(client)
 
         await run_to_completion(close)
@@ -651,7 +654,9 @@ class VercelSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
     async def _ended(self, sandbox: Sandbox) -> WorkspaceError | None:
         """Why `sandbox` cannot run a command now: deleted, or its session ended; `None` if neither, or Vercel cannot say."""
         client = self._client
-        if client is None:  # pragma: no cover - only an operation ending during a direct `get_sandbox()` clears it
+        if client is None:
+            # An operation that ended meanwhile closed the client; a direct `get_sandbox()` is not
+            # counted as one. Without a lookup, the command's own outcome stands.
             return None
         with anyio.move_on_after(_REQUEST_TIMEOUT):
             try:

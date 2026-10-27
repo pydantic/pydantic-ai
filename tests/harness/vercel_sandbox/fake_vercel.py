@@ -118,6 +118,7 @@ class FakeSandbox:
         self.commands.append(argv)
         self.command_envs.append(env)
         self.kill_after.append(kill_after)
+        owner.process_requested.set()
         if self.deleted:
             raise api_error(404, 'Sandbox not found', code='not_found')
         if owner.process_error is not None:
@@ -215,6 +216,7 @@ class FakeVercel:
         self.destroy_error: Exception | None = None
         self.process_error: Exception | None = None
         self.process_gate: asyncio.Event | None = None
+        self.process_requested = asyncio.Event()
         self.process_started = asyncio.Event()
         self.read_error: Exception | None = None
         self.wait_error: Exception | None = None
