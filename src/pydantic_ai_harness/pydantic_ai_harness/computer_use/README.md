@@ -110,8 +110,9 @@ async def main():
 - Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), a retried action may repeat a click that already
   happened. Temporal and Prefect retry each action on its own; DBOS, Absurd and pgtask retry the whole call.
 - Every screenshot rides in each model request, so under Temporal a run passes the 2 MB payload limit after a few
-  steps: store large payloads outside the history with Temporal's
-  [external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads), or set `keep_screenshots`.
+  steps and then stops making progress. Configure Temporal's [external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads),
+  which keeps large payloads outside the history. `keep_screenshots` doesn't avoid this: it drops screenshots 25 at a
+  time.
 - With [instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/#excluding-binary-content), every request's screenshots are recorded on its span; pass
   `InstrumentationSettings(include_binary_content=False)` to leave them out.
 - [`Advisor(forward_history=True)`](../advisor/) forwards the run's history with every screenshot, not only the newest
