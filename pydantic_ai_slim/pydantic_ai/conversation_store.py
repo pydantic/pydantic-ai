@@ -20,14 +20,16 @@ from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import KW_ONLY
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from . import messages as _messages, usage as _usage
+from ._conversation_marks import mark_stored, stored_boundary
 from ._deferred import DeferredToolRequests
 from ._utils import now_utc
 from ._uuid import uuid7
 from .conversation import Conversation
 from .exceptions import UserError
+from .run import AgentRunResult
 
 __all__ = (
     'ConversationEntry',
@@ -36,28 +38,6 @@ __all__ = (
     'ConversationStore',
     'InMemoryConversationStore',
 )
-
-
-_STORED_TAIL = '_stored_tail'
-"""Where `_mark_stored` keeps the message just before the unsaved ones, outside the fields: not compared, serialized or copied."""
-
-
-def _mark_stored(conversation: Conversation, index: int) -> None:
-    """Set `conversation.new_message_index`, remembering the message before it to check that it still marks the boundary."""
-    conversation.new_message_index = index
-    conversation.__dict__[_STORED_TAIL] = conversation.messages[index - 1] if index else None
-
-
-def _stored_boundary(conversation: Conversation) -> int | None:
-    """`conversation.new_message_index`, if the messages before it are still the ones it was set after."""
-    index = conversation.new_message_index
-    if index is None or index == 0:
-        return index
-    if index > len(conversation.messages) or conversation.messages[index - 1] is not conversation.__dict__.get(
-        _STORED_TAIL
-    ):
-        return None
-    return index
 
 
 @dataclasses.dataclass(frozen=True)
@@ -110,6 +90,14 @@ class ConversationRecord:
     forked_from: str | None = None
     """The entry a [`fork`][pydantic_ai.conversation_store.ConversationStore.fork] branched this conversation off."""
 
+    branches: list[str] = dataclasses.field(default_factory=list[str])
+    """The last entries of the branches this conversation has left, oldest first.
+
+    [`branch`][pydantic_ai.conversation_store.ConversationStore.branch] adds the history it leaves, as
+    does a save that rewrites the history, so an app can list them and
+    [`branch`][pydantic_ai.conversation_store.ConversationStore.branch] back to one with `from_entry`.
+    """
+
     revision: str = dataclasses.field(default_factory=lambda: str(uuid7()))
     """A token that changes on every save, so concurrent writers can't overwrite each other unnoticed.
 
@@ -143,6 +131,16 @@ class ConversationConflict(UserError):
         )
 
 
+def _in_scope(record: ConversationRecord | None, scope: str | None) -> bool:
+    """Whether `record`, if there is one, may be read or changed by a caller that names `scope`."""
+    return record is None or scope is None or record.scope == scope
+
+
+def _left(branches: list[str], tip: str) -> list[str]:
+    """`branches` with `tip`, the last entry of a history a conversation left, recorded as the newest."""
+    return [*(entry for entry in branches if entry != tip), tip]
+
+
 class ConversationStore(ABC):
     """A store for conversations, keeping each one's messages as a log in which each message is stored once.
 
@@ -153,22 +151,31 @@ class ConversationStore(ABC):
     ```python {test="skip" lint="skip"}
     conversation = await store.load(conversation_id) or Conversation(conversation_id=conversation_id)
     result = await agent.run(prompt, conversation=conversation)
-    await store.save(result.conversation)
+    await store.save(result)
     ```
 
     The stored conversation only ever grows: a save appends the messages a run added, even when a
-    capability trimmed or rewrote the history that run was sent. Rewinding it, to regenerate or edit
-    an earlier turn, branches off an earlier message and keeps the old branch stored.
+    capability trimmed or rewrote the history that run was sent. To regenerate or edit an earlier
+    turn, [`branch`][pydantic_ai.conversation_store.ConversationStore.branch] it from an earlier
+    message: the history it leaves stays stored, so it can branch back. To explore from a point
+    without moving the conversation, [`fork`][pydantic_ai.conversation_store.ConversationStore.fork]
+    a new one from it.
+
+    Pass `scope=` to the methods that read or change a stored conversation to keep it to its owner: a
+    conversation saved with another scope is treated as one the store doesn't have.
 
     A backend implements the five storage primitives below; the store works out which messages are new,
     where a history branches, and what a fork shares.
     """
 
-    async def load(self, conversation_id: str, *, limit: int | None = None) -> Conversation | None:
+    async def load(
+        self, conversation_id: str, *, limit: int | None = None, scope: str | None = None
+    ) -> Conversation | None:
         """Load a conversation, or `None` if the store doesn't have it.
 
         Args:
             conversation_id: The conversation to load.
+            scope: Only load it if it was saved with this scope.
             limit: Load only its last `limit` messages, for a run that only needs the recent turns.
                 Saving the result still appends to the whole stored conversation. The window can
                 start in the middle of a turn, say with a tool result whose call it left out; a
@@ -177,7 +184,7 @@ class ConversationStore(ABC):
         Raises:
             UserError: If `limit` is negative.
         """
-        loaded = await self._read(conversation_id, limit=limit)
+        loaded = await self._read(conversation_id, limit=limit, scope=scope)
         if loaded is None:
             return None
         record, history = loaded
@@ -188,10 +195,12 @@ class ConversationStore(ABC):
             deferred_tool_requests=record.deferred_tool_requests,
             revision=record.revision,
         )
-        _mark_stored(conversation, len(conversation.messages))
+        mark_stored(conversation, len(conversation.messages))
         return conversation
 
-    async def load_entries(self, conversation_id: str, *, limit: int | None = None) -> list[ConversationEntry] | None:
+    async def load_entries(
+        self, conversation_id: str, *, limit: int | None = None, scope: str | None = None
+    ) -> list[ConversationEntry] | None:
         """Load a conversation's history with each message's entry, or `None` if the store doesn't have it.
 
         An entry's [`id`][pydantic_ai.conversation_store.ConversationEntry.id] identifies its message
@@ -201,27 +210,30 @@ class ConversationStore(ABC):
         Args:
             conversation_id: The conversation to load.
             limit: Load only its last `limit` messages.
+            scope: Only load it if it was saved with this scope.
 
         Raises:
             UserError: If `limit` is negative.
         """
-        loaded = await self._read(conversation_id, limit=limit)
+        loaded = await self._read(conversation_id, limit=limit, scope=scope)
         return None if loaded is None else loaded[1]
 
     async def _read(
-        self, conversation_id: str, *, limit: int | None
+        self, conversation_id: str, *, limit: int | None = None, scope: str | None = None
     ) -> tuple[ConversationRecord, list[ConversationEntry]] | None:
         if limit is not None and limit < 0:
             raise UserError('`limit` must not be negative.')
         while True:
-            record = await self.read_record(conversation_id)
+            record = await self._read_record(conversation_id, scope=scope)
             if record is None:
                 return None
             history = await self._history_of(record, limit=limit)
             if history is not None:
                 return record, history
 
-    async def save(self, conversation: Conversation, *, scope: str | None = None) -> list[ConversationEntry]:
+    async def save(
+        self, conversation: Conversation | AgentRunResult[Any], *, scope: str | None = None
+    ) -> list[ConversationEntry]:
         """Save a conversation, storing only the messages the store doesn't have yet.
 
         When the conversation knows its
@@ -243,10 +255,12 @@ class ConversationStore(ABC):
         `new_message_index`.
 
         Args:
-            conversation: The conversation to save, usually a run's
-                [`AgentRunResult.conversation`][pydantic_ai.agent.AgentRunResult.conversation].
-            scope: Whose or where the conversation is, to list it by. Defaults to the scope it was
-                saved with before.
+            conversation: The conversation to save, or a run's result to save its
+                [`conversation`][pydantic_ai.agent.AgentRunResult.conversation]. A saved result's
+                `conversation` then carries the new revision, so it can be continued or saved again.
+            scope: Whose or where the conversation is, to list it by. A conversation the store has
+                must have been saved with it, and one it doesn't have is saved with it. Defaults to
+                the scope it was saved with before.
 
         Returns:
             The entries this save stored, in order, so their
@@ -254,16 +268,23 @@ class ConversationStore(ABC):
             messages, say with a billing row or a rating. Empty when there was nothing new.
 
         Raises:
-            ConversationConflict: If the conversation was saved or deleted since it was loaded, or
-                one with its `conversation_id` already exists when it wasn't loaded from the store.
+            ConversationConflict: If the conversation was saved or deleted since it was loaded, one
+                with its `conversation_id` already exists when it wasn't loaded from the store, or
+                it was saved with another `scope`.
         """
+        result: AgentRunResult[Any] | None
+        if isinstance(conversation, AgentRunResult):
+            result, conversation = conversation, conversation.conversation
+        else:
+            result = None
         conversation_id = conversation.conversation_id
         # Read once: a concurrent save of the same object advances it while this one awaits the store.
         expected_revision = conversation.revision
         record = await self.read_record(conversation_id)
-        if (record.revision if record is not None else None) != expected_revision:
+        if (record.revision if record is not None else None) != expected_revision or not _in_scope(record, scope):
             raise ConversationConflict(conversation_id)
-        boundary = _stored_boundary(conversation)
+        branches = list(record.branches) if record is not None else []
+        boundary = stored_boundary(conversation)
         if record is not None and boundary is not None:
             parent_id = record.head_id
             unsaved = conversation.messages[boundary:]
@@ -278,6 +299,9 @@ class ConversationStore(ABC):
                 shared += 1
             parent_id = history[shared - 1].id if shared else None
             unsaved = conversation.messages[shared:]
+            if shared < len(history):
+                # A rewritten history leaves the stored one as a branch.
+                branches = _left(branches, history[-1].id)
         new_entries: list[ConversationEntry] = []
         for message in unsaved:
             entry = ConversationEntry(parent_id=parent_id, message=message)
@@ -290,106 +314,154 @@ class ConversationStore(ABC):
             deferred_tool_requests=conversation.deferred_tool_requests,
             scope=scope if scope is not None else record.scope if record is not None else None,
             forked_from=record.forked_from if record is not None else None,
+            branches=branches,
         )
         await self.write_record(updated, new_entries=new_entries, expected_revision=expected_revision)
         conversation.revision = updated.revision
-        _mark_stored(conversation, len(conversation.messages))
+        mark_stored(conversation, len(conversation.messages))
+        if result is not None:
+            result._conversation_saved(updated.revision)  # pyright: ignore[reportPrivateUsage]
         return new_entries
 
-    async def rewind(self, conversation_id: str, *, at: int, expected_revision: str | None) -> Conversation:
-        """Move a conversation back to an earlier message, to regenerate or edit what came after it.
+    async def branch(
+        self,
+        conversation_id: str,
+        *,
+        at: int | None = None,
+        from_entry: str | None = None,
+        expected_revision: str | None,
+        scope: str | None = None,
+    ) -> Conversation:
+        """Continue a conversation from an earlier point, to regenerate or edit what came after it, or switch branches.
 
-        The messages after it stay stored as a branch of the log, but the conversation no longer
-        loads them. Continue the returned conversation and save it as usual: the new turn branches
-        off the kept history.
+        The history it leaves stays stored, and is added to the record's
+        [`branches`][pydantic_ai.conversation_store.ConversationRecord.branches], so the conversation can
+        branch back to it with `from_entry`. Continue the returned conversation and save it as usual: the
+        new turn goes on the branch.
 
         Args:
-            conversation_id: The conversation to rewind.
-            at: How many of its stored messages to keep.
+            conversation_id: The conversation to branch.
+            at: How many of its current messages to keep.
+            from_entry: The entry to continue from instead: one in its current history, or in a branch it left.
             expected_revision: The [`revision`][pydantic_ai.conversation.Conversation.revision] the
-                conversation was loaded with, so a rewind can't undo a turn someone else saved since.
+                conversation was loaded with, so a branch can't undo a turn someone else saved since.
+            scope: Only branch it if it was saved with this scope.
 
         Raises:
-            UserError: If the store doesn't have the conversation, or `at` is out of range.
+            UserError: If the store doesn't have the conversation, `at` is out of range, `from_entry`
+                isn't in its history or a branch it left, or not exactly one of `at` and `from_entry` is given.
             ConversationConflict: If the conversation was saved or deleted since it was loaded.
         """
-        record = await self.read_record(conversation_id)
-        if record is None:
+        loaded = await self._read(conversation_id, scope=scope)
+        if loaded is None:
             raise UserError(f'Conversation {conversation_id!r} is not in the store.')
+        record, history = loaded
         if record.revision != expected_revision:
             raise ConversationConflict(conversation_id)
-        history = await self._history_of(record)
-        if history is None:
-            raise ConversationConflict(conversation_id)
-        if not 0 <= at <= len(history):
-            raise UserError(f'`at` must be between 0 and {len(history)}, the number of messages in the conversation.')
-        kept = history[:at]
-        rewound = dataclasses.replace(
+        kept = await self._kept_history(record, history, at=at, from_entry=from_entry)
+        branches = list(record.branches)
+        if history and history[-1].id not in {entry.id for entry in kept}:
+            branches = _left(branches, history[-1].id)
+        head_id = kept[-1].id if kept else None
+        branched = dataclasses.replace(
             record,
-            head_id=kept[-1].id if kept else None,
-            deferred_tool_requests=record.deferred_tool_requests if at == len(history) else None,
+            head_id=head_id,
+            deferred_tool_requests=record.deferred_tool_requests if head_id == record.head_id else None,
+            branches=[tip for tip in branches if tip != head_id],
             revision=str(uuid7()),
             updated_at=now_utc(),
         )
-        await self.write_record(rewound, expected_revision=expected_revision)
+        await self.write_record(branched, expected_revision=expected_revision)
         conversation = Conversation(
             messages=[entry.message for entry in kept],
-            usage=rewound.usage,
+            usage=branched.usage,
             conversation_id=conversation_id,
-            deferred_tool_requests=rewound.deferred_tool_requests,
-            revision=rewound.revision,
+            deferred_tool_requests=branched.deferred_tool_requests,
+            revision=branched.revision,
         )
-        _mark_stored(conversation, len(conversation.messages))
+        mark_stored(conversation, len(conversation.messages))
         return conversation
+
+    async def _kept_history(
+        self,
+        record: ConversationRecord,
+        history: list[ConversationEntry],
+        *,
+        at: int | None,
+        from_entry: str | None,
+        default_all: bool = False,
+    ) -> list[ConversationEntry]:
+        """The history up to `at` messages of `history`, or up to `from_entry` in it or a branch `record` left."""
+        if at is not None and from_entry is not None or at is None and from_entry is None and not default_all:
+            raise UserError('Pass exactly one of `at` and `from_entry`.')
+        if from_entry is None:
+            keep = len(history) if at is None else at
+            if not 0 <= keep <= len(history):
+                raise UserError(
+                    f'`at` must be between 0 and {len(history)}, the number of messages in the conversation.'
+                )
+            return history[:keep]
+        for tip in [None, *reversed(record.branches)]:
+            line = history if tip is None else await self.read_history(tip)
+            for index, entry in enumerate(line):
+                if entry.id == from_entry:
+                    return line[: index + 1]
+        raise UserError(
+            f'Entry {from_entry!r} is not in the history of conversation {record.conversation_id!r} or a branch it left.'
+        )
 
     async def fork(
         self,
         conversation_id: str,
         *,
         at: int | None = None,
+        from_entry: str | None = None,
         new_conversation_id: str | None = None,
         scope: str | None = None,
+        source_scope: str | None = None,
     ) -> Conversation:
         """Start a new conversation from a stored one's history, sharing its entries rather than copying them.
+
+        Fork the same point more than once to explore alternatives side by side, while the original
+        conversation carries on.
 
         Args:
             conversation_id: The conversation to fork.
             at: How many of its messages the fork keeps. Defaults to all of them.
+            from_entry: The entry to fork from instead: one in its history, or in a branch it left.
             new_conversation_id: The fork's identifier. Defaults to a new one.
             scope: The fork's scope. Defaults to the forked conversation's.
+            source_scope: Only fork the conversation if it was saved with this scope.
 
         Raises:
-            UserError: If the store doesn't have the conversation, or `at` is out of range.
+            UserError: If the store doesn't have the conversation, `at` is out of range, `from_entry`
+                isn't in its history or a branch it left, or both `at` and `from_entry` are given.
             ConversationConflict: If a conversation with `new_conversation_id` is already stored.
         """
-        while True:
-            record = await self.read_record(conversation_id)
-            if record is None:
-                raise UserError(f'Conversation {conversation_id!r} is not in the store.')
-            history = await self._history_of(record)
-            if history is not None:
-                break
-        keep = len(history) if at is None else at
-        if not 0 <= keep <= len(history):
-            raise UserError(f'`at` must be between 0 and {len(history)}, the number of messages in the conversation.')
-        head_id = history[keep - 1].id if keep else None
+        loaded = await self._read(conversation_id, scope=source_scope)
+        if loaded is None:
+            raise UserError(f'Conversation {conversation_id!r} is not in the store.')
+        record, history = loaded
+        kept = await self._kept_history(record, history, at=at, from_entry=from_entry, default_all=True)
+        head_id = kept[-1].id if kept else None
+        whole = head_id == record.head_id
         fork = ConversationRecord(
             conversation_id=new_conversation_id if new_conversation_id is not None else str(uuid7()),
             head_id=head_id,
-            usage=dataclasses.replace(record.usage) if keep == len(history) else _usage.RunUsage(),
-            deferred_tool_requests=record.deferred_tool_requests if keep == len(history) else None,
+            usage=dataclasses.replace(record.usage) if whole else _usage.RunUsage(),
+            deferred_tool_requests=record.deferred_tool_requests if whole else None,
             scope=scope if scope is not None else record.scope,
             forked_from=head_id,
         )
         await self.write_record(fork, expected_revision=None)
         forked = Conversation(
-            messages=[entry.message for entry in history[:keep]],
+            messages=[entry.message for entry in kept],
             usage=fork.usage,
             conversation_id=fork.conversation_id,
             deferred_tool_requests=fork.deferred_tool_requests,
             revision=fork.revision,
         )
-        _mark_stored(forked, keep)
+        mark_stored(forked, len(kept))
         return forked
 
     async def list_conversations(
@@ -408,15 +480,22 @@ class ConversationStore(ABC):
             raise UserError('`limit` must not be negative.')
         return list(await self.read_records(scope=scope, limit=limit))
 
-    async def delete(self, conversation_id: str) -> None:
+    async def delete(self, conversation_id: str, *, scope: str | None = None) -> None:
         """Delete a conversation, so it no longer loads or lists.
+
+        With `scope`, a conversation saved with another scope is left as it is.
 
         Whether the entries no other conversation's history uses are deleted with it depends on the
         backend: [`InMemoryConversationStore`][pydantic_ai.conversation_store.InMemoryConversationStore]
         deletes them, and each backend documents what it does. Don't rely on `delete` alone to
         erase a conversation's messages unless your backend says it does.
         """
-        await self.delete_record(conversation_id)
+        if await self._read_record(conversation_id, scope=scope) is not None:
+            await self.delete_record(conversation_id)
+
+    async def _read_record(self, conversation_id: str, *, scope: str | None) -> ConversationRecord | None:
+        record = await self.read_record(conversation_id)
+        return record if _in_scope(record, scope) else None
 
     async def _history_of(
         self, record: ConversationRecord, *, limit: int | None = None
@@ -537,10 +616,10 @@ class InMemoryConversationStore(ConversationStore):
         self._records.pop(conversation_id, None)
         reachable: set[str] = set()
         for record in self._records.values():
-            entry_id = record.head_id
-            while entry_id is not None and entry_id not in reachable:
-                reachable.add(entry_id)
-                entry_id = self._entries[entry_id].parent_id
+            for entry_id in [record.head_id, *record.branches]:
+                while entry_id is not None and entry_id not in reachable:
+                    reachable.add(entry_id)
+                    entry_id = self._entries[entry_id].parent_id
         self._entries = {entry_id: entry for entry_id, entry in self._entries.items() if entry_id in reachable}
 
     async def read_entry(self, entry_id: str) -> ConversationEntry:

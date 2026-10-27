@@ -17,6 +17,7 @@ from pydantic_ai.conversation_store import (
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
 
@@ -329,14 +330,13 @@ async def test_a_conversation_replaced_while_it_is_read_loads_as_replaced() -> N
     conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
     await store.save(conversation)
     rewritten = Conversation(
-        messages=[ModelRequest(parts=[UserPromptPart('rewritten')])],
-        conversation_id=conversation.conversation_id,
-        revision=conversation.revision,
+        messages=[ModelRequest(parts=[UserPromptPart('rewritten')])], conversation_id=conversation.conversation_id
     )
 
     async def replace_it() -> None:
+        # Deleting collects the history being read; a rewrite would keep it as a branch.
+        await store.delete(conversation.conversation_id)
         await store.save(rewritten)
-        await store.delete('unrelated')  # Collects the replaced history's entries.
 
     store.race = replace_it
     assert await store.load(conversation.conversation_id) == rewritten
@@ -528,16 +528,16 @@ async def test_a_run_result_keeps_where_its_conversation_s_unsaved_messages_star
     assert 'conversation_unsaved' not in adapter.dump_python(plain)
 
 
-async def test_rewinding_a_conversation_branches_off_an_earlier_message_and_keeps_the_rest() -> None:
+async def test_branching_a_conversation_continues_from_an_earlier_message_and_keeps_the_rest() -> None:
     store = InMemoryConversationStore()
     stored = await _stored_conversation(store, turns=2)
     loaded = await store.load(stored.conversation_id)
     assert loaded is not None
 
-    rewound = await store.rewind(stored.conversation_id, at=2, expected_revision=loaded.revision)
-    assert rewound.messages == stored.messages[:2]
+    branched = await store.branch(stored.conversation_id, at=2, expected_revision=loaded.revision)
+    assert branched.messages == stored.messages[:2]
     assert _entry_count(store) == 4
-    result = await Agent(TestModel()).run('a different second turn', conversation=rewound)
+    result = await Agent(TestModel()).run('a different second turn', conversation=branched)
     await store.save(result.conversation)
 
     reloaded = await store.load(stored.conversation_id)
@@ -545,41 +545,41 @@ async def test_rewinding_a_conversation_branches_off_an_earlier_message_and_keep
     assert reloaded.messages == [*stored.messages[:2], *result.new_messages()]
     assert _entry_count(store) == 6
     with pytest.raises(ConversationConflict):
-        await store.rewind(stored.conversation_id, at=1, expected_revision=loaded.revision)
+        await store.branch(stored.conversation_id, at=1, expected_revision=loaded.revision)
 
 
-async def test_rewinding_keeps_what_a_paused_conversation_waits_on_only_when_nothing_is_dropped() -> None:
+async def test_branching_keeps_what_a_paused_conversation_waits_on_only_when_nothing_is_dropped() -> None:
     store = InMemoryConversationStore()
     requests = DeferredToolRequests(metadata={'call': {}})
     conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])], deferred_tool_requests=requests)
     await store.save(conversation)
 
-    whole = await store.rewind(conversation.conversation_id, at=1, expected_revision=conversation.revision)
+    whole = await store.branch(conversation.conversation_id, at=1, expected_revision=conversation.revision)
     assert whole.deferred_tool_requests == requests
-    partial = await store.rewind(conversation.conversation_id, at=0, expected_revision=whole.revision)
+    partial = await store.branch(conversation.conversation_id, at=0, expected_revision=whole.revision)
     assert partial.deferred_tool_requests is None
     assert partial.messages == []
 
 
-async def test_rewinding_a_missing_conversation_or_past_its_end_raises() -> None:
+async def test_branching_a_missing_conversation_or_past_its_end_raises() -> None:
     store = InMemoryConversationStore()
     conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
     await store.save(conversation)
 
     with pytest.raises(UserError, match="Conversation 'unknown' is not in the store"):
-        await store.rewind('unknown', at=0, expected_revision=None)
+        await store.branch('unknown', at=0, expected_revision=None)
     with pytest.raises(UserError, match='`at` must be between 0 and 1'):
-        await store.rewind(conversation.conversation_id, at=2, expected_revision=conversation.revision)
+        await store.branch(conversation.conversation_id, at=2, expected_revision=conversation.revision)
 
 
-async def test_rewinding_a_conversation_deleted_while_it_is_read_conflicts() -> None:
+async def test_branching_a_conversation_deleted_while_it_is_read_raises_that_it_is_gone() -> None:
     store = _RacingStore()
     conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
     await store.save(conversation)
 
     store.race = lambda: store.delete(conversation.conversation_id)
-    with pytest.raises(ConversationConflict):
-        await store.rewind(conversation.conversation_id, at=0, expected_revision=conversation.revision)
+    with pytest.raises(UserError, match='is not in the store'):
+        await store.branch(conversation.conversation_id, at=0, expected_revision=conversation.revision)
 
 
 async def test_loading_with_a_negative_limit_raises() -> None:
@@ -647,3 +647,107 @@ async def test_a_conversation_copied_after_loading_is_compared_instead() -> None
     reloaded = await store.load('c')
     assert reloaded is not None
     assert reloaded.messages == copied.messages
+
+
+async def test_a_conversation_can_branch_back_to_a_branch_it_left() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    original = await store.load_entries(stored.conversation_id)
+    assert original is not None
+
+    branched = await store.branch(stored.conversation_id, at=2, expected_revision=stored.revision)
+    edited = (await Agent(TestModel()).run('an edited second turn', conversation=branched)).conversation
+    edited_tip = (await store.save(edited))[-1].id
+    record = await store.read_record(stored.conversation_id)
+    assert record is not None
+    assert record.branches == [original[-1].id]
+
+    back = await store.branch(stored.conversation_id, from_entry=original[-1].id, expected_revision=edited.revision)
+
+    assert back.messages == stored.messages
+    record = await store.read_record(stored.conversation_id)
+    assert record is not None
+    assert (record.head_id, record.branches) == (original[-1].id, [edited_tip])
+
+
+async def test_branching_needs_exactly_one_known_point() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=1)
+
+    with pytest.raises(UserError, match='exactly one of `at` and `from_entry`'):
+        await store.branch(stored.conversation_id, expected_revision=stored.revision)
+    with pytest.raises(UserError, match='exactly one of `at` and `from_entry`'):
+        await store.branch(stored.conversation_id, at=0, from_entry='x', expected_revision=stored.revision)
+    with pytest.raises(UserError, match="Entry 'unknown' is not in the history"):
+        await store.branch(stored.conversation_id, from_entry='unknown', expected_revision=stored.revision)
+
+
+async def test_a_fork_can_start_from_a_branch_the_conversation_left() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    original = await store.load_entries(stored.conversation_id)
+    assert original is not None
+    await store.branch(stored.conversation_id, at=0, expected_revision=stored.revision)
+
+    fork = await store.fork(stored.conversation_id, from_entry=original[1].id)
+
+    assert fork.messages == stored.messages[:2]
+    assert fork.usage == RunUsage()
+
+
+async def test_a_save_that_rewrites_the_history_records_the_branch_it_left() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    (entry,) = await store.save(conversation)
+    conversation.messages = [ModelRequest(parts=[UserPromptPart('rewritten')])]
+    conversation.new_message_index = None
+
+    await store.save(conversation)
+
+    record = await store.read_record(conversation.conversation_id)
+    assert record is not None
+    assert record.branches == [entry.id]
+    await store.save(other := Conversation(messages=[ModelRequest(parts=[UserPromptPart('other')])]))
+    await store.delete(other.conversation_id)
+    # Deleting another conversation collects its entries, but keeps the branch this one left.
+    assert _entry_count(store) == 2
+
+
+async def test_a_scope_keeps_a_conversation_to_its_owner() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation, scope='alice')
+    conversation_id = conversation.conversation_id
+
+    assert await store.load(conversation_id, scope='bob') is None
+    assert await store.load_entries(conversation_id, scope='bob') is None
+    assert await store.load(conversation_id, scope='alice') is not None
+    with pytest.raises(UserError, match='is not in the store'):
+        await store.branch(conversation_id, at=0, expected_revision=conversation.revision, scope='bob')
+    with pytest.raises(UserError, match='is not in the store'):
+        await store.fork(conversation_id, source_scope='bob')
+    with pytest.raises(ConversationConflict):
+        await store.save(conversation, scope='bob')
+    await store.delete(conversation_id, scope='bob')
+    assert await store.load(conversation_id) is not None
+    await store.delete(conversation_id, scope='alice')
+    assert await store.load(conversation_id) is None
+
+
+async def test_saving_a_result_lets_its_conversation_continue_and_save_again() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+    result = await agent.run('one')
+    await store.save(result)
+
+    result = await agent.run('two', conversation=result.conversation)
+    await store.save(result)
+    assert await store.save(result) == []
+
+    loaded = await store.load(result.conversation_id)
+    assert loaded is not None
+    assert loaded.messages == result.all_messages()
+    adapter: TypeAdapter[AgentRunResult[str]] = TypeAdapter(AgentRunResult[str])
+    restored = adapter.validate_json(adapter.dump_json(result))
+    assert restored.conversation.revision == loaded.revision
+    assert restored.conversation.new_message_index == len(loaded.messages)

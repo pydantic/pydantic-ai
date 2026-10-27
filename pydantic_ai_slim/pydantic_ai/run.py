@@ -24,6 +24,7 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
+from ._conversation_marks import mark_stored
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
 from ._run_context import (
@@ -32,7 +33,6 @@ from ._run_context import (
 )
 from .capabilities._pending_messages import drain_pending_messages_at_end
 from .conversation import Conversation
-from .conversation_store import _mark_stored  # pyright: ignore[reportPrivateUsage]
 from .output import OutputDataT
 from .tools import AgentDepsT, DeferredToolRequests
 
@@ -57,6 +57,7 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     conversation_id: NotRequired[str]
     conversation_revision: NotRequired[str | None]
     conversation_unsaved: NotRequired[list[_messages.ModelMessage]]
+    conversation_saved: NotRequired[bool]
     metadata: NotRequired[dict[str, Any] | None]
     traceparent: NotRequired[str | None]
 
@@ -78,6 +79,7 @@ class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
     conversation_id: str
     conversation_revision: str | None
     conversation_unsaved: list[_messages.ModelMessage]
+    conversation_saved: bool
     metadata: dict[str, Any] | None
     traceparent: str | None
 
@@ -121,7 +123,15 @@ def _rewritten(message: _messages.ModelMessage, original: _messages.ModelMessage
     return message != dataclasses.replace(original, **filled)
 
 
-_STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'conversation_revision', 'conversation_unsaved', 'metadata')
+_STATE_KEYS = (
+    'usage',
+    'run_id',
+    'conversation_id',
+    'conversation_revision',
+    'conversation_unsaved',
+    'conversation_saved',
+    'metadata',
+)
 """Serialized keys that live on `GraphAgentState` rather than on `AgentRunResult` itself."""
 
 
@@ -940,6 +950,8 @@ class AgentRunResult(Generic[OutputDataT]):
             data['conversation_revision'] = self._state.conversation_revision
         if self._state.conversation_unsaved is not None:
             data['conversation_unsaved'] = self._state.conversation_unsaved
+        if self._state.conversation_saved:
+            data['conversation_saved'] = True
         if 'output' in serialized:
             # Absent when the caller filtered it out: an explicit `exclude={'output'}`, or
             # `exclude_none=True` on a `None` output. The handler applies those filters to the
@@ -1092,10 +1104,17 @@ class AgentRunResult(Generic[OutputDataT]):
             revision=self._state.conversation_revision,
         )
         if (index := self._conversation_new_message_index()) is not None:
-            _mark_stored(conversation, index)
+            mark_stored(conversation, index)
         return conversation
 
+    def _conversation_saved(self, revision: str) -> None:
+        """Record that a store saved this result's conversation, so its `conversation` continues from the new revision."""
+        self._state.conversation_revision = revision
+        self._state.conversation_saved = True
+
     def _conversation_new_message_index(self) -> int | None:
+        if self._state.conversation_saved:
+            return len(self._state.message_history)
         unsaved = self._state.conversation_unsaved
         if unsaved is None:
             return None
