@@ -136,6 +136,8 @@ export function sessionApi(id: string | null) {
     changes: (scope: ChangeScope, diffs = true) =>
       call<Changes>('GET', `${base}/changes?scope=${scope}${diffs ? '' : '&diffs=false'}`),
     complete: (text: string) => call<CompletionInfo[]>('GET', `${base}/complete?text=${encodeURIComponent(text)}`),
+    /** The files and folders in the session's folder that best match `query`, the text after an `@`. */
+    files: (query: string) => call<CompletionInfo[]>('GET', `${base}/files?q=${encodeURIComponent(query)}`),
     selectModel: (name: string) => call<void>('POST', `${base}/model`, { name }),
     answer: (request: string, answers: AnswerBody[] | null) =>
       call<void>('POST', `${base}/questions/${request}`, { answers }),
