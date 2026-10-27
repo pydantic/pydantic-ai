@@ -871,6 +871,12 @@ async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui
     async with page.expect_request(f'**/api/sessions/{web_ui.lines}/input') as typed_in_full:
         await composer.press('Enter')
     assert (await typed_in_full.value).post_data_json == {'text': 'see @README.md'}
+    # A longer word under the caret is not the file typed in full, so Enter takes the suggestion instead.
+    await composer.fill('@README.mdx')
+    await composer.press('ArrowLeft')
+    await expect(names.first).to_have_text('README.md')
+    await composer.press('Enter')
+    await expect(composer).to_have_value('@README.md ')
 
     # Esc closes the list, and Enter then sends the mention as typed, for the agent to read with its tools.
     await composer.fill('read @READ')
