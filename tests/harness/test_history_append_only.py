@@ -179,16 +179,14 @@ def _deferred_forecast_and_tides() -> AbstractCapability[Any]:
     )
 
 
-def _forecasting_and_tidal() -> list[AbstractCapability[Any]]:
-    return [
-        Capability(
-            id='forecasting',
-            description='Weather forecasts.',
-            tools=[Tool(_forecast, name='forecast')],
-            defer_loading=True,
-        ),
-        Capability(id='tidal', description='Tide times.', tools=[Tool(_tides, name='tides')], defer_loading=True),
-    ]
+def _forecasting() -> AbstractCapability[Any]:
+    return Capability(
+        id='forecasting', description='Weather forecasts.', tools=[Tool(_forecast, name='forecast')], defer_loading=True
+    )
+
+
+def _tidal() -> AbstractCapability[Any]:
+    return Capability(id='tidal', description='Tide times.', tools=[Tool(_tides, name='tides')], defer_loading=True)
 
 
 def _run_code(code: str) -> tuple[str, dict[str, Any]]:
@@ -318,7 +316,7 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
         _CODE_MODE_SEARCHES,
     ),
     'CodeMode+Capability(defer_loading=True)': (
-        lambda _: [CodeMode(), *_forecasting_and_tidal()],
+        lambda _: [CodeMode(), _forecasting(), _tidal()],
         _CODE_MODE_LOADS,
     ),
     'CodeMode+ToolSearch+Capability(defer_loading=True)': (
@@ -326,7 +324,7 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
             CodeMode(),
             ToolSearch(),
             Toolset(FunctionToolset([Tool(_forecast, name='forecast', defer_loading=True)])),
-            _forecasting_and_tidal()[1],
+            _tidal(),
         ],
         _code_mode_discoveries(_LOAD_TIDAL, _TIDES_FROM_CODE),
     ),
@@ -354,7 +352,7 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
         _CODE_MODE_SEARCHES,
     ),
     'CodeMode(dynamic_catalog=False)+Capability(defer_loading=True)': (
-        lambda _: [CodeMode(dynamic_catalog=False), *_forecasting_and_tidal()],
+        lambda _: [CodeMode(dynamic_catalog=False), _forecasting(), _tidal()],
         _CODE_MODE_LOADS,
     ),
 }
