@@ -107,6 +107,7 @@ end of the body, before the checklist. Skip the section entirely when the log is
 ```
 
 Do not copy the decisions template's instructions into the PR body.
+The section is public. Restate each entry's decision and its technical reason; leave out who asked for it and quotes from the conversation.
 
 ### Keep labels current with the title and body
 
