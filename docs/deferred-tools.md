@@ -102,6 +102,8 @@ If approval depends on the tool call's arguments or the agent [run context][pyda
 
 You can also raise it from the tool's [`args_validator`](tools-advanced.md#args-validator), which runs before the tool function and lets you reject invalid arguments before asking a human to approve them.
 
+Base the decision on arguments and context your code can check, not on a confidence or risk score the model reports: see [Don't gate actions on model-reported confidence](output.md#model-reported-confidence).
+
 To require approval for calls to tools provided by a [toolset](toolsets.md) (like an [MCP server](mcp/client.md)), see the [`ApprovalRequiredToolset` documentation](toolsets.md#requiring-tool-approval).
 
 !!! warning "Approval is not an authorization boundary against an untrusted client"
