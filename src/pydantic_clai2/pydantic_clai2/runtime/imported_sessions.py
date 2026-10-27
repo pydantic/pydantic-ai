@@ -63,7 +63,7 @@ _SOURCES: dict[ImportSource, _Source] = {
         titles=codex_sessions.titles,
         header=codex_sessions.header,
         messages=codex_sessions.messages,
-        tasks=lambda _path, _conversation_id: [],
+        tasks=codex_sessions.tasks,
     ),
 }
 
@@ -71,6 +71,39 @@ _SOURCES: dict[ImportSource, _Source] = {
 def import_source(name: str) -> ImportSource | None:
     """The source a `/resume` argument names, if it names one."""
     return next((source for source in IMPORT_SOURCES if source == name), None)
+
+
+def source_of(summary: ConversationSummary) -> ImportSource | None:
+    """The agent a session was imported from, or `None` for CLAI's own.
+
+    An import's ID derives from its source, unlike the random ID CLAI gives its own sessions, and its
+    first tag names the source; a topic tag a naming model chose that happens to name one is neither.
+    """
+    try:
+        derived = UUID(summary.id).version == 5
+    except ValueError:
+        derived = False
+    return import_source(summary.tags[0]) if derived and summary.tags else None
+
+
+def source_label(source: ImportSource) -> str:
+    """The name the agent goes by, such as `Claude Code`."""
+    return _SOURCES[source].label
+
+
+def imported_from(summary: ConversationSummary) -> str | None:
+    """The name of the agent a session was imported from, or `None` for CLAI's own."""
+    source = source_of(summary)
+    return None if source is None else source_label(source)
+
+
+def with_source_tags(previous: ConversationSummary, tags: Sequence[str]) -> tuple[str, ...]:
+    """`tags` without source names, led by the source of an import, so renaming it keeps where it came from.
+
+    Only an import keeps its source tag: a fork of one, under an ID of its own, is CLAI's and drops it.
+    """
+    source = previous.tags[:1] if imported_from(previous) is not None else ()
+    return (*source, *(tag for tag in tags if import_source(tag) is None))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -81,6 +114,8 @@ class ImportedSession:
     path: Path
     summary: ConversationSummary
     """Revision 0, as it is not yet in CLAI's store."""
+    listed: bool = True
+    """Whether the browser lists it, rather than only importing it by ID."""
 
     def messages(self) -> list[ModelMessage]:
         """Read the whole transcript. Blocking file IO, so call it off the event loop."""
@@ -112,6 +147,7 @@ def _imported(source: ImportSource, path: Path, *, modified: float, titles: dict
     return ImportedSession(
         source=source,
         path=path,
+        listed=header.listed,
         summary=ConversationSummary(
             id=str(uuid5(_NAMESPACE, f'{source}:{header.native_id}')),
             workspace=str(Path(header.cwd).resolve()),
@@ -159,7 +195,11 @@ class ImportCatalog:
                 if imported is not None:
                     self._by_id[imported.summary.id] = imported
             imported = self._read[path]
-            if imported is not None and needle in f'{imported.summary.title}\n{imported.summary.workspace}'.casefold():
+            if (
+                imported is not None
+                and imported.listed
+                and needle in f'{imported.summary.title}\n{imported.summary.workspace}'.casefold()
+            ):
                 found.append(imported.summary)
         return found
 

@@ -353,17 +353,25 @@ calculator = MCPToolset('http://localhost:3002/sse').prefixed('calc')   # `calc_
 agent = Agent('{{ openai:medium }}', toolsets=[weather, calculator])
 ```
 
+The [`MCP` capability](../capabilities/mcp.md#tool-names) does the same with `tool_prefix='weather'`, or with `tool_prefix=True` to use its explicit `id=` as the prefix.
+
 ## Server instructions
 
-MCP servers can provide instructions during initialization that give context about how to best interact with the server's tools. These are accessible via [`MCPToolset.instructions`][pydantic_ai.mcp.MCPToolset.instructions] after the connection is established, and can be automatically injected into the agent's instructions by setting `include_instructions=True`:
+MCP servers can provide instructions during initialization that give context about how to best interact with the server's tools. These are accessible via [`MCPToolset.instructions`][pydantic_ai.mcp.MCPToolset.instructions] after the connection is established, and can be added to the agent's instructions by setting `include_instructions=True`:
 
 ```python {title="mcp_server_include_instructions.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
-toolset = MCPToolset('http://localhost:8000/mcp', include_instructions=True)
+toolset = MCPToolset('http://localhost:8000/mcp', id='docs', include_instructions=True)
 agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
+
+On `MCPToolset` this is off by default because the server writes this text, and the model receives it with the same authority as the instructions you write yourself. Only enable it for servers you trust. The [`MCP`](../capabilities/mcp.md) capability turns it on for the local toolset it builds, so only point an `MCP` capability at servers you trust, or pass your own `local=MCPToolset(...)`.
+
+The instructions are read each time the toolset connects, which by default is once per agent run, and on a toolset with an [`id`][pydantic_ai.mcp.MCPToolset.id] they [append their changes](../agent.md#appending-instruction-changes). If the server sends different instructions on a later connection, as when it's redeployed between turns of a conversation, the new text is appended to the conversation rather than rewriting the instruction prefix that the provider has cached. The model receives them in a `<context id="toolset:<id>">` element, so it can tell which server they came from.
+
+A toolset for a server URL that you don't give an `id` takes the URL's hostname as its `id`, as in `toolset:localhost`, with `-` in place of the `:`s of an IPv6 address. Only an `id` you choose is stamped as the `toolset_id` of the server's tool definitions, and [durable execution](../durable_execution/overview.md) doesn't accept a derived one: name the toolset with `id=` there. If two toolsets would take the same hostname, as for two servers on one host, neither keeps it for its instructions, which then rewrite the prefix as plain text, with a warning suggesting a distinct `id=` for each. A stdio or in-process server without an `id` has nothing to key its instructions by either, so pass `id=` to append them.
 
 ## Tool metadata
 

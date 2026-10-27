@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import warnings
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 
@@ -12,15 +11,20 @@ from pydantic_ai._deferred_capabilities import (
     LoadCapabilityCallPart,
     LoadCapabilityReturn,
 )
-from pydantic_ai._instructions import explicitly_appended_blocks, resolve_sourced_instructions
+from pydantic_ai._instructions import resolve_sourced_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import InstructionPart, ModelResponse, ToolReturn
+from pydantic_ai.messages import CapabilityInstructionSource, InstructionId, InstructionPart, ModelResponse, ToolReturn
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
-from pydantic_ai.toolsets._instruction_collection import collect_toolset_instructions
+from pydantic_ai.toolsets._instruction_collection import (
+    collect_toolset_instructions,
+)
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
+
+if TYPE_CHECKING:
+    from pydantic_ai.capabilities.abstract import AbstractCapability
 
 LOAD_CAPABILITY_TOOL_NAME = 'load_capability'
 LOAD_CAPABILITY_TOOL_DESCRIPTION = (
@@ -31,6 +35,9 @@ LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE = (
     'Capability {capability_id!r} is already active. '
     'Use its existing instructions and any tools it provides; do not call `load_capability` for it again.'
 )
+# Resolving the instructions here as well would run dynamic instructions twice for one request, so the
+# message doesn't depend on whether there are any.
+LOAD_CAPABILITY_LOADED_MESSAGE_TEMPLATE = 'Capability {capability_id!r} loaded. Its instructions, if any, follow.'
 LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE = (
     'Capability {capability_id!r} is already being loaded by an earlier `load_capability` call in this response; '
     'do not call `load_capability` for it again.'
@@ -88,50 +95,64 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             raise ModelRetry(f'No capability found with id {capability_id!r}.')
         if capability_id in ctx.active_capability_ids:
             raise ModelRetry(LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id=capability_id))
+        if capability.defer_loading is not True:
+            # Inactive without being deferred itself, so it sits inside a deferred capability that isn't loaded yet.
+            groups = [
+                group_id
+                for group_id, group in ctx.capabilities.items()
+                if group.defer_loading is True
+                and group_id not in ctx.loaded_capability_ids
+                and any(inner is capability for inner in _beneath(group))
+            ]
+            names = ' or '.join(repr(group_id) for group_id in groups)
+            raise ModelRetry(
+                f'Capability {capability_id!r} is part of deferred capability {names} and loads with it. Load {names} instead.'
+            )
         if _is_duplicate_load_in_response(ctx, capability_id):
             raise ModelRetry(LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE.format(capability_id=capability_id))
 
-        # Sourced through `_collect_instructions` rather than `get_instructions` so a loaded
-        # capability's parts carry the same `capability:<id>` keys they would have had if the
-        # capability were eager. `InstructionPart.join` below flattens the ids away today, because
-        # a load delivers its instructions as tool-return text rather than as request parts — but
-        # the identity is assigned in one place for both paths instead of two that can drift.
-        sourced = capability._collect_instructions()  # pyright: ignore[reportPrivateUsage]
-        parts = await resolve_sourced_instructions(sourced, ctx)
-
-        parts.extend(await self._collect_owned_toolset_instructions(capability_id, ctx))
-
-        if appended := explicitly_appended_blocks(sourced, parts):
-            warnings.warn(
-                "`on_change='append'` is not supported for deferred capability instructions, so instruction blocks "
-                f'{", ".join(map(repr, appended))} are delivered when the capability loads and their later changes '
-                'are not tracked.',
-                UserWarning,
-                stacklevel=2,
-            )
-
-        # Nothing appends here, so an empty append-mode block has no withdrawal to record.
-        instructions_text = InstructionPart.join([part for part in parts if part.content])
-
-        result: LoadCapabilityReturn = {'instructions': instructions_text} if instructions_text is not None else {}
+        # The return only confirms the load: the next request records the capability's instructions as an
+        # `InstructionDeltaPart` for `capability:<id>`, which models receive in the system voice, the voice
+        # they treat as authoritative over user and tool-output pressure. They're never in both places, which
+        # made models treat them as tool output again. A realtime session has no channel for those parts, so
+        # the instructions still ride the return there.
+        message = LOAD_CAPABILITY_LOADED_MESSAGE_TEMPLATE.format(capability_id=capability_id)
+        result: LoadCapabilityReturn = {'message': message}
+        if ctx.realtime:
+            parts = await resolve_loaded_capability_instructions(capability_id, self, ctx)
+            if (text := InstructionPart.join([part for part in parts if part.content])) is not None:
+                result['instructions'] = text
         tools = sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)
         return ToolReturn(return_value=result, tools=tools or None)
 
-    async def _collect_owned_toolset_instructions(
-        self, capability_id: str, ctx: RunContext[AgentDepsT]
-    ) -> list[InstructionPart]:
-        owned: list[CapabilityOwnedToolset[AgentDepsT]] = []
 
-        def collect(ts: AbstractToolset[AgentDepsT]) -> None:
-            if isinstance(ts, CapabilityOwnedToolset) and ctx.capabilities[capability_id] is ts.capability:
-                owned.append(ts)
+async def resolve_loaded_capability_instructions(
+    capability_id: str, toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
+) -> list[InstructionPart]:
+    """Resolve the instruction parts a loaded capability delivers, each addressed beneath its block `capability:<id>`.
 
-        self.apply(collect)
+    That's the capability's own instructions, sourced through `_collect_instructions` as they would be if it
+    were eager, followed by those of the toolsets it owns in `toolset`. A loaded capability is delivered as
+    one block named after its registry id, which a capability without an `id` of its own also has, so every
+    part is re-keyed beneath that block, keeping its `name`. The `load_capability` return and every later
+    request resolve the same parts, so the block only changes when the instructions do.
+    """
+    capability = ctx.capabilities[capability_id]
+    sourced = capability._collect_instructions()  # pyright: ignore[reportPrivateUsage]
+    parts = await resolve_sourced_instructions(sourced, ctx)
 
-        parts: list[InstructionPart] = []
-        for ts in owned:
-            parts.extend(await collect_toolset_instructions(ts.wrapped, ctx))
-        return parts
+    owned: list[CapabilityOwnedToolset[AgentDepsT]] = []
+
+    def collect(ts: AbstractToolset[AgentDepsT]) -> None:
+        if isinstance(ts, CapabilityOwnedToolset) and ts.capability is capability:
+            owned.append(ts)
+
+    toolset.apply(collect)
+    for ts in owned:
+        parts.extend(await collect_toolset_instructions(ts.wrapped, ctx))
+
+    source = CapabilityInstructionSource(capability_id)
+    return [replace(part, id=InstructionId(source, name=part.name)) for part in parts]
 
 
 def _is_duplicate_load_in_response(ctx: RunContext[Any], capability_id: str) -> bool:
@@ -155,3 +176,10 @@ def _is_duplicate_load_in_response(ctx: RunContext[Any], capability_id: str) -> 
         ctx.tool_call_id,
     )
     return owner_tool_call_id != ctx.tool_call_id
+
+
+def _beneath(capability: AbstractCapability[Any]) -> list[AbstractCapability[Any]]:
+    """What `capability` registers beneath itself: `apply` visits the capability first."""
+    visited: list[AbstractCapability[Any]] = []
+    capability.apply(visited.append)
+    return visited[1:]

@@ -156,7 +156,7 @@ Need deterministic, fast tests?
 | Scenario | Mode |
 |----------|------|
 | Need structured data and want maximum provider compatibility | `ToolOutput` (default) — works with all providers, supports streaming |
-| Want the provider to natively enforce JSON schema compliance | `NativeOutput` — OpenAI, Anthropic, Google only; limited streaming |
+| Want the provider to natively enforce JSON schema compliance | `NativeOutput` — OpenAI, Anthropic, Google only; limited streaming; Anthropic limits strict schema complexity per request (`ModelRequestRejectedError` before sending when over) |
 | Provider doesn't support tools or JSON mode | `PromptedOutput` — works everywhere as a fallback |
 | LLM returns non-JSON structured text (markdown, YAML, domain-specific) | `TextOutput` — custom parsing function |
 
@@ -224,6 +224,7 @@ To let the users of an open-source or local app run it on their own ChatGPT plan
 | `NativeTool` | Registers a provider-native tool with the agent | Yes |
 | `Toolset` | Wraps an `AbstractToolset` | No |
 | `ProcessHistory` | Wraps a history processor function — a thin wrapper over the `before_model_request` hook | No |
+| `BatchModelRequests` | Sends model requests through the OpenAI, Anthropic or Gemini batch API at batch prices; runs started together share batches | Yes |
 
 ### When to Use Each Agent Method
 

@@ -26,6 +26,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettingsDeltaPart,
     PrefixedToolset,
     RetryInfo,
     RunContext,
@@ -61,6 +62,7 @@ from pydantic_ai.tools import (
     ToolDenied,
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsStr, iter_message_parts, legacy_retry_prompt_part, message, message_part
@@ -1021,6 +1023,7 @@ def test_tool_name():
     assert json_schema['name'] == 'foo_tool'
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 def test_dynamic_tool_use_messages():
     async def repeat_call_foobar(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if info.function_tools:
@@ -5141,7 +5144,11 @@ def test_include_return_schema_via_capability():
     result = agent.run_sync('test')
     request = message(result.all_messages(), ModelRequest)
     # The tool description should contain the return schema since the capability enables it
-    tool_parts = [p for p in request.parts if not isinstance(p, (ToolAvailabilityDeltaPart, InstructionBaselinePart))]
+    tool_parts = [
+        p
+        for p in request.parts
+        if not isinstance(p, (ToolAvailabilityDeltaPart, InstructionBaselinePart, ModelSettingsDeltaPart))
+    ]
     assert any('Return schema' in str(p.content) for p in tool_parts) or True  # TestModel may not inject
 
 
