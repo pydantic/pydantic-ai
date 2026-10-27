@@ -7,6 +7,7 @@ depends only on the `PostgresPool` protocol from `pydantic_ai_harness.media`, wh
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from collections.abc import Mapping, Sequence
@@ -16,6 +17,7 @@ from typing import TYPE_CHECKING
 import anyio
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai_harness.spend._budget import delimited
 from pydantic_ai_harness.spend._snapshot import Spent, from_nanos, to_nanos
 from pydantic_ai_harness.spend._store import DEFAULT_DEDUP_RETAIN, SpendEntry
 
@@ -36,12 +38,23 @@ def _int(value: object) -> int:
     return value
 
 
+def _digest(text: str) -> str:
+    """The SHA-256 hex digest the tables are keyed by.
+
+    A budget key can carry a caller-supplied conversation or run id of any length, and a
+    B-tree index refuses an entry past about 2.7 kB, so indexing the text itself would let an
+    oversized id fail the write after the model had already been paid for. A digest is a
+    fixed 64 characters whatever it stands for.
+    """
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
 class PostgresSpendStore:
     """Spend counters in PostgreSQL, so every worker enforces one budget.
 
     One row per window in `{table}_counters`, holding the four counters as integers, and one
-    row per applied `SpendEntry.token` and window in `{table}_dedup`. Both tables are created
-    on first use. Takes a caller-owned asyncpg-compatible pool; the store never closes it.
+    row per applied `SpendEntry.token` and window in `{table}_dedup`, both keyed by a SHA-256
+    digest so a key or token of any length fits the index. Both tables are created on first use. Takes a caller-owned asyncpg-compatible pool; the store never closes it.
 
     Horizons are measured on the server's clock, `now()`, the way Redis measures expiry on its
     own, so every worker agrees on when a window rolls over and a worker whose clock runs ahead
@@ -155,11 +168,12 @@ class PostgresSpendStore:
         if entry.token is None or horizon is None:
             return True
         claimed = await connection.fetchval(
-            f'INSERT INTO {self._dedup} (key, token, expires_at) VALUES ($1, $2, now() + $3::interval) '
-            f'ON CONFLICT (key, token) DO UPDATE SET expires_at = EXCLUDED.expires_at '
+            f'INSERT INTO {self._dedup} (marker_sha256, expires_at) VALUES ($1, now() + $2::interval) '
+            f'ON CONFLICT (marker_sha256) DO UPDATE SET expires_at = EXCLUDED.expires_at '
             f'WHERE {self._dedup}.expires_at <= now() RETURNING 1',
-            entry.key,
-            entry.token,
+            # Length-prefixed, as `RedisSpendStore` names its markers, so `('a|b', 'c')` and
+            # `('a', 'b|c')` stay two markers.
+            _digest(delimited(entry.key, entry.token)),
             horizon,
         )
         return claimed is not None
@@ -176,9 +190,10 @@ class PostgresSpendStore:
             for column in ('usd_nanos', 'tokens', 'requests', 'unpriced')
         )
         await connection.execute(
-            f'INSERT INTO {table} (key, usd_nanos, tokens, requests, unpriced, expires_at) '
-            f'VALUES ($1, $2, $3, $4, $5, now() + $6::interval) ON CONFLICT (key) DO UPDATE SET {increments}, '
-            'expires_at = EXCLUDED.expires_at',
+            f'INSERT INTO {table} (key_sha256, key, usd_nanos, tokens, requests, unpriced, expires_at) '
+            f'VALUES ($1, $2, $3, $4, $5, $6, now() + $7::interval) ON CONFLICT (key_sha256) DO UPDATE SET '
+            f'{increments}, expires_at = EXCLUDED.expires_at',
+            _digest(entry.key),
             entry.key,
             to_nanos(entry.usd),
             entry.tokens,
@@ -190,8 +205,8 @@ class PostgresSpendStore:
     async def _totals(self, connection: PostgresConnection, keys: Sequence[str]) -> dict[str, Spent]:
         rows = await connection.fetch(
             f'SELECT key, usd_nanos, tokens, requests, unpriced FROM {self._counters} '
-            'WHERE key = ANY($1::text[]) AND (expires_at IS NULL OR expires_at > now())',
-            list(keys),
+            'WHERE key_sha256 = ANY($1::text[]) AND (expires_at IS NULL OR expires_at > now())',
+            [_digest(key) for key in keys],
         )
         found = {
             str(row[0]): Spent(
@@ -226,12 +241,12 @@ class PostgresSpendStore:
         """
         try:
             await connection.execute(
-                f'DELETE FROM {self._counters} WHERE expires_at <= now() AND key IN '
-                f'(SELECT key FROM {self._counters} WHERE expires_at <= now() FOR UPDATE SKIP LOCKED)'
+                f'DELETE FROM {self._counters} WHERE expires_at <= now() AND key_sha256 IN '
+                f'(SELECT key_sha256 FROM {self._counters} WHERE expires_at <= now() FOR UPDATE SKIP LOCKED)'
             )
             await connection.execute(
-                f'DELETE FROM {self._dedup} WHERE expires_at <= now() AND (key, token) IN '
-                f'(SELECT key, token FROM {self._dedup} WHERE expires_at <= now() FOR UPDATE SKIP LOCKED)'
+                f'DELETE FROM {self._dedup} WHERE expires_at <= now() AND marker_sha256 IN '
+                f'(SELECT marker_sha256 FROM {self._dedup} WHERE expires_at <= now() FOR UPDATE SKIP LOCKED)'
             )
         except Exception:
             _logger.warning('PostgresSpendStore could not delete expired rows from %r', self._counters, exc_info=True)
@@ -261,7 +276,7 @@ class PostgresSpendStore:
                 await connection.fetchval('SELECT pg_advisory_xact_lock(hashtext($1))', self._counters)
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._counters} ('
-                    'key TEXT PRIMARY KEY, usd_nanos BIGINT NOT NULL, tokens BIGINT NOT NULL, '
+                    'key_sha256 TEXT PRIMARY KEY, key TEXT NOT NULL, usd_nanos BIGINT NOT NULL, tokens BIGINT NOT NULL, '
                     'requests BIGINT NOT NULL, unpriced BIGINT NOT NULL, expires_at TIMESTAMPTZ)'
                 )
                 await connection.execute(
@@ -270,8 +285,7 @@ class PostgresSpendStore:
                 )
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._dedup} ('
-                    'key TEXT NOT NULL, token TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL, '
-                    'PRIMARY KEY (key, token))'
+                    'marker_sha256 TEXT PRIMARY KEY, expires_at TIMESTAMPTZ NOT NULL)'
                 )
                 await connection.execute(
                     f'CREATE INDEX IF NOT EXISTS {self._dedup}_expiry ON {self._dedup} (expires_at)'

@@ -816,6 +816,19 @@ async def test_spend_concurrent_schema_initialization() -> None:
         assert await first.get_many(['a', 'b']) == {'a': Spent(requests=1), 'b': Spent(requests=1)}
 
 
+async def test_spend_a_key_and_token_past_the_btree_entry_limit_are_stored() -> None:
+    """A caller-supplied conversation id can exceed the ~2.7 kB B-tree entry limit; the tables index digests."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        # Random, so compression cannot bring the value back under the limit.
+        entry = SpendEntry(key='b|conversation|*|' + os.urandom(4000).hex(), requests=1, token=os.urandom(4000).hex())
+
+        await store.add_many([entry])
+
+        assert await store.add_many([entry]) == {entry.key: Spent(requests=1)}
+        assert await store.get_many([entry.key]) == {entry.key: Spent(requests=1)}
+
+
 async def test_spend_hostile_keys_and_tokens_are_bound_not_interpolated() -> None:
     """A quote, a backslash and `$1` in a key and a token are stored and matched verbatim."""
     async with _live_tables() as (pool, prefix):

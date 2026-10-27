@@ -137,8 +137,28 @@ class TestPostgresSpendStore:
             [SpendEntry(key='month', requests=1, token='r1'), SpendEntry(key='day', requests=1, token='r1')]
         )
 
-        written = [args[0] for query, args in pool.calls if query.startswith('INSERT INTO')]
-        assert written == ['day', 'day', 'month', 'month']
+        written = [args[1] for query, args in pool.calls if query.startswith('INSERT INTO spend_counters')]
+        assert written == ['day', 'month']
+
+    async def test_a_key_and_token_of_any_length_are_stored(self, pool: _RecordingPool):
+        """Indexed by digest: a B-tree refuses an entry past about 2.7 kB, which a caller's id can exceed."""
+        store = PostgresSpendStore(pool)
+        entry = SpendEntry(key='b|conversation|*|' + 'x' * 10_000, requests=1, token='t' * 10_000)
+
+        await store.add_many([entry])
+
+        assert await store.add_many([entry]) == {entry.key: Spent(requests=1)}
+        indexed = [args[0] for query, args in pool.calls if query.startswith('INSERT INTO')]
+        assert {len(str(value)) for value in indexed} == {64}
+
+    async def test_a_separator_inside_a_key_or_token_does_not_merge_two_markers(self, pool: _RecordingPool):
+        """`('a|b', 'c')` and `('a', 'b|c')` are two responses on two windows, not a replay."""
+        store = PostgresSpendStore(pool)
+
+        await store.add_many([SpendEntry(key='a|b', requests=1, token='c')])
+        totals = await store.add_many([SpendEntry(key='a', requests=1, token='b|c')])
+
+        assert totals == {'a': Spent(requests=1)}
 
     async def test_nothing_to_apply_is_not_a_round_trip(self, pool: _RecordingPool):
         assert await PostgresSpendStore(pool).add_many([]) == {}
