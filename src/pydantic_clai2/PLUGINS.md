@@ -3386,7 +3386,7 @@ render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set
 explicit window override, and clears the window when unloaded. Until a turn on the
 selected model has run in the conversation, a `None` `context_window` shows
 `model_window`, that model's known window, which the shell sets; an empty
-conversation reads `0`. A host built
+conversation reads `0`, and a resumed one its last response's context. A host built
 outside the shell gets an in-memory `Transcript` and a detached `Status`, so
 tests need no special case. The status row itself is CLAI's; a plugin adds to it
 with `get_status_segments`. `cost` is the retained-history cost; when retained
@@ -3533,7 +3533,8 @@ parameters) for plugin models. When `resolve` returns a model class of a provide
 CLAI knows, such as an `AnthropicModel` subclass, set `settings_from='anthropic'`
 (or `'openai'`, `'openai-chat'`, `'google'`) on the `ModelProvider` and these
 models get that provider's controls instead, such as Claude's thinking mode and
-effort. Any other value raises `ValueError`.
+effort, and the status row shows that provider's known context window for them
+before a turn measures one. Any other value raises `ValueError`.
 
 The built-in `/effort [VALUE|reset]` shortcut uses the active model's
 `/model settings` effort control, including a plugin provider's `settings_from`

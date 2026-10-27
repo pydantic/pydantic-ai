@@ -1178,7 +1178,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     def show_model(self) -> None:
         """Show the model the next prompt runs on in the status row, forgetting the last one's window if it changed.
 
-        Its known window, and an empty conversation's zero, show until a turn on it measures them.
+        Its known window, a plugin model's taken from its `settings_from` provider, and the conversation's last
+        response's context (zero when empty) show until a turn on it measures them.
         """
         model = self.session.model or _model_label(self.agent)
         if model != self.status.model:
@@ -1193,9 +1194,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         elif self.session.model is None and isinstance(agent_model, Model):
             self.status.model_window = agent_model.context_window
         else:
-            self.status.model_window = infer_model_profile(base_model(model)).get('context_window')
-        if self.status.context_tokens is None and not self.session.messages:
-            self.status.context_tokens = 0
+            profiled = base_model(self.loader.settings_model(model))
+            self.status.model_window = infer_model_profile(profiled).get('context_window')
+        if self.status.context_tokens is None:
+            self.status.context_tokens = _last_context_tokens(self.session.messages)
 
     def _show_status_segments(self) -> None:
         """Paint the status segments of the plugins loaded now."""
@@ -1475,6 +1477,17 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if ended.outcome == 'completed':
             self._measured_model = model
         return ended
+
+
+def _last_context_tokens(messages: Sequence[ModelMessage]) -> int | None:
+    """The context a conversation's last response left, as a resumed one reads before its next turn.
+
+    An empty conversation reads `0`; one without a response that reported usage stays unknown.
+    """
+    if not messages:
+        return 0
+    response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
+    return None if response is None else context_tokens(response) or None
 
 
 def _report_interrupt(completed: bool, console: Console) -> None:
