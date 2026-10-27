@@ -6514,10 +6514,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-_compacted_on_request: ContextVar[tuple[str | None, int] | None] = ContextVar(
-    '_openai_compacted_on_request', default=None
-)
-"""The run and step whose request `OpenAICompaction` compacted on a `CompactionRequestedEvent`."""
+_compacted_for: ContextVar[tuple[str | None, int] | None] = ContextVar('_openai_compacted_for', default=None)
+"""The run and step whose request `OpenAICompaction` already compacted, so it doesn't compact it again."""
 
 
 def _unwrap_model(model: Model) -> Model:
@@ -6677,10 +6675,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        if not self._should_compact(request_context.messages) or _compacted_on_request.get() == (
-            ctx.run_id,
-            ctx.run_step,
-        ):
+        if not self._should_compact(request_context.messages) or _compacted_for.get() == (ctx.run_id, ctx.run_step):
             return request_context
 
         model = _unwrap_model(request_context.model)
@@ -6689,18 +6684,21 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
                 f'OpenAICompaction requires OpenAIResponsesModel, got {type(model).__name__}. '
                 f'Use the provider-specific compaction capability for your model.'
             )
-        await self._compact(ctx, request_context)
+        if await self._compact(ctx, request_context):
+            _compacted_for.set((ctx.run_id, ctx.run_step))
         return request_context
 
     @on_event(CompactionRequestedEvent)
-    async def _compact_on_request(self, ctx: RunContext[AgentDepsT], event: CompactionRequestedEvent) -> None:
+    async def _on_compaction_requested(self, ctx: RunContext[AgentDepsT], event: CompactionRequestedEvent) -> None:
         """Compact when another capability requests it, unless an earlier listener already did or the model isn't OpenAI's."""
         request_context = event.request_context
-        if event.compacted_by is None and isinstance(_unwrap_model(request_context.model), OpenAIResponsesModel):
-            if await self._compact(ctx, request_context):
-                event.compacted_by = 'OpenAICompaction'
-                # Its own trigger may still hold for the compacted history; compacting it again would only cost a call.
-                _compacted_on_request.set((ctx.run_id, ctx.run_step))
+        if event.compacted_by is not None or not isinstance(_unwrap_model(request_context.model), OpenAIResponsesModel):
+            return
+        step = (ctx.run_id, ctx.run_step)
+        # A compaction this request already got, from its own trigger, answers the request: another would only cost a call.
+        if _compacted_for.get() == step or await self._compact(ctx, request_context):
+            event.compacted_by = 'OpenAICompaction'
+            _compacted_for.set(step)
 
     async def _compact(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> bool:
         """Replace the history before the current request with a compaction; return whether it did."""

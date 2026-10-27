@@ -687,7 +687,7 @@ async def compact_with_span(
     return compacted
 
 
-async def compact_on_request(
+async def on_compaction_requested(
     ctx: RunContext[AgentDepsT],
     event: CompactionRequestedEvent,
     *,

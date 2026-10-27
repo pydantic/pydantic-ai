@@ -43,7 +43,8 @@ class CompactionRequestedEvent(CapabilityEvent, namespace='compaction', name='re
         request_context = _request_context.get()
         if request_context is None:
             raise UserError(
-                '`CompactionRequestedEvent.request_context` is only available to the listeners of the event.'
+                '`CompactionRequestedEvent.request_context` is only available to its listeners, '
+                'and only when the event is emitted with `request_compaction()`.'
             )
         return request_context
 
@@ -53,7 +54,8 @@ async def request_compaction(
 ) -> CompactionRequestedEvent:
     """Ask the agent's compaction capabilities to compact the history of `request_context`.
 
-    Call it from a capability's `wrap_model_request` or `before_model_request` hook. When a listener compacted,
+    Call it from a capability's `before_model_request` hook, where the request's model is the one the run will call
+    (under durable execution, the recorded one). When a listener compacted,
     `request_context.messages` holds the compacted history and it is also written to `ctx.messages`, so the run
     keeps it. The returned event's `compacted_by` names that listener, or is `None` when no listener compacted.
     """

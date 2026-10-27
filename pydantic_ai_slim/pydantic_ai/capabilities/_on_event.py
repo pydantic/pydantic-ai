@@ -110,10 +110,15 @@ def marked_needs_event_stream(cls: type[Any]) -> bool:
     doesn't need the run to stream.
     """
     return any(
-        not method.event_types
-        or not all(
-            issubclass(event_type, CapabilityEvent) and event_type.event_dispatch == 'immediate'
-            for event_type in method.event_types
-        )
+        not method.event_types or not all(_dispatched_immediately(event_type) for event_type in method.event_types)
         for method in collect_on_event_methods(cls)
+    )
+
+
+def _dispatched_immediately(event_type: type[Any]) -> bool:
+    """Whether every event a listener for `event_type` can receive is dispatched immediately, subclasses included."""
+    return (
+        issubclass(event_type, CapabilityEvent)
+        and event_type.event_dispatch == 'immediate'
+        and all(_dispatched_immediately(subclass) for subclass in event_type.__subclasses__())
     )

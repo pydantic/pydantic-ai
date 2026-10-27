@@ -79,6 +79,16 @@ class ThingStartEvent(CapabilityEvent, namespace='on_event_decision', dispatch='
 
 
 @dataclass(kw_only=True)
+class ParentEvent(CapabilityEvent, namespace='on_event_decision', name='parent', dispatch='immediate'):
+    pass
+
+
+@dataclass(kw_only=True)
+class StreamedChildEvent(ParentEvent, namespace='on_event_decision', name='streamed_child', dispatch='stream'):
+    pass
+
+
+@dataclass(kw_only=True)
 class NestedEvent(CapabilityEvent, namespace='on_event_nested'):
     value: str
 
@@ -245,9 +255,28 @@ def test_only_immediate_listeners_dont_need_the_event_stream() -> None:
             self, ctx: RunContext[Any], event: ThingStartEvent | FileReadEvent
         ) -> None: ...  # pragma: no cover
 
+    @dataclass
+    class ImmediateParent(AbstractCapability[Any]):
+        @on_event(ParentEvent)
+        async def record(self, ctx: RunContext[Any], event: ParentEvent) -> None: ...  # pragma: no cover
+
+    @dataclass
+    class Everything(AbstractCapability[Any]):
+        @on_event
+        async def record(self, ctx: RunContext[Any], event: AgentStreamEvent) -> None: ...  # pragma: no cover
+
+    class ImmediateHooks(Hooks[Any]):
+        @on_event(ThingStartEvent)
+        async def record(self, ctx: RunContext[Any], event: ThingStartEvent) -> None: ...  # pragma: no cover
+
     assert not Immediate().has_on_event
     assert not CombinedCapability[Any](capabilities=[Immediate()]).has_on_event
+    assert not WrapperCapability[Any](wrapped=Immediate()).has_on_event
+    assert not ImmediateHooks().has_on_event
     assert Mixed().has_on_event
+    assert Everything().has_on_event
+    # A subclass of the event can be delivered by the stream, so a listener for the parent needs it.
+    assert ImmediateParent().has_on_event
 
 
 async def test_framework_events_auto_enable_streaming() -> None:

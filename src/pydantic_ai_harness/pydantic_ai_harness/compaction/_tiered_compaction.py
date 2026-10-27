@@ -14,12 +14,12 @@ from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
     SupportsFocus,
-    compact_on_request,
     compact_with_span,
     context_for_request,
     estimate_request_tokens,
     estimate_token_count,
     get_compaction_reclaim,
+    on_compaction_requested,
     record_compaction_reclaim,
     resolve_token_trigger,
     validate_token_trigger,
@@ -189,7 +189,7 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         return await self._escalate(messages, ctx, target)
 
     @on_event(CompactionRequestedEvent)
-    async def _compact_on_request(self, ctx: RunContext[AgentDepsT], event: CompactionRequestedEvent) -> None:
+    async def _on_compaction_requested(self, ctx: RunContext[AgentDepsT], event: CompactionRequestedEvent) -> None:
         """Compact when another capability requests it, running at least the first tier.
 
         The request comes from a capability such as `CompactOnCacheExpiry`, which asks after the prompt
@@ -199,7 +199,7 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         if target is None:  # pragma: no cover -- a realtime session never prepares a model request
             return
         model_request_parameters = event.request_context.model_request_parameters
-        await compact_on_request(
+        await on_compaction_requested(
             ctx,
             event,
             strategy='TieredCompaction',

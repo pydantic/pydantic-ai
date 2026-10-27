@@ -44,7 +44,7 @@ A request-side compaction part wasn't produced by any provider's compaction API,
 
 ## Requesting compaction
 
-A capability can ask for the history to be compacted before a model request without knowing which compaction the agent uses. It awaits [`request_compaction()`][pydantic_ai.capabilities.request_compaction] from a `wrap_model_request` or `before_model_request` hook, which emits a [`CompactionRequestedEvent`][pydantic_ai.capabilities.CompactionRequestedEvent]:
+A capability can ask for the history to be compacted before a model request without knowing which compaction the agent uses. It awaits [`request_compaction()`][pydantic_ai.capabilities.request_compaction] from a `before_model_request` hook, which emits a [`CompactionRequestedEvent`][pydantic_ai.capabilities.CompactionRequestedEvent]:
 
 ```python {title="request_compaction.py"}
 from dataclasses import dataclass
@@ -61,16 +61,15 @@ class CompactEveryTenSteps(AbstractCapability[Any]):
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         if ctx.run_step % 10 == 0:
-            event = await request_compaction(ctx, request_context, reason='every_ten_steps')
-            print(event.compacted_by)
+            await request_compaction(ctx, request_context, reason='every_ten_steps')
         return request_context
 ```
 
 _(This example is complete, it can be run "as is")_
 
-The compaction capabilities listen with [`@on_event(CompactionRequestedEvent)`][pydantic_ai.capabilities.on_event], replace [`event.request_context.messages`][pydantic_ai.capabilities.CompactionRequestedEvent.request_context] with the compacted history, and set `compacted_by`. They run in capability order, and one should leave an event that already has `compacted_by` set alone, so the first that compacts handles the request. The compacted history is written to the run's history too. [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] honours a request on an OpenAI Responses model; `AnthropicCompaction` doesn't yet. The event is dispatched immediately, so listening to it doesn't make a run stream its model requests.
+To respond to requests in your own compaction capability, listen with [`@on_event(CompactionRequestedEvent)`][pydantic_ai.capabilities.on_event]. Skip the event if `compacted_by` is already set. Otherwise replace [`event.request_context.messages`][pydantic_ai.capabilities.CompactionRequestedEvent.request_context] with the compacted history and set `compacted_by`. The first capability in the list that compacts handles the request, and the compacted history is kept in the run's history. [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] responds on OpenAI Responses models; `AnthropicCompaction` doesn't yet.
 
-Harness's [`CompactOnCacheExpiry`](https://pydantic.dev/docs/ai/harness/compaction/#compactoncacheexpiry-compact-once-the-cache-has-expired) requests compaction once the provider's prompt cache has expired, and its compaction strategies honour requests.
+Harness's [`CompactOnCacheExpiry`](https://pydantic.dev/docs/ai/harness/compaction/#compactoncacheexpiry-compact-once-the-cache-has-expired) requests compaction once the provider's prompt cache has expired, and Harness's compaction strategies respond to requests.
 
 ## Pydantic AI Harness
 

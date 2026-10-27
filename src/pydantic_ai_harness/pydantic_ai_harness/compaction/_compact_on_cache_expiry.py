@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler, request_compaction
+from pydantic_ai.capabilities import AbstractCapability, durable_operation, request_compaction
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 from pydantic_ai.profiles import ModelProfile, PromptCacheOutlook, prompt_cache_outlook
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -19,7 +18,7 @@ from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
     compact_with_span,
     context_for_request,
-    estimate_request_tokens,
+    estimate_context_tokens,
     estimate_token_count,
     get_compaction_reclaim,
     record_compaction_reclaim,
@@ -32,7 +31,7 @@ if TYPE_CHECKING:
     from pydantic_ai.settings import ModelSettings
 
 
-DEFAULT_MIN_FRACTION = 0.2
+DEFAULT_MAX_FRACTION = 0.2
 """Default size, as a fraction of the context window, below which an expired history is left alone."""
 
 CLEARED_TOOL_RESULT_HINT = '[Tool result cleared to save context. Call the tool again if you need it.]'
@@ -40,10 +39,6 @@ CLEARED_TOOL_RESULT_HINT = '[Tool result cleared to save context. Call the tool 
 
 It tells the model the result can be fetched again: with a bare placeholder, models answered from
 what they guessed the cleared result said rather than calling the tool again."""
-
-
-_requested_for: ContextVar[tuple[str | None, int] | None] = ContextVar('_cache_expiry_requested_for', default=None)
-"""The run and step whose expired request a `CompactOnCacheExpiry` already acted on, so a second one doesn't."""
 
 
 def _default_fallback() -> CompactionStrategy[AgentDepsT]:
@@ -92,16 +87,15 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
     fallback: CompactionStrategy[AgentDepsT] | None = field(default_factory=_default_fallback)
     """The compaction to run when no compaction capability handled the request. `None` leaves the history alone.
 
-    Its own trigger is bypassed: its `compact` method is called directly. Defaults to clearing all but
-    the 5 most recent tool results, which is what Claude Code does after an idle gap longer than its
-    cache retention, with a placeholder that tells the model it can call the tool again."""
+    Its own trigger is ignored. Defaults to clearing all but the 5 most recent tool results, with a
+    placeholder that tells the model it can call the tool again."""
 
     max_tokens: int | None = field(default=None, kw_only=True)
     """Only compact an expired history whose estimated context tokens exceed this value.
 
     Replaces the default `max_fraction`."""
 
-    max_fraction: float | None = field(default=DEFAULT_MIN_FRACTION, kw_only=True)
+    max_fraction: float | None = field(default=DEFAULT_MAX_FRACTION, kw_only=True)
     """Only compact an expired history above this fraction of the request model's window.
 
     Defaults to `0.2`, so compacting reclaims enough to be worth the lost content. `None` compacts
@@ -123,66 +117,50 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
     tokenizer: Callable[[str], int] | None = field(default=None, kw_only=True)
     """Optional token counter for `max_tokens`/`max_fraction` and the fallback; defaults to the characters-per-token heuristic."""
 
+    id: str | None = field(default='compact_on_cache_expiry', kw_only=True)
+
     def __post_init__(self) -> None:
-        if self.max_tokens is not None and self.max_fraction == DEFAULT_MIN_FRACTION:
+        if self.max_tokens is not None and self.max_fraction == DEFAULT_MAX_FRACTION:
             self.max_fraction = None
         validate_token_trigger(self.max_tokens, self.max_fraction, self.fallback_context_window, self.context_window)
         if self.fallback_retention is not None and self.fallback_retention <= timedelta(0):
             raise ValueError('fallback_retention must be positive.')
 
-    async def wrap_model_request(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        request_context: ModelRequestContext,
-        handler: WrapModelRequestHandler,
-    ) -> ModelResponse:
-        """Request compaction when the cache has expired and the history is above `max_tokens`/`max_fraction`.
-
-        Runs here rather than in `before_model_request` so the request comes before every compaction
-        capability's own `before_model_request`, wherever this capability is listed.
-        """
-        return await handler(await self._compact_if_expired(ctx, request_context))
-
-    async def _compact_if_expired(
+    async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
+        """Request compaction when the cache has expired and the history is above `max_tokens`/`max_fraction`."""
         model = request_context.model
-        messages: list[ModelMessage] = list(request_context.messages)
+        messages: list[ModelMessage] = list(ctx.messages)
         if messages and isinstance(messages[-1], ModelResponse):
             # Resuming a response the provider paused: it must get the exact history back, however long the pause.
             return request_context
         now = _request_time(messages)
         if self._outlook(messages, model, request_context.model_settings, now) != 'cold':
             return request_context
-        step = (ctx.run_id, ctx.run_step)
-        if _requested_for.get() == step:
+        if get_compaction_reclaim(ctx) > 0:
+            # A compaction's own trigger already compacted the history for this request.
             return request_context
         request_ctx = context_for_request(ctx, request_context)
         floor = resolve_token_trigger(
             self.max_tokens, self.max_fraction, model, self.fallback_context_window, self.context_window
         )
         if floor is not None and (
-            estimate_request_tokens(
-                messages,
-                self.tokenizer,
-                model_request_parameters=request_context.model_request_parameters,
-                reclaimed=get_compaction_reclaim(ctx),
+            estimate_context_tokens(
+                messages, self.tokenizer, model_request_parameters=request_context.model_request_parameters
             )
             <= floor
         ):
             return request_context
-        _requested_for.set(step)
         request_context = replace(request_context, messages=messages)
         event = await request_compaction(request_ctx, request_context, reason='cache_expired')
         if event.compacted_by is not None or self.fallback is None:
             return request_context
-        fallback = self.fallback
         compacted = await compact_with_span(
             request_ctx,
             strategy='CompactOnCacheExpiry',
             messages=messages,
-            compact=lambda: _compact_pinned(fallback, messages, request_ctx),
+            compact=lambda: self._compact_fallback(request_ctx, messages),
             tokenizer=self.tokenizer,
             attributes={'compaction.idle_seconds': _idle_seconds(messages, now), 'compaction.reason': event.reason},
         )
@@ -195,6 +173,16 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
             estimate_token_count(compacted, self.tokenizer),
         )
         return replace(request_context, messages=compacted)
+
+    @durable_operation('compact')
+    async def _compact_fallback(self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage]) -> list[ModelMessage]:
+        """The fallback's compaction of *messages*, as a durable operation of this capability.
+
+        The fallback isn't registered on the agent, so a durable operation of its own (the summary call of
+        `SummarizingCompaction`) doesn't bind; this one does, so a replay reuses the recorded history.
+        """
+        assert self.fallback is not None
+        return reinject_pinned(messages, await self.fallback.compact(messages, ctx))
 
     def _outlook(
         self, messages: list[ModelMessage], model: Model, model_settings: ModelSettings | None, now: datetime
@@ -209,12 +197,6 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
         if retention is None and (profile is None or profile.get('default_cache_retention') is None):
             retention = self.fallback_retention
         return prompt_cache_outlook(messages, profile=profile, retention=retention, now=now)
-
-
-async def _compact_pinned(
-    strategy: CompactionStrategy[AgentDepsT], messages: list[ModelMessage], ctx: RunContext[AgentDepsT]
-) -> list[ModelMessage]:
-    return reinject_pinned(messages, await strategy.compact(messages, ctx))
 
 
 def _request_time(messages: list[ModelMessage]) -> datetime:

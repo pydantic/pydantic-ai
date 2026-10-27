@@ -22,13 +22,13 @@ from pydantic_ai_harness.compaction._shared import (
     BackgroundOutcome,
     CompactionStrategy,
     SupportsFocus,
-    compact_on_request,
     compact_with_span,
     context_for_request,
     estimate_context_tokens,
     estimate_request_tokens,
     estimate_token_count,
     get_compaction_reclaim,
+    on_compaction_requested,
     record_compaction_reclaim,
     resolve_token_trigger,
     validate_token_trigger,
@@ -195,14 +195,16 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         raise last_error
 
     @on_event(CompactionRequestedEvent)
-    async def _compact_on_request(self, ctx: RunContext[AgentDepsT], event: CompactionRequestedEvent) -> None:
+    async def _on_compaction_requested(self, ctx: RunContext[AgentDepsT], event: CompactionRequestedEvent) -> None:
         """Compact when another capability requests it, such as `CompactOnCacheExpiry` after the prompt cache expired."""
-        await compact_on_request(
-            ctx,
-            event,
-            strategy='FallbackCompaction',
-            compact=lambda messages, ctx: self._compact_pinned(messages, ctx, None),
-            tokenizer=self.tokenizer,
+        parameters = event.request_context.model_request_parameters
+
+        async def compact(messages: list[ModelMessage], ctx: RunContext[AgentDepsT]) -> list[ModelMessage]:
+            held, _ = await self._take_background(messages, ctx.model, ctx.conversation_id, parameters)
+            return await self._compact_pinned(messages, ctx, held)
+
+        await on_compaction_requested(
+            ctx, event, strategy='FallbackCompaction', compact=compact, tokenizer=self.tokenizer
         )
 
     async def before_model_request(

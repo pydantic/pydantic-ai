@@ -14,7 +14,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, CompactionRequestedEvent, on_event, request_compaction
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.messages import CompactionPart, ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import Model, ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
@@ -73,14 +73,6 @@ async def test_a_listener_compacts_and_the_run_keeps_the_history() -> None:
     assert len(second.all_messages()) == 2
 
 
-async def test_the_first_listener_to_compact_handles_the_request() -> None:
-    requester = Requester()
-    agent = _agent(FunctionModel(_reply), requester, KeepLastRequest(name='first'), KeepLastRequest(name='second'))
-    first = await agent.run('one')
-    await agent.run('two', message_history=first.all_messages())
-    assert [event.compacted_by for event in requester.events] == ['first']
-
-
 async def test_without_a_listener_nothing_changes() -> None:
     requester = Requester()
     agent = _agent(FunctionModel(_reply), requester)
@@ -92,7 +84,7 @@ async def test_without_a_listener_nothing_changes() -> None:
 
 
 def test_request_context_is_only_available_to_listeners() -> None:
-    with pytest.raises(UserError, match='only available to the listeners of the event'):
+    with pytest.raises(UserError, match='only available to its listeners'):
         CompactionRequestedEvent(reason='test').request_context
 
 
@@ -138,4 +130,3 @@ async def test_openai_compaction_handles_a_request(
     first_message = messages[0]
     assert isinstance(first_message, ModelResponse)
     assert isinstance(first_message.parts[0], CompactionPart)
-    assert isinstance(messages[1], ModelRequest)

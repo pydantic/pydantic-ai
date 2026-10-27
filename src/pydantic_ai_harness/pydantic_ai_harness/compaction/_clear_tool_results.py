@@ -11,7 +11,6 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
-    compact_on_request,
     compact_with_span,
     context_for_request,
     estimate_token_count,
@@ -19,6 +18,7 @@ from pydantic_ai_harness.compaction._shared import (
     get_compaction_reclaim,
     is_cleared_return,
     iter_tool_pairs,
+    on_compaction_requested,
     rebuild_with_cleared,
     record_compaction_reclaim,
     resolve_token_trigger,
@@ -158,9 +158,9 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
         return cleared
 
     @on_event(CompactionRequestedEvent)
-    async def _compact_on_request(self, ctx: RunContext[AgentDepsT], event: CompactionRequestedEvent) -> None:
+    async def _on_compaction_requested(self, ctx: RunContext[AgentDepsT], event: CompactionRequestedEvent) -> None:
         """Compact when another capability requests it, such as `CompactOnCacheExpiry` after the prompt cache expired."""
-        await compact_on_request(
+        await on_compaction_requested(
             ctx, event, strategy='ClearToolResults', compact=self.compact, tokenizer=self.tokenizer
         )
 

@@ -19,7 +19,7 @@ tool-return pairs intact, and their edits persist into the run's message history
 | Some old tool results are still needed verbatim, others are dead weight | `RelevanceCompaction` (a judge model ranks each older step) |
 | Summarization can fail (API error) and the run must survive | `FallbackCompaction` |
 | The model knows when a phase of work ends and should compact then | `CompactOnRequest` |
-| Conversations pause longer than the provider's cache retention | `CompactOnCacheExpiry` (asks your compaction to run once the cache has expired) |
+| Conversations pause longer than the provider's cache lifetime | `CompactOnCacheExpiry` (runs your compaction once the cache has expired) |
 | One runaway response or tool-call arg blows the cap | `ClampOversizedMessages` |
 | Model should wrap up rather than have history rewritten | `WarnNearLimits` |
 | UI needs a live "context: 73%" gauge | `ReportContextUsage` |
@@ -232,26 +232,28 @@ agent = Agent(
 
 ### `CompactOnCacheExpiry`
 
-`CompactOnCacheExpiry(fallback=ClearToolResults(max_tokens=1, keep_pairs=5, placeholder=<call-again hint>), *, max_tokens=None, max_fraction=0.2, fallback_retention=None)`:
-on the first request after the provider's prompt cache has expired, when the next request pays
-the full cache write anyway, it emits core's `CompactionRequestedEvent` from `wrap_model_request`.
-`SummarizingCompaction`, `RelevanceCompaction`, `TieredCompaction` (runs at least its first tier), `ClearToolResults`,
-`SlidingWindowCompaction`, `FallbackCompaction`, and core `OpenAICompaction` compact on it,
-bypassing their own trigger; the first in the capabilities list that changes the history handles
-it. If none does, `fallback` runs (`None` disables it). `AnthropicCompaction` doesn't listen yet,
-so the fallback runs there.
+`CompactOnCacheExpiry(fallback=<clear all but 5 tool results>, *, max_tokens=None, max_fraction=0.2, fallback_retention=None, id='compact_on_cache_expiry')`:
+on the first request after the provider's prompt cache has expired, when that request pays to
+cache the history anyway, it emits Pydantic AI's `CompactionRequestedEvent` from
+`before_model_request`. `SummarizingCompaction`, `RelevanceCompaction`, `TieredCompaction` (runs at
+least its first tier), `ClearToolResults`, `SlidingWindowCompaction`, `FallbackCompaction`, and
+Pydantic AI's `OpenAICompaction` (OpenAI Responses models only) compact on it, bypassing their own
+trigger; the first in the capabilities list that changes the history handles it. If a compaction
+already compacted the history for this request, it doesn't ask again. If none changes the history,
+`fallback` runs (`None` disables it). `AnthropicCompaction` doesn't respond yet, so with only
+`AnthropicCompaction` the fallback runs.
 
-The decision uses core `prompt_cache_outlook` with the retention the request's settings ask for,
-else the provider's documented default, on the model selected for the request (a model swapped in
-`before_model_request` isn't seen). Does nothing when retention is unknown (Gemini direct, DeepSeek,
-xAI, Azure, Bedrock Nova, OpenAI before GPT-5.6, `FallbackModel`) unless `fallback_retention` is
-set. By default it skips histories at or below 20% of the context window; `max_tokens` replaces
-that, `max_fraction=None` removes it. The decision needs the history's response timestamps (AG-UI
-drops them, so it never fires there), and the run stamps requests with the wall clock, which is
-not replay-safe under durable execution.
+The decision uses Pydantic AI's `prompt_cache_outlook` with the retention the request's settings
+ask for, else the provider's documented default. Does nothing when retention is unknown (Gemini
+direct, DeepSeek, xAI, Azure, OpenAI before GPT-5.6 without `openai_prompt_cache_retention='24h'`,
+`FallbackModel`) unless `fallback_retention` is set. By default it skips histories at or below 20%
+of the context window; `max_tokens` replaces that, `max_fraction=None` removes it. The decision
+needs the history's response timestamps (AG-UI drops them, so it never fires there). Under durable
+execution the fallback runs as a durable operation of the stable default `id`, so a replay reuses
+it; the run stamps requests with the wall clock, so a replay can still find an expired cache the
+original run did not.
 
-It never fires while the cache is warm, so keep a size-based strategy too. Size gates later in the
-same request subtract what the expiry compaction reclaimed, so the history isn't compacted twice.
+It never fires while the cache is warm, so keep a size-based strategy too.
 
 ```python
 from pydantic_ai import Agent

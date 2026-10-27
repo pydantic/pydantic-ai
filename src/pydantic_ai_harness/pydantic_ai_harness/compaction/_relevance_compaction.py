@@ -57,7 +57,6 @@ from pydantic_ai_harness.compaction._shared import (
     CHARS_PER_TOKEN,
     CLEARED_TOOL_RESULT_METADATA,
     cleared_return,
-    compact_on_request,
     compact_with_span,
     context_for_request,
     estimate_context_tokens,
@@ -67,6 +66,7 @@ from pydantic_ai_harness.compaction._shared import (
     find_token_cutoff,
     get_compaction_reclaim,
     is_harness_data,
+    on_compaction_requested,
     record_compaction_reclaim,
     resolve_token_trigger,
     validate_token_trigger,
@@ -314,9 +314,9 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
         return focused
 
     @on_event(CompactionRequestedEvent)
-    async def _compact_on_request(self, ctx: RunContext[AgentDepsT], event: CompactionRequestedEvent) -> None:
+    async def _on_compaction_requested(self, ctx: RunContext[AgentDepsT], event: CompactionRequestedEvent) -> None:
         """Compact when another capability requests it, such as `CompactOnCacheExpiry` after the prompt cache expired."""
-        await compact_on_request(
+        await on_compaction_requested(
             ctx, event, strategy='RelevanceCompaction', compact=self.compact, tokenizer=self.tokenizer
         )
 
