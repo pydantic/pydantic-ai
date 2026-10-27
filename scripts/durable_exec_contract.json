@@ -1177,7 +1177,8 @@
     },
     "RunContext.trace_include_content": {
       "engines": [
-        "durable_exec"
+        "durable_exec",
+        "temporal"
       ],
       "kinds": [
         "attribute_read"
@@ -1187,7 +1188,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.serialize_run_context"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.serialize_run_context",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::_publish_workspace_telemetry"
       ]
     },
     "RunContext.tracer": {
@@ -1560,7 +1562,7 @@
         "attribute_read"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._instrumentation_settings"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::agent_instrumentation_settings"
       ]
     },
     "Agent.name": {
@@ -1582,7 +1584,7 @@
         "attribute_read"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._instrumentation_settings",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::agent_instrumentation_settings",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::recover_capability"
       ]
     },
@@ -1823,8 +1825,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._bind_capability_operations",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._bind_workspace_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._check_construction_workspace",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._instrumentation_settings",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.from_agent",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::agent_instrumentation_settings",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.restore",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::_restore_workspace",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._bind_to_agent",
@@ -4969,25 +4971,29 @@
     },
     "InstrumentationSettings.include_content": {
       "engines": [
-        "durable_exec"
-      ],
-      "kinds": [
-        "attribute_read"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._request_policy_scope"
-      ]
-    },
-    "InstrumentationSettings.tracer": {
-      "engines": [
         "durable_exec",
-        "render"
+        "temporal"
       ],
       "kinds": [
         "attribute_read"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._request_policy_scope",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::_publish_workspace_telemetry"
+      ]
+    },
+    "InstrumentationSettings.tracer": {
+      "engines": [
+        "durable_exec",
+        "render",
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._request_policy_scope",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::_publish_workspace_telemetry",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::RenderRunContextCodec._resolve_tracer"
       ]
     },
@@ -6639,6 +6645,19 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run_stream_events",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run_sync"
+      ]
+    }
+  },
+  "pydantic_ai_slim/pydantic_ai/workspaces/_telemetry.py": {
+    "publish_workspace_telemetry": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::<module>"
       ]
     }
   },

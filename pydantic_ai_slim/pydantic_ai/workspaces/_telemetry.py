@@ -12,6 +12,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from typing import Literal, TypeAlias
 
 from opentelemetry.trace import INVALID_SPAN, NoOpTracer, Span, Tracer
 from opentelemetry.util.types import AttributeValue
@@ -19,7 +20,34 @@ from opentelemetry.util.types import AttributeValue
 from .._instrumentation import record_exception, set_error_status
 from .protocol import WorkspaceBackend, WorkspaceCommand
 
-__all__ = ('command_span', 'operation_span', 'publish_workspace_telemetry', 'set_command', 'set_content')
+__all__ = (
+    'Operation',
+    'Step',
+    'command_span',
+    'operation_span',
+    'publish_workspace_telemetry',
+    'set_command',
+    'set_content',
+)
+
+
+Operation: TypeAlias = Literal[
+    'run', 'read_bytes', 'write_bytes', 'stat', 'list_dir', 'make_dir', 'remove', 'exists', 'realpath'
+]
+Step: TypeAlias = Literal[
+    'probe',
+    'read_chunk',
+    'write_chunk',
+    'commit',
+    'cleanup',
+    'stat',
+    'list',
+    'make_dir',
+    'remove',
+    'exists',
+    'realpath',
+]
+"""What a shell-filesystem command does for the file operation it is part of."""
 
 
 @dataclass(frozen=True)
@@ -54,7 +82,7 @@ def set_command(span: Span, command: WorkspaceCommand) -> None:
 
 
 @contextmanager
-def operation_span(operation: str, backend: WorkspaceBackend) -> Generator[Span]:
+def operation_span(operation: Operation, backend: WorkspaceBackend) -> Generator[Span]:
     """Open a `workspace {operation}` span, unless tracing is off or a workspace operation is already open."""
     if _in_operation.get():
         yield INVALID_SPAN
@@ -64,7 +92,7 @@ def operation_span(operation: str, backend: WorkspaceBackend) -> Generator[Span]
 
 
 @contextmanager
-def command_span(step: str) -> Generator[Span]:
+def command_span(step: Step) -> Generator[Span]:
     """Open a `workspace run` span for a command the shell filesystem runs as part of a file operation.
 
     It opens inside the file operation's span, which names the workspace. `step` says what the command
@@ -76,7 +104,7 @@ def command_span(step: str) -> Generator[Span]:
 
 
 @contextmanager
-def _span(operation: str, backend: WorkspaceBackend | None = None) -> Generator[Span]:
+def _span(operation: Operation, backend: WorkspaceBackend | None = None) -> Generator[Span]:
     telemetry = _telemetry.get()
     if telemetry is None:
         yield INVALID_SPAN

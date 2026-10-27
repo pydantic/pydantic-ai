@@ -6790,7 +6790,7 @@ async def test_temporal_workspace_calls_are_traced_inside_their_activity(
 ):
     """The run's tracer can't cross into an activity, so the activity traces its workspace calls with the agent's own.
 
-    They nest under the activity's span, and the workflow side, whose calls are activities, adds no workspace span.
+    They nest under the activity's span.
     """
     _workspace_probe_backends.clear()
 

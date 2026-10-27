@@ -199,8 +199,8 @@ class _SandboxedCommands(WorkspaceBackend, SupportsCommands):
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        # `WorkspaceBackend` requires it, but the sandbox routes only file operations through this backend.
-        return self._sandbox.ref  # pragma: no cover
+        # The sandbox routes only file operations through this backend; the ref names the sandbox on their spans.
+        return self._sandbox.ref
 
     async def working_dir(self) -> str:
         return await self._sandbox.working_dir()

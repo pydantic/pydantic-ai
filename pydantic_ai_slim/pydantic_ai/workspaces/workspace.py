@@ -16,7 +16,7 @@ from typing_extensions import get_protocol_members
 
 from pydantic_ai.exceptions import UserError
 
-from ._telemetry import command_span, operation_span, set_command, set_content
+from ._telemetry import Operation, Step, command_span, operation_span, set_command, set_content
 from .protocol import (
     CommandResult,
     FileEntry,
@@ -122,7 +122,7 @@ class _ShellFilesystem(SupportsFilesystem):
     def __init__(self, backend: SupportsCommands):
         self._backend = backend
 
-    async def _run(self, command: str, step: str) -> CommandResult:
+    async def _run(self, command: str, step: Step) -> CommandResult:
         with command_span(step) as span:
             result = await self._backend.run(command, shell=True)
             span.set_attribute('process.exit.code', result.exit_code)
@@ -442,7 +442,7 @@ class Workspace(WorkspaceBackend):
             '`SupportsFilesystem` or `SupportsCommands`.'
         )
 
-    def _operation(self, operation: str) -> AbstractContextManager[Span]:
+    def _operation(self, operation: Operation) -> AbstractContextManager[Span]:
         """Trace `operation` on the layer that calls the backend; the layers around it delegate to that one."""
         backend = self._backend
         if isinstance(backend, (Workspace, UnavailableWorkspace)):
