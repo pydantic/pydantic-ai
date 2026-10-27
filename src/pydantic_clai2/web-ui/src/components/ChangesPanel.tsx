@@ -11,12 +11,12 @@ const SCOPES: { scope: ChangeScope; label: string; empty: string }[] = [
   {
     scope: 'uncommitted',
     label: 'Uncommitted',
-    empty: 'No tracked file differs from the last commit. Untracked files are not changes, as in git diff HEAD.',
+    empty: 'No tracked file differs from the last commit. Untracked files are not shown, as in git diff HEAD.',
   },
   {
     scope: 'branch',
     label: 'Branch vs base',
-    empty: 'No tracked file differs from where this branch left its base. Untracked files are not changes.',
+    empty: 'No tracked file differs from where this branch left its base. Untracked files are not shown.',
   },
 ]
 
@@ -86,7 +86,7 @@ export function ChangesPanel({
   onClose,
 }: {
   session: SessionApi
-  /** The session changes, which the answers belong to. */
+  /** The session shown, which the answers belong to. */
   owner: string
   /** Whether to ask: off while a turn runs, so the panel asks again as it ends. */
   active: boolean
@@ -155,7 +155,7 @@ export function ChangesPanel({
               <span>
                 {files.length} {files.length === 1 ? 'file' : 'files'} changed
                 {changes.base && <> against <span className="mono">{changes.base}</span></>}
-                {changes.omitted > 0 && `, ${changes.omitted} more not changes`}
+                {changes.omitted > 0 && `, ${changes.omitted} more not shown`}
               </span>
               <Counts change={total} />
             </div>

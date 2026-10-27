@@ -13,6 +13,7 @@ from pydantic_ai import Agent, models
 from pydantic_ai.messages import ModelMessage, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.filesystem import EDIT_FILE_KIND, WRITE_FILE_KIND
+from pydantic_clai2.builtin_plugins.web import changes as changes_module
 from tests.clai2.browser.conftest import Serve
 from tests.clai2.test_web import TOKEN
 from tests.clai2.test_web_sessions import Fleet
@@ -118,6 +119,14 @@ async def test_changes_panel_lists_the_files_of_two_turns(page: Page, changes_ui
     docstring = panel.locator('.changes-file').filter(has_text='a.py').locator('.diff-add')
     await expect(docstring).to_have_count(1)
     await expect(docstring).to_contain_text('"""Say hello."""')
+
+    # Past the most one answer lists, the rest are counted, not listed.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(changes_module, 'MAX_FILES', 1)
+        await panel.get_by_role('tab', name='This session').click()
+        await panel.get_by_role('button', name='Refresh').click()
+        await expect(files).to_have_text(['Aa.py+3 −0'])
+        await expect(panel.locator('.changes-summary')).to_contain_text('1 file changed, 2 more not shown')
 
     # The workspace is not a Git repository, which the Git scopes say.
     await panel.get_by_role('tab', name='Uncommitted').click()

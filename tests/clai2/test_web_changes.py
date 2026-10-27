@@ -316,26 +316,41 @@ async def test_git_scopes_say_why_they_show_nothing(tmp_path: Path, scope: Chang
     assert (await session_changes([], tmp_path, scope=scope)).note == 'This repository has no commits yet.'
 
 
-async def test_branch_without_a_base(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_branch_without_a_base(repo: Path) -> None:
     git(repo, 'branch', '-q', '-m', 'trunk')
     found = await session_changes([], repo, scope='branch')
     assert found.note == 'No base branch found: neither origin/HEAD nor main or master.'
+
+
+@pytest.mark.parametrize('scope', ['uncommitted', 'branch'])
+async def test_git_scopes_without_git(repo: Path, monkeypatch: pytest.MonkeyPatch, scope: ChangeScope) -> None:
     monkeypatch.setenv('PATH', '')
-    assert (await session_changes([], repo, scope='uncommitted')).note == 'Git is not installed.'
-    # Without Git, a file the session wrote whole counts as created.
+    assert (await session_changes([], repo, scope=scope)).note == 'Git is not installed.'
+
+
+async def test_a_written_file_counts_as_created_without_git(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no Git to ask for the last commit, a file the session wrote whole counts as created."""
+    monkeypatch.setenv('PATH', '')
     history = History()
     history.turn('one', write('a.py', 'def a():\n    return 1\n'))
     assert listed(await session_changes(history.messages, repo, scope='session')) == [('a.py', 'A', 2, 0)]
 
 
-async def test_git_that_takes_too_long(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_git_scopes_say_when_git_takes_too_long(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(changes_module, 'GIT_TIMEOUT', 0)
+    note = (await session_changes([], repo, scope='uncommitted')).note
+    assert note == 'Git could not compare: git rev-parse took longer than 0 seconds'
+
+
+async def test_a_written_file_counts_as_created_when_git_takes_too_long(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The last commit Git did not give in time is not used, as without Git."""
     monkeypatch.setattr(changes_module, 'GIT_TIMEOUT', 0)
     (repo / 'a.py').write_text('def a():\n    return 10\n')
     history = History()
     history.turn('one', write('a.py', 'def a():\n    return 10\n'))
     assert listed(await session_changes(history.messages, repo, scope='session')) == [('a.py', 'A', 2, 0)]
-    note = (await session_changes([], repo, scope='uncommitted')).note
-    assert note == 'Git could not compare: git rev-parse took longer than 0 seconds'
 
 
 def test_changes_route(make_fleet: MakeFleet) -> None:
