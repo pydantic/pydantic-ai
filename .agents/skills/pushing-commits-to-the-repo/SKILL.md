@@ -23,8 +23,8 @@ Choose by the session's model family, not by the harness.
 | GPT | latest Sol | latest Luna |
 | Other | session's model | session's model |
 
-Use the strong tier to drive a PR.
-Use the light tier for local `/review-branch` runs, when your environment provides that skill, and the metadata check.
+Start sessions that drive a PR on the strong tier.
+Use the light tier for the metadata check and, when your environment provides it, local `/review-branch` runs.
 Use the light tier for pre-push review until hosted review has commented on two earlier pushes.
 Then use the strong tier for pre-push review.
 Pass the model explicitly when the dispatch accepts one.
@@ -373,7 +373,8 @@ if the head changes, capture the new SHA and restart the loop.
      Require douwebot `APPROVE` on that SHA with no douwebot comments on that head.
      A successful run alone does not satisfy the merge bar. A failure comment leaves the gate unsatisfied.
    - **Human approval:** require one for L and XL PRs. Request the missing approval through David.
-   Recheck that the live head is unchanged. Do not substitute another named reviewer. Any valid
+
+   Recheck that the live head is unchanged. Do not substitute a `pydanty:*` surface or another reviewer for a required review. Any valid
    finding and push restarts the lifecycle. Missing, stale, or failed required reviews are
    unsatisfied; retry when appropriate, otherwise escalate.
 4. **Triage every comment** (bots and humans alike). A comment is evidence to weigh, never an
