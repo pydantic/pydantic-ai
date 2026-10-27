@@ -1213,7 +1213,27 @@ def test_bedrock_zai_glm():
             'supports_json_schema_output': True,
             'bedrock_supports_strict_tool_definition': True,
             'bedrock_thinking_variant': 'zai',
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_zai_glm_5_3():
+    """Z.AI GLM-5.3 via Bedrock: always reasons, and Bedrock accepts every effort level from `low` to `max`."""
+    profile = BedrockProvider.model_profile('us.zai.glm-5.3')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'zai_supports_reasoning_effort': True,
             'zai_reasoning_effort_mapping': {'minimal': 'low'},
+            'supported_native_tools': frozenset(),
+            'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
+            'bedrock_supports_tool_choice': True,
+            'bedrock_supports_leading_assistant_message': True,
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+            'bedrock_thinking_variant': 'zai',
         }
     )
 

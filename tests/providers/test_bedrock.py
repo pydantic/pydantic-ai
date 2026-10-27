@@ -267,11 +267,6 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert deepseek_profile.get('ignore_streamed_leading_whitespace', False) is True
     assert deepseek_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
-    deepseek_v3_2_profile = provider.model_profile('deepseek.v3.2')
-    assert deepseek_v3_2_profile is not None
-    assert deepseek_v3_2_profile.get('supports_thinking') is True
-    assert deepseek_v3_2_profile.get('bedrock_thinking_variant') == 'deepseek'
-
     qwen_profile = provider.model_profile('qwen.qwen3-32b-v1:0')
     qwen_model_profile_mock.assert_called_with('qwen3-32b')
     assert isinstance(qwen_profile, dict)
@@ -330,15 +325,10 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert zai_profile.get('bedrock_supports_strict_tool_definition', False) is True
     assert zai_profile.get('supports_thinking', False) is True
     assert zai_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
-    assert zai_profile.get('bedrock_thinking_variant') == 'zai'
 
-    # GLM-5.3 always reasons and, on Bedrock, accepts every effort level except `minimal`.
-    glm_5_3_profile = provider.model_profile('us.zai.glm-5.3')
+    # The `us.` inference-profile prefix is stripped before the upstream Z.AI profile is looked up.
+    provider.model_profile('us.zai.glm-5.3')
     zai_model_profile_mock.assert_called_with('glm-5.3')
-    assert isinstance(glm_5_3_profile, dict)
-    assert glm_5_3_profile.get('thinking_always_enabled', False) is True
-    assert glm_5_3_profile.get('bedrock_thinking_variant') == 'zai'
-    assert glm_5_3_profile.get('zai_reasoning_effort_mapping') == {'minimal': 'low'}
 
     # Moonshot AI's Kimi models are registered under both the `moonshot.` and `moonshotai.` prefixes.
     for kimi_model in ('moonshot.kimi-k2-thinking', 'moonshotai.kimi-k2.5'):

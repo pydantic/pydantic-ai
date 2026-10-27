@@ -64,6 +64,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool
+from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelConnectionError,
@@ -8955,60 +8956,65 @@ def test_bedrock_non_anthropic_raw_thinking_does_not_override_unified_thinking(
         model.prepare_request(settings, params)
 
 
-MODELS_THAT_FOLLOW_FORCED_TOOL_CHOICE = ['zai.glm-4.7', 'zai.glm-5', 'us.zai.glm-5.3', 'deepseek.v3.2']
-
-
-@pytest.mark.parametrize('model_name', MODELS_THAT_FOLLOW_FORCED_TOOL_CHOICE)
-def test_bedrock_forced_output_tool_kept_while_thinking_on(bedrock_provider: BedrockProvider, model_name: str) -> None:
-    """Bedrock accepts a forced tool choice with these models while they reason, so the output tool stays on."""
-    model = BedrockConverseModel(model_name, provider=bedrock_provider)
-    params = ModelRequestParameters(
-        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
-        output_mode='tool',
-        allow_text_output=False,
-    )
-
-    _, prepared_params = model.prepare_request(BedrockModelSettings(thinking=True), params)
-
-    assert prepared_params.output_mode == 'tool'
-
-
-@pytest.mark.parametrize('model_name', ['zai.glm-4.7', 'zai.glm-5', 'us.zai.glm-5.3'])
-def test_bedrock_explicit_forced_tool_choice_kept_while_thinking_on(
-    bedrock_provider: BedrockProvider, model_name: str
+@pytest.mark.parametrize('model_name', ['zai.glm-5', 'deepseek.v3.2'])
+@pytest.mark.parametrize('output_mode', ['tool', 'auto'])
+def test_bedrock_output_tool_kept_while_thinking_on(
+    bedrock_provider: BedrockProvider, model_name: str, output_mode: Literal['tool', 'auto']
 ) -> None:
-    """An explicit forcing `tool_choice` is still sent while these Z.AI models reason.
+    """With thinking on, an output tool is kept for these models, both when requested and by default. No `UserError`.
 
-    DeepSeek V3.2 is left out on purpose: its profile doesn't support forced tool choice at all, with or without thinking.
+    Not a VCR test: this is the pre-request output-mode and guard decision, which a recording doesn't capture.
     """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
-    profile = cast(BedrockModelProfile, model.profile)
     params = ModelRequestParameters(
         output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
-        output_mode='tool',
-        allow_text_output=False,
-    )
-
-    assert _support_tool_forcing(
-        model.model_name, profile, BedrockModelSettings(thinking=True, tool_choice='required'), params
-    )
-
-
-@pytest.mark.parametrize('model_name', MODELS_THAT_FOLLOW_FORCED_TOOL_CHOICE)
-def test_bedrock_default_output_mode_stays_tool_while_thinking_on(
-    bedrock_provider: BedrockProvider, model_name: str
-) -> None:
-    """With thinking on and no explicit output mode, the output tool stays on for these models."""
-    model = BedrockConverseModel(model_name, provider=bedrock_provider)
-    params = ModelRequestParameters(
-        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
-        output_mode='auto',
+        output_mode=output_mode,
         allow_text_output=False,
     )
 
     _, prepared_params = model.prepare_request(BedrockModelSettings(thinking=True), params)
 
     assert prepared_params.output_mode == 'tool'
+
+
+async def test_bedrock_explicit_forced_tool_choice_sent_while_thinking_on(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """An explicit `tool_choice='required'` goes out as `toolChoice: any` on Z.AI GLM with thinking on.
+
+    Mocked rather than recorded: the test checks the forced `toolChoice` that is sent, which a recording's matchers
+    don't compare.
+    """
+    model = BedrockConverseModel('zai.glm-5', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='get_answer', parameters_json_schema={'type': 'object'})],
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
+        output_mode='tool',
+        allow_text_output=False,
+    )
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {
+            'message': {
+                'role': 'assistant',
+                'content': [{'toolUse': {'toolUseId': 'call_1', 'name': 'final_result', 'input': {'answer': 120}}}],
+            }
+        },
+        'stopReason': 'tool_use',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await model_request(
+        model,
+        [ModelRequest.user_text_prompt('What is the answer?')],
+        model_settings=ModelSettings(thinking=True, tool_choice='required'),
+        model_request_parameters=params,
+    )
+
+    kwargs = mock_converse.call_args.kwargs
+    assert kwargs['toolConfig']['toolChoice'] == {'any': {}}
+    assert kwargs['additionalModelRequestFields'] == {'reasoning_effort': 'high'}
 
 
 @pytest.mark.parametrize('thinking_config', [{'type': 'disabled'}, 'invalid'])

@@ -511,8 +511,17 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
 
 def bedrock_zai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Z.AI (Zhipu) GLM model used via Bedrock."""
+    zai_profile = _strip_builtin_tools(zai_model_profile(model_name))
+    # Bedrock accepts every `reasoning_effort` from `low` to `max` on GLM-5.3 (unlike Z.AI's API, which only
+    # accepts `low`/`high`/`max`), so only `minimal` needs substituting. The mapping is read only for models with
+    # effort levels, so it is set only for them.
+    effort_mapping = (
+        ZaiModelProfile(zai_reasoning_effort_mapping={'minimal': 'low'})
+        if zai_profile.get('zai_supports_reasoning_effort', False)
+        else None
+    )
     return merge_profile(
-        _strip_builtin_tools(zai_model_profile(model_name)),
+        zai_profile,
         BedrockModelProfile(
             bedrock_supports_tool_choice=True,
             bedrock_supports_leading_assistant_message=True,
@@ -521,9 +530,7 @@ def bedrock_zai_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_strict_tool_definition=True,
             bedrock_thinking_variant='zai',
         ),
-        # Bedrock accepts every `reasoning_effort` from `low` to `max` on GLM-5.3 (unlike Z.AI's API, which only
-        # accepts `low`/`high`/`max`), so only `minimal` needs substituting.
-        ZaiModelProfile(zai_reasoning_effort_mapping={'minimal': 'low'}),
+        effort_mapping,
     )
 
 
