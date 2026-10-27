@@ -16,11 +16,14 @@ import pytest
 from pydantic import BaseModel, create_model
 
 from pydantic_ai import Agent, Tool
-from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError, UserError
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._anthropic_schema_limits import exceeded_limit, is_schema_too_complex_error
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import NativeOutput, OutputObjectDefinition, ToolOutput
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 
@@ -177,16 +180,38 @@ EXPLICIT_STRICT_CASES = {
 async def test_explicit_strict_over_limits_raises_before_sending(
     allow_model_requests: None, anthropic_model: ANTHROPIC_MODEL_FIXTURE, case: ExplicitStrictCase
 ):
-    """Strict schemas the user asked for that Anthropic would reject raise a `UserError` rather than a 400.
+    """Strict schemas the user asked for that Anthropic would reject raise a `ModelRequestRejectedError` rather than a 400.
 
     The error is raised before a request is sent, which is why there's no cassette.
     """
     agent = Agent(anthropic_model('claude-sonnet-4-5'), output_type=case.output_type, tools=case.tools)
 
-    with pytest.raises(UserError, match=case.error) as exc_info:
+    with pytest.raises(ModelRequestRejectedError, match=case.error) as exc_info:
         await agent.run(_PROMPT, model_settings={'thinking': True})
 
     assert 'https://pydantic.dev/docs/ai/models/anthropic/#schema-complexity-limits' in str(exc_info.value)
+
+
+async def test_explicit_strict_over_limits_falls_back(
+    allow_model_requests: None, anthropic_model: ANTHROPIC_MODEL_FIXTURE
+):
+    """`FallbackModel` falls back on the pre-send error, as it does on the 400 Anthropic would send.
+
+    A unit test: the Anthropic request is refused before it's sent, so there's nothing to record.
+    """
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('{}')])
+
+    other = FunctionModel(answer, profile=ModelProfile(supports_json_schema_output=True))
+    fallback = FallbackModel(anthropic_model('claude-sonnet-4-5'), other)
+
+    result = await Agent(fallback, output_type=NativeOutput(Survey)).run(_PROMPT)
+
+    assert isinstance(result.output, Survey)
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == other.model_name
 
 
 def _mock_model(*responses: BetaMessage) -> AnthropicModel:
@@ -217,7 +242,7 @@ async def test_strict_tools_count_under_tool_choice_none(allow_model_requests: N
     """
     agent = Agent(_mock_model(), tools=[_strict_tool(i) for i in range(21)])
 
-    with pytest.raises(UserError, match='21 strict tools, over the limit of 20'):
+    with pytest.raises(ModelRequestRejectedError, match='21 strict tools, over the limit of 20'):
         await agent.run('Say done.', model_settings={'tool_choice': 'none'})
 
 
@@ -272,7 +297,7 @@ def test_strict_schema_limits_per_client(client: Callable[[], Any], enforced: bo
 
     assert model.profile.get('anthropic_enforces_strict_schema_limits') is enforced
     if enforced:
-        with pytest.raises(UserError, match='17 parameters with union types'):
+        with pytest.raises(ModelRequestRejectedError, match='17 parameters with union types'):
             model.prepare_request(None, params)
     else:
         _, prepared = model.prepare_request(None, params)

@@ -1100,7 +1100,7 @@ class BedrockConverseModel(Model[BaseClient]):
         # Pass unmerged model_settings; base class does its own merge
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
-            raise limit_exceeded_error(exceeded)
+            raise limit_exceeded_error(exceeded, self.model_name)
         if prepared_settings and (
             self.profile.get('anthropic_disallows_sampling_settings', False)
             or self.profile.get('bedrock_disallows_sampling_settings', False)

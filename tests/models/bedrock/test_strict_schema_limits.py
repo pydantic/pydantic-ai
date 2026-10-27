@@ -14,7 +14,7 @@ from pydantic import BaseModel, create_model
 
 from pydantic_ai import Tool
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError, UserError
+from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, OutputObjectDefinition
@@ -77,10 +77,10 @@ async def test_bedrock_default_output_over_limits_uses_non_strict_tool_output(
 async def test_bedrock_explicit_strict_over_limits_raises_before_sending(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """A `NativeOutput` that Bedrock would reject raises a `UserError` before a request is sent, so there's no cassette."""
+    """A `NativeOutput` that Bedrock would reject raises a `ModelRequestRejectedError` before a request is sent, so there's no cassette."""
     agent = Agent(BedrockConverseModel(_MODEL_NAME, provider=bedrock_provider), output_type=NativeOutput(Survey))
 
-    with pytest.raises(UserError, match='17 parameters with union types, over the limit of 16'):
+    with pytest.raises(ModelRequestRejectedError, match='17 parameters with union types, over the limit of 16'):
         await agent.run('Fill in a survey answer.')
 
 
@@ -100,7 +100,7 @@ async def test_bedrock_strict_tools_over_limits_raise_before_sending(
         tools=[Tool(lookup, name=f'lookup_{i}', strict=True) for i in range(21)],
     )
 
-    with pytest.raises(UserError, match='21 strict tools, over the limit of 20'):
+    with pytest.raises(ModelRequestRejectedError, match='21 strict tools, over the limit of 20'):
         await agent.run('Look something up.')
 
 

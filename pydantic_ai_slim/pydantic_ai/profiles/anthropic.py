@@ -200,7 +200,7 @@ class AnthropicModelProfile(ModelProfile, total=False):
     limits](https://platform.claude.com/docs/en/build-with-claude/structured-outputs#schema-complexity-limits). When
     True, an `output_type` that doesn't pick an output mode uses non-strict Tool Output instead of Native Output where
     the Native Output schema wouldn't fit, and a request that explicitly asks for strict schemas over a limit raises a
-    [`UserError`][pydantic_ai.exceptions.UserError] before it's sent.
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before it's sent.
     """
 
 

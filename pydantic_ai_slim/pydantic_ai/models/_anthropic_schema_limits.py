@@ -21,7 +21,7 @@ from typing import cast
 
 from .._json_schema import DEFINITION_KEYS, JsonSchema, inline_objects, split_definitions
 from .._utils import is_str_dict
-from ..exceptions import UserError
+from ..exceptions import ModelRequestRejectedError
 from ..output import StructuredOutputMode
 from ..profiles.anthropic import _COUNTING_STRICT_SCHEMAS  # pyright: ignore[reportPrivateUsage]
 from ..settings import ModelSettings
@@ -139,13 +139,18 @@ def default_output_mode_within_limits(
     return 'tool' if exceeded(model_settings, candidate) is not None else mode
 
 
-def limit_exceeded_error(exceeded: str) -> UserError:
-    """The error for a request that explicitly asks for strict schemas over Anthropic's limits."""
-    return UserError(
+def limit_exceeded_error(exceeded: str, model_name: str) -> ModelRequestRejectedError:
+    """The error for a request that explicitly asks for strict schemas over Anthropic's limits.
+
+    It's raised before the request is sent, as the same category as the 400 Anthropic would send, so
+    `FallbackModel` and `except ModelAPIError` handle it as they handle that 400.
+    """
+    return ModelRequestRejectedError(
+        model_name,
         f"The strict schemas in this request exceed Anthropic's schema complexity limits, which count all strict "
         f'schemas in a request together: they have {exceeded}. Strict schemas are those of tools with `strict=True` '
         'and of `NativeOutput`. Set `strict=True` only on the tools that need it, simplify the schemas, or use '
-        f'`ToolOutput` without `strict=True` or `PromptedOutput` for the output type. See {_DOCS_URL}'
+        f'`ToolOutput` without `strict=True` or `PromptedOutput` for the output type. See {_DOCS_URL}',
     )
 
 

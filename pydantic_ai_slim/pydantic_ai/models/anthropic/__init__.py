@@ -1229,7 +1229,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
-            raise limit_exceeded_error(exceeded)
+            raise limit_exceeded_error(exceeded, self.model_name)
         if profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
