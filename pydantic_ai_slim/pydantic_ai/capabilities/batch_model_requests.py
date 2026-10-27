@@ -137,6 +137,7 @@ class BatchModelRequests(AbstractCapability[Any]):
         )
 
     def get_wrapper_model(self, model: Model) -> Model | None:
+        """Wrap `model` so each request it's given waits in this capability's batch pool, unless it's batched already."""
         if isinstance(model, BatchedModel):
             # Already batched, by this capability or another one.
             return None

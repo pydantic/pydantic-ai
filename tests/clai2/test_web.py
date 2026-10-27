@@ -6,6 +6,7 @@ import gzip
 import hashlib
 import html
 import io
+import json
 import re
 import shutil
 import sys
@@ -61,6 +62,7 @@ from pydantic_clai2.builtin_plugins.web.app import (
     create_app,
 )
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    PROTOCOL,
     DialogClosed,
     DialogOpened,
     DialogShown,
@@ -222,7 +224,9 @@ def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb', monkeypatch: pytest.
         TestModel(call_tools=['lookup'], custom_output_text='All **done**.'), deps_type=type(None), capabilities=[tools]
     )
     web_ = make_web(agent)
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         snapshot = WIRE.validate_json(socket.receive_text())
         assert isinstance(snapshot, Snapshot) and snapshot.items == [] and not snapshot.running
         running = web_.run()
@@ -267,7 +271,9 @@ def test_a_background_fork_is_not_a_turn(make_web: 'MakeWeb') -> None:
     """`/fork` fires the turn moments for its background run; the browser shows only the held conversation's turns."""
     web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='ok'), deps_type=type(None)))
     shell = web_.shell
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': '/fork look elsewhere'})
@@ -292,7 +298,9 @@ def test_switches(make_web: 'MakeWeb') -> None:
     web_ = make_web(Agent(TestModel()))
     status = web_.get('/api/state').json()['status']
     assert (status['code_mode'], status['speculation']) == (False, False), 'the tests turn code mode off'
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         assert web_.post('/api/switch', {'key': 'run.speculative_code_mode', 'on': True}).status_code == 204
@@ -311,7 +319,9 @@ def test_theme(make_web: 'MakeWeb') -> None:
     theme = web_.get('/api/state').json()['theme']
     assert (theme['name'], theme['palette']) == ('default', None)
     assert {'default', 'tokyo_night', 'github_light'} <= set(theme['names'])
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': '/theme tokyo_night'})
@@ -342,7 +352,9 @@ def test_theme_changes_while_a_turn_runs(make_web: 'MakeWeb') -> None:
         return 'released'
 
     web_ = make_web(Agent(TestModel(call_tools=['wait']), deps_type=type(None), capabilities=[tools]))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'wait'})
@@ -364,7 +376,9 @@ def test_a_monty_cell_from_the_browser(make_web: 'MakeWeb') -> None:
     """`/monty` from the browser runs the user's cell in the session's Monty sandbox: shown as theirs, and not a turn."""
     pytest.importorskip('pydantic_monty')
     web_ = make_web(Agent(TestModel()))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': '/set run.code_mode true'})
@@ -396,7 +410,9 @@ def test_a_failed_turn(make_web: 'MakeWeb') -> None:
         yield  # pragma: no cover
 
     web_ = make_web(Agent(FunctionModel(stream_function=fail), deps_type=type(None)))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'try'})
@@ -468,7 +484,9 @@ def test_a_terminal_menu_or_prompt_fails_without_a_terminal(
             received.append((notice.level, notice.text, notice.command))
         return received
 
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         assert notices(('/model add', '/model settings', '/chain', '/set api_key', '/resume claude')) == [
@@ -509,7 +527,9 @@ def test_a_terminal_menu_opens_in_the_terminal_that_runs_clai(
         return 'A menu would open here.'
 
     web_.shell.commands.register(Command(name='probe', description='Open a terminal menu', handler=probe))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': '/probe'})
@@ -544,7 +564,9 @@ def test_images_pasted_in_the_browser_go_with_the_prompt(make_web: 'MakeWeb') ->
         yield 'seen'
 
     web_ = make_web(Agent(FunctionModel(stream_function=stream)))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'first'})
@@ -581,7 +603,9 @@ def test_the_transcript_fetches_the_images_of_a_session(make_web: 'MakeWeb') -> 
     web_ = make_web(Agent(FunctionModel(stream_function=stream)))
     [red] = decode_images([encoded(png('red'))])
     route = f'/api/sessions/{web_.shell.session.conversation_id}/images/{image_id(red)}'
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'look', 'images': [encoded(png('red'))]})
@@ -661,7 +685,9 @@ def test_completion_and_models(make_web: 'MakeWeb') -> None:
 def test_questions_are_answered_from_the_browser(make_web: 'MakeWeb') -> None:
     agent = Agent(QuestionModel(call_tools=['ask_user_question']), deps_type=type(None))
     web_ = make_web(agent)
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'ask me'})
@@ -687,7 +713,9 @@ def test_questions_are_answered_from_the_browser(make_web: 'MakeWeb') -> None:
 def test_a_custom_answer_or_declining(make_web: 'MakeWeb', answers: JsonValue, expected: str) -> None:
     agent = Agent(QuestionModel(call_tools=['ask_user_question']), deps_type=type(None))
     web_ = make_web(agent)
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'ask me'})
@@ -715,7 +743,9 @@ def test_interrupt_from_the_browser(make_web: 'MakeWeb') -> None:
     agent = Agent(TestModel(call_tools=['wait']), deps_type=type(None), capabilities=[tools])
     web_ = make_web(agent)
     assert web_.post('/api/interrupt').json() == {'interrupted': False}
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'wait'})
@@ -734,7 +764,9 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
     """The sidebar lists, reads, renames, forks, deletes, opens, and starts sessions in the store `/resume` uses."""
     web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='ok'), deps_type=type(None)))
     shell = web_.shell
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'first'})
@@ -914,9 +946,17 @@ def test_new_session_offers_every_worktree_of_a_known_repository(
     assert shown('include_worktrees=true') == [main, ('feature', str(feature.resolve()), [])]
     assert shown('q=') == [main], 'the sidebar lists checkouts with sessions only'
     assert shown('q=Main&include_worktrees=true') == [main]
-    identity = project_identity(str(repo.resolve()))
     monkeypatch.setenv('PATH', '')
-    assert worktree_roots(identity) == []
+    assert shown('include_worktrees=true') == [main]
+
+
+def test_a_bare_repository_is_not_a_worktree(tmp_path: Path) -> None:
+    """A bare clone's own folder holds no checkout, so only its linked worktrees are offered."""
+    source, bare, feature = tmp_path / 'source', tmp_path / 'bare.git', tmp_path / 'feature'
+    repository(source, linked=tmp_path / 'unused', branch='unused')
+    git('clone', '--bare', str(source), str(bare))
+    git('-C', str(bare), 'worktree', 'add', '-b', 'feature', str(feature))
+    assert worktree_roots(project_identity(str(feature.resolve()))) == [str(feature.resolve())]
 
 
 def test_sidebar_notices_a_folder_removed_or_recreated_while_it_runs(make_web: 'MakeWeb', tmp_path: Path) -> None:
@@ -959,7 +999,9 @@ def test_archived_sessions_leave_the_sidebar_until_it_lists_them(make_web: 'Make
             for entry in worktree['sessions']
         }
 
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         assert web_.post(f'/api/sessions/{old.id}/archive').status_code == 204
         receive_until(socket, SessionsChanged)
@@ -1221,7 +1263,9 @@ def SampleSettings_schema() -> JsonValue:
 def test_settings_from_the_browser_are_validated_saved_and_applied(make_web: 'MakeWeb', tmp_path: Path) -> None:
     web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
     first = loaded_plugin(web_, 'sample')
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         assert web_.post('/api/plugins/sample/settings', {'changes': {'limit': 5, 'mode': 'slow'}}).status_code == 204
         receive_until(socket, PluginsChanged)
@@ -1284,7 +1328,9 @@ def test_settings_built_from_a_stale_listing_are_refused(
 
 def test_plugins_turn_on_off_and_reload_from_the_browser(make_web: 'MakeWeb', tmp_path: Path) -> None:
     web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         assert web_.post('/api/plugins/sample/disable').status_code == 204
         receive_until(socket, PluginsChanged)
@@ -1312,7 +1358,9 @@ def test_plugins_turn_on_off_and_reload_from_the_browser(make_web: 'MakeWeb', tm
 
 def test_a_plugins_own_settings_menu_opens_in_the_terminal(make_web: 'MakeWeb', tmp_path: Path) -> None:
     web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         web_.run()
         assert web_.post('/api/plugins/sample/menu').status_code == 204
@@ -1351,8 +1399,8 @@ def test_access_checks(make_web: 'MakeWeb') -> None:
 
     for path, headers in (
         ('/ws', {'origin': 'http://testserver'}),
-        (f'/ws?token={TOKEN}', {}),
-        (f'/ws?token={TOKEN}', {'origin': 'http://evil.example'}),
+        (f'/ws?token={TOKEN}&protocol={PROTOCOL}', {}),
+        (f'/ws?token={TOKEN}&protocol={PROTOCOL}', {'origin': 'http://evil.example'}),
     ):
         with pytest.raises(WebSocketDisconnect) as refused, client.websocket_connect(path, headers=headers):
             pass  # pragma: no cover
@@ -1582,7 +1630,9 @@ def test_a_falling_behind_browser_reconnects(make_web: 'MakeWeb', monkeypatch: p
     monkeypatch.setattr(live, 'QUEUE_LIMIT', 2)
     web_ = make_web(Agent(TestModel()))
     hub = web_.plugin.service.hub
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         socket.receive_text()  # The orchestrator chat's state.
         socket.receive_text()  # The live sessions.
@@ -1629,7 +1679,9 @@ def test_a_declared_settings_menu_edits_from_the_browser(make_web: 'MakeWeb', tm
         'button': '',
     }
     assert (fields['size']['note'], fields['token']['secret'], fields['token']['action']) == ('a note', True, True)
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         # A value the menu rejects is reported with its own message, and nothing is saved or reloaded.
         rejected = web_.post('/api/plugins/declared/fields/size', {'value': '0'})
@@ -1666,7 +1718,9 @@ def test_a_settings_menu_action_asks_through_browser_dialogs(make_web: 'MakeWeb'
     web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
     with (
         ThreadPoolExecutor(1) as pool,
-        web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket,
+        web_.client.websocket_connect(
+            f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+        ) as socket,
     ):
         socket.receive_text()
         action = pool.submit(web_.post, '/api/plugins/declared/fields/token/action')
@@ -1740,7 +1794,9 @@ def test_stopping_the_web_ui_backs_out_of_open_dialogs(make_web: 'MakeWeb', tmp_
     web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
     with (
         ThreadPoolExecutor(1) as pool,
-        web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket,
+        web_.client.websocket_connect(
+            f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+        ) as socket,
     ):
         socket.receive_text()
         action = pool.submit(web_.post, '/api/plugins/declared/fields/token/action')
@@ -1799,7 +1855,9 @@ def test_sessions_continue_in_their_own_directories(
     assert web_.get('/api/state').json()['follows_workspace'] is True
     assert [web_.get(f'/api/sessions/{id}').json()['openable'] for id in (here, there, lost)] == [True, True, False]
     assert web_.get(f'/api/sessions/{lost}').json()['missing'] is True
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
 
@@ -1906,7 +1964,9 @@ def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path
     }
     with pytest.raises(ValueError, match='Select it in /resume to confirm'):
         web_.portal.call(shell.sessions.resume, elsewhere)
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         first = shell.session.conversation_id
@@ -1920,5 +1980,21 @@ def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path
         assert web_.post('/api/sessions/new', {'workspace': shell.session.workspace}).status_code == 200
         snapshot = receive_until(socket, Snapshot)[1]
         assert (snapshot.session.id != first, snapshot.session.workspace) == (True, shell.session.workspace)
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_a_page_from_before_the_tag_renames_gets_the_old_tags(make_web: MakeWeb) -> None:
+    """A tab open across the `/update` that renamed the tags sends no `protocol`, so it gets the tags it knows."""
+    web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='answer'), deps_type=type(None)))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'hello'})
+        tags: list[JsonValue] = []
+        while 'turn_end' not in tags:
+            tags.append(json.loads(socket.receive_text())['type'])
+        assert 'turn_start' in tags
+        assert not {'turn_started', 'turn_ended', 'text_delta'} & set(map(str, tags))
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)

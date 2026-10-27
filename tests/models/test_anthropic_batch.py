@@ -89,7 +89,7 @@ def test_anthropic_batch_api_is_only_on_the_claude_api_client(monkeypatch: pytes
 
     assert direct.batch_max_requests == 100_000
     assert bedrock.batch_max_requests is None
-    with pytest.raises(UserError, match='has no batch API'):
+    with pytest.raises(UserError, match=r'has no batch API on this platform: .*`anthropic:` provider'):
         BatchPool().wrap(bedrock)
 
 
@@ -99,7 +99,7 @@ def test_anthropic_batch_api_is_off_through_the_gateway() -> None:
     model = AnthropicModel('claude-sonnet-4-5', provider=provider)
     assert isinstance(provider.client, AsyncAnthropic)
     assert model.batch_max_requests is None
-    with pytest.raises(UserError, match='has no batch API'):
+    with pytest.raises(UserError, match='has no batch API through the Pydantic AI Gateway yet'):
         BatchPool().wrap(model)
 
     opted_in = AnthropicModel(
@@ -118,7 +118,7 @@ async def test_anthropic_batch_api_follows_the_profile_flag(monkeypatch: pytest.
     )
     assert opted_out.profile.get('anthropic_supports_message_batches') is False
     assert opted_out.batch_max_requests is None
-    with pytest.raises(UserError, match='has no batch API'):
+    with pytest.raises(UserError, match=r'has no batch API\.$'):
         BatchPool().wrap(opted_out)
 
     opted_in = AnthropicModel(

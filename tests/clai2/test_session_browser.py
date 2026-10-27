@@ -7,6 +7,7 @@ from io import StringIO
 from itertools import chain, count, repeat
 from pathlib import Path, PurePath
 from types import SimpleNamespace
+from uuid import UUID, uuid4, uuid5
 
 import pytest
 from termflow.ansi.utils import visible_length
@@ -57,7 +58,9 @@ def repository(repo: Path, *, linked: Path, branch: str) -> None:
     git('-C', str(repo), 'worktree', 'add', '-b', branch, str(linked))
 
 
-def browser(*, keys: list[str] | None = None) -> tuple[SessionBrowser, list[ConversationSummary]]:
+def browser(
+    *, keys: list[str] | None = None, now: datetime | None = None
+) -> tuple[SessionBrowser, list[ConversationSummary]]:
     entries = [
         ConversationSummary(id='one', workspace='/a/project', title='Fix renderer', subtitle='Race', tags=('tests',)),
         ConversationSummary(id='two', workspace='/b/project', title='Add resume', message_count=24, total_tokens=1200),
@@ -88,6 +91,7 @@ def browser(*, keys: list[str] | None = None) -> tuple[SessionBrowser, list[Conv
         output=StringIO(),
         key_source=lambda: next(source),
         size=lambda: (110, 24),
+        now=lambda: now or datetime.now(UTC),
     )
     return widget, entries
 
@@ -225,7 +229,9 @@ def test_date_buckets() -> None:
     now = datetime(2026, 9, 18, 12, tzinfo=UTC)
     assert date_label(now, now=now) == 'TODAY'
     assert date_label(now - timedelta(days=1), now=now) == 'YESTERDAY'
-    assert date_label(now - timedelta(days=365), now=now).startswith(str((now - timedelta(days=365)).year))
+    assert date_label(now - timedelta(days=6), now=now) == 'LAST 7 DAYS'
+    assert date_label(now - timedelta(days=29), now=now) == 'LAST 30 DAYS'
+    assert date_label(now - timedelta(days=365), now=now) == 'SEPTEMBER 2025'
 
 
 def test_idle_refresh_and_storage_errors_stay_in_menu(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -499,7 +505,8 @@ def test_removed_worktree_stays_in_its_repository(tmp_path: Path) -> None:
     assert widget.projects == [widget.project]
     assert widget.project_label(widget.project) == 'repo'
     frame = '\n'.join(widget.frame(width=120, height=24))
-    assert '├─ main (1)' in frame and '└─ fix (removed) (1)' in frame
+    # Gathered with the other removed and idle worktrees, its sessions still saying where they ran.
+    assert '├─ main (1)' in frame and '└─ 1 older worktree (1)' in frame and '[fix (removed)]' in frame
 
 
 def test_placements_of_removed_folders() -> None:
@@ -607,3 +614,67 @@ def test_archiving_hides_a_session_until_archived_ones_are_listed() -> None:
     widget.handle_key('h')
     assert widget.notice == 'Archived sessions are hidden.'
     assert [entry.id for entry in widget.entries] == ['one', 'two', 'three']
+
+
+def test_sources_filter_and_idle_worktrees_fold(tmp_path: Path) -> None:
+    """`f` lists one source's sessions; removed and idle worktrees gather in one row under active ones."""
+    now = datetime(2026, 9, 18, 12, tzinfo=UTC)
+    repo, feature, stale = tmp_path / 'repo', tmp_path / 'feature', tmp_path / 'stale'
+    repository(repo, linked=feature, branch='feature')
+    git('-C', str(repo), 'worktree', 'add', '-b', 'stale', str(stale))
+    widget, entries = browser(now=now)
+    entries[:] = [
+        ConversationSummary(id=str(uuid4()), workspace=str(repo), title='Native', updated_at=now),
+        ConversationSummary(
+            id=str(uuid5(UUID(int=0), 'claude')),
+            workspace=str(feature),
+            title='From Claude',
+            tags=('claude',),
+            updated_at=now - timedelta(days=1),
+        ),
+        ConversationSummary(
+            id=str(uuid5(UUID(int=0), 'codex')),
+            workspace=str(stale),
+            title='From Codex',
+            tags=('codex',),
+            updated_at=now - timedelta(days=35),
+        ),
+    ]
+    widget.reload()
+    key = widget.project
+    assert widget.rows == [
+        (key, ''),
+        (key, widget.identity(str(repo)).root),
+        (key, widget.identity(str(feature)).root),
+        (key, module.OLDER),
+    ]
+    frame = '\n'.join(widget.frame(width=120, height=30))
+    assert '└─ 1 older worktree (1)' in frame and 'stale (1)' not in frame
+    # Headings widen with age; an older card shows its date.
+    older = f'{(now - timedelta(days=35)).astimezone():%b %d} From Codex'
+    assert all(heading in frame for heading in ('TODAY', 'YESTERDAY', 'AUGUST 2026', older))
+    for _ in range(3):
+        widget.handle_key(Key.DOWN)
+    assert [e.title for e in widget.sessions] == ['From Codex']
+    assert 'SESSIONS: repo / 1 older worktree' in '\n'.join(widget.frame(width=120, height=30))
+    titles: list[list[str]] = []
+    for _ in range(4):
+        widget.handle_key('f')
+        titles.append([e.title for e in widget.sessions])
+    assert titles == [['Native'], ['From Claude'], ['From Codex'], ['Native', 'From Claude', 'From Codex']]
+    widget.handle_key('f')
+    assert widget.notice == 'Listing CLAI sessions.' and 'Source: CLAI' in widget.frame(width=120, height=30)[0]
+    # The older row is gone with the worktrees it gathered, so the project is selected instead.
+    assert widget.rows == [(key, '')] and widget.checkout == ''
+    for _ in range(3):
+        widget.handle_key('f')
+    assert widget.notice == 'Listing all sessions.' and 'f source' in widget.footer()
+    # The repository's own checkout keeps its row however idle; only worktrees are gathered.
+    entries[0] = replace(entries[0], updated_at=now - timedelta(days=60))
+    widget.reload()
+    assert widget.rows == [
+        (key, ''),
+        (key, widget.identity(str(repo)).root),
+        (key, widget.identity(str(feature)).root),
+        (key, module.OLDER),
+    ]
