@@ -168,10 +168,14 @@ class SessionNamer:
         digest = conversation_text(saved.messages)[-2400:]
         if not digest.strip():
             return None
-        prompt = (
+        # A fallback title is a placeholder cut from the first prompt, not a name to keep stable:
+        # sessions started from one template would all keep the same cut-off prefix.
+        previous = (
             f'Previous title: {saved.summary.title}\nPrevious detail: {saved.summary.subtitle}\n'
-            f'Current conversation tail:\n{digest}'
+            if saved.summary.title_source == 'generated'
+            else ''
         )
+        prompt = f'{previous}Current conversation tail:\n{digest}'
         result = await client.generate(prompt)
         if result is None:
             return None
