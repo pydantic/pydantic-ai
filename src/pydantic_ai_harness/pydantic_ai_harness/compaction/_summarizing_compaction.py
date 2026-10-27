@@ -56,7 +56,6 @@ from pydantic_ai_harness.compaction._receipts import (
     record_receipt,
 )
 from pydantic_ai_harness.compaction._shared import (
-    HARNESS_ORIGIN_PREFIX,
     compact_with_span,
     context_for_request,
     estimate_token_count,
@@ -64,6 +63,7 @@ from pydantic_ai_harness.compaction._shared import (
     find_safe_cutoff,
     find_token_cutoff,
     harness_data_origin,
+    harness_origin,
     is_harness_data,
     is_realtime_model,
     record_compaction_reclaim,
@@ -444,11 +444,7 @@ def is_legacy_summary(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[S
     return (
         isinstance(part, SystemPromptPart)
         and part.content.startswith(SUMMARY_PREFIX)
-        and not (
-            is_str_dict(part.metadata)
-            and isinstance(origin := part.metadata.get('origin'), str)
-            and origin.startswith(HARNESS_ORIGIN_PREFIX)
-        )
+        and harness_origin(part.metadata) is None
     )
 
 
