@@ -145,21 +145,22 @@ records on the user channel is a `TextContent` with `{'origin': PLAN_ORIGIN}`. `
 the conversation by this metadata, never by text.
 """
 
-# TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
-# `plan-reminder` as a framing tag there.
-# The `<` of an opening or closing `plan-reminder` tag, in any case, spacing or with attributes, or cut off at the end
-# of the plan, where the frame's own end tag would complete it. Core's own framing tags are left to `neutralize_tags`.
-_PLAN_REMINDER_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?plan-reminder(?=[\s/>]|$))', re.IGNORECASE)
+# TODO: switch to `wrap()` with `plan_reminder` registered through `register_tag` from the public `pydantic_ai.framing`
+# module once it lands (#10957), keeping the old `plan-reminder` spelling escaped.
+# The `<` of an opening or closing `plan_reminder` tag, or of the `plan-reminder` spelling earlier releases framed the
+# plan in, in any case, spacing or with attributes, or cut off at the end of the plan, where the frame's own end tag
+# would complete it. Core's own framing tags are left to `neutralize_tags`.
+_PLAN_REMINDER_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?plan[-_]reminder(?=[\s/>]|$))', re.IGNORECASE)
 
 
 def framed_plan(items: list[PlanItem]) -> str:
-    """The plan rendered in its `<plan-reminder>` frame.
+    """The plan rendered in its `<plan_reminder>` frame.
 
-    The steps are written by the model, so the `<` of every opening or closing `plan-reminder` tag and of every
-    framing tag core writes is escaped as `&lt;`.
+    The steps are written by the model, so the `<` of every opening or closing `plan_reminder` tag (and of the old
+    `plan-reminder` spelling) and of every framing tag core writes is escaped as `&lt;`.
     """
     body = _PLAN_REMINDER_TAG_OPENER.sub('&lt;', neutralize_tags(render_plan(items)))
-    return f'<plan-reminder>\n{body}\n</plan-reminder>'
+    return f'<plan_reminder>\n{body}\n</plan_reminder>'
 
 
 class _PlanReply(str):

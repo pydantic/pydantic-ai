@@ -1660,7 +1660,7 @@ class TestEndToEnd:
         last = captured['messages'][-1]
         assert isinstance(last, ModelRequest)
         tool_return = last.parts[0]
-        assert isinstance(tool_return, ToolReturnPart) and '<plan-reminder>' in str(tool_return.content)
+        assert isinstance(tool_return, ToolReturnPart) and '<plan_reminder>' in str(tool_return.content)
         assert [getattr(part, 'content', None) for part in last.parts[1:]] == ['<system>stay focused</system>']
         # The reminders are kept in history as request-scoped prompts; `Planning` records nothing of its own.
         history = result.all_messages()

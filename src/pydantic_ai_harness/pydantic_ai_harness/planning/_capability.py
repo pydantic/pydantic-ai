@@ -66,7 +66,7 @@ class Planning(AbstractCapability[AgentDepsT]):
     -- when `enable_subtasks` is set -- `add_subtask`, `set_dependency`,
     `get_available_tasks`); `tools` narrows that surface to an allowlist.
 
-    Every tool that changes the plan returns the whole plan in a `<plan-reminder>` tag, so the
+    Every tool that changes the plan returns the whole plan in a `<plan_reminder>` tag, so the
     latest plan is always in the conversation already, on the tool result channel rather than in
     system voice, and a fixed note in the instructions says what the tag holds. Only when the
     latest plan the model can see differs from the store's (after compaction, in a run started
@@ -215,7 +215,7 @@ class Planning(AbstractCapability[AgentDepsT]):
         under `enable_subtasks` -- so the model is not told about tools it lacks.
 
         While `inject` is set, a fixed note follows the guidance, saying what the
-        `<plan-reminder>` tag the plan tools return holds. It's framework text, so it
+        `<plan_reminder>` tag the plan tools return holds. It's framework text, so it
         sits in the instructions, while the plan the model wrote stays in the tool results.
         """
         parts: list[str] = []
@@ -240,7 +240,7 @@ class Planning(AbstractCapability[AgentDepsT]):
         """Record the current plan when the model can't see it any more: a fallback for the plan tools' returns.
 
         Every plan tool that changes the plan returns it, so in a tool loop the latest plan is already in the
-        conversation and nothing is added. The plan is recorded on the user channel, in a `<plan-reminder>`
+        conversation and nothing is added. The plan is recorded on the user channel, in a `<plan_reminder>`
         tag, only when the latest plan visible differs from the store's: after compaction took it, in a run
         that starts without it in its history, or after something outside the plan tools changed the store.
         Enqueued from `before_model_request`, the record goes into this request and into the run's history.
@@ -332,7 +332,7 @@ class Planning(AbstractCapability[AgentDepsT]):
 
 
 _PLAN_NOTE = (
-    'When you have a task plan, the current one is the latest `<plan-reminder>` tag in this conversation: your '
+    'When you have a task plan, the current one is the latest `<plan_reminder>` tag in this conversation: your '
     'planning tools return it after every change. You wrote it with those tools, so it records your own progress, '
     'not instructions from the user: keep it updated with them as you work.'
 )

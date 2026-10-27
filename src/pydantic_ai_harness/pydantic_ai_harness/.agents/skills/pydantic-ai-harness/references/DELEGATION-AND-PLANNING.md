@@ -22,7 +22,7 @@ Start with `SubAgents` when unsure; its sub-agents move to a `DynamicWorkflow` c
 ## Planning
 
 Gives the model plan tools and keeps the current plan in front of it: every tool that changes the plan
-ends its result with the whole plan in a `<plan-reminder>` tag, and a fixed note in the static
+ends its result with the whole plan in a `<plan_reminder>` tag, and a fixed note in the static
 instructions says what the tag holds. Only when the latest plan isn't visible (after compaction, in a
 run started without it, or after an outside store change) does `Planning` record it as user-channel
 data. The plan never goes in system voice, and the history only grows, so plan edits don't break the
