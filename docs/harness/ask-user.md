@@ -101,15 +101,15 @@ async def answer_for_session(ctx: RunContext[str], request: AskUserRequest) -> A
 agent = Agent('{{ anthropic:xlarge }}', deps_type=str, capabilities=[AskUser(answerer=answer_for_session)])
 ```
 
-`ctx.deps`, `ctx.model`, and `ctx.messages` belong to the run that called the tool. For a delegated
-agent, that is the child's run, not the parent's. The messages include the model response that
+In an in-process run, `ctx.deps`, `ctx.model`, and `ctx.messages` belong to the run that called
+the tool. For a delegated agent, that is the child's run, not the parent's. The messages include the model response that
 asked the question, including thinking parts when the model provides them. Treat the history as
 read-only; other tools may still run while the answerer waits.
 
-The context is passed separately: `AskUserRequest` and the events do not gain context or history
-fields. Inside a Temporal tool activity, `ctx.messages` is empty because Temporal excludes message
-history from tool-activity payloads. Deferred requests still contain only the validated questions
-and their request ID; hosts manage any additional context separately.
+The context reaches only the answerer; it is not part of the request, its events or deferred
+calls. With `answerer=None`, no answerer is called: deferred hosts supply context from their own
+state. Durable execution can restrict access to context fields; see
+[Temporal's run-context rules](../durable_execution/temporal.md#agent-run-context-and-dependencies).
 
 ## Bounding the wait
 

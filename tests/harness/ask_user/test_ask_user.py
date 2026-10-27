@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
 import re
 from collections.abc import AsyncIterator, Sequence
@@ -272,7 +274,6 @@ class TestAskUser:
 class TestContextAnswerer:
     @pytest.mark.parametrize('shape', ['function', 'callable', 'bound', 'partial'])
     async def test_receives_asking_context(self, shape: Literal['function', 'callable', 'bound', 'partial']) -> None:
-        """Callback dispatch and context identity are library contracts, independent of provider behavior."""
         seen: list[RunContext[str]] = []
 
         async def answer(ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
@@ -356,6 +357,29 @@ class TestContextAnswerer:
         agent = Agent(calling(raw_questions()), capabilities=[AskUser(answerer=answer)])
         result = await agent.run('go')
         assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
+    def test_typing_constructor_signatures_match_dataclass(self) -> None:
+        parameters = inspect.signature(AskUser).parameters
+        expected = {name: parameter.default for name, parameter in parameters.items()}
+        constructors = [
+            node
+            for node in ast.walk(ast.parse(inspect.getsource(AskUser)))
+            if isinstance(node, ast.FunctionDef) and node.name == '__init__'
+        ]
+        assert len(constructors) == 3
+        for constructor in constructors:
+            assert not constructor.args.posonlyargs
+            assert [argument.arg for argument in constructor.args.args] == ['self']
+            assert constructor.args.vararg is constructor.args.kwarg is None
+            defaults = {
+                argument.arg: inspect.Parameter.empty if default is None else ast.literal_eval(default)
+                for argument, default in zip(constructor.args.kwonlyargs, constructor.args.kw_defaults)
+            }
+            assert defaults == expected
+            for argument in constructor.args.kwonlyargs:
+                if argument.arg != 'answerer':
+                    assert argument.annotation is not None
+                    assert ast.unparse(argument.annotation) == parameters[argument.arg].annotation
 
     async def test_inherited_options_and_dataclass_replace_are_preserved(self) -> None:
         async def answer(ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:

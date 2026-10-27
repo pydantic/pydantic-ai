@@ -187,7 +187,8 @@ class ContextAnswerer(Protocol[AgentDepsT]):
 
     Annotate the first parameter as `RunContext[DepsT]` to opt in. The request and response
     follow the same contract as `Answerer`; the context is passed separately, not serialized
-    into `AskUserRequest` or its events. In a Temporal tool activity, `ctx.messages` is empty.
+    into `AskUserRequest` or its events. Durable execution can restrict context fields; see
+    [Temporal's run-context rules](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#agent-run-context-and-dependencies).
     """
 
     async def __call__(self, ctx: RunContext[AgentDepsT], request: AskUserRequest, /) -> AskUserResponse:
