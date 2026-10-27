@@ -259,6 +259,8 @@ async def _committed(workspace: Path, paths: list[str]) -> dict[str, str]:
     # Git reads one name a line, so a name with a line break in it is never asked for.
     relative = [path for path in paths if not posixpath.isabs(path) and '\n' not in path and '\r' not in path]
     try:
+        # Outside a repository `cat-file` would quit before reading its input, breaking the pipe.
+        await _run_git(workspace, 'rev-parse', '--verify', '--quiet', 'HEAD')
         output = await _run_git(
             workspace, 'cat-file', '--batch', input=''.join(f'HEAD:./{path}\n' for path in relative).encode()
         )
