@@ -311,7 +311,8 @@ persistence still report state and token metadata.
 
 Metadata has a 24-hour TTL and reports `$model`, `$tokens` (retained-history
 input plus output tokens), and `$context` (percentage from the compaction
-plugin's context events, omitted when unknown). Add those fields to your herdr
+plugin's context events; cleared with JSON null when unknown so a prior turn's
+value does not linger). Add those fields to your herdr
 sidebar's `rows_by_agent.clai2` configuration to display them. No prompts,
 answers, or tool contents are sent; session IDs, database paths, and conversation
 titles are sent to the local herdr socket.

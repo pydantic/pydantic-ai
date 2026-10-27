@@ -162,7 +162,11 @@ async def test_session_titles_metadata(recorded: RecordingClient, tmp_path: Path
     assert metadata['applies_to_source'] == 'clai2'
     assert metadata['title'] == 'My conversation'
     assert metadata['ttl_ms'] == 86_400_000
-    assert metadata['tokens'] == {'model': 'agent default', 'tokens': f'{session.summary.total_tokens:,}'}
+    assert metadata['tokens'] == {
+        'model': 'agent default',
+        'tokens': f'{session.summary.total_tokens:,}',
+        'context': None,
+    }
     await session.clear()
     assert recorded.reports[-1] == ('tab.rename', {'label': None})
     references = [params for method, params in recorded.reports if method == 'pane.report_agent_session']
@@ -274,7 +278,7 @@ async def test_context_percentage(recorded: RecordingClient) -> None:
     await loaded.dispatch(TurnStart(text='new prompt'))
     metadata = [params for method, params in recorded.reports if method == 'pane.report_metadata'][-1]
     tokens = metadata['tokens']
-    assert isinstance(tokens, dict) and 'context' not in tokens
+    assert isinstance(tokens, dict) and tokens['context'] is None
     await loaded.dispatch(SessionEnd(reason='exit'))
 
 

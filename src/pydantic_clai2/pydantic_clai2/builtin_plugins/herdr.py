@@ -106,9 +106,11 @@ class _Reporter:
     def refresh(self) -> None:
         title = self.title()
         total = session_usage(self.host.conversation.messages).total
-        tokens: dict[str, JsonValue] = {'model': self.host.status.model, 'tokens': f'{total.total_tokens:,}'}
-        if self.context is not None:
-            tokens['context'] = self.context
+        tokens: dict[str, JsonValue] = {
+            'model': self.host.status.model,
+            'tokens': f'{total.total_tokens:,}',
+            'context': self.context,
+        }
         metadata: dict[str, JsonValue] = {
             'applies_to_source': SOURCE,
             'ttl_ms': 86_400_000,
