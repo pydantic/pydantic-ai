@@ -40,6 +40,7 @@ Servers
                                  Load this repository's .clai/mcp_servers.json and .mcp.json
 
 States:  + running (connected)  o ready (connects on your next prompt)  - stopped  ! error
+An on-demand server ("defer_loading": true) shows whether the agent has loaded its tools in this conversation.
 
 Examples
   /mcp install             # opens the add-server form
@@ -161,6 +162,8 @@ class MCPCommand:
                 f'  state    {state}' + (f' for {_uptime(self.servers.uptime(entry))}' if state == 'running' else ''),
                 f'  type     {entry.server.type}',
                 f'  target   {target(entry.server)}',
+                f'  loading  {self.loading(entry) or "eager (tools in every prompt)"}',
+                *([f'  about    {self.servers.description(entry)}'] if entry.server.defer_loading else []),
                 f'  source   {entry.source} ({source})',
                 f'  env      {", ".join(variables) if variables else "none referenced"}',
                 *self._oauth_line(entry),
@@ -182,13 +185,20 @@ class MCPCommand:
         }[state]
         return [f'  oauth    {status} (/mcp auth {entry.name} [logout])']
 
+    def loading(self, entry: ServerEntry) -> str | None:
+        """`on demand (loaded)` or `on demand (not loaded)` for an on-demand server; `None` for an eager one."""
+        if not entry.server.defer_loading:
+            return None
+        return f'on demand ({"loaded" if self.servers.loaded(entry) else "not loaded"})'
+
     def _summary(self, entry: ServerEntry, state: State) -> str:
+        loading = self.loading(entry)
         if state == 'running':
-            return f'{len(self.servers.tools(entry))} tools'
+            return ', '.join([f'{len(self.servers.tools(entry))} tools', *([loading] if loading else [])])
         if state == 'error':
             return self.servers.problem(entry) or 'error'
         if state == 'ready':
-            return 'connects on next prompt'
+            return loading or 'connects on next prompt'
         return f'/mcp start {entry.name}'
 
     def _trust_notice(self) -> str | None:
