@@ -288,6 +288,8 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load().update_channel == 'stable'
     # Databases from before grouped tool calls keep one line per call.
     assert store.load().tool_calls == 'detailed'
+    # Older databases show the model in delegated-task rows unless the user turns it off.
+    assert store.load().task_models is True
     # Databases from before `/system_prompt` add no instructions of the user's own.
     assert store.load().instructions == ''
     assert store.overrides() == {'model': 'test', 'display.thinking': False}
@@ -308,6 +310,18 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     with closing(sqlite3.connect(path)) as connection:
         assert list(connection.iterdump()) == snapshot
         assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+
+
+def test_task_model_display_preference_survives_reopen(tmp_path: Path) -> None:
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    assert store.load().task_models is True
+    store.set('display.task_models', False)
+    reopened = SettingsStore(path)
+    assert reopened.load().task_models is False
+    assert reopened.overrides() == {'display.task_models': False}
+    reopened.reset('display.task_models')
+    assert SettingsStore(path).load().task_models is True
 
 
 @pytest.mark.parametrize('value_json', ['false', 'true'])

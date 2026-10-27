@@ -62,10 +62,10 @@ from pydantic_clai2.plugins import (
     bare_screen,
     collect,
 )
-from pydantic_clai2.plugins._factories import build, scope, settings_capability
-from pydantic_clai2.plugins._git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
 from pydantic_clai2.plugins.compatibility import INCLUDED, Binds, included_by
 from pydantic_clai2.plugins.describe import describe
+from pydantic_clai2.plugins.factories import build, scope, settings_capability
+from pydantic_clai2.plugins.git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import LiveRuntime, ProcessPlugins, PromptInputs, handling, same_plugin
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard

@@ -68,7 +68,7 @@ they agree in the same PR.
   capability function might return a sandbox, so `local_workspace()` attaches the
   launch directory only after every `for_run`, and harness `Skills` (which reads its
   libraries in `for_run`) fails the turn. Wrap a function that never returns a
-  workspace in `runtime/_session.py`'s `WorkspacelessCapability`.
+  workspace in `runtime/session.py`'s `WorkspacelessCapability`.
 - **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.
@@ -199,7 +199,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `for_run` function returns, never on the `DynamicCapability`), so each costs one
   catalog line until the model calls `load_capability`. A new integration does the same.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
-  `config/builtins.py` lists the library's built-ins (re-exported by `_app.py`,
+  `config/builtins.py` lists the library's built-ins (re-exported by `app.py`,
   kept apart so `clai2 plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
   agent into delegation without changing supplied-agent defaults. CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
   `compaction`, `persistence`, `observability`, `hooks`). The loader treats them like drop-ins with the lowest
@@ -223,8 +223,9 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   drop-in folder, project, built-in. CLAI never writes the project file.
   The exception is a factory in `APPROVED_AS_WRITTEN` (`plugins/process_plugins.py`),
   such as the `hooks` table's `project_hooks`: its declaration is what runs, so
-  a stored approval that differs from the project's is stale and the project's,
-  off, replaces it.
+  a stored approval with the same id and factory that differs from the
+  project's is stale and the project's, off, replaces it. A drop-in or a user's
+  own plugin under that id is never replaced.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
   approval. [Environment variables](docs/reference.md#environment-variables) documents the
@@ -372,7 +373,7 @@ from the palette.
 
 ## Source layout
 
-The package root composes the shell (`_app.py`, `__main__.py`) and keeps the
+The package root composes the shell (`app.py`, `__main__.py`) and keeps the
 plugin-author imports `pydantic_clai2.plugins` and `pydantic_clai2.commands`
 stable. Other code is grouped by responsibility:
 
@@ -419,6 +420,9 @@ Before adding, removing, or renaming a setting, changing its type, meaning, or
 default, or changing the SQL schema, consider upgrades, downgrades, and branch
 switches. Different versions can share the same settings database.
 
+- Adding a setting needs no API compatibility waiver: `SETTING_FIELDS` and
+  `STRING_SETTINGS` are `growing_collections` in `.github/api-compatibility-allowlist.json`.
+  Removing or renaming one still needs a deprecation and a waiver.
 - Add regression cases to `tests/test_settings_compatibility.py` and affected CLI
   tests using the previous stored format. Keep historical fixtures unchanged;
   do not regenerate them with current models or rewrite them to make a change pass.

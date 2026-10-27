@@ -42,7 +42,7 @@ from pydantic_clai2.models.model_settings import ModelSettingsForm
 from pydantic_clai2.models.profiles import parse_model
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
-from pydantic_clai2.runtime._session import ModelDefaults, SessionModels, resolve_model_name, supports_local_workspace
+from pydantic_clai2.runtime.session import ModelDefaults, SessionModels, resolve_model_name, supports_local_workspace
 from pydantic_clai2.runtime.tasks import review_workspace
 from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme

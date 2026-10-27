@@ -102,7 +102,7 @@ def run(*, splash: Splash | None = None) -> None:
         args.token_file = args.token_file.resolve()  # Also before `--worktree` changes directory.
     try:
         from pydantic_ai.usage import UsageLimits
-        from pydantic_clai2._app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
+        from pydantic_clai2.app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
         from pydantic_clai2.cli.agent_import import import_agent
         from pydantic_clai2.cli.self_update import Relaunch
         from pydantic_clai2.commands import config_command, plugins_command
