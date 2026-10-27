@@ -1064,6 +1064,8 @@ What the evaluators see depends on whether the engine serializes the operation's
 - DBOS and Prefect run the operation in the run's own process, so evaluators see the same [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] values as without durable execution.
 - Temporal serializes the arguments to send them to an activity, so `inputs`, `output` and `metadata` arrive in their JSON form, such as a dict for a Pydantic model output, and sampling callables see `inputs` the same way. The span tree doesn't cross, so [`span_tree`][pydantic_evals.evaluators.EvaluatorContext.span_tree] raises a [`SpanTreeRecordingError`][pydantic_evals.otel.SpanTreeRecordingError]. An evaluator with `run_on_errors=True` receives an `Exception` whose message starts with the original exception's type name, such as `'UsageLimitExceeded: ...'`.
 
+The operation starts the evaluators in the background and completes without waiting for them, as evaluation without durable execution does. If the worker stops before the evaluators finish, their results are lost: the engine has already recorded the operation, so it doesn't run it again.
+
 !!! note "Prefect flow retries"
     Prefect identifies a recorded task by its arguments, and the run's duration measured in flow code differs on a flow retry, so a retry evaluates the run again. [#11575](https://github.com/pydantic/pydantic-ai/issues/11575) tracks letting the operation choose what identifies it.
 

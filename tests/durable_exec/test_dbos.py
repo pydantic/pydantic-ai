@@ -145,6 +145,7 @@ with try_import() as evals_available:
     from pydantic_evals.evaluators import Evaluator, EvaluatorContext
     from pydantic_evals.online import OnlineEvaluator, SamplingContext, wait_for_evaluations
     from pydantic_evals.online_capability import OnlineEvaluation
+    from pydantic_evals.otel.span_tree import SpanTree
 
 
 class OnlineEvaluationAnswer(BaseModel):
@@ -6045,11 +6046,13 @@ async def test_dbos_online_evaluation_dispatches_once_on_replay(dbos: DBOS) -> N
     the way recovery does. Before the dispatch was a step, each replay ran the evaluators again.
     """
     evaluated: list[tuple[str | None, object]] = []
+    span_trees: list[SpanTree] = []
 
     @dataclass
     class RecordRun(Evaluator):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
             evaluated.append((ctx.name, ctx.output))
+            span_trees.append(ctx.span_tree)
             return True
 
     agent = Agent(
@@ -6070,8 +6073,10 @@ async def test_dbos_online_evaluation_dispatches_once_on_replay(dbos: DBOS) -> N
     with SetWorkflowID(workflow_id):
         run_id = await run_workflow()
     await wait_for_evaluations()
-    # DBOS steps run in the workflow's process, so evaluators see the live output.
+    # DBOS steps run in the workflow's process, so evaluators see the live output and span tree.
     assert evaluated == [(run_id, OnlineEvaluationAnswer(text='a'))]
+    [span_tree] = span_trees
+    assert span_tree.any({'name_equals': 'dbos_online_evaluation__model.request'})
 
     steps = await dbos.list_workflow_steps_async(workflow_id)
     fork = await dbos.fork_workflow_async(workflow_id, max(step['function_id'] for step in steps) + 1)
@@ -6165,3 +6170,63 @@ async def test_dbos_online_evaluation_dispatch_failure_keeps_run_error(dbos: DBO
             pytest.raises(UsageLimitExceeded),
         ):
             await run_workflow()
+
+
+@pytest.mark.skipif(not evals_available(), reason='pydantic_evals not installed')
+async def test_dbos_online_evaluation_dispatch_failure_fails_completed_run(dbos: DBOS) -> None:
+    """When dispatching a completed run's evaluation fails, the run fails with the dispatch error, without a warning."""
+
+    def failing_sample_rate(ctx: SamplingContext) -> bool:
+        raise RuntimeError('sampling failed')
+
+    @dataclass
+    class RecordRun(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            return True  # pragma: no cover
+
+    agent = Agent(
+        TestModel(),
+        name='dbos_online_evaluation_completed_run_dispatch_failure',
+        capabilities=[
+            DBOSDurability[object](),
+            OnlineEvaluation(
+                id='online_evaluation',
+                evaluators=[OnlineEvaluator(evaluator=RecordRun(), sample_rate=failing_sample_rate)],
+            ),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        with pytest.raises(RuntimeError, match='sampling failed'):
+            await run_workflow()
+
+
+@pytest.mark.skipif(not evals_available(), reason='pydantic_evals not installed')
+async def test_dbos_online_evaluation_failed_run_without_run_on_errors_records_no_step(dbos: DBOS) -> None:
+    """A failed run whose evaluators don't run on errors records no dispatch step and keeps its own error."""
+
+    @dataclass
+    class RecordRun(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            return True  # pragma: no cover
+
+    agent = Agent(
+        TestModel(),
+        name='dbos_online_evaluation_failed_run',
+        capabilities=[DBOSDurability[object](), OnlineEvaluation(id='online_evaluation', evaluators=[RecordRun()])],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run', usage_limits=UsageLimits(request_limit=0))
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        with pytest.raises(UsageLimitExceeded):
+            await run_workflow()
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    assert [step['function_name'] for step in steps if step['function_name'].endswith('.dispatch')] == []

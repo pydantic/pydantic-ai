@@ -37,6 +37,7 @@ with workflow.unsafe.imports_passed_through():
         from pydantic_evals.evaluators import Evaluator, EvaluatorContext
         from pydantic_evals.online import OnlineEvaluator, wait_for_evaluations
         from pydantic_evals.online_capability import OnlineEvaluation
+        from pydantic_evals.otel import SpanTreeRecordingError
     except ImportError:  # pragma: lax no cover
         pytest.skip('pydantic_evals not installed', allow_module_level=True)
 
@@ -50,6 +51,7 @@ class Answer(BaseModel):
 
 
 _evaluated: list[tuple[str, str | None, object]] = []
+_span_tree_errors: list[str] = []
 
 
 @dataclass
@@ -62,6 +64,10 @@ class RecordRun(Evaluator):
             # The message's first sentence; the rest links to the docs.
             output = f'{type(output).__name__}: {output}'.split('.')[0]
         _evaluated.append((self.label, ctx.name, output))
+        try:
+            ctx.span_tree
+        except SpanTreeRecordingError as e:
+            _span_tree_errors.append(str(e))
         return True
 
 
@@ -103,6 +109,7 @@ async def test_online_evaluation_dispatches_once_across_replays(client: Client):
     Before the dispatch was a durable operation, each replay ran the earlier runs' evaluators again.
     """
     _evaluated.clear()
+    _span_tree_errors.clear()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -127,6 +134,12 @@ async def test_online_evaluation_dispatches_once_across_replays(client: Client):
         'Exception: UsageLimitExceeded: The next request would exceed the request_limit of 0',
     ]
     assert [name for name, _ in always[:2]] == run_ids
+    # The span tree doesn't cross the data converter either.
+    assert set(_span_tree_errors) == {
+        "The span tree is not available because the run's evaluation context crossed a durable "
+        'execution boundary that cannot carry it.'
+    }
+    assert len(_span_tree_errors) == len(_evaluated)
     sampled_names = [name for label, name, _ in _evaluated if label == 'sampled']
     assert len(sampled_names) == len(set(sampled_names))
     assert set(sampled_names) <= set(run_ids)
