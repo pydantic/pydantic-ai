@@ -12,6 +12,7 @@ import { CommandMenu } from './components/CommandMenu'
 import { CommandPalette } from './components/CommandPalette'
 import { SettingsWindow, commandSection, linkedSection, type SettingsSection } from './components/SettingsWindow'
 import { DialogLayer } from './components/DialogLayer'
+import { GitChip } from './components/GitChip'
 import { MontyPanel } from './components/MontyPanel'
 import { OrchestratorPane } from './components/OrchestratorPane'
 import { NewSessionDialog } from './components/NewSessionDialog'
@@ -631,6 +632,14 @@ export function App() {
                     </span>
                   )}
                 </div>
+              )}
+              {chat.session && !preview && !workerTask && (
+                <GitChip
+                  session={chat.session.id}
+                  // While a turn runs its edits are not done yet; each item after it may be a `/commit`'s.
+                  refresh={chat.running ? -1 : entries.length}
+                  onNotice={showNotice}
+                />
               )}
               {panels.map((panel) => {
                 const key = panelKey(panel)

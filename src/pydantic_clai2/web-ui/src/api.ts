@@ -46,7 +46,7 @@ function problem(detail: unknown): { message: string; fields: Record<string, str
   return { message, fields: Object.fromEntries(Object.entries(errors).map(([key, value]) => [key, String(value)])) }
 }
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
     method,
     headers: { 'x-clai-token': token, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
