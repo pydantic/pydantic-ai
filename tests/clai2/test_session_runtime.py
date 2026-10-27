@@ -18,8 +18,8 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TaskProgress
-from pydantic_clai2.runtime._session import resolve_model_name
 from pydantic_clai2.runtime.process import ClaiProcess
+from pydantic_clai2.runtime.session import resolve_model_name
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.tasks import TaskRouter, Tasks
 from pydantic_clai2.ui.prompt.interrupts import Interrupts

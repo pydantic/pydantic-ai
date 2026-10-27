@@ -34,16 +34,16 @@ from pydantic_clai2.plugins import (
     SessionStart,
 )
 from pydantic_clai2.plugins.loader import SessionPlugins
-from pydantic_clai2.runtime._session import (
+from pydantic_clai2.runtime.imported_sessions import ImportSource
+from pydantic_clai2.runtime.launch import launch_session_id
+from pydantic_clai2.runtime.reloading import reload_clai
+from pydantic_clai2.runtime.session import (
     ModelDefaults,
     SessionModels,
     StockAgent,
     local_workspace,
     resolve_model_name,
 )
-from pydantic_clai2.runtime.imported_sessions import ImportSource
-from pydantic_clai2.runtime.launch import launch_session_id
-from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
@@ -122,6 +122,8 @@ async def open_stock_agent(
     with TemporaryDirectory(prefix='clai2-') as config, open(os.devnull, 'w', encoding='utf-8') as sink:
         console = Console(file=sink, force_terminal=False)
         store = SettingsStore(Path(config) / 'config.db')
+        models = ModelResolver(console=console, store=store)
+        model_defaults = ModelDefaults[None](lambda name: default_model_settings(model=name, saved={}))
         loader = SessionPlugins[None](
             store=store,
             console=console,
@@ -131,8 +133,10 @@ async def open_stock_agent(
             ),
             builtin=declarations,
             workspace=lambda: root,
+            resolve_model=models.resolve,
+            model_settings=model_defaults.defaults,
         )
-        models = ModelResolver(console=console, store=store, plugins=loader.model_providers)
+        models.plugins = loader.model_providers
         try:
             for declaration in declarations:
                 await loader.load(declaration.id)
@@ -143,7 +147,7 @@ async def open_stock_agent(
                 [
                     *bound,
                     SessionModels[None](lambda _, name: resolve_model_name(models.resolve, name)),
-                    ModelDefaults[None](lambda name: default_model_settings(model=name, saved={})),
+                    model_defaults,
                 ],
                 model=model if isinstance(model, str) else None,
             )

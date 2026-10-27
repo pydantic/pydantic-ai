@@ -34,7 +34,7 @@ from pydantic_clai2.cli.shell_passthrough import (
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.runtime._processes import taskkill_path
+from pydantic_clai2.runtime.processes import taskkill_path
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.prompt.interrupts import Interrupts

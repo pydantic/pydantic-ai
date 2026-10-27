@@ -107,6 +107,7 @@ from .. import (
     download_item,
     get_user_agent,
 )
+from .._anthropic_schema_limits import default_output_mode_within_limits, limit_exceeded_error, model_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
 from .._prompt_cache import (
     excess_cache_points,
@@ -387,13 +388,12 @@ _BATCH_UNSUPPORTED_CLIENTS = (
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
 # `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
-# Bedrock `anthropic_beta` body field and Vertex beta routes. The AWS-operated Bedrock Messages API
-# explicitly does not accept Anthropic beta headers, while Foundry has no published support for this
-# beta, so those two stay excluded until the provider contract changes or a live request verifies them.
-_THINKING_BINDING_UNSUPPORTED_CLIENTS = (
-    AsyncAnthropicBedrockMantle,
-    AsyncAnthropicFoundry,
-)
+# Bedrock `anthropic_beta` body field and Vertex beta routes. Verified live on the Bedrock Messages API
+# (`AsyncAnthropicBedrockMantle`) with `anthropic.claude-opus-5-5`: it takes `block_binding` under this beta in
+# the `anthropic-beta` header, and rejects a stale block or drops it as the Claude API does
+# (https://github.com/pydantic/pydantic-ai/issues/11481). Foundry has no published support for this beta, so it
+# stays excluded until the provider contract changes or a live request verifies it.
+_THINKING_BINDING_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 # The legacy Bedrock InvokeModel API (`AsyncAnthropicBedrock`) accepts the `bm25` tool-search variant wherever it
 # accepts `regex`, but an unset strategy resolves to `regex` there: it was the only variant Bedrock accepted,
 # and resolving to `bm25` would change the search algorithm for every request that doesn't set one. For the same
@@ -409,11 +409,17 @@ _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS = (AsyncAnthropicBedrock,)
 _WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 _WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
 _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
-# The advisor tool is available on the direct Anthropic API and Claude Platform on AWS
-# (`AsyncAnthropicBedrockMantle`) only — not on the legacy Bedrock InvokeModel client, Vertex, or
-# Foundry. `AsyncAnthropicBedrockMantle` isn't a subclass of `AsyncAnthropicBedrock`, so the plain
-# isinstance tuple keeps it supported.
-_ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, AsyncAnthropicFoundry)
+# The advisor tool is documented for the direct Anthropic API and Claude Platform on AWS only. Claude Platform on AWS
+# is `AsyncAnthropicAWS`, an `AsyncAnthropic` subclass, so it keeps the tool. The Bedrock Messages API
+# (`AsyncAnthropicBedrockMantle`, which isn't an `AsyncAnthropicBedrock` subclass) is listed explicitly: verified
+# live, it rejects `advisor_20260301` with a 400 ("tool type ... is not supported for this model") on Claude Opus
+# 5.5, Sonnet 5 and Haiku 4.5. https://github.com/pydantic/pydantic-ai/issues/11481
+_ADVISOR_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicVertex,
+    AsyncAnthropicFoundry,
+)
 # Mid-conversation `{'role': 'system'}` messages are published as available on the Anthropic API,
 # Amazon Bedrock and Google Cloud, which leaves Microsoft Foundry as the only transport that has to
 # fall back to the `<system>`-tagged user rendering. Verified on Bedrock rather than assumed: with
@@ -422,11 +428,13 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, Asy
 # that ignores the entry on *every* transport — which measured the model, not the transport.
 _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 # Per-message effort (`mid-conversation-output-config-2026-07-01`) is documented for the Claude API, Google Cloud
-# and Amazon Bedrock. The AWS-operated Bedrock Messages API doesn't accept Anthropic beta headers, and Foundry
-# isn't listed, so those two send effort changes as the request-level setting. The legacy InvokeModel client
-# serves a narrower model list, which `AnthropicModel.profile` applies.
+# and Amazon Bedrock. Foundry isn't listed, so it sends effort changes as the request-level setting. Both Bedrock
+# APIs serve a narrower model list, which `AnthropicModel.profile` applies. The Bedrock Messages API
+# (`AsyncAnthropicBedrockMantle`) accepts the beta on `anthropic.claude-opus-5-5` but rejects a per-message
+# `output_config` on `anthropic.claude-opus-5` ("Extra inputs are not permitted"), as the legacy InvokeModel
+# API does. https://github.com/pydantic/pydantic-ai/issues/11481
 # https://platform.claude.com/docs/en/build-with-claude/effort#per-message-effort-beta
-_MID_CONVERSATION_EFFORT_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrockMantle, AsyncAnthropicFoundry)
+_MID_CONVERSATION_EFFORT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 _MID_CONVERSATION_EFFORT_BETA = 'mid-conversation-output-config-2026-07-01'
 # Cache diagnostics are documented as Claude API only. Verified live: the Bedrock InvokeModel and Messages APIs
 # both reject the `diagnostics` field with a 400 ("Extra inputs are not permitted").
@@ -446,6 +454,9 @@ _COUNT_TOKENS_SERVER_TOOLS_UNVERIFIED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
+# Anthropic's explicit strict-schema limits were verified live on the Messages API and on both Bedrock clients. Vertex
+# and Foundry weren't reachable with our credentials, so they keep sending such requests for the API to judge.
+_STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS = (AsyncAnthropicFoundry, AsyncAnthropicVertex)
 
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
@@ -1035,7 +1046,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             _profile.get('supports_mid_conversation_effort', False)
             and not isinstance(client, _MID_CONVERSATION_EFFORT_UNSUPPORTED_CLIENTS)
             and (
-                not isinstance(client, AsyncAnthropicBedrock)
+                not isinstance(client, AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle)
                 or bedrock_claude_supports_mid_conversation_effort(self._model_name)
             )
         )
@@ -1080,6 +1091,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         client, and `anthropic_cache` and the unified `cache` setting place a breakpoint on the last block there
         instead. Narrowing the default rather than the resolved profile lets a `supports_auto_cache` the user sets
         explicitly win, for models this list doesn't know yet.
+
+        Anthropic's strict-schema limits are only checked on the clients they were verified on, and a user whose
+        Vertex or Foundry deployment is known to enforce them can opt in with `anthropic_enforces_strict_schema_limits`.
         """
         client = self._provider.client
         profile = merge_profile(
@@ -1101,7 +1115,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(
             self._model_name
         ):
-            return merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))
+            profile = merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))
+        if isinstance(client, _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS):
+            profile = merge_profile(profile, AnthropicModelProfile(anthropic_enforces_strict_schema_limits=False))
         return profile
 
     @property
@@ -1306,8 +1322,28 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters.output_tools
             and _request_thinking_type(self.profile, model_settings, model_request_parameters) == 'enabled'
         ):
-            return 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
-        return super()._default_structured_output_mode(model_settings, model_request_parameters)
+            mode: StructuredOutputMode = (
+                'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
+            )
+        else:
+            mode = super()._default_structured_output_mode(model_settings, model_request_parameters)
+        return default_output_mode_within_limits(
+            self, mode, model_settings, model_request_parameters, self._strict_schema_limit_exceeded
+        )
+
+    def _strict_schema_limit_exceeded(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> str | None:
+        """The limit the request's strict schemas exceed, where the API enforces Anthropic's limits."""
+        return model_exceeded_limit(
+            self,
+            model_settings,
+            model_request_parameters,
+            supports_strict_tools=lambda: self.profile.get('supports_json_schema_output', False),
+            sent_tools=lambda settings, params: self._tool_choice_declarations(
+                cast(AnthropicModelSettings, settings or {}), params
+            )[0].values(),
+        )
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1344,6 +1380,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
+            raise limit_exceeded_error(exceeded, self.model_name)
         if profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
@@ -2679,7 +2717,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
             elif isinstance(request_part, ToolReturnPart):
                 request_context.user_content_params.append(await self._map_tool_return_part(request_part, map_context))
-            elif isinstance(request_part, SpeechPart):  # pragma: no cover
+            elif isinstance(request_part, SpeechPart):
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
                 raise _unconverted_speech_part_error()
             elif isinstance(request_part, _UnpreparedPart):  # pragma: no cover
@@ -3436,7 +3474,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 ),
                 include_citations,
             )
-        else:  # pragma: no cover
+        else:
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
 
     @staticmethod
@@ -3471,7 +3509,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 ),
                 include_citations,
             )
-        else:  # pragma: no cover
+        else:
             raise RuntimeError(f'Unsupported document media type: {item.media_type}')
 
     @staticmethod

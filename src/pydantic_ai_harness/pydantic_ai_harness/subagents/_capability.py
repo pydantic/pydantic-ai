@@ -35,6 +35,7 @@ from pydantic_ai_harness.subagents._toolset import (
     SELF_AGENT_NAME,
     SubAgent,
     SubAgentToolset,
+    WorkspaceResolver,
     at_max_depth,
 )
 
@@ -264,6 +265,17 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     A backend, not the `LocalWorkspace` capability. It is used in-process only in this release: a
     durable engine does not route it through its workflow machinery."""
+
+    workspace_resolver: WorkspaceResolver[AgentDepsT] | None = field(default=None, kw_only=True)
+    """Opt into `delegate_task(working_directory=...)` with an async callback receiving the parent
+    context and a `DelegationWorkspaceRequest` with the delegate name and requested directory.
+    Return the child's `Workspace`; the caller owns
+    its resources, including keeping it alive for background tasks. Omission keeps the parent workspace.
+    The callback validates paths and decides which delegates and backends may change directory.
+    Parent and delegate read-only restrictions still apply. Tools that bypass the workspace API need
+    their own restrictions. Remote and durable delegations cannot request another directory.
+    Resuming a task keeps its saved directory; the resolver is called again for that directory.
+    This does not change where `agent_folders` are discovered (see `workspace`)."""
 
     include_self: bool = False
     """If `True`, the roster also lists the running agent itself, as `self`.
@@ -765,6 +777,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             task_control=self.task_control,
             dynamic_agents=self.dynamic_agents,
             created=self._created,
+            workspace_resolver=self.workspace_resolver,
         )
 
     @classmethod
