@@ -2706,6 +2706,7 @@ def _span_outcomes(exporter: InMemorySpanExporter) -> list[tuple[object, str, ob
             (span.attributes or {}).get('error.type'),
         )
         for span in exporter.get_finished_spans()
+        if (span.attributes or {}).get('gen_ai.operation.name') is not None
     ]
     return sorted(outcomes, key=repr)
 

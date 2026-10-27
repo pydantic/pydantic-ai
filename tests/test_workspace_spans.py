@@ -7,9 +7,6 @@ from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
-from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Instrumentation, LocalWorkspace
@@ -17,7 +14,16 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, WorkspaceTimeoutError
 
+from .conftest import try_import
 from .workspace_fakes import RunOnlyWorkspaceBackend
+
+with try_import() as otel_sdk_installed:
+    # `opentelemetry-sdk` arrives with the `logfire` extra, so it is not importable in the slim install.
+    from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+pytestmark = pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed')
 
 
 def instrumented(include_content: bool) -> tuple[Instrumentation, InMemorySpanExporter]:
