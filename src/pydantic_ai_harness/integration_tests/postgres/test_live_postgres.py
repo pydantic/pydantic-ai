@@ -713,6 +713,24 @@ async def test_spend_concurrent_writers_taking_windows_in_either_order_do_not_de
         assert await store.get_many(['day', 'month']) == {'day': Spent(requests=40), 'month': Spent(requests=40)}
 
 
+async def test_spend_concurrent_calls_sharing_a_key_with_different_tokens_do_not_deadlock() -> None:
+    """Markers are all claimed before any counter, so no writer holds a counter while waiting on a marker."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        await store.get_many(['k'])
+
+        for round_ in range(20):
+            first, second = f'r{round_}-a', f'r{round_}-b'
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(
+                    store.add_many,
+                    [SpendEntry(key='k', requests=1, token=first), SpendEntry(key='k', requests=1, token=second)],
+                )
+                tg.start_soon(store.add_many, [SpendEntry(key='k', requests=1, token=second)])
+
+        assert await store.get_many(['k']) == {'k': Spent(requests=40)}
+
+
 async def test_spend_concurrent_writers_succeed_on_a_pool_defaulting_to_serializable() -> None:
     """The write sets `READ COMMITTED` itself, so a stricter pool default cannot fail a concurrent writer."""
     async with _live_tables() as (_, prefix):

@@ -134,9 +134,11 @@ class PostgresSpendStore:
         sets that level rather than inheriting a stricter default, under which the second writer
         would fail with a serialization error instead.
 
-        Entries are applied in key order so two transactions taking the same windows lock their
-        rows in the same order rather than deadlocking. Entries sharing a key keep their relative
-        order.
+        Every marker is claimed before any counter is written, markers in key and token order and
+        counters in key order, so two transactions lock rows in one global order and wait on each
+        other rather than deadlocking. Claiming a marker after a counter instead would let a
+        transaction hold the counter while it waits on another's marker for the same key, while
+        that one waits on the counter. Entries sharing a key are applied in their given order.
         """
         if not entries:
             return {}
@@ -148,9 +150,10 @@ class PostgresSpendStore:
         async with self._pool.acquire() as connection:
             async with connection.transaction():
                 await connection.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
-                for entry in sorted(entries, key=lambda entry: entry.key):
-                    if await self._claim(connection, entry):
-                        await self._increment(connection, entry)
+                by_marker = sorted(range(len(entries)), key=lambda i: (entries[i].key, entries[i].token or ''))
+                applied = [i for i in by_marker if await self._claim(connection, entries[i])]
+                for entry in sorted((entries[i] for i in sorted(applied)), key=lambda entry: entry.key):
+                    await self._increment(connection, entry)
                 totals = await self._totals(connection, [entry.key for entry in entries])
             self._writes_since_sweep += len(entries)
             if self._writes_since_sweep >= self._sweep_every:
