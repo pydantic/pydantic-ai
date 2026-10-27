@@ -242,6 +242,24 @@
     },
     {
       "against": "v2.61.0",
+      "fingerprint": "54b11089348bd00c418f096431094cf982522914aa5ab18e3ed6f8912308f039",
+      "reason": "False positive: `pydantic_clai2.plugins.TaskEvent` was renamed to `TaskProgress` and still imports, from a module `__getattr__` that returns `TaskProgress` with a deprecation warning, which Griffe cannot see.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11354"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "99511dd22203858daeb3800da13abc3312a8f3a4641d0f95ce87fbd152a5e193",
+      "reason": "False positive: `pydantic_clai2.plugins.UpdateProgress` was renamed to `InstallProgress` and still imports, from a module `__getattr__` that returns `InstallProgress` with a deprecation warning, which Griffe cannot see.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11354"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "0193ad7865a550457966edbb39656950ed55a8ccbe1398362bb08ebdaff9c63f",
+      "reason": "`HostEvent` names the renamed `TaskProgress` and `InstallProgress`, the same classes the deprecated `TaskEvent` and `UpdateProgress` names still resolve to; every member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11354"
+    },
+    {
+      "against": "v2.61.0",
       "fingerprint": "e7227083e7391a9760af16f36f7e38c947b660d8a7ad4ff9bc81cc1248aec0db",
       "reason": "Adds `BatchModelRequests` to the agent-spec capability registry; every existing entry is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10672"
