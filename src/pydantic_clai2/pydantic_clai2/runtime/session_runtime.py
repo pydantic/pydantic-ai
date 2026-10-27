@@ -674,6 +674,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
+    _question_status: QuestionStatus[DepsT] = field(init=False, repr=False)
     _measured_model: str | None = field(default=None, init=False, repr=False)
     """The model whose completed turn measured the status row's figures; `None` once the model changes."""
     _inbox: PromptInbox = field(default_factory=PromptInbox, init=False, repr=False)
@@ -824,6 +825,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         telemetry.conversation_selected()
 
     def __post_init__(self) -> None:
+        self._question_status = QuestionStatus(self.live_session)
         self.tasks = Tasks(
             console=self.console,
             conversation_id=lambda: self.session.summary.id,
@@ -852,7 +854,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         mount stays within every `FileSystem` and `ToolGuardrail` the run has.
         """
         granted = (*self.plugins, *self.loader.capabilities())
-        bound = (*self.plugins, *self.loader.run_capabilities(), QuestionStatus[DepsT](self.live_session))
+        bound = (*self.plugins, *self.loader.run_capabilities(), self._question_status)
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)

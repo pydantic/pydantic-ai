@@ -5,6 +5,7 @@ import os
 import socket
 import sys
 from collections.abc import Callable, Iterator
+from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -170,9 +171,12 @@ async def test_client_refuses_oversized_frames(private_runtime: Path) -> None:
 
 @pytest.mark.parametrize('reply', [b'', b'{}'])
 async def test_client_rejects_incomplete_reply(private_runtime: Path, reply: bytes) -> None:
-    def respond(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def respond(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readline()
         writer.write(reply)
+        await writer.drain()
         writer.close()
+        await writer.wait_closed()
 
     path = private_runtime / 'reply.sock'
     async with await asyncio.start_unix_server(respond, path=str(path)):
@@ -280,6 +284,8 @@ async def test_rejects_unsafe_directory_and_wrong_uid(private_runtime: Path, mon
         reader, writer = await asyncio.open_unix_connection(str(registry.socket_path))
         writer.write(b'{"op":"hello","protocol":1}\n')
         await writer.drain()
-        assert await reader.read() == b''
+        with suppress(ConnectionResetError):
+            assert await reader.read() == b''
         writer.close()
-        await writer.wait_closed()
+        with suppress(ConnectionResetError):
+            await writer.wait_closed()
