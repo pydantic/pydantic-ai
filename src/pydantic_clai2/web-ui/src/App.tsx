@@ -577,12 +577,12 @@ export function App() {
   // A session still opening is named from its sidebar row, never as a new session while its snapshot comes.
   const title = workerTask
     ? `${workerTask.agent}: ${workerTask.prompt.split('\n')[0]}`
-    : preview
-      ? preview.title
-      : opening
-        ? opening.title
+    : opening
+      ? opening.title
+      : preview
+        ? preview.title
         : (chat.session?.title ?? 'New session')
-  const workspace = preview ? preview.workspace : opening ? (opening.workspace ?? '') : (chat.session?.workspace ?? '')
+  const workspace = opening ? (opening.workspace ?? '') : preview ? preview.workspace : (chat.session?.workspace ?? '')
   const entries = preview ? preview.items : chat.entries
   const prompts = useMemo(() => entries.flatMap((entry) => (entry.kind === 'user' ? [entry.text] : [])), [entries])
   const project = (chat.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''

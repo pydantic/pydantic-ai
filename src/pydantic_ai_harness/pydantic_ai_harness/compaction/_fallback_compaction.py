@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from opentelemetry.trace import NoOpTracer
@@ -22,6 +23,7 @@ from pydantic_ai_harness.compaction._shared import (
     BackgroundOutcome,
     CompactionStrategy,
     SupportsFocus,
+    compact_if_smaller,
     compact_with_span,
     context_for_request,
     estimate_context_tokens,
@@ -30,6 +32,7 @@ from pydantic_ai_harness.compaction._shared import (
     resolve_token_trigger,
     validate_token_trigger,
 )
+from pydantic_ai_harness.compaction._summarizing_compaction import SummarizingCompaction
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Tracer
@@ -182,12 +185,36 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
     ) -> list[ModelMessage]:
         """Return the first successful compaction result."""
+        return await self._compact(messages, ctx)
+
+    async def _compact(
+        self, messages: list[ModelMessage], ctx: RunContext[AgentDepsT], *, smaller_only: bool = False
+    ) -> list[ModelMessage]:
+        """The first successful compaction result; with *smaller_only*, a summary that isn't smaller falls through.
+
+        When no strategy succeeds and one of them was such a summary, *messages* is returned unchanged:
+        that strategy completed, it just didn't help, so an error from another one isn't the outcome.
+        """
         last_error: Exception | None = None
+        rejected = False
         for strategy in self.fallback_chain:
             try:
-                return await strategy.compact(list(messages), ctx)
+                if not (smaller_only and isinstance(strategy, SummarizingCompaction)):
+                    return await strategy.compact(list(messages), ctx)
+                compacted = await compact_if_smaller(
+                    ctx,
+                    strategy='SummarizingCompaction',
+                    messages=messages,
+                    compact=partial(strategy.compact, list(messages), ctx),
+                    tokenizer=self.tokenizer,
+                )
+                if compacted is not None:
+                    return compacted
+                rejected = True
             except self.fallback_on as error:
                 last_error = error
+        if rejected:
+            return messages
         assert last_error is not None
         raise last_error
 
@@ -252,7 +279,7 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
     async def _compact_pinned(
         self, messages: list[ModelMessage], ctx: RunContext[AgentDepsT], held: list[ModelMessage] | None
     ) -> list[ModelMessage]:
-        compacted = held if held is not None else await self.compact(messages, ctx)
+        compacted = held if held is not None else await self._compact(messages, ctx, smaller_only=True)
         return reinject_pinned(messages, compacted)
 
     async def _check_background(
