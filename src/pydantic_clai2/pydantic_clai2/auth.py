@@ -37,7 +37,7 @@ from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.prompt import line_input
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 CODEX = 'openai-codex'
 _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)

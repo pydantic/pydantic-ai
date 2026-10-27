@@ -110,29 +110,29 @@ Tools that match the selector are wrapped inside `run_code`. Non-matching tools 
 
 ### Tool Search
 
-When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](https://ai.pydantic.dev/tools-advanced/#tool-search)), `CodeMode` keeps them out of `run_code` while they're undiscovered -- they pass straight through, so Tool Search drives them as usual (sent on the wire with `defer_loading` on providers with native tool search; otherwise dropped until discovered, with a `search_tools` tool alongside `run_code`). `CodeMode` uses `RunContext.is_tool_available` to follow that reveal state. Once the model discovers a tool -- or loads the deferred capability that owns it -- `CodeMode` folds it into `run_code` like any other tool from then on, so it's callable from generated code. (The tool keeps `defer_loading=True`, which records what its author asked for; what changes is its availability for the run.)
+When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](https://ai.pydantic.dev/tools-advanced/#tool-search)), `CodeMode` keeps them out of `run_code` while they're undiscovered and leaves their discovery to Tool Search; how they're offered until then depends on `dynamic_catalog`, below. `CodeMode` uses `RunContext.is_tool_available` to follow that reveal state. Once the model discovers a tool -- or loads the deferred capability that owns it -- `CodeMode` folds it into `run_code` like any other tool from then on, so it's callable from generated code. (The tool keeps `defer_loading=True`, which records what its author asked for; what changes is its availability for the run.)
 
-That fold-in grows `run_code`'s description, which invalidates the prompt-cache prefix once at the moment of discovery (turns with no discovery stay cache-warm). Two ways to avoid the bust:
+By default (`dynamic_catalog=True`), a discovery appends to the conversation instead of rewriting it, so the prompt cache survives it. The catalog of sandboxed-tool signatures goes into the agent instructions rather than `run_code`'s description, as a dynamic [`InstructionPart`](https://ai.pydantic.dev/api/messages/#pydantic_ai.messages.InstructionPart) with the id `toolset:code_mode:catalog` and [`on_change='append'`](https://ai.pydantic.dev/agent/#appending-instruction-changes): when a discovery adds a function, the updated catalog is appended to the message history. When Tool Search found the tool, a short system prompt part sent through [`ctx.enqueue`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.enqueue) also names the new functions; loading a capability appends only the catalog update. Deferred tools that `run_code` will take over are kept off the wire until they're found: the model finds them with the local `search_tools` tool, or by loading the capability that owns them, and from then on calls them from `run_code` only. The tool definitions and the instructions of earlier requests stay as they were sent.
 
-- Pass `dynamic_catalog=True` to make discoveries append to the conversation instead of rewriting it. The catalog of sandboxed-tool signatures moves out of `run_code.description` into the agent instructions, as a dynamic [`InstructionPart`](https://ai.pydantic.dev/api/messages/#pydantic_ai.messages.InstructionPart) with the id `toolset:code_mode:catalog` and [`on_change='append'`](https://ai.pydantic.dev/agent/#appending-instruction-changes): when a discovery adds a function, the updated catalog is appended to the message history. When Tool Search found the tool, a short system prompt part sent through [`ctx.enqueue`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.enqueue) also names the new functions; loading a capability appends only the catalog update. Deferred tools that `run_code` will take over are kept off the wire until they're found: the model finds them with the local `search_tools` tool, or by loading the capability that owns them, and from then on calls them from `run_code` only. The tool definitions and the instructions of earlier requests stay as they were sent, so the prompt cache survives the discovery:
+The catalog renders tool definitions into the instructions, including the names, descriptions and schemas an MCP server supplies. Tool definitions are trusted operator configuration: the model already receives them in the request's tool definitions with the same authority, so moving them into instructions gives them no authority they didn't have. Connect only MCP servers you trust. The discovery announcement names functions only by their Python identifiers, and keeps the tool names as found in its metadata.
+
+The cache stays intact only if a callable `tools` selector gives the same answer for a tool before and after it's revealed. A selector that keeps a hidden tool native and sandboxes it once revealed declares the tool and then drops the declaration, which moves the cached prefix, as with `dynamic_catalog=False`.
+
+The catalog block is keyed through the toolset id `code_mode`, which `CodeModeToolset` takes only with `dynamic_catalog=True`. If the agent has another toolset with the id `code_mode` that contributes instructions, the run raises a `UserError` for the duplicate id. Rename that toolset.
+
+Two setups still declare a deferred tool that `run_code` will take over natively, because only the provider's native tool search can find it there: the `'bm25'` and `'regex'` Tool Search strategies, which have no local `search_tools`, and a `tools` selector that keeps another deferred tool native, which keeps the native search on the wire in place of `search_tools`. In those setups the declaration is dropped when the tool moves into `run_code`, as it is with `dynamic_catalog=False`.
+
+Pass `dynamic_catalog=False` to keep the catalog in `run_code`'s description instead, which earlier releases did by default:
 
 ```python
 from pydantic_ai_harness import CodeMode
 
-CodeMode(dynamic_catalog=True)
+CodeMode(dynamic_catalog=False)
 ```
 
-  The catalog renders tool definitions into the instructions, including the names, descriptions and schemas an MCP server supplies. Tool definitions are trusted operator configuration: the model already receives them in the request's tool definitions with the same authority, so moving them into instructions gives them no authority they didn't have. Connect only MCP servers you trust. The discovery announcement names functions only by their Python identifiers, and keeps the tool names as found in its metadata.
+The tool definitions are part of the cached prompt prefix, so each discovery grows `run_code`'s description and invalidates the cached prefix from that point on (turns with no discovery stay cache-warm). Deferred tools are declared to the provider's native tool search where there is one.
 
-  The cache stays intact only if a callable `tools` selector gives the same answer for a tool before and after it's revealed. A selector that keeps a hidden tool native and sandboxes it once revealed declares the tool and then drops the declaration, which moves the cached prefix, as without `dynamic_catalog`.
-
-  The catalog block is keyed through the toolset id `code_mode`, which `CodeModeToolset` takes only with `dynamic_catalog=True`. If the agent has another toolset with the id `code_mode` that contributes instructions, the run raises a `UserError` for the duplicate id. Rename that toolset.
-
-  Two setups still declare such a tool natively, because only the provider's native tool search can find it there: the `'bm25'` and `'regex'` Tool Search strategies, which have no local `search_tools`, and a `tools` selector that keeps another deferred tool native, which keeps the native search on the wire in place of `search_tools`. In those setups the declaration is dropped when the tool moves into `run_code`, as it is without `dynamic_catalog`.
-
-  This pays off with Tool Search or deferred capabilities, at the cost of a larger system prompt. With a fixed toolset, the default keeps the system prompt shorter and is the better choice.
-
-- To instead keep a Tool Search corpus fully native -- never folded into `run_code`, but not callable from inside it -- exclude it with a `tools` selector; corpus members carry `with_native` set to the managing native tool:
+To keep a Tool Search corpus fully native instead -- never folded into `run_code`, but not callable from inside it -- exclude it with a `tools` selector; corpus members carry `with_native` set to the managing native tool:
 
 ```python
 from pydantic_ai_harness import CodeMode
@@ -202,6 +202,8 @@ result
 | Print output with a plain, non-`None` final expression | `{"output": "<printed text>", "result": <last expression>}` |
 | Multimodal final expression with no print output | Returned natively for model processing |
 | Print output with a multimodal final expression | List with printed text followed by native multimodal content |
+
+When a nested tool returns a [`ToolReturn`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#advanced-tool-returns), the snippet receives its `return_value`. Its `content`, such as a screenshot, never enters the sandbox: it is sent to the model alongside the `run_code` result, in call order, just as it would be for a direct tool call.
 
 Printed output is limited to 10 MiB. Exceeding the limit makes `run_code` return a model retry.
 
@@ -584,6 +586,9 @@ calls and their results.
 Only code execution moves to the worker. Your tools, `mount` directories, `os_access`, and `print`
 output stay in your process, and REPL state persists across `run_code` calls as it does locally.
 
+The `run_code` description lists the standard library modules Monty 1.4 can import, so run the
+worker on `pydantic-monty>=1.4.0`.
+
 ## Temporal durability
 
 Install both integrations:
@@ -790,7 +795,8 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 
 - No third-party imports (allowed stdlib: `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
   `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`,
-  `functools`, `dataclasses`, `copy`, `base64`, `binascii`)
+  `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `hashlib`,
+  `os.path`, `tomllib`)
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation
   and wait APIs are unavailable
 - No clock or randomness by default (`datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, unseeded `random`) -- they become available when an `os_access` handler implements them (the built-in `OSAccess` does); `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer
@@ -819,7 +825,7 @@ CodeMode(
     speculate=None,       # read-only tool names, or 'declared', to start while run_code streams
     monty_sandbox=None,     # a ws:// or wss:// URL, or a function that returns the pool
     repl_store=None,      # keep the run_code REPL across runs (CodeModeReplStore)
-    dynamic_catalog=False,
+    dynamic_catalog=True,
 )
 ```
 

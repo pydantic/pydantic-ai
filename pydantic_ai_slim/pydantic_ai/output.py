@@ -13,7 +13,7 @@ from typing_extensions import TypeAliasType, TypeForm, TypeVar
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
 from ._run_context import RunContext
-from .messages import ToolCallPart
+from .messages import ModelResponse, ToolCallPart
 from .tools import ObjectJsonSchema, ToolDefinition
 
 __all__ = (
@@ -22,6 +22,7 @@ __all__ = (
     'NativeOutput',
     'PromptedOutput',
     'TextOutput',
+    'PendingModelResponse',
     'StructuredDict',
     'Choice',
     'Choices',
@@ -303,6 +304,23 @@ class PromptedOutput(Generic[OutputDataT]):
         self.name = name
         self.description = description
         self.template = template
+
+
+@dataclass(kw_only=True)
+class PendingModelResponse:
+    """A model response that the provider is still working on, such as a batch request or an OpenAI background response.
+
+    This can be used as an agent's `output_type`, alongside the output the model produces. The run then ends with this
+    as its output as soon as a model request is left waiting on the provider, instead of waiting for it to finish.
+
+    The run's message history ends in the pending response, so running the agent again with that history checks on
+    the same request: the run continues when the response has arrived, or ends with a `PendingModelResponse` again.
+
+    See [Submitting now and collecting later](../batch.md#ending-a-run-while-it-waits) for more information.
+    """
+
+    response: ModelResponse
+    """The pending response, with [`state`][pydantic_ai.messages.ModelResponse.state] `'suspended'`."""
 
 
 @dataclass

@@ -39,7 +39,7 @@ from pydantic_clai2.ui.menus.field_menu import (
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.plugin_menu import Redrawable
 from pydantic_clai2.ui.menus.slash_search import slash_search
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 _HINT = 'Enter sign in again - a add - r rename - d sign out - [ ] reorder - Esc close'
 _ADD = 'add'

@@ -193,7 +193,8 @@ class ModelProfile(TypedDict, total=False):
     """Whether the provider's API can change the thinking effort from a point in the conversation onward. Default: `False`.
 
     When `True`, on a model whose adapter renders the change (`OpenAIResponsesModel`'s `configuration_update`
-    item, `AnthropicModel`'s per-message `output_config`), a
+    item, `AnthropicModel`'s per-message `output_config`, `OpenRouterModel`'s `configuration_update` system
+    message), a
     [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] is sent in place and the request
     keeps the conversation's earlier request-level effort, so the prompt cache survives the change. When
     `False`, `Model.prepare_messages` drops those parts and the current effort goes out as the request-level

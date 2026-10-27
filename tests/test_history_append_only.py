@@ -152,6 +152,11 @@ FIXTURES: dict[str, Fixture] = {
 """Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
 
 EXEMPT: dict[str, Exempt] = {
+    'BatchModelRequests': Exempt(
+        "Sends each request through the provider's batch API, which the scenario doesn't serve. A batch item's body is "
+        "built by the same code as the model's own request, so it's the unbatched request's (see the providers' "
+        '`batch_encode` tests).'
+    ),
     'NativeOrLocalTool': Exempt(
         'Base class that needs a subclass; `WebSearch`, `WebFetch`, `XSearch` and `MCP` are its cases.'
     ),

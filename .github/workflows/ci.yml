@@ -1121,7 +1121,8 @@ jobs:
         # A pull request runs only the legs that collect coverage (see `COLLECT_COVERAGE`), which
         # include one `lowest` leg (see the `test` job's matrix), the 3.13 `locked` leg that runs the
         # Render local runtime tests (see `RENDER_LOCAL_RUNTIME`), and the 3.15 `locked` leg below,
-        # the newest Python.
+        # the newest Python, which runs the manifest freshness test of a `pydantic-ai-harness`-only
+        # change (see `DURABLE_EXEC_MANIFEST_FRESHNESS`).
         pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         exclude:
           - pull_request: "true"
@@ -1151,6 +1152,10 @@ jobs:
       BLOCKBUSTER_ENABLED: false
       # The one leg that runs the Render local runtime tests (see that step).
       RENDER_LOCAL_RUNTIME: ${{ matrix.python-version == '3.13' && matrix.resolution == 'locked' }}
+      # The one leg that runs the contract manifest freshness test of a `pydantic-ai-harness`-only
+      # change (see the run tests step). On the full path, every leg runs it within
+      # `tests/durable_exec`.
+      DURABLE_EXEC_MANIFEST_FRESHNESS: ${{ matrix.python-version == '3.15' && matrix.resolution == 'locked' }}
       # Puts every Temporal worker in debug mode, which disables the workflow deadlock detector
       # (temporalio sets the per-activation budget to `None` instead of 2s). That budget is
       # wall-clock, so it measures runner contention as readily as a blocking call, and a
@@ -1207,10 +1212,16 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
-          # A `pydantic-ai-harness`-only change runs only the harness `temporal` tests.
+          # A `pydantic-ai-harness`-only change runs the harness `temporal` tests and, of
+          # `tests/durable_exec`, only the contract manifest freshness test, on the leg that sets
+          # `DURABLE_EXEC_MANIFEST_FRESHNESS`: the manifest also walks the Harness engines, so a
+          # harness change can leave it stale.
           if [[ "$HARNESS_ONLY" != "true" ]]; then
             uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
               "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
+          elif [[ "$DURABLE_EXEC_MANIFEST_FRESHNESS" == "true" ]]; then
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+              "${runner[@]}" tests/durable_exec/test_durable_exec_contract_manifest.py
           fi
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
             "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
@@ -1657,7 +1668,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       localstack: ${{ steps.detect.outputs.localstack }}
-      monty: ${{ steps.detect.outputs.monty }}
       mongodb: ${{ steps.detect.outputs.mongodb }}
       postgres: ${{ steps.detect.outputs.postgres }}
       redis: ${{ steps.detect.outputs.redis }}
@@ -1696,7 +1706,6 @@ jobs:
             tests/harness/step_persistence tests/harness/media tests/harness/_postgres_sqlite.py \
             "$H/integration_tests/postgres"
           detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
-          detect monty "$H/pydantic_ai_harness/code_mode" "$H/pydantic_ai_harness/_monty_exec.py" tests/harness/code_mode
 
   harness-localstack-integration:
     name: harness LocalStack integration tests
@@ -1737,45 +1746,6 @@ jobs:
         env:
           # The job executes the full PR checkout, so path detection is not a security boundary.
           LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }} # zizmor: ignore[secrets-outside-env]
-
-  harness-monty-integration:
-    name: harness CodeMode tests on hosted Monty
-    needs: [harness-integration-changes]
-    # The `test` job runs `tests/harness/code_mode` on local Monty workers; this runs the same suite
-    # with its Monty pool dialed on the staging server instead (see `_remote_monty` in its conftest),
-    # except tests that patch the pool themselves, plus `test_hosted_monty_sandbox` through a `monty_sandbox` function.
-    # Pushes to `main` only, never a pull request, merge group or tag (a tag can point at any commit):
-    # the job hands the staging key to whatever code it checks out, so it runs only merged code. Not a
-    # `check` dependency, so it reports but never blocks while the staging server settles.
-    if: >-
-      ${{ always()
-          && github.ref == 'refs/heads/main'
-          && needs.harness-integration-changes.outputs.monty == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-        with:
-          python-version: "3.14"
-          enable-cache: true
-          cache-suffix: harness-monty
-
-      - run: uv sync --locked --package pydantic-ai-harness --group dev --extra code-mode
-
-      # An empty URL would quietly run the suite on local workers, and staging refuses a dial
-      # without a key, so either secret missing fails here instead.
-      # `temporal` tests run in `test-durable-exec` and need a dev server.
-      - run: |
-          [ -n "$MONTY_SANDBOX_TEST_URL" ] || { echo '::error::the MONTY_STAGING_URL secret is not set'; exit 1; }
-          [ -n "$LOGFIRE_API_KEY" ] || { echo '::error::the MONTY_EXECUTION_KEY secret is not set'; exit 1; }
-          uv run --no-sync pytest -n logical --dist=loadgroup -p no:cacheprovider --durations=20 -m "not temporal" tests/harness/code_mode
-        env:
-          MONTY_SANDBOX_TEST_URL: ${{ secrets.MONTY_STAGING_URL }} # zizmor: ignore[secrets-outside-env]
-          LOGFIRE_API_KEY: ${{ secrets.MONTY_EXECUTION_KEY }} # zizmor: ignore[secrets-outside-env]
 
   harness-mongodb-integration:
     name: harness MongoDB integration tests

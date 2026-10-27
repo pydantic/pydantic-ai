@@ -61,6 +61,8 @@ from pydantic_clai2.config.theme_names import names as theme_names
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    ForkEnd,
+    InstallProgress,
     LiveSession,
     LiveSessions,
     PanelView,
@@ -70,8 +72,7 @@ from pydantic_clai2.plugins import (
     SessionCatalog,
     SidePanel,
     TaskCatalog,
-    TaskEvent,
-    UpdateProgress,
+    TaskProgress,
 )
 from pydantic_clai2.plugins.loader import PluginError
 from pydantic_clai2.plugins.menus import SettingsMenu
@@ -362,10 +363,13 @@ class WebService:
         # `/plugins`, or a plugin's own command such as `/grain`, may have changed a plugin or its settings.
         self.hub.publish(PluginsChanged())
 
-    def task_event(self, event: TaskEvent) -> None:
+    def task_progress(self, event: TaskProgress) -> None:
         self.current().workers.observe(event)
 
-    def update_progress(self, event: UpdateProgress) -> None:
+    def fork_ended(self, event: ForkEnd) -> None:
+        self.current().fork_ended(event)
+
+    def install_progress(self, event: InstallProgress) -> None:
         """Show `/update` going: uv's last line while it installs, then all it printed, as the terminal shows it."""
         if event.stage == 'installing':
             self._uv_output = []
@@ -428,8 +432,8 @@ class WebService:
         run = {'enable': catalog.enable, 'disable': catalog.disable, 'reload': catalog.reload}[action]
         try:
             await run(name)
-        except PluginError as error:
-            raise ValueError(str(error)) from error
+        except PluginError as exc:
+            raise ValueError(str(exc)) from exc
         finally:
             self.hub.publish(PluginsChanged())
 
@@ -452,11 +456,11 @@ class WebService:
         settings = info.settings_model.model_validate({**values, **changes})
         try:
             await self.plugin_catalog.save_settings(name, settings)
-        except PluginError as error:
-            raise ValueError(str(error)) from error
-        except TypeError as error:
+        except PluginError as exc:
+            raise ValueError(str(exc)) from exc
+        except TypeError as exc:
             # Its model changed since the listing above, as a reload that re-imports it does.
-            raise ValueError(f'{name} changed; reload the panel and try again.') from error
+            raise ValueError(f'{name} changed; reload the panel and try again.') from exc
         finally:
             self.hub.publish(PluginsChanged())
 
@@ -492,8 +496,8 @@ class WebService:
         catalog = self.plugin_catalog
         try:
             messages = await catalog.edit_settings(name, edit)
-        except PluginError as error:
-            raise ValueError(str(error)) from error
+        except PluginError as exc:
+            raise ValueError(str(exc)) from exc
         finally:
             self.hub.publish(PluginsChanged())
         menu = catalog.settings_menu(name)
@@ -585,7 +589,7 @@ class WebService:
         # Backgrounding changes the row without an event from the task, which may be waiting on its model.
         for task in catalog.listing():
             if task.id == task_id:
-                channel.workers.observe(TaskEvent(task=task))
+                channel.workers.observe(TaskProgress(task=task))
 
     async def prompt_task(self, task_id: str, text: str) -> None:
         """Run a finished task again with `text`, on its own: its session's conversation never sees it."""
@@ -752,8 +756,8 @@ async def _view(panel: SidePanel) -> PanelView:
     except TimeoutError:
         return PanelView(note=f'{panel.title} did not answer in time.')
     # Any plugin's bug: one broken panel must not take the others, or the page, down.
-    except Exception as error:  # noqa: BLE001
-        return PanelView(note=f'{panel.title} failed: {str(error) or type(error).__name__}')
+    except Exception as exc:  # noqa: BLE001
+        return PanelView(note=f'{panel.title} failed: {str(exc) or type(exc).__name__}')
     if view.url is not None and not _web_page(view.url):
         return PanelView(note=f'{panel.title} offered a page that is not on the web; only http and https open here.')
     return view
@@ -801,8 +805,8 @@ class Observer(AbstractCapability[None]):
         except get_cancelled_exc_class():
             channel.run_ended('cancelled')
             raise
-        except Exception as error:
-            channel.run_ended('failed', error=error)
+        except Exception as exc:
+            channel.run_ended('failed', error=exc)
             raise
         channel.run_ended('completed', usage=result.usage)
         return result

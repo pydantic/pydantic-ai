@@ -32,10 +32,10 @@ from pydantic_ai_harness.step_persistence.conversations import SqliteConversatio
 from pydantic_clai2 import chat
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
-from pydantic_clai2.ui.rendering._rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.history import render_history, turn_starts
+from pydantic_clai2.ui.rendering.rendering import StreamRenderer
 
 
 def turn(index: int) -> list[ModelMessage]:

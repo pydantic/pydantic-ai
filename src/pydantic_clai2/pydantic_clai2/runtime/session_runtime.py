@@ -31,7 +31,7 @@ from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, Mode
 from pydantic_ai.models import Model, infer_model_profile
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_ai_harness.subagents import DelegationTask
+from pydantic_ai_harness.subagents import DelegationTask, TaskQuestionEvent
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
 from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff
@@ -57,34 +57,34 @@ from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    InstallProgress,
     QueuedInput,
     Renderer,
     SessionEndReason,
     SessionStart,
-    TaskEvent,
+    TaskProgress,
     TurnEnd,
     TurnStart,
-    UpdateProgress,
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, SessionPlugins
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import LiveRuntime, handling
 from pydantic_clai2.runtime import image_codec
-from pydantic_clai2.runtime._session import (
+from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
+from pydantic_clai2.runtime.forks import Forks
+from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
+from pydantic_clai2.runtime.process import ClaiProcess
+from pydantic_clai2.runtime.session import (
     Session,
     StockAgent,
     agent_capabilities,
     current_session_id,
 )
-from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
-from pydantic_clai2.runtime.forks import Forks
-from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
-from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
-from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
+from pydantic_clai2.runtime.tasks import Tasks, question_row, resume_prompt
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
 from pydantic_clai2.ui.menus.menu_worker import without_terminal
@@ -106,8 +106,8 @@ from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.prompt.terminal import Terminal
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.history import render_history
+from pydantic_clai2.ui.rendering.rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
@@ -461,9 +461,10 @@ def create_shell(
         default_model=partial(_default_model, store=store, models=models, fallback=agent.model),
         default_model_name=partial(_default_model_name, store=store, fallback=agent.model),
         inputs=lambda: shell,
+        forks=lambda: shell.forks.listing(),
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
-    updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
+    updates.report = lambda: loader.fire if loader.handles(InstallProgress) else None
     # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
     updates.capture = lambda: web_serving(loader) is not None
     updates.serving = lambda: web_serving(loader)
@@ -822,9 +823,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             conversation_id=lambda: self.session.summary.id,
             router=self.process.tasks,
             fire=self.loader.fire,
-            listening=lambda: self.loader.handles(TaskEvent),
+            listening=lambda: self.loader.handles(TaskProgress),
             send_input=self.send_input,
             prompt_task=self.prompt_task,
+            show_task_models=lambda: self.context.settings.task_models,
         )
         self.status.subagent = self.tasks.focused
         self.forks = Forks(
@@ -1013,7 +1015,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                     if isinstance(self.agent, StockAgent):
                         self.session.delegations = owner
                     # Reports a task left while no CLAI ran are known once the owner opened.
-                    if self.editor is not None and owner.reports(conversation_id=self.session.summary.id):
+                    if self.editor is not None and self.tasks.waiting(self.session.summary.id):
                         self.editor.wake()
                     reason = await self._read_loop()
                     return reason
@@ -1064,7 +1066,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             # Input a plugin entered while the editor read for another session, or did not exist yet.
             for entry in self._inbox.take():
                 editor.submit(entry)
-            if self.tasks.owner.reports(conversation_id=self.session.summary.id):
+            if self.tasks.waiting(self.session.summary.id):
                 editor.wake()
         if self._reading is not None:
             self._reading.cancel()
@@ -1226,7 +1228,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 await self._rewind()
                 continue
             except PromptWakeup:
-                if not self.tasks.owner.reports(conversation_id=self.session.summary.id):
+                if not self.tasks.waiting(self.session.summary.id):
                     continue
                 with self._handling_input():
                     async with self.forks.busy():
@@ -1557,6 +1559,23 @@ async def _prompt_with_steering(
     return result
 
 
+def _run_events(
+    observe: Callable[[AgentStreamEvent], Awaitable[None]], tasks: Tasks | None
+) -> Callable[[AgentStreamEvent], Awaitable[None]]:
+    """The main run's stream handler. With the tasks' feed, a task's question shows once, from that feed.
+
+    The run streams only the questions asked while it is open to them; the feed gets every one.
+    """
+    if tasks is None:
+        return observe
+
+    async def observe_run(event: AgentStreamEvent) -> None:
+        if not isinstance(event, TaskQuestionEvent):
+            await observe(event)
+
+    return observe_run
+
+
 async def _run_prompt(
     session: Session[DepsT, OutputT],
     text: str | None,
@@ -1571,8 +1590,9 @@ async def _run_prompt(
     tasks: Tasks | None = None,
     steering: tuple[MemoryObjectSendStream[str], MemoryObjectReceiveStream[str]] | None = None,
 ) -> TurnEnd:
+    # Without the tasks' feed, a task-control run of a custom agent still shows its tasks' questions.
     renderer = _stream_renderer(
-        console, settings=settings, renderers=[*renderers, task_row] if tasks is not None else renderers
+        console, settings=settings, renderers=[*renderers, tasks.row if tasks is not None else question_row]
     )
     status.streamed_chars = 0
     status.output_tokens = None
@@ -1609,7 +1629,8 @@ async def _run_prompt(
     session.on_context_usage = context_usage
     session.on_usage = usage
     session.on_context_window = context_window
-    session.on_stream_event = observe
+
+    session.on_stream_event = _run_events(observe, tasks)
     # A session the terminal does not show yet prints nowhere: no footer of its own may draw over the editor later.
     status_line = StatusLine(console, status, enabled=screen.editor is None and console.is_terminal, spinner=spinner)
 
