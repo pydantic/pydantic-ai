@@ -9603,6 +9603,16 @@ _DOCUMENT_FROM_DATA = {
             _DOCUMENT_FROM_DATA,
             id='data_uri_media_type_wins',
         ),
+        pytest.param(
+            {'mimeType': 'image/png', 'url': 'data:image/png;base64,aGVs%62G8%3D'},
+            _IMAGE_FROM_DATA,
+            id='percent_encoded_data_uri',
+        ),
+        pytest.param(
+            {'mimeType': 'image/png', 'url': 'data:image/png;base64,'},
+            {'type': 'image', 'source': {'type': 'data', 'value': '', 'mime_type': 'image/png'}},
+            id='empty_data_uri',
+        ),
     ],
 )
 def test_retired_binary_part_is_translated_on_1_0(part: dict[str, Any], expected: dict[str, Any]) -> None:

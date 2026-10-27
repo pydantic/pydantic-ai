@@ -30,6 +30,7 @@ from ag_ui.core import InputContent, Message
 from pydantic import BaseModel, JsonValue
 
 from ..._utils import get_union_args
+from ...messages import BinaryContent
 from ._utils import media_part_type
 
 __all__ = ['HAS_BINARY_INPUT_PART', 'adapt_unsupported_items']
@@ -103,21 +104,26 @@ def _translate_binary_part(item: dict[str, JsonValue]) -> dict[str, JsonValue] |
     """The typed media part for a retired `binary` part, or `None` when it has no MIME type or payload.
 
     `url` wins over `data`, and `data` over `id`, as in the legacy loader. A base64 data URI in `url` is how
-    0.x clients inlined bytes, so it becomes a data source, and its own media type wins over the declared
-    one, as `BinaryContent.from_data_uri` did. An `id` becomes 1.0's `file` source with no provider, which
-    `load_messages` drops with a warning since nothing can resolve it.
+    0.x clients inlined bytes, so it is decoded with `BinaryContent.from_data_uri`, as the legacy loader did,
+    into a data source; its own media type wins over the declared one. An `id` becomes 1.0's `file` source
+    with no provider, which `load_messages` drops with a warning since nothing can resolve it.
     """
     mime_type = item.get('mimeType', item.get('mime_type'))
     if not isinstance(mime_type, str):
         return None
     url = item.get('url')
-    data = item.get('data')
-    if isinstance(url, str) and url.startswith('data:') and ';base64,' in url:
-        uri_mime_type, data = url.removeprefix('data:').split(';base64,', 1)
-        mime_type, url = uri_mime_type or mime_type, None
+    if isinstance(url, str) and url.startswith('data:'):
+        try:
+            inlined = BinaryContent.from_data_uri(url)
+        except ValueError:
+            pass  # not a base64 data URI, so it stays a URL, as in the legacy loader
+        else:
+            mime_type = inlined.media_type or mime_type
+            source: dict[str, JsonValue] = {'type': 'data', 'value': inlined.base64, 'mimeType': mime_type}
+            return {'type': media_part_type(mime_type), 'source': source}
     if isinstance(url, str) and url:
-        source: dict[str, JsonValue] = {'type': 'url', 'value': url, 'mimeType': mime_type}
-    elif isinstance(data, str) and data:
+        source = {'type': 'url', 'value': url, 'mimeType': mime_type}
+    elif isinstance(data := item.get('data'), str) and data:
         source = {'type': 'data', 'value': data, 'mimeType': mime_type}
     elif isinstance(file_id := item.get('id'), str) and file_id:
         source = {'type': 'file', 'value': file_id, 'mimeType': mime_type}
