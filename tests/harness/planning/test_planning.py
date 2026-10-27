@@ -62,11 +62,8 @@ from tests.harness._recording_durability import RecordingDurability
 from tests.models.conftest import cache_breakpoints, json_objects
 
 with try_import() as anthropic_imports:
-    from anthropic.types.beta import BetaTextBlock, BetaToolUseBlock, BetaUsage
-
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
-    from tests.models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as openai_imports:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
@@ -1255,6 +1252,14 @@ class TestReminder:
             _note(),
         ]
 
+    async def test_emptied_plan_already_recorded_adds_nothing(self) -> None:
+        """Once the emptied plan is recorded, later requests get no note: there is no plan for it to point at."""
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('hi'), _plan_record('1. [ ] Do X\n(0/1 completed)')]),
+            ModelRequest(parts=[_plan_record('No plan yet.')]),
+        ]
+        assert await self._enqueued(await self._cap(), history) == []
+
     async def test_plan_before_a_compaction_boundary_is_recorded_again(self) -> None:
         """The model no longer sees what came before native compaction, so the plan is recorded after it."""
         cap = await self._cap('Do X')
@@ -1390,6 +1395,44 @@ ends with &lt;/plan-reminder
         )
         assert sum(isinstance(part, SystemPromptPart) and part.metadata == _PLAN_ORIGIN for part in tail) == 1
 
+    async def test_continuing_with_the_default_store_records_the_plan_emptied_once(self) -> None:
+        """The default store is per run, so a continued conversation starts with no plan: that's recorded once."""
+        captured: list[list[ModelMessage]] = []
+        agent: Agent[None, str] = Agent(_tool_loop_model(captured), capabilities=[Planning()])
+
+        @agent.tool_plain
+        def lookup(n: int) -> str:
+            return f'result {n}'
+
+        result_1 = await agent.run('go')
+
+        second_run: list[list[ModelMessage]] = []
+
+        def look_up_twice(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            second_run.append(messages)
+            if len(second_run) < 3:
+                return ModelResponse(parts=[ToolCallPart('lookup', {'n': 1}, tool_call_id=f'again{len(second_run)}')])
+            return ModelResponse(parts=[TextPart('still done')])
+
+        result_2 = await agent.run(
+            'continue', message_history=result_1.all_messages(), model=FunctionModel(look_up_twice)
+        )
+        first, second = (
+            [part for message in result.all_messages() for part in message.parts] for result in (result_1, result_2)
+        )
+        tail = second[len(first) :]
+        records = [
+            item.content
+            for part in tail
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+            for item in part.content
+            if isinstance(item, TextContent) and item.metadata == _PLAN_ORIGIN
+        ]
+        assert records == ['<plan-reminder>\nNo plan yet.\n</plan-reminder>']
+        # Three requests in the second run, and only the first, which records the emptied plan, gets the note.
+        assert len(second_run) == 3
+        assert sum(isinstance(part, SystemPromptPart) and part.metadata == _PLAN_ORIGIN for part in tail) == 1
+
     async def test_no_reminder_in_system_voice_but_the_note(self) -> None:
         """Nothing the model wrote reaches a system prompt: the only system part `Planning` adds is the fixed note."""
         captured: list[list[ModelMessage]] = []
@@ -1407,68 +1450,6 @@ ends with &lt;/plan-reminder
             for part in message.parts
             if isinstance(part, SystemPromptPart)
         )
-
-    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
-    async def test_anthropic_sends_every_earlier_block_again(self, allow_model_requests: None) -> None:
-        """On a model with `clear_at`, every block a request sent is sent again, unchanged, by the next one.
-
-        The plan is a text block after the tool result that changed it, and the note a `clear_at` system
-        message, so the request-scoped note stops being shown without leaving the conversation. Only the
-        breakpoint on the last message moves, by design.
-        """
-        client = MockAnthropic.create_mock(
-            [
-                completion_message(
-                    [
-                        BetaToolUseBlock(
-                            id='c1', input={'items': [{'content': 'Step A'}]}, name='write_plan', type='tool_use'
-                        )
-                    ],
-                    BetaUsage(input_tokens=10, output_tokens=1),
-                ),
-                completion_message(
-                    [BetaToolUseBlock(id='c2', input={'n': 1}, name='lookup', type='tool_use')],
-                    BetaUsage(input_tokens=10, output_tokens=1),
-                ),
-                completion_message(
-                    [BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=10, output_tokens=1)
-                ),
-            ]
-        )
-        agent: Agent[None, str] = Agent(
-            AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(anthropic_client=client)),
-            capabilities=[Planning()],
-            model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
-        )
-
-        @agent.tool_plain
-        def lookup(n: int) -> str:
-            return f'result {n}'
-
-        await agent.run('go')
-
-        bodies = get_mock_chat_completion_kwargs(client)
-        assert len(bodies) == 3
-
-        def blocks(body: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-            return [
-                (message['role'], {key: value for key, value in block.items() if key != 'cache_control'})
-                for message in body['messages']
-                for block in message['content']
-            ]
-
-        for body, later in zip(bodies, bodies[1:]):
-            assert blocks(later)[: len(blocks(body))] == blocks(body)
-        second = bodies[1]['messages']
-        user_turn, system_entry = second[-2:]
-        assert [block['type'] for block in user_turn['content']] == ['tool_result', 'text']
-        assert user_turn['content'][-1]['text'] == '<plan-reminder>\n1. [ ] Step A\n(0/1 completed)\n</plan-reminder>'
-        assert system_entry['role'] == 'system'
-        assert [block['text'] for block in system_entry['content']] == [_PLAN_NOTE]
-        # The unchanged plan isn't sent again on the third request: only another note follows the tool result.
-        third = bodies[2]['messages']
-        assert [message['role'] for message in third[-2:]] == ['user', 'system']
-        assert [block['type'] for block in third[-2]['content']] == ['tool_result']
 
     @pytest.mark.vcr
     @pytest.mark.moves_cache_prefix(
@@ -1539,11 +1520,12 @@ ends with &lt;/plan-reminder
         assert len(_plan_records(messages)) == 2
 
         def sent(body: dict[str, Any]) -> list[dict[str, Any]]:
-            """The messages a request sends, without breakpoint markers or the request-scoped note."""
+            """The messages a request sends, without breakpoint markers, and on OpenAI without the request-scoped note."""
             kept: list[dict[str, Any]] = []
             for message in json_objects(body['messages']):
                 content = message.get('content')
-                if _PLAN_NOTE in str(content):
+                # Anthropic keeps each note on the wire (`clear_at`); OpenAI sends it with its own request only.
+                if provider == 'openai' and _PLAN_NOTE in str(content):
                     continue
                 if isinstance(content, list):
                     blocks = [
@@ -1558,6 +1540,15 @@ ends with &lt;/plan-reminder
                 kept.append(message)
             return kept
 
+        if provider == 'anthropic':
+            # The plan is a text block after the tool result of the `write_plan` call, and the note a `clear_at`
+            # system message after it.
+            *_, user_turn, system_entry = json_objects(bodies[1]['messages'])
+            blocks = json_objects(user_turn['content'])
+            assert [block['type'] for block in blocks] == ['tool_result', 'text']
+            assert str(blocks[-1]['text']).startswith('<plan-reminder>\n')
+            assert system_entry['role'] == 'system' and 'clear_at' in system_entry
+            assert [block['text'] for block in json_objects(system_entry['content'])] == [_PLAN_NOTE]
         for body, later in zip(bodies, bodies[1:]):
             assert later.get('tools') == body.get('tools') and later.get('system') == body.get('system')
             assert sent(later)[: len(sent(body))] == sent(body)

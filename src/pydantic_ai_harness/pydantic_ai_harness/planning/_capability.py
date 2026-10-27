@@ -251,10 +251,13 @@ class Planning(AbstractCapability[AgentDepsT]):
         # A plan emptied after the model was shown one is recorded too, so the old plan doesn't read as current.
         plan = _plan_text(items)
         parts: list[UserPromptPart | SystemPromptPart] = []
-        if plan != latest:
+        changed = plan != latest
+        if changed:
             parts.append(UserPromptPart([TextContent(plan, metadata={'origin': _PLAN_ORIGIN})]))
-        parts.append(SystemPromptPart(_PLAN_NOTE, scope='request', metadata={'origin': _PLAN_ORIGIN}))
-        ctx.enqueue(*parts)
+        # The note goes with every request while there is a plan, and with the request that records it emptied.
+        if items or changed:
+            parts.append(SystemPromptPart(_PLAN_NOTE, scope='request', metadata={'origin': _PLAN_ORIGIN}))
+            ctx.enqueue(*parts)
         return request_context
 
     # Each plan store call is a durable operation, so recovering a durable run reuses the recorded

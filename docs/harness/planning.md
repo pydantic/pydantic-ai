@@ -24,7 +24,7 @@ The model owns the plan through the `planning` toolset. On each model request, `
 
 Each request starts with everything the previous one sent, apart from a note left out at the tail where there's no `clear_at`, so the cached prefix holds turn over turn, and on models with [preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking) the model's earlier reasoning stays valid. The cache breakpoints your model's caching settings place (such as `anthropic_cache_messages`) go before the note.
 
-Both parts carry `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1'}`. That metadata, never the text, is how `Planning` finds the latest plan it recorded, and how compaction tells the plan from something the user said. When compaction removes the latest plan, the next request records it again. A plan that's emptied after the model was shown one is recorded as `No plan yet.`, so the old plan doesn't read as current.
+Both parts carry `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1'}`. That metadata, never the text, is how `Planning` finds the latest plan it recorded, and how compaction tells the plan from something the user said. When compaction removes the latest plan, the next request records it again. A plan that's emptied after the model was shown one is recorded as `No plan yet.`, so the old plan doesn't read as current, and the note stops after that request.
 
 ## Usage
 
