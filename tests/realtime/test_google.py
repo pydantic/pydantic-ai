@@ -1052,7 +1052,7 @@ def test_output_transcription_is_the_answer_in_a_text_session(text_output: bool)
         ('models/gemini-3.8-live-extended-thinking', False),
         ('gemini-live-2.5-flash', False),
         ('gemini-live-2.5-flash-native-audio', False),
-        ('gemini-robotics-er-2-streaming-preview', True),  # not probed: no extra send
+        ('gemini-robotics-er-2-streaming-preview', False),
     ],
 )
 def test_profile_text_turns_see_video_frames(model_name: str, sees_video_frames: bool) -> None:

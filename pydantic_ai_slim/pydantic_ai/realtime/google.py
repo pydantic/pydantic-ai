@@ -441,8 +441,8 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     a typed turn doesn't, the most recent image sent in the last 10 seconds is sent again in the typed
     turn's own content, ahead of the text. Every Gemini Live model probed misses it:
     `gemini-3.1-flash-live-preview`, `gemini-3.8-live` and its extended-thinking variant answer that
-    they can't see an image, and `gemini-2.5-flash-native-audio-*` and Vertex's `gemini-live-2.5-flash`
-    misread it.
+    they can't see an image, and `gemini-2.5-flash-native-audio-*`, Vertex's `gemini-live-2.5-flash` and
+    `gemini-robotics-er-2-streaming-preview` misread it.
     """
 
 
