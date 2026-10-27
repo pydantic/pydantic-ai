@@ -253,12 +253,14 @@ class SystemPromptPart:
     """How long the model sees this prompt.
 
     * `'conversation'` (the default): from where it sits in the history for the rest of the conversation.
-    * `'request'`: only for the model request it's part of, including a continuation of that same request
-      (such as an Anthropic `pause_turn`). Once a later request exists, the model no longer sees it.
+    * `'request'`: the model sees it only in the model request it's part of, including a continuation of
+      that same request (such as an Anthropic `pause_turn`): the next request, even the next step of the same
+      run, no longer shows it.
 
-    A request-scoped prompt stays in the message history like any other part. Use one for a nudge about the
-    current moment (a reminder against instruction fade, a note that tool output was hidden, a remaining
-    budget), not for something that stays true. See
+    A request-scoped prompt stays in the message history like any other part. Use one for a value that changes
+    from one request to the next, such as a remaining budget, sent with every request. Fixed text belongs in
+    instructions, and a note the model must still act on after the next request, such as one saying the user
+    can't see a tool's output, needs the default `'conversation'` scope. See
     [request-scoped system prompts](../message-history.md#request-scoped-system-prompts) for how each provider
     renders it.
     """
@@ -4519,6 +4521,19 @@ class ModelResponse:
     provider_url: str | None = None
     """The base URL of the LLM provider that generated the response."""
 
+    canonical_system: str | None = None
+    """The system whose keys verify the stateless signed or encrypted data in this response, when it isn't evident from `provider_name`.
+
+    Set by the model from its provider's [`canonical_system`][pydantic_ai.providers.Provider.canonical_system]
+    when that differs from `provider_name`, such as `'openai'` for an `openai-codex` response. It's always set
+    when the provider's canonical system depends on its client: the `google` and `google-cloud` providers each serve
+    both the Gemini API (`'google'`) and Google Cloud (`'google-cloud'`), and `OpenAIProvider` serves OpenAI
+    (`'openai'`) or, with an `AsyncAzureOpenAI` client, Azure (`'azure'`). It applies to the parts whose `provider_name` is this response's.
+    Models read it to decide whether they can send that data, such as encrypted reasoning and thinking signatures,
+    back to their own provider: see
+    [`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts].
+    """
+
     provider_details: Annotated[
         dict[str, Any] | None,
         # `vendor_details` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
@@ -4836,14 +4851,25 @@ def _post_compaction_window_start(messages: Sequence[ModelMessage]) -> tuple[int
     return 0, 0
 
 
-def _compaction_part_is_wire_boundary(
-    part: CompactionPart, provider_name: str, *, requires_encrypted_content: bool = False
-) -> bool:
-    """Whether `provider_name` would honor `part` as a compaction boundary on the wire.
+_StatelessArtifactPredicate: TypeAlias = Callable[[ModelResponse, ModelResponsePart | None], bool]
+"""Whether a model can send back the stateless data a part in a response carries, such as
+[`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts]."""
 
-    A part is only ever a boundary for the provider that produced it — compaction data round-trips
-    to its own provider — and only while it still carries the payload that provider renders. A part
-    carrying neither payload (no encrypted content, and no summary or an empty one) is a failed
+
+def _compaction_part_is_wire_boundary(
+    response: ModelResponse,
+    part: CompactionPart,
+    accepts: _StatelessArtifactPredicate,
+    *,
+    requires_encrypted_content: bool = False,
+) -> bool:
+    """Whether a model that `accepts` the part would honor `part` in `response` as a compaction boundary on the wire.
+
+    A part is only ever a boundary for a model that can send its compaction data back — its own
+    provider, or another with the same canonical system (see
+    [`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts]), the same
+    predicate the adapter renders the part by — and only while it still carries the payload that provider
+    renders. A part carrying neither payload (no encrypted content, and no summary or an empty one) is a failed
     compaction, a documented no-op, and a boundary for nobody.
 
     `requires_encrypted_content` is the caller's own render condition, not something derivable from
@@ -4861,7 +4887,7 @@ def _compaction_part_is_wire_boundary(
     adapter would skip. That errs toward refusing a call rather than toward admitting an unseen
     tool, and unifying the two properly wants a declared per-model compaction mode (see #7255).
     """
-    if part.provider_name != provider_name:
+    if not accepts(response, part):
         return False
     if part.provider_details and 'encrypted_content' in part.provider_details:
         return True
@@ -4869,17 +4895,27 @@ def _compaction_part_is_wire_boundary(
 
 
 def _post_compaction_window_for_response(  # pyright: ignore[reportUnusedFunction]
-    messages: Sequence[ModelMessage], serving_response: ModelResponse
+    messages: Sequence[ModelMessage],
+    serving_response: ModelResponse,
+    accepts: _StatelessArtifactPredicate | None = None,
 ) -> list[ModelMessage]:
-    """The provider-exact evidence window for calls in `serving_response`.
+    """The evidence window for calls in `serving_response`, from the boundary the request that produced it honored.
 
-    Only boundaries strictly before the serving response are eligible: a provider can emit a
-    compaction part and continue generating a call in the same response, but that response was not
-    part of the request whose tools the model saw. A response without provider provenance falls
-    back to the provider-agnostic window.
+    `accepts` is the predicate the request that produced `serving_response` was trimmed by (see
+    `Model._compaction_window_predicate`), so the window starts where that request's history did. Without one,
+    only a compaction part from the serving response's own provider is a boundary. Only boundaries strictly
+    before the serving response are eligible: a provider can emit a compaction part and continue generating a
+    call in the same response, but that response was not part of the request whose tools the model saw. A
+    response without provider provenance falls back to the provider-agnostic window.
     """
-    if serving_response.provider_name is None:
+    serving_provider_name = serving_response.provider_name
+    if serving_provider_name is None:
         return post_compaction_window(messages)
+
+    def from_serving_provider(response: ModelResponse, part: ModelResponsePart | None) -> bool:
+        return part is not None and part.provider_name == serving_provider_name
+
+    accepts = accepts or from_serving_provider
 
     serving_index = next((i for i in range(len(messages) - 1, -1, -1) if messages[i] is serving_response), None)
     assert serving_index is not None, '`serving_response` must be present in `messages`'
@@ -4888,9 +4924,7 @@ def _post_compaction_window_for_response(  # pyright: ignore[reportUnusedFunctio
         if isinstance(message, ModelResponse):
             for part_index in range(len(message.parts) - 1, -1, -1):
                 part = message.parts[part_index]
-                if isinstance(part, CompactionPart) and _compaction_part_is_wire_boundary(
-                    part, serving_response.provider_name
-                ):
+                if isinstance(part, CompactionPart) and _compaction_part_is_wire_boundary(message, part, accepts):
                     return [
                         replace(message, parts=list(message.parts[part_index:])),
                         *(messages[i] for i in range(message_index + 1, len(messages))),

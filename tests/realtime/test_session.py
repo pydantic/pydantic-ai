@@ -602,6 +602,36 @@ async def test_cumulative_transcript_repeating_itself_emits_nothing() -> None:
     assert deltas == [TranscriptUpdate(index=0, speaker='user', delta='Hello', transcript='Hello')]
 
 
+async def test_cumulative_transcript_revised_to_empty_clears_the_caption() -> None:
+    """A snapshot revising the turn to nothing is a correction, and the caption view must show it as one.
+
+    An empty `transcript` is a real value, not "no transcript": treating it as missing would keep
+    rendering the text the provider just withdrew.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='hello', cumulative=True),
+            InputTranscript(text='', cumulative=True),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        events, deltas = await asyncio.gather(
+            drain_events(session), aiter_to_list(session.stream_transcripts(delta=True))
+        )
+
+    assert [event.delta for event in events if isinstance(event, PartDeltaEvent)] == [
+        SpeechPartDelta(speaker='user', transcript_delta='hello', transcript='hello'),
+        SpeechPartDelta(speaker='user', transcript_delta='', transcript=''),
+    ]
+    assert deltas == [
+        TranscriptUpdate(index=0, speaker='user', delta='hello', transcript='hello'),
+        TranscriptUpdate(index=0, speaker='user', delta='', transcript=''),
+    ]
+
+
 # One second of the default 24 kHz mono PCM16 output.
 _SECOND = 48000
 _MINUTE = 60 * _SECOND
