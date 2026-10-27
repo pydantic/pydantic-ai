@@ -45,6 +45,7 @@ from pydantic_ai.messages import (
     StructuredContent,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
+    ToolCallPart,
     ToolRetryCause,
     UserPromptPart,
     _dangling_tool_calls_by_response,  # pyright: ignore[reportPrivateUsage]
@@ -506,8 +507,7 @@ def _take_new_turn(
             f'or reload the conversation from the server.'
         )
 
-    last_stored_response = max((i for i, m in enumerate(history) if isinstance(m, ModelResponse)), default=-1)
-    pending = {call.tool_call_id for call in _dangling_tool_calls_by_response(history).get(last_stored_response, [])}
+    pending = {call.tool_call_id for call in pending_tool_calls(history)}
     kept: list[ModelMessage] = []
     dropped = 0
     for message in new_turn:
@@ -525,14 +525,29 @@ def _take_new_turn(
         elif parts:
             kept.append(replace(message, parts=parts))
     if dropped:
-        warnings.warn(
-            f'{dropped} client-submitted tool result(s) were dropped because they answer no tool call that '
-            f"`message_history` is waiting on. With `manage_message_history='server'`, the client can only "
-            f'return results for the tool calls at the end of the stored history.',
-            UserWarning,
-            stacklevel=4,
-        )
+        warn_dropped_tool_results(dropped, stacklevel=5)
     return _ServerHeldTurn(history, _drop_compaction_parts(kept), cut_at)
+
+
+def pending_tool_calls(message_history: Sequence[ModelMessage]) -> list[ToolCallPart]:
+    """The tool calls of `message_history`'s last response that no request after it answers."""
+    history = list(message_history)
+    last_response = max((i for i, m in enumerate(history) if isinstance(m, ModelResponse)), default=-1)
+    return _dangling_tool_calls_by_response(history).get(last_response, [])
+
+
+def warn_dropped_tool_results(dropped: int, *, stacklevel: int) -> None:
+    """Warn that `manage_message_history='server'` dropped client tool results for calls that aren't pending.
+
+    `stacklevel` counts from the caller, as `warnings.warn` does.
+    """
+    warnings.warn(
+        f'{dropped} client-submitted tool result(s) were dropped because they answer no tool call that '
+        f"`message_history` is waiting on. With `manage_message_history='server'`, the client can only "
+        f'return results for the tool calls at the end of the stored history.',
+        UserWarning,
+        stacklevel=stacklevel,
+    )
 
 
 @runtime_checkable
@@ -640,8 +655,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
       as on a regenerate, an edit or a retried submit, `message_history` is cut just before that
       message, so the run replaces that turn instead of adding a copy. Tool results stored alongside
       that message stay. Otherwise the new turn is appended, except that a regenerate of a message
-      `message_history` doesn't hold is rejected with a protocol error event, as the client then holds
-      a different conversation than the server.
+      `message_history` doesn't hold is rejected with a protocol error event: the server never stored
+      that message (its run failed or was stopped), or the client holds a different conversation than
+      the server.
     - A client tool result is kept only if it answers a tool call that is still unanswered at the end
       of `message_history`. Others are dropped with a warning.
     - Tool approvals still come from the request, and the new turn is sanitized as usual.
@@ -915,19 +931,31 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """
         return False
 
+    def _server_held_client_messages(self, message_history: Sequence[ModelMessage]) -> list[ModelMessage]:
+        """The client's messages under `manage_message_history='server'`, loaded against the stored history.
+
+        A protocol whose messages only load in the context of earlier ones, as an AG-UI tool result needs
+        the call it answers, can fill that context in from `message_history` for a client that sends only
+        its new messages.
+        """
+        return self.messages
+
     def _run_message_history(
         self, message_history: Sequence[ModelMessage] | None, deferred_tool_results: DeferredToolResults | None
     ) -> list[ModelMessage]:
         """The history to run on: `message_history` and the client's messages, per `manage_message_history`."""
-        frontend_messages = self.messages
         if self.manage_message_history == 'server':
-            turn = _take_new_turn(message_history or [], frontend_messages, regenerate=self._regenerates())
+            stored = message_history or []
+            client_messages = self._server_held_client_messages(stored)
+            turn = _take_new_turn(stored, client_messages, regenerate=self._regenerates())
             message_history, frontend_messages = turn.history, turn.new_turn
-        elif message_history:
-            _warn_on_repeated_client_messages(message_history, frontend_messages)
-            # A client-supplied compaction part would trim the trusted server-side history off the
-            # wire, so only the server's own boundaries are honored. See `_drop_compaction_parts`.
-            frontend_messages = _drop_compaction_parts(frontend_messages)
+        else:
+            frontend_messages = self.messages
+            if message_history:
+                _warn_on_repeated_client_messages(message_history, frontend_messages)
+                # A client-supplied compaction part would trim the trusted server-side history off the
+                # wire, so only the server's own boundaries are honored. See `_drop_compaction_parts`.
+                frontend_messages = _drop_compaction_parts(frontend_messages)
         # `sanitize_messages` must be the last step that drops or merges client messages. Its final step
         # strips unresolved tool calls from the end of the history, and a run without a new prompt
         # executes the tool calls of whatever response ends up last. Dropping or merging a message after

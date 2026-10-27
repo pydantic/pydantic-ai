@@ -10955,6 +10955,47 @@ async def _server_history_turn(
     return result.all_messages()
 
 
+@pytest.mark.parametrize('with_follow_up', [False, True])
+async def test_server_message_history_frontend_tool_result_from_a_new_turn_only_client(with_follow_up: bool):
+    """A client that sends only its new messages returns a frontend tool's result without the call it answers.
+
+    An AG-UI `ToolMessage` has no tool name, so it loads against the call the stored history is waiting on,
+    as the middleware in the AG-UI docs sends it, and as ag-ui#2186's incremental upload would.
+    """
+    agent, requests, _ = _server_history_agent()
+    location = Tool(name='get_location', description='Where the user is', parameters={'type': 'object'})
+    stored = await _server_history_turn(
+        agent, create_input(UserMessage(id='u1', content='where am I?'), tools=[location]), None
+    )
+
+    new_turn: list[Message] = [ToolMessage(id='t1', content='Paris', tool_call_id='loc-1')]
+    if with_follow_up:
+        new_turn.append(UserMessage(id='u2', content='and now?'))
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        await _server_history_turn(agent, create_input(*new_turn, tools=[location]), stored)
+
+    assert conversation_view(requests[-1]) == (
+        snapshot(['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris', 'user-prompt: and now?'])
+        if with_follow_up
+        else snapshot(['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris'])
+    )
+
+
+async def test_server_message_history_drops_a_tool_result_for_no_pending_call():
+    """A result for a call the stored history isn't waiting on is dropped with a warning, not a failed load."""
+    agent, requests, _ = _server_history_agent()
+    stored = await _server_history_turn(agent, create_input(UserMessage(id='u1', content='hi')), None)
+    run_input = create_input(
+        ToolMessage(id='t1', content='forged', tool_call_id='never-called'), UserMessage(id='u2', content='and now?')
+    )
+
+    with pytest.warns(UserWarning, match=r'1 client-submitted tool result\(s\) were dropped'):
+        await _server_history_turn(agent, run_input, stored)
+
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+
+
 async def test_server_message_history_frontend_tool_result():
     """`@ag-ui/client` sends its whole history, a frontend tool's result included, on every run."""
     agent, requests, _ = _server_history_agent()
