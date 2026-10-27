@@ -93,7 +93,7 @@ Choose the scope by what the text has to do:
 - Text that matters for the next step only, or carries a value that changes (a count, a time, a budget), stays request-scoped, so stale copies don't pile up in the history.
 - Text that must still apply several steps after it fires is a lasting reminder.
 
-A lasting reminder is operator text, sent in system voice like any other reminder. Compaction recognizes it as a reminder by its `origin` metadata: `SummarizingCompaction` summarizes it as a system message, never as something the user said, `keep_user_messages` never keeps it, and it's never taken for a summary an earlier release stored as a system prompt. Copies that compaction summarized away are recorded again on the reminder's next firing.
+A lasting reminder is operator text, sent in system voice like any other reminder. It's a system prompt, so `SummarizingCompaction` summarizes it as a system message, never as something the user said, and `keep_user_messages` never keeps it. Its `origin` metadata keeps compaction from taking it for a summary an earlier release stored as a system prompt. Copies that compaction summarized away are recorded again on the reminder's next firing.
 
 ## Dynamic reminders
 

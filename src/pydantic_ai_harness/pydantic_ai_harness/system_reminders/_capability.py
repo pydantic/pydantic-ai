@@ -129,7 +129,9 @@ class Reminder(Generic[AgentDepsT]):
     """
 
     scope: Literal['conversation', 'request'] = 'request'
-    """How long each firing stays in front of the model, named as in [`SystemPromptPart.scope`][pydantic_ai.messages.SystemPromptPart.scope].
+    """How long each firing stays in front of the model.
+
+    Named as in [`SystemPromptPart.scope`][pydantic_ai.messages.SystemPromptPart.scope], which it sets.
 
     `'request'` (the default) shows it for the request it fires on only. `'conversation'` records each firing as a
     lasting system prompt, sent again on every later request, so the history gains one part per firing: with
@@ -552,10 +554,11 @@ def _reminder_parts(texts: Sequence[str | _StaticText | GeneratedReminder]) -> l
     """The parts a firing enqueues, in the reminders' configured order, each carrying the same origin metadata.
 
     Reminders in the framework's or the operator's own wording are system prompts of their scope (request-scoped
-    unless a `Reminder` asks for `'conversation'`), consecutive ones of the same scope sharing one. A reminder that quotes content it didn't write, such as a model's generated reminder,
-    is a record of two parts kept together in the history: the framework's note in system voice and the
-    quoted content on the user channel. Neither is request-scoped, so no later request, compaction or
-    summary sees the quoted content without the note that says what it is.
+    unless a `Reminder` asks for `'conversation'`), consecutive ones of the same scope sharing one. A reminder
+    that quotes content it didn't write, such as a model's generated reminder, is a record of two parts kept
+    together in the history: the framework's note in system voice and the quoted content on the user channel.
+    Neither is request-scoped, so no later request, compaction or summary sees the quoted content without the
+    note that says what it is.
     """
     parts: list[SystemPromptPart | TextContent] = []
     plain: list[str] = []
