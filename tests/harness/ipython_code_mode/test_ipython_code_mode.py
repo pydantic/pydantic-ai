@@ -426,6 +426,9 @@ def book(*, trip: Trip, travellers: int) -> str:
         result = await agent.run('Run the code', deps='alice')
         assert _returns(result.all_messages()) == ['alice']
 
+    @pytest.mark.moves_cache_prefix(
+        reason='a revealed tool joins the `run_code` description; `IPythonCodeMode` has no `dynamic_catalog`'
+    )
     async def test_tools_tool_search_has_not_revealed_stay_off_the_kernel(self, kernel: IPythonKernel) -> None:
         def forecast(city: str) -> str:
             """Get the weather forecast for a city."""
