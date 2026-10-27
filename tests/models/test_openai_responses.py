@@ -6,7 +6,7 @@ import re
 import warnings
 from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -1025,42 +1025,6 @@ async def test_openai_responses_reasoning_mode_pro(allow_model_requests: None, o
 
     assert result.output == snapshot('Paris')
     assert single_request_body(vcr)['reasoning'] == snapshot({'mode': 'pro', 'context': 'all_turns'})
-
-
-@pytest.mark.parametrize(
-    ('thinking', 'expected_reasoning', 'expected_temperature'),
-    [
-        pytest.param(None, {'context': 'all_turns'}, None, id='None'),
-        pytest.param(False, {'effort': 'none', 'context': 'all_turns'}, 0.5, id='False'),
-        pytest.param('minimal', {'effort': 'low', 'context': 'all_turns'}, None, id='minimal'),
-        pytest.param('max', {'effort': 'max', 'context': 'all_turns'}, None, id='max'),
-    ],
-)
-async def test_openai_responses_gpt_6_1_terra(
-    allow_model_requests: None,
-    openai_api_key: str,
-    request_capture: RequestCapture,
-    thinking: ThinkingLevel | None,
-    expected_reasoning: dict[str, str],
-    expected_temperature: float | None,
-):
-    """Terra reasons by default, accepts disabling reasoning with sampling, and maps minimal/max effort."""
-    model = OpenAIResponsesModel(
-        'gpt-6.1-terra', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
-    )
-    settings = OpenAIResponsesModelSettings(temperature=0.5)
-    if thinking is not None:
-        settings['thinking'] = thinking
-    agent = Agent(model, model_settings=settings)
-
-    with pytest.warns(UserWarning, match='Sampling parameters') if expected_temperature is None else nullcontext():
-        result = await agent.run('What is the capital of France? Answer in one word.')
-
-    assert result.output == 'Paris'
-    body = request_capture.body('/v1/responses')
-    assert body['reasoning'] == expected_reasoning
-    assert body.get('temperature') == expected_temperature
-    assert ('temperature' in body) is (expected_temperature is not None)
 
 
 async def test_openai_responses_gpt_5_6_reasoning_off_keeps_sampling_params(

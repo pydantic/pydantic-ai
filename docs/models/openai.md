@@ -40,7 +40,7 @@ agent = Agent('{{ openai:medium }}')
     For voice agents, use a GPT-Live or `gpt-realtime` model with a [realtime session](../realtime/openai.md) instead.
 
 To pin to the legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead, use the `'openai-chat:'` prefix, which resolves to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
-For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. The current endpoint also accepts such calls for `gpt-6.1-terra`, but [OpenAI documents tool calling through Responses only](https://developers.openai.com/api/docs/models/gpt-6.1-terra), so use Responses for its tool calls. Use Responses whenever you need reasoning and tools together. `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for function calling with them.
+For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. [OpenAI documents tool calling for `gpt-6.1-terra` through Responses only](https://developers.openai.com/api/docs/models/gpt-6.1-terra), so use Responses for its tool calls. Use Responses whenever you need reasoning and tools together. `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for function calling with them.
 
 Or initialise the model directly with just the model name:
 
