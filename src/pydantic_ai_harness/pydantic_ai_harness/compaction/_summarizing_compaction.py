@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from string import Formatter
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
 
+from pydantic_ai._framing import neutralize_tags
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -290,6 +291,7 @@ def format_transcript(
                             part.model_response(),
                             cause=part.retry.cause,
                             max_chars=tool_return_max_chars,
+                            core_framed=True,
                         )
                     )
                 elif (
@@ -317,20 +319,22 @@ _TRANSCRIPT_TAG_OPENER = re.compile(
 )
 """The `<` of an opening or closing tag of the summarizer transcript's own markup.
 
-Any case, whitespace around the `/`, attributes and a trailing `/>` all match, matching the framing
-helper in #10547; a longer tag name that merely starts with one of these doesn't. The optional `/` is
-grouped with the whitespace after it, so a long run of whitespace with no tag name after it is
-scanned once rather than split every possible way.
+Any case, whitespace around the `/`, attributes and a trailing `/>` all match, as `pydantic_ai._framing`
+matches core's framing tags, which `neutralize_tags` escapes; a longer tag name that merely starts with
+one of these doesn't. The optional `/` is grouped with the whitespace after it, so a long run of
+whitespace with no tag name after it is scanned once rather than split every possible way.
 """
 
 
 def _neutralize_transcript_tags(content: str) -> str:
-    """Escape the transcript's own tags in *content*.
+    """Escape the transcript's own tags and every framing tag core writes in *content*.
 
-    Content then can't open or close a message, the transcript, or the previous summary.
+    Content then can't open or close a message, the transcript, or the previous summary, and a
+    `<system>`, `<context>` or `<tool_result>` tag in it stays inside its element.
     """
-    # TODO(#10547): switch to `_framing.wrap()` once it lands.
-    return _TRANSCRIPT_TAG_OPENER.sub('&lt;', content)
+    # TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
+    # the transcript's tags as framing tags there.
+    return _TRANSCRIPT_TAG_OPENER.sub('&lt;', neutralize_tags(content))
 
 
 def _message_element(
@@ -340,15 +344,18 @@ def _message_element(
     name: str | None = None,
     cause: str | None = None,
     max_chars: int | None = None,
+    core_framed: bool = False,
 ) -> str:
     """One transcript entry: *content* in a `<message>` element tagged with its *role*, for tools *name*, and for retry feedback *cause*.
 
     *content* is escaped before it is cut to *max_chars*, so the cap bounds what the summarizer receives.
+    *core_framed* content was framed by core, which escaped the framing tags in its body, so its own frame
+    stays as written and only the transcript's tags are escaped.
     """
     attrs = ''.join(
         f' {key}="{html.escape(value)}"' for key, value in (('name', name), ('cause', cause)) if value is not None
     )
-    body = _neutralize_transcript_tags(content)
+    body = _TRANSCRIPT_TAG_OPENER.sub('&lt;', content) if core_framed else _neutralize_transcript_tags(content)
     if max_chars is not None:
         body = _truncate_with_marker(body, max_chars)
     return f'<message role="{role}"{attrs}>\n{body}\n</message>'
