@@ -70,7 +70,7 @@ Append whenever you make a decision the issue didn't already spell out:
   --decision "<one-line decision>" \
   --why "<one-line why>" \
   --source "<source url — mandatory>" \
-  [--iter N] [--supersedes "<earlier title>"]
+  [--iter N] [--supersedes "<earlier title>"] [--session ID]
 # Positional compat: title decision why source [iter] [supersedes]
 # — do NOT put iter as the second arg.
 ```
@@ -82,6 +82,7 @@ Entry shape (script writes this):
 - Decision: <one line>
 - Why: <one line>
 - Source: <link — mandatory>
+- Session: <harness session id, if available>
 - Supersedes: <earlier title, if applicable>
 ```
 
