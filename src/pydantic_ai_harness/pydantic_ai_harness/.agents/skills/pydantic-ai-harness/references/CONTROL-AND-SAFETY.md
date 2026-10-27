@@ -583,8 +583,8 @@ output validators, and gets no deps.
 
 Gotchas: judge usage counts against the run's `usage` and `usage_limits` (a tick that cannot fit
 the request limit is skipped); one evaluation in flight per judge (a slow judge skips ticks); judge
-failures are raised on the run at the next tick or run end (use a `FallbackModel` in a custom
-agent to degrade); rejected with `UserError` inside Temporal/DBOS/Prefect durable execution. It
+failures are raised on the run at the next tick or run end (give a custom agent the `ModelFallback`
+capability to degrade); rejected with `UserError` inside Temporal/DBOS/Prefect durable execution. It
 observes and steers only; enforcement belongs to guardrails. Try `SystemReminders` first.
 
 `TrajectoryJudge(model='openai:...')` builds its judge `Agent` in the constructor, so defining it

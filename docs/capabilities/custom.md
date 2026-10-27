@@ -401,7 +401,7 @@ An [`override(model=...)`][pydantic_ai.agent.AbstractAgent.override] still wins 
 
 Later model contributions override earlier ones. If [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] leaves the capability unchanged, its bootstrap selection is reused on step one; if it returns a replacement with a different selector, that selector makes a new step-one selection.
 
-Fallback is complementary to selection: return a configured [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] when request failures should be retried on another model.
+Fallback is complementary to selection: add [`ModelFallback`](model-fallback.md) to the agent when request failures should be retried on another model, and it falls back from whichever model was selected.
 
 ## Resolving model IDs
 
