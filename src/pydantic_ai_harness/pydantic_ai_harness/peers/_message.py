@@ -2,25 +2,21 @@
 
 from __future__ import annotations
 
-import html
-
 from pydantic import TypeAdapter, ValidationError
 
+from pydantic_ai.framing import register_tag, wrap
 from pydantic_ai.messages import ModelRequestPart, TextContent, UserPromptPart
 from pydantic_ai_harness._peer_message import PEER_MESSAGE_ORIGIN
-from pydantic_ai_harness._provenance import neutralize_harness_tags, tagged_text
+from pydantic_ai_harness._provenance import tagged_text
 from pydantic_ai_harness.peers._types import PeerMessage
 
 _MESSAGE = TypeAdapter(PeerMessage)
+_PEER_MESSAGE = register_tag('peer_message')
 
 
 def make_peer_message(message: PeerMessage) -> UserPromptPart:
     """Frame untrusted peer text using core's tag escaper and retain its typed provenance in metadata."""
-    # TODO: register this data frame with the public framing API once #10957 lands.
-    sender = html.escape(message.sender.handle)
-    message_id = html.escape(message.id)
-    body = neutralize_harness_tags(message.text)
-    text = f'<peer_message sender="{sender}" id="{message_id}">\n{body}\n</peer_message>'
+    text = wrap(_PEER_MESSAGE, message.text, sender=message.sender.handle, id=message.id)
     return UserPromptPart(
         [
             TextContent(

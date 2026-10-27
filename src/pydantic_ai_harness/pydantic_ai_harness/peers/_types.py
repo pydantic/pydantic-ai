@@ -35,6 +35,7 @@ class PeerInfo:
     branch: str = ''
     """Its Git branch, if known."""
     status: PeerStatus = 'idle'
+    """The peer's current activity, independent of whether it accepts messages."""
     waiting_for: str = ''
     """With `status='waiting'`, what the peer is waiting for."""
     status_since: datetime | None = None
@@ -50,8 +51,11 @@ class PeerSender:
     """Identity supplied by the network, not the agent's tool arguments."""
 
     id: str
+    """The sender's `PeerInfo.id`, assigned by the host."""
     handle: str
+    """The sender's short display name at send time."""
     workspace: str = ''
+    """The sender's working directory, if known."""
 
 
 @dataclass(frozen=True, kw_only=True)

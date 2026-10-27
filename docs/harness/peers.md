@@ -5,7 +5,7 @@ description: "Let an agent discover and message other agent sessions without sta
 
 # Peers
 
-Let an agent discover and message other agent sessions without starting or controlling their runs. Use `Peers` when separately owned sessions need to exchange context, rather than delegate work to a child agent.
+Let an agent discover and message other agent sessions without starting or controlling their runs. Use [Peers][pydantic_ai_harness.peers.Peers] when separately owned sessions need to exchange context, rather than delegate work to a child agent.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/peers/)
 
@@ -13,7 +13,7 @@ Let an agent discover and message other agent sessions without starting or contr
 
 ## In-process example
 
-[`InMemoryPeerNetwork`][pydantic_ai_harness.peers.InMemoryPeerNetwork] connects sessions in one application. Give each recipient a [`PeerInbox`][pydantic_ai_harness.peers.PeerInbox], and pass that same inbox both to `join()` and to its [`Peers`][pydantic_ai_harness.Peers] capability. Joining without an inbox is send-only: incoming messages are rejected until the host joins with an explicit inbox.
+[InMemoryPeerNetwork][pydantic_ai_harness.peers.InMemoryPeerNetwork] connects sessions in one application. Give each recipient a [PeerInbox][pydantic_ai_harness.peers.PeerInbox], and pass that same inbox both to `join()` and to its [Peers][pydantic_ai_harness.Peers] capability. Joining without an inbox is send-only: incoming messages are refused.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -40,17 +40,17 @@ Sending to an idle peer queues a message but does not start that peer's run. The
 
 ## Transport and persistence
 
-`InMemoryPeerNetwork` is an in-process example, not a cross-process transport. For sessions across processes or machines, implement `PeerNetwork.peers()` and `PeerNetwork.send()` in the host. The host owns peer identity, routing, authentication, and any user-visible notifications; the model supplies the recipient, text, and optional `reply_to` ID. A [`PeerNetwork`][pydantic_ai_harness.peers.PeerNetwork] returns other peers as [`PeerInfo`][pydantic_ai_harness.peers.PeerInfo] objects from `peers()`. `send()` delivers to the recipient and returns a [`PeerDelivery`][pydantic_ai_harness.peers.PeerDelivery] with status `delivered`, `queued`, or `refused`; it raises `LookupError` for a peer that disappeared. Implement [`PeerSender`][pydantic_ai_harness.peers.PeerSender] to send a message to one recipient.
+[InMemoryPeerNetwork][pydantic_ai_harness.peers.InMemoryPeerNetwork] is an in-process example, not a cross-process transport. For sessions across processes or machines, implement [PeerNetwork.peers()][pydantic_ai_harness.peers.PeerNetwork.peers] and [PeerNetwork.send()][pydantic_ai_harness.peers.PeerNetwork.send] in the host. The host owns peer identity, routing, authentication, and any user-visible notifications; the model supplies the recipient, text, and optional `reply_to` ID. [PeerNetwork.peers()][pydantic_ai_harness.peers.PeerNetwork.peers] returns other peers as [PeerInfo][pydantic_ai_harness.peers.PeerInfo] objects. [PeerNetwork.send()][pydantic_ai_harness.peers.PeerNetwork.send] builds a [PeerMessage][pydantic_ai_harness.peers.PeerMessage] whose `sender` is a [PeerSender][pydantic_ai_harness.peers.PeerSender] supplied by the host from its own authenticated identity, never from the model's tool arguments. It delivers the message and returns a [PeerDelivery][pydantic_ai_harness.peers.PeerDelivery] with status `delivered`, `queued`, or `refused`; it raises `LookupError` for a peer that disappeared.
 
-`PeerInbox(path=...)` saves pending messages to an atomically replaced JSON file at a host-chosen per-recipient path. Use a private directory for that path. An inbox without `path` keeps messages only in memory. A file-backed inbox does not provide a network or coordinate simultaneous writers across processes. Pass the same inbox to the recipient's transport endpoint and `Peers(inbox=...)`; without an inbox bound to `Peers`, the capability provides sending tools but does not attach a recipient inbox to the run.
+`PeerInbox(path=...)` saves pending messages to an atomically replaced JSON file at a host-chosen per-recipient path. Use a private directory for that path. An inbox without `path` keeps messages only in memory. A file-backed inbox does not provide a network or coordinate simultaneous writers across processes. Pass the same inbox to the recipient's transport endpoint and `Peers(inbox=...)`; without an inbox bound to [Peers][pydantic_ai_harness.peers.Peers], the capability provides sending tools but does not attach a recipient inbox to the run.
 
-Incoming text is framed as untrusted peer data on the user channel, with typed provenance metadata. It is not an instruction from the receiving user and cannot grant approval. A [`PeerMessage`][pydantic_ai_harness.peers.PeerMessage] carries that data. [`read_peer_message`][pydantic_ai_harness.peers.read_peer_message] reads a peer message from a tagged message part by its metadata, not by matching the displayed text. Native message serialization preserves that metadata; adapters that discard `TextContent.metadata` lose the provenance marker on round-trip.
+Incoming text is framed as untrusted peer data on the user channel, with typed provenance metadata. It is not an instruction from the receiving user and cannot grant approval. [read_peer_message(part)][pydantic_ai_harness.peers.read_peer_message] reads a [PeerMessage][pydantic_ai_harness.peers.PeerMessage] from a tagged message part by its metadata, not by matching the displayed text. Native message serialization preserves that metadata; adapters that discard `TextContent.metadata` lose the provenance marker on round-trip.
 
 ## Limits and scope
 
-`MAX_MESSAGE_BYTES` (16384 UTF-8 bytes) and `MAX_PENDING` (50) are public transport contract defaults. A host transport can use them to reject oversized wire messages and bound incoming queues before messages reach `PeerInbox.receive`. `Peers` also defaults to `max_messages_per_run=10` and `max_listed=30`. Only delivered or queued messages count toward `max_messages_per_run`. Sending the same text to the same peer twice in one run, or exceeding the limit, tells the model without sending the message. All limits must be positive.
+[MAX_MESSAGE_BYTES][pydantic_ai_harness.peers.MAX_MESSAGE_BYTES] (16384 UTF-8 bytes) and [MAX_PENDING][pydantic_ai_harness.peers.MAX_PENDING] (50) are public transport contract defaults. A host transport can use them to reject oversized wire messages and bound incoming queues before messages reach [PeerInbox.receive()][pydantic_ai_harness.peers.PeerInbox.receive]. [Peers][pydantic_ai_harness.peers.Peers] also defaults to `max_messages_per_run=10` and `max_listed=30`. Only delivered or queued messages count toward `max_messages_per_run`. Sending the same text to the same peer twice in one run, or exceeding the limit, tells the model without sending the message. All limits must be positive. See the [peer API reference](#api-reference) for the host-facing transport types and helpers.
 
-Unlike [Subagents](subagents.md), `Peers` does not create a child run, forward dependencies or usage, or wait for another agent's result. Its tools run as ordinary function tools, so core's tool-call spans cover them; the capability adds no dedicated telemetry spans.
+Unlike [Subagents](subagents.md), [Peers][pydantic_ai_harness.peers.Peers] does not create a child run, forward dependencies or usage, or wait for another agent's result. Its tools run as ordinary function tools, so core's tool-call spans cover them; the capability adds no dedicated telemetry spans.
 
 ## API reference
 
