@@ -78,7 +78,11 @@ class ConversationSummary:
     A content save of an existing conversation clears it.
     """
     forked_from: str | None = None
-    """The ID of the conversation this one was copied from, which `listing(forked_from=...)` finds it by."""
+    """The `id` of the saved conversation this one was copied from; `None` when the application recorded none.
+
+    It names the whole source conversation, not a message in it. The store only saves it; the application
+    decides which copies record it, and `listing(forked_from=...)` finds those.
+    """
 
 
 def ensure_inactive(summary: ConversationSummary) -> None:
@@ -279,7 +283,7 @@ class SqliteConversationStore:
         """Page summaries without loading transcripts. Search includes title, tags and conversation text.
 
         `archived=False` leaves archived conversations out, `True` lists only those, and `None` lists both.
-        `forked_from` lists only the forks of that conversation.
+        `forked_from` lists only conversations whose `forked_from` is that ID.
         """
         if limit < 1 or offset < 0:
             raise ValueError('limit must be positive and offset nonnegative')
