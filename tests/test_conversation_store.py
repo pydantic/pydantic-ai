@@ -714,7 +714,7 @@ async def test_a_window_carried_into_a_run_with_instructions_appends_to_the_whol
 
 
 async def _no_history_read() -> None:
-    raise AssertionError('the history was read')
+    raise AssertionError('the history was read')  # pragma: no cover
 
 
 async def test_a_serialized_window_appends_to_the_whole_conversation() -> None:
