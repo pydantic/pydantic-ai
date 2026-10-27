@@ -196,15 +196,15 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """
 
     anthropic_count_tokens_accepts_server_tools: bool
-    """Whether the `count_tokens` endpoint accepts the web search, web fetch, code execution and tool search tools.
-    Default: `False`.
+    """Whether the `count_tokens` endpoint accepts the web search, web fetch, code execution, tool search and advisor
+    tools. Default: `False`.
 
-    When True, `AnthropicModel.count_tokens` sends those tools as the real request does, so the count matches its
-    `input_tokens`. Without them, the count leaves out their definitions, and the Anthropic API rejects a count whose
-    function tools are all deferred with a 400. When the provider's profile doesn't set it, `AnthropicModel` turns it
-    on for the `AsyncAnthropic` client, which serves the Anthropic API, Pydantic AI Gateway and other proxies, and
-    leaves it off for the Bedrock, Vertex AI and Foundry clients, whose count endpoints haven't been verified to
-    accept them.
+    When True, `AnthropicModel.count_tokens` sends those tools, and the advisor's history blocks, as the real request
+    does, so the count matches its `input_tokens`. Without them, the count leaves out their definitions, and the
+    Anthropic API rejects a count whose function tools are all deferred with a 400. When the provider's profile doesn't
+    set it, `AnthropicModel` turns it on for the `AsyncAnthropic` client, which serves the Anthropic API, Pydantic AI
+    Gateway and other proxies, and leaves it off for the Bedrock, Vertex AI and Foundry clients, whose count endpoints
+    haven't been verified to accept them.
     """
 
 

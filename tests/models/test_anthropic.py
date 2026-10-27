@@ -135,6 +135,7 @@ with try_import() as imports_successful:
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
         AsyncStream,
+        Omit,
         omit as OMIT,
     )
     from anthropic._models import construct_type
@@ -208,7 +209,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic._errors import is_expired_container_error
     from pydantic_ai.models.anthropic._response import map_usage
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-    from pydantic_ai.profiles.anthropic import anthropic_model_profile
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -9375,30 +9376,49 @@ async def test_anthropic_advisor_history_dropped_when_absent():
     assert [b.get('type') for b in blocks] == snapshot(['text'])
 
 
-async def test_anthropic_advisor_history_dropped_for_count_tokens(allow_model_requests: None):
-    """`count_tokens` strips the advisor tool from the wire, so advisor history must be stripped too.
+@pytest.mark.parametrize(
+    'accepts_server_tools,betas,assistant_block_types',
+    [
+        pytest.param(
+            True,
+            ['advisor-tool-2026-03-01'],
+            ['server_tool_use', 'advisor_tool_result', 'text'],
+            id='flag-on',
+        ),
+        pytest.param(False, OMIT, ['text'], id='flag-off'),
+    ],
+)
+async def test_anthropic_advisor_history_on_count_tokens(
+    allow_model_requests: None,
+    accepts_server_tools: bool,
+    betas: list[str] | Omit,
+    assistant_block_types: list[str],
+):
+    """`count_tokens` keeps the advisor tool and its history blocks together, or drops both.
 
-    The advisor tool is a server tool that `count_tokens` rejects, so `_messages_count_tokens`
-    drops it from the outgoing `tools`. Replaying advisor call/result history blocks without the
-    tool definition would 400, so mapping must run with advisor inactive even though the request
-    params still carry the `AdvisorTool` (which stays active on the real `/v1/messages` request).
+    Where `anthropic_count_tokens_accepts_server_tools` is on, the advisor tool and its call/result
+    blocks reach the count as they reach `/v1/messages`. Where it is off, the tool is dropped, and its
+    history blocks must be dropped with it: replaying them without the tool definition would 400.
+    A mock client, since the flag-off side belongs to clients that can't be recorded here;
+    `test_anthropic_count_tokens_with_advisor_history` records the flag-on side.
     """
     mock_client = cast(AsyncAnthropic, MockAnthropic())
-    m = AnthropicModel('claude-sonnet-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(
+        'claude-sonnet-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        profile=AnthropicModelProfile(anthropic_count_tokens_accepts_server_tools=accepts_server_tools),
+    )
     mrp = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-opus-4-8')])
 
     await m.count_tokens(_advisor_history(m), None, mrp)
 
     count_tokens_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    # The advisor beta header is only added when the advisor tool reaches the wire; its absence
-    # (`betas` stays unset/`Omit`) confirms the tool was stripped from the count-tokens request...
-    assert count_tokens_kwargs.get('betas', OMIT) is OMIT
-    # ...so the advisor history blocks it would otherwise require must be stripped too.
+    assert count_tokens_kwargs.get('betas', OMIT) == betas
     assistant_content = cast(
         list[dict[str, Any]],
         next(msg['content'] for msg in count_tokens_kwargs['messages'] if msg['role'] == 'assistant'),
     )
-    assert [block.get('type') for block in assistant_content] == snapshot(['text'])
+    assert [block.get('type') for block in assistant_content] == assistant_block_types
 
 
 async def test_anthropic_advisor_dangling_call_replayed_when_active():
@@ -14695,6 +14715,57 @@ async def test_anthropic_count_tokens_with_native_tools(
         },
         wire_tool,
     ]
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'executor,advisor_model,result_type,input_tokens',
+    [
+        pytest.param('claude-sonnet-5-5', 'claude-opus-5-5', 'advisor_redacted_result', 1278, id='redacted'),
+        pytest.param('claude-haiku-5-5', 'claude-opus-4-8', 'advisor_result', 1237, id='plaintext'),
+    ],
+)
+async def test_anthropic_count_tokens_with_advisor_history(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    executor: str,
+    advisor_model: str,
+    result_type: str,
+    input_tokens: int,
+):
+    """`count_tokens` replays two advisor turns as the real request does, and matches its `input_tokens`.
+
+    The history comes from two runs that each consult the advisor, so it carries two advisor call and
+    result pairs. The count sends the advisor tool and those blocks, with the advisor's own result shape
+    (encrypted for a 5.5 advisor, plaintext for Opus 4.8). `max_tokens=1` stops the real request before
+    the executor can consult the advisor again.
+    """
+    m = anthropic_model(executor, capture=True)
+    advisor = AdvisorTool(model=advisor_model, max_tokens=1024)
+    agent = Agent(m, capabilities=[NativeTool(advisor)])
+    first = await agent.run("What's 2+2? Consult your advisor first.")
+    second = await agent.run(
+        'And what is that plus one? Consult your advisor again.', message_history=first.all_messages()
+    )
+
+    messages = [*second.all_messages(), ModelRequest.user_text_prompt('And that times two?')]
+    params = ModelRequestParameters(native_tools=[advisor])
+    settings: AnthropicModelSettings = {'max_tokens': 1}
+    usage = await m.count_tokens(messages, settings, params)
+    response = await m.request(messages, settings, params)
+
+    assert usage.input_tokens == response.usage.input_tokens == input_tokens
+    count_body = request_capture.body('/v1/messages/count_tokens')
+    request_body = request_capture.bodies('/v1/messages')[-1]
+    assert count_body['tools'] == request_body['tools']
+    assert count_body['messages'] == request_body['messages']
+    result_types = [
+        content.get('type')
+        for block in content_blocks(count_body, 'advisor_tool_result')
+        if isinstance(content := block['content'], dict)
+    ]
+    assert result_types == [result_type, result_type]
 
 
 @pytest.mark.vcr()
