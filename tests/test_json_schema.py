@@ -887,43 +887,51 @@ def test_inline_defs_resolves_property_names_ref_through_tool_preparation():
     assert agent.run_sync('accept').output == 'done'
 
 
-INLINED_DEFS_EXPECTATIONS: dict[bool, JsonSchema] = {
-    True: snapshot(
-        {
-            'additionalProperties': False,
-            'properties': {
-                'values': {
-                    'additionalProperties': {'type': 'integer'},
-                    'propertyNames': {'type': 'string'},
+@pytest.mark.parametrize(
+    ('prefer_inlined_defs', 'expected'),
+    [
+        (
+            True,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'additionalProperties': {'type': 'integer'},
+                            'propertyNames': {'type': 'string'},
+                            'type': 'object',
+                            'properties': {},
+                        }
+                    },
+                    'required': ['values'],
                     'type': 'object',
-                    'properties': {},
                 }
-            },
-            'required': ['values'],
-            'type': 'object',
-        }
-    ),
-    False: snapshot(
-        {
-            'additionalProperties': False,
-            'properties': {
-                'values': {
-                    'additionalProperties': {'type': 'integer'},
-                    'propertyNames': {'$ref': '#/$defs/Key'},
+            ),
+        ),
+        (
+            False,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'additionalProperties': {'type': 'integer'},
+                            'propertyNames': {'$ref': '#/$defs/Key'},
+                            'type': 'object',
+                            'properties': {},
+                        }
+                    },
+                    'required': ['values'],
                     'type': 'object',
-                    'properties': {},
+                    '$defs': {'Key': {'type': 'string'}},
                 }
-            },
-            'required': ['values'],
-            'type': 'object',
-            '$defs': {'Key': {'type': 'string'}},
-        }
-    ),
-}
-
-
-@pytest.mark.parametrize('prefer_inlined_defs', [True, False])
-def test_property_names_ref_through_tool_preparation_follows_prefer_inlined_defs(prefer_inlined_defs: bool):
+            ),
+        ),
+    ],
+)
+def test_property_names_ref_through_tool_preparation_follows_prefer_inlined_defs(
+    prefer_inlined_defs: bool, expected: JsonSchema
+):
     """A transformer that drops `$defs` inlines the `$ref` under `propertyNames`; one that keeps them leaves both alone.
 
     A recording can't check this: cassettes match on method and URI, not the request body.
@@ -938,7 +946,7 @@ def test_property_names_ref_through_tool_preparation_follows_prefer_inlined_defs
         return 'accepted'  # pragma: no cover
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.function_tools[0].parameters_json_schema == INLINED_DEFS_EXPECTATIONS[prefer_inlined_defs]
+        assert info.function_tools[0].parameters_json_schema == expected
         return ModelResponse(parts=[TextPart('done')])
 
     transformer = InliningOpenAIJsonSchemaTransformer if prefer_inlined_defs else OpenAIJsonSchemaTransformer
