@@ -174,6 +174,14 @@ def _modal_sandbox() -> AbstractCapability[Any]:
     return ModalSandbox(warn_if_no_tools=False)
 
 
+def _ipython_code_mode() -> AbstractCapability[Any]:
+    # Imported here, so collecting this file never imports `jupyter_client`. The test has already skipped
+    # when it isn't installed (`OPTIONAL_DEPENDENCIES`).
+    from pydantic_ai_harness.ipython_code_mode import IPythonCodeMode
+
+    return IPythonCodeMode(tools=[])
+
+
 def _read_file_key(call: ToolCallPart) -> str | None:
     args = call.args_as_dict()
     return str(args['path']) if call.tool_name == 'read_file' else None
@@ -203,6 +211,9 @@ FIXTURES: dict[str, Fixture] = {
     ),
     'FileSystem': _workspace(FileSystem),
     'InputGuardrail': lambda _: InputGuardrail(guard=lambda text: True),
+    # Keeps the scenario's tools native, so the conversation checks the `run_code` declaration without
+    # launching a kernel process for every provider.
+    'IPythonCodeMode': lambda _: _ipython_code_mode(),
     'Macroscope': _workspace(Macroscope),
     'ManagedPrompt': lambda _: ManagedPrompt('assistant', default='You answer questions about the news.'),
     'ModalSandbox': lambda _: _modal_sandbox(),
@@ -359,6 +370,7 @@ OPTIONAL_DEPENDENCIES: dict[str, str] = {
     'E2BSandbox': 'e2b',
     'ExaAgent': 'exa_py',
     'ExaSearch': 'exa_py',
+    'IPythonCodeMode': 'jupyter_client',
     'ModalSandbox': 'modal',
     'PlaywrightBrowser': 'playwright',
     'PromptInjectionDefender': 'stackone_defender',
