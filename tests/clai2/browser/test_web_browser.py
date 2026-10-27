@@ -836,6 +836,40 @@ async def test_a_row_that_says_it_opens_shows_read_only_when_it_no_longer_can(pa
     await expect(page.get_by_role('alert')).to_have_count(0)
 
 
+async def test_a_pick_over_a_read_only_view_names_the_picked_session(page: Page, web_ui: WebUI) -> None:
+    """While a session opens over a read-only view, the header names the session picked, as the tab title does."""
+    await list_gamma_folder_as_openable(page, web_ui)
+    await page.route(
+        f'**/api/sessions/{web_ui.moved}/open',
+        lambda route: route.fulfill(status=400, json={'detail': 'The folder is gone.'}),
+    )
+    transcript: dict[str, object] = {
+        'id': web_ui.moved,
+        'title': 'Browser Moved',
+        'workspace': '/gone',
+        'items': [],
+        'openable': False,
+        'missing': True,
+    }
+    await page.route(f'**/api/sessions/{web_ui.moved}', lambda route: route.fulfill(json=transcript))
+    sidebar = page.locator('.sidebar')
+    await sidebar.get_by_text('Browser Moved', exact=True).click()
+    await expect(page.locator('.preview-banner')).to_be_visible()
+    held: list[Route] = []
+
+    async def hold(route: Route) -> None:
+        held.append(route)
+
+    await page.route(f'**/api/sessions/{web_ui.saved}/open', hold)
+    async with page.expect_request(f'**/api/sessions/{web_ui.saved}/open'):
+        await sidebar.get_by_text('Browser Saved', exact=True).click()
+    await expect(page.locator('.topbar .title')).to_have_text('Browser Saved')
+    await expect(page).to_have_title('Browser Saved · CLAI')
+    [route] = held
+    await route.continue_()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Saved')
+
+
 async def test_the_websocket_opens_before_the_page_renders(page: Page, web_ui: WebUI) -> None:
     """The first snapshot is on its way while React renders the page, not only once it has mounted."""
     await page.add_init_script("""
