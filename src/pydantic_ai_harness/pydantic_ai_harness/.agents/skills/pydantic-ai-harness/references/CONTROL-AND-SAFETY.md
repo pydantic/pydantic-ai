@@ -2,7 +2,8 @@
 
 Capabilities that constrain, screen, budget, or steer a run: repair malformed tool arguments,
 guard prompts/tool calls/outputs, scan tool results for prompt injection, cap spend, ask the user
-a question mid-run, re-inject reminders, and review the trajectory with a judge model. All are
+a question mid-run, re-inject reminders, interrupt repeated-action loops, and review the trajectory with a
+judge model. All are
 `AbstractCapability`s passed in `Agent(capabilities=[...])`. Only `PromptInjectionDefender` needs
 an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 `DeferredToolRequests`, `HandleDeferredToolCalls`), use the core mechanism documented in the
@@ -27,6 +28,7 @@ an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
 | Counter instruction fade in long runs, cache-safe | `SystemReminders` |
 | Have a second model review the run and steer it when it drifts | `TrajectoryJudge` |
+| Interrupt an agent that keeps repeating the same tool call, result, or response | `DetectLoops` |
 
 ## RepairToolArguments
 
@@ -494,10 +496,12 @@ print(agent.run_sync('Set up storage').output)
 ## SystemReminders
 
 Enqueues reminders at the tail of each model request as a request-scoped `SystemPromptPart`
-(`scope='request'`): the model sees each one for that request only, it's kept in message history,
-and it sits after the cached prefix, so it doesn't invalidate it. Turn on caching on the model
+(`scope='request'`): the model sees each one only in the model request it's part of, and the next
+request, even the next step of the same run, no longer shows it. It's kept in message history, and
+it sits after the cached prefix, so it doesn't invalidate it. Turn on caching on the model
 (e.g. `anthropic_cache`); its breakpoint lands before the reminder. `cache_ttl` is deprecated and
-has no effect.
+has no effect. With `interval>1` the model sees a reminder only on the requests where it fires, so
+text it must follow at every step belongs in the agent's instructions, not in a `Reminder`.
 
 ```python
 from pydantic_ai import Agent
@@ -537,11 +541,13 @@ agent = Agent(
   text on the user channel (`<generated_reminder model="...">`), kept in history together as one record.
   A plain `str` a dynamic reminder returns is operator text in system voice. Framing tags in quoted
   text are escaped.
-- `LLMReminder(model=...)` (model required) makes one extra model call per request; its agent is
-  built on first use, so no provider key is needed at construction. On any error it sends
-  `GoalReanchor` text instead, logging a warning with the traceback once per run under
-  `pydantic_ai_harness.system_reminders`; only a budget too tight for the extra request is silent.
-  Gate it with your own cadence wrapper.
+- `LLMReminder(model=..., interval=10)` (model required) makes one extra model call every `interval`
+  requests (10th, 20th, ...; pass `interval` explicitly: left unset it warns that the default used to
+  be `1`). Each firing adds a note and the generated text to history for good, so a run of R requests
+  gains `2 * (R // interval)` parts. Its agent is built on first use, so no provider key is needed at
+  construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
+  traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
+  the extra request is silent. A wrapper that gates it itself should pass `interval=1`.
 - Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
   (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
   gone without a warning, so turn on caching on the model (such as `anthropic_cache`).
@@ -592,6 +598,57 @@ at import time fails without that provider's API key. Pass
 `agent=Agent('openai:...', defer_model_check=True, instructions=...)` instead; a custom agent does
 not get the built-in judge instructions, so its `instructions` must describe the review.
 
+## DetectLoops
+
+Before each model request, checks the current run's history for four patterns: `repeated_call` (same
+tool and canonical arguments `repeated_call_threshold=5` times in the last `window=10` calls),
+`repeated_result` (same call returning the same result `repeated_result_threshold=3` times in a row;
+`ModelRetry` with the same message counts), `alternating_calls` (A-B-A-B for
+`alternating_calls_threshold=3` cycles), and `repeated_text` (`repeated_text_threshold=3` consecutive
+responses with no tool calls and the same text). A threshold of `None` turns a check off.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from pydantic_ai_harness import DetectLoops
+from pydantic_ai_harness.detect_loops import LoopDetectedError
+
+
+def stuck(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'missing.txt'})])
+
+
+agent = Agent(FunctionModel(stuck), capabilities=[DetectLoops(action='error')])
+
+
+@agent.tool_plain
+def read_file(path: str) -> str:
+    return 'Error: file not found'
+
+
+try:
+    agent.run_sync('Summarize missing.txt')
+except LoopDetectedError as error:
+    print(error.loop.pattern)
+    #> repeated_result
+```
+
+- `action='nudge'` (default) enqueues a `SystemPromptPart` (conversation scope, so it keeps
+  applying) into the current request; find it by `metadata['origin'] == 'pydantic-ai-harness.detect_loops.nudge.v1'`, never by
+  text. `'error'` raises `LoopDetectedError` (an `AgentRunError`, `.loop` is the `DetectedLoop`). A
+  sync or async `(ctx, loop)` callable decides itself; type `ctx` as `RunContext[object]` on an agent
+  without `deps_type`.
+- Calls, results, and text are recorded as they arrive (the capability runs outermost), so
+  compaction can't make calls look alike.
+  One loop per request; its responses are then not counted again. Only the current run counts, so
+  `message_history` from earlier runs starts at zero. Hooks run in workflow code under Temporal,
+  DBOS, and Prefect, so replay reaches the same decisions; keep a handler free of I/O.
+- Agents that poll on purpose trip `repeated_result` after 3 identical statuses: raise or disable it.
+- Emits a `loop detected` span (`detect_loops.pattern`, `.action`, `.count`, `.window`,
+  `.tool_names`; `.fingerprints` only with `trace_include_content`); no arguments or results.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/repair-tool-arguments/
@@ -603,4 +660,5 @@ not get the built-in judge instructions, so its `instructions` must describe the
 - https://pydantic.dev/docs/ai/harness/ask-user/
 - https://pydantic.dev/docs/ai/harness/system-reminders/
 - https://pydantic.dev/docs/ai/harness/trajectory-judge/
+- https://pydantic.dev/docs/ai/harness/detect-loops/
 - https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/ (core tool approval and deferred tools)
