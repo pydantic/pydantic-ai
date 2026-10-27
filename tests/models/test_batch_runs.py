@@ -25,6 +25,7 @@ from pydantic_ai import (
     CallToolsNode,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestNode,
     ModelRetry,
     PendingModelResponse,
     TextPart,
@@ -35,6 +36,7 @@ from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, Sel
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult, WrapRunHandler
 from pydantic_ai.direct import model_request, model_request_batch, model_request_stream
 from pydantic_ai.exceptions import (
+    AgentRunError,
     ModelAPIError,
     ModelConnectionError,
     ModelContextWindowExceededError,
@@ -46,6 +48,7 @@ from pydantic_ai.exceptions import (
     ModelServerError,
     ModelTimeoutError,
     ModelUnavailableError,
+    RunCancelled,
     SuspendedResponseExpired,
     UserError,
 )
@@ -1244,7 +1247,9 @@ class _EndPendingRun(AbstractCapability[object]):
     async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[Any]:
         if self.end == 'on_run_error_recovers':
             return AgentRunResult('recovered')
-        raise RuntimeError('on_run_error failed') from error
+        if self.end == 'on_run_error_raises':
+            raise RuntimeError('on_run_error failed') from error
+        raise error
 
     async def after_run(self, ctx: RunContext[object], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
         if self.end == 'after_run_raises':
@@ -1260,6 +1265,40 @@ class _EndPendingRun(AbstractCapability[object]):
         return result
 
 
+_ENDED_WITH: dict[EndPendingRun, object] = {
+    'after_run_raises': RuntimeError('after_run failed'),
+    'after_run_replaces': 'replaced',
+    'wrap_run_raises': RuntimeError('wrap_run failed'),
+    'on_run_error_raises': RuntimeError('on_run_error failed'),
+    'on_run_error_recovers': 'recovered',
+    'cancelled': asyncio.CancelledError(),
+    'ctx_cancel': RunCancelled('The agent run was cancelled.'),
+}
+"""What each way of ending a run other than with its pending response ends `agent.run()` with."""
+
+_STREAM_BLOCK_ENDED_WITH: dict[EndPendingRun, object] = {
+    # The block gets the stream's output, while `after_run` replaces the run's once the block has exited.
+    'after_run_replaces': PendingModelResponse,
+    # The block can't get the output `on_run_error` recovers the run with, as the run had none when it failed.
+    'on_run_error_recovers': AgentRunError('Agent run finished without producing a final result'),
+}
+"""Where the `run_stream()` block ends differently from `agent.run()`."""
+
+
+async def _assert_left_for_a_later_run(
+    agent: Agent[None, Any], wrapped: SlowBatchTestModel, stored: list[ModelMessage]
+) -> None:
+    """Resume `stored` and cancel the resuming run, which only leaves the batch running if the first run released it."""
+    checks = wrapped.status_checks
+    resuming = asyncio.create_task(agent.run(message_history=stored))
+    await wrapped.wait_until(lambda model: model.status_checks > checks)
+    resuming.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await resuming
+    await asyncio.sleep(0.01)
+    assert wrapped.canceled == []
+
+
 @pytest.mark.parametrize('stream', [False, True], ids=['run', 'run_stream'])
 @pytest.mark.parametrize('end', get_args(EndPendingRun))
 async def test_a_pending_response_is_withdrawn_unless_the_run_ends_with_it(end: EndPendingRun, stream: bool) -> None:
@@ -1271,12 +1310,17 @@ async def test_a_pending_response_is_withdrawn_unless_the_run_ends_with_it(end: 
         output_type=[str, PendingModelResponse],
         capabilities=[ending, BatchModelRequests(**FAST_BATCH_SETTINGS)],
     )
+    stored: list[ModelMessage] = []
 
     async def run() -> object:
         if stream:
             async with agent.run_stream('Hello') as result:
-                return await result.get_output()
-        return (await agent.run('Hello')).output
+                output = await result.get_output()
+                stored.extend(result.all_messages())
+                return output
+        result = await agent.run('Hello')
+        stored.extend(result.all_messages())
+        return result.output
 
     task = asyncio.create_task(run())
     if end == 'cancelled':
@@ -1291,13 +1335,17 @@ async def test_a_pending_response_is_withdrawn_unless_the_run_ends_with_it(end: 
     if end == 'ends_pending':
         assert isinstance(output, PendingModelResponse)
         assert wrapped.canceled == []
+        await _assert_left_for_a_later_run(agent, wrapped, stored)
+        return
+
+    expected = (_STREAM_BLOCK_ENDED_WITH.get(end) if stream else None) or _ENDED_WITH[end]
+    if expected is PendingModelResponse:
+        assert isinstance(output, PendingModelResponse)
+    elif isinstance(expected, BaseException):
+        assert type(output) is type(expected) and str(output) == str(expected)
     else:
-        if stream and end == 'after_run_replaces':
-            # The block gets the stream's output, while `after_run` replaces the run's once the block has exited.
-            assert isinstance(output, PendingModelResponse)
-        else:
-            assert not isinstance(output, PendingModelResponse)
-        assert wrapped.canceled == [wrapped.created[0].id]
+        assert output == expected
+    assert wrapped.canceled == [wrapped.created[0].id]
 
 
 async def test_a_pending_response_is_withdrawn_when_the_caller_stops_iterating_before_the_run_ends() -> None:
@@ -1323,3 +1371,69 @@ async def test_a_pending_response_is_left_for_a_later_run_when_an_iterated_run_e
             pass
     assert agent_run.result is not None and isinstance(agent_run.result.output, PendingModelResponse)
     assert wrapped.canceled == []
+    await _assert_left_for_a_later_run(agent, wrapped, agent_run.result.all_messages())
+
+
+@dataclass
+class _AskAgainOnce(AbstractCapability[object]):
+    """Sends the run back to the model once it would have ended, as a hook redirecting the graph can."""
+
+    asked: bool = False
+
+    async def after_node_run(
+        self, ctx: RunContext[object], *, node: AgentNode[object], result: NodeResult[object]
+    ) -> NodeResult[object]:
+        if isinstance(node, CallToolsNode) and not self.asked:
+            self.asked = True
+            return ModelRequestNode(request=ModelRequest.user_text_prompt('Again'))
+        return result
+
+
+async def test_a_pending_response_a_later_request_supersedes_is_withdrawn() -> None:
+    wrapped = SlowBatchTestModel(pending_checks=10**6)
+    agent = Agent(
+        wrapped,
+        output_type=[str, PendingModelResponse],
+        capabilities=[_AskAgainOnce(), BatchModelRequests(**FAST_BATCH_SETTINGS)],
+    )
+    result = await agent.run('Hello')
+    assert isinstance(result.output, PendingModelResponse)
+    assert len(wrapped.created) == 2
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
+class _ClosingBatchModel(SlowBatchTestModel):
+    """Can't cancel a batch once it's been exited, like a model whose HTTP client was closed."""
+
+    closed = False
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        self.closed = True
+        return await super().__aexit__(*args)
+
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        if self.closed:
+            raise RuntimeError('the client is closed')
+        return await super().batch_cancel(batch)
+
+
+async def test_a_pending_response_of_a_model_selected_later_in_the_run_is_withdrawn_before_the_model_is_exited() -> (
+    None
+):
+    first, second = SlowBatchTestModel(pending_checks=10**6), _ClosingBatchModel(pending_checks=10**6)
+    agent = Agent(
+        first,
+        output_type=[str, PendingModelResponse],
+        capabilities=[
+            SelectModel(lambda ctx: first if ctx.run_step <= 1 else second),
+            # The first step's pending response is retried, so the second step's request is the one the run accepts.
+            _RejectPendingOnce('retry'),
+            _EndPendingRun('after_run_raises'),
+            BatchModelRequests(**FAST_BATCH_SETTINGS),
+        ],
+    )
+    with pytest.raises(RuntimeError, match='after_run failed'):
+        await agent.run('Hello')
+    assert first.canceled == [first.created[0].id]
+    assert second.closed
+    assert second.canceled == [second.created[0].id]

@@ -2546,6 +2546,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             await _settle_pending(pending, None)
             raise
         if pending is not None and _is_kept(pending, response):
+            # A hook that sent the run back to the model, rather than letting it end, superseded the one it accepted.
+            await _settle_pending(ctx.deps.ended_pending, None)
             ctx.deps.ended_pending = pending
         else:
             await _settle_pending(pending, response)

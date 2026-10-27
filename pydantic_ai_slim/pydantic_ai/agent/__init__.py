@@ -4928,7 +4928,6 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                     timer = loop.call_later(remaining, graph_deps.cancellation.expire)
                     stack.callback(timer.cancel)
 
-            self.model_resources.bind_stack(stack)
             task_id = anyio.get_current_task().id
             if isinstance(self.concurrency_limiter, _concurrency.ConcurrencyLimiter) and any(
                 active_task_id == task_id and limiter is self.concurrency_limiter
@@ -4946,6 +4945,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                     (*_ACTIVE_AGENT_LIMITERS.get(), (task_id, self.concurrency_limiter))
                 )
                 stack.callback(_ACTIVE_AGENT_LIMITERS.reset, limiter_token)
+            # On a stack of their own, so a model selected later in the run, whose exit is registered then, is still
+            # exited after the run's pending response is settled below.
+            self.model_resources.bind_stack(await stack.enter_async_context(AsyncExitStack()))
             if self.capability_owns_current_model:
                 if self.graph_deps.model_selected_for_step == 1:
                     # The run's model selector already chose the model for the first step.
@@ -4959,8 +4961,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             agent_run: AgentRun[_PreparedDepsT, _PreparedOutputT] | None = None
 
             async def settle_ended_pending(exc_type: type[BaseException] | None, *_: object) -> None:
-                # After the run's hooks and the caller's block, so it knows how the run ended, and before its models
-                # are exited, so a pending response the run didn't end with can still be withdrawn through them.
+                # After the run's hooks and the caller's block, so it knows how the run ended, and before any model it
+                # entered is exited, so a pending response the run didn't end with can still be withdrawn through it.
                 if graph_deps.ended_pending is None:
                     return
                 assert agent_run is not None
