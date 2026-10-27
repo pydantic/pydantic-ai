@@ -43,7 +43,7 @@ uv tool install --compile-bytecode pydantic-clai2
 
 This gives you the `clai2` command (and `pydantic-clai2`, which does the same).
 `--compile-bytecode` makes the install take a little longer so the first start doesn't, and
-`/update` uses it too. To try CLAI without installing, run `uvx pydantic-clai2`; set
+`/update now` uses it too. To try CLAI without installing, run `uvx pydantic-clai2`; set
 `UV_COMPILE_BYTECODE=1` to compile the bytecode up front there too.
 
 CLAI comes with the OpenAI and Anthropic SDKs. Other providers may need their SDK
@@ -107,10 +107,14 @@ in the reference.
 
 ## Updating
 
-Run `/update`. CLAI installs the newest build, then restarts into it with the same
-conversation open. While other live sessions run turns, as ones the browser opened can,
-`/update` and `/reload` ask you to try again when they finish. They restart CLAI in the folder it started in,
-so a session from another folder shown in the terminal cannot run them.
+Run `/update` to see whether a newer CLAI is out, and choose **Update…** to install it.
+`/update now` installs without asking, and `clai2 --update` does it from your shell and exits
+(on Windows, use `/update now` instead).
+CLAI installs the newest build, then restarts into it with the same conversation open.
+While other live sessions run turns, as ones the browser opened can, `/update now`
+and `/reload` ask you to try again when they finish; bare `/update` still shows the
+menu. Installs and reloads restart CLAI in the folder it started in, so a session
+from another folder shown in the terminal cannot run them.
 
 When a newer build is out, the status row tells you, for example
 `update 0.57.0: /update`. CLAI checks once at startup and again when you change channel.
@@ -124,12 +128,12 @@ There are two channels. Pick one with `/set updates.channel`:
 
 ```text
 /set updates.channel main
-/update
+/update now
 ```
 
-`/update` works when CLAI was installed with `uv tool install`. On Windows, CLAI closes
+`/update now` works when CLAI was installed with `uv tool install`. On Windows, CLAI closes
 first and installs in a new PowerShell window; start `clai2` again when it is done.
-`/update` reinstalls `pydantic-clai2` without extras or `--with` packages, so add those
+`/update now` reinstalls `pydantic-clai2` without extras or `--with` packages, so add those
 again afterwards. See
 [Updating](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#updating)
 in the reference for the details.

@@ -174,6 +174,8 @@ export const api = {
   fork: (id: string) => call<{ id: string }>('POST', `/api/sessions/${id}/fork`),
   archive: (id: string) => call<void>('POST', `/api/sessions/${id}/archive`),
   unarchive: (id: string) => call<void>('POST', `/api/sessions/${id}/unarchive`),
+  /** Archive several sessions at once, such as every one of a worktree. */
+  archiveAll: (ids: string[]) => call<void>('POST', '/api/sessions/archive', { ids }),
   remove: (id: string) => call<void>('DELETE', `/api/sessions/${id}`),
   /** Answer a settings menu's dialog, which belongs to the page rather than to one session. */
   answerDialog: (id: string, value: string | null) => call<void>('POST', `/api/dialogs/${id}`, { value }),
