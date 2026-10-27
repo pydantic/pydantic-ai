@@ -40,7 +40,7 @@ agent = Agent('{{ openai:medium }}')
     For voice agents, use a GPT-Live or `gpt-realtime` model with a [realtime session](../realtime/openai.md) instead.
 
 To pin to the legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead, use the `'openai-chat:'` prefix, which resolves to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
-For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. Use the Responses API when you need reasoning and tools together. `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for function calling with them.
+For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. [OpenAI documents tool calling for `gpt-6.1-terra` through Responses only](https://developers.openai.com/api/docs/models/gpt-6.1-terra), so use Responses for its tool calls. Use Responses whenever you need reasoning and tools together. `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for function calling with them.
 
 Or initialise the model directly with just the model name:
 
@@ -572,8 +572,36 @@ When the response comes back still pending (`'queued'` or `'in_progress'`), Pyda
 
 Because the request is queued server-side, the time to the first token is higher than for a synchronous request. While a background response is still pending, Pydantic AI polls for completion at a fixed interval.
 
+To end the run instead of waiting, add [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] to the agent's `output_type`: the run then ends with a `PendingModelResponse` as soon as the background response is queued (when streaming, the response streams until it's finished, unless the stream drops before then), and running the agent again with the run's message history checks on the same background response. See [Ending a run while it waits](../batch.md#ending-a-run-while-it-waits).
+
 !!! note
-    If a run is suspended mid-request (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) and persisted in message history, passing that history back resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired]. Abandoning or cancelling the run cancels the server-side background job.
+    A message history that ends in a pending response (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired]. Abandoning or cancelling a run that's waiting cancels the server-side background job.
+
+## Batch API
+
+`OpenAIResponsesModel` supports [batch processing](../batch.md) through OpenAI's
+[Batch API](https://platform.openai.com/docs/guides/batch), which charges 50% of the standard price. A batch
+targets one model and holds up to 50,000 requests, in an input file of up to 200 MB. When the process that submitted
+a batch collects its results, it deletes the input file. A batch collected from another process, for example from a
+stored [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits) history, leaves the file for OpenAI to delete
+after 30 days, since only the process that uploaded it knows it's safe to delete. Like requests on their own,
+batched responses are stored unless you set `openai_store=False`, so they can be continued with
+`openai_previous_response_id`.
+
+The Batch API is OpenAI's own: `OpenAIChatModel`, Azure OpenAI, and providers with a class of their own that implement
+the Responses API, like [OpenRouter](openrouter.md), don't use it by default. It isn't available through the
+[Pydantic AI Gateway](../gateway.md) yet: use `OpenAIProvider` with an OpenAI API key instead. Whether a model uses it is decided by the
+[`openai_supports_batch_api`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_batch_api] profile flag,
+which `OpenAIProvider` sets, also when you give it the `base_url` of an
+[OpenAI-compatible endpoint](compatible-apis.md#other-endpoints). For a provider that also serves the Batch API's
+`/v1/files` and `/v1/batches` endpoints for `/v1/responses` requests, set the flag in the model's
+[profile](compatible-apis.md#model-profile), as in `profile=OpenAIModelProfile(openai_supports_batch_api=True)`, or set
+it to `False` for an endpoint that doesn't serve them.
+
+Batch requests can't use [background mode](#background-mode), which raises a
+[`UserError`][pydantic_ai.exceptions.UserError] when the request is made, and per-request `timeout` and
+`extra_headers` are unsupported: configure them on the client instead. A streamed run gets the batch result's events
+all at once when it arrives.
 
 ## Chat Completions API
 

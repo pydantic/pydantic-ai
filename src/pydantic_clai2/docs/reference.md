@@ -46,7 +46,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/fork [@MODEL] PROMPT` | Run a copy of the conversation in the background; `/fork cancel N` stops one |
 | `/forks` | Show this session's background forks |
 | `/tasks` | Inspect and control delegated tasks |
-| `/update` | Install the newest CLAI from `updates.channel` and restart |
+| `/update [now]` | Show whether a newer CLAI is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
 | `/reload` | Reload CLAI's own code without restarting |
 | `/exit` | Quit |
 | `/SKILL-NAME [ARGS]` | Send an Agent Skill as your next prompt |
@@ -63,10 +63,12 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `-p`, `--prompt TEXT` | Run one prompt without interaction and print only the answer; see [Headless mode](#headless-mode) |
 | `-a`, `--agent MODULE:ATTR` | Chat with your own Pydantic AI agent; see [Your own agent](#your-own-agent) |
 | `--resume [SESSION-ID]` | Restore a saved session; no ID opens the browser |
+| `-c`, `--continue` | Restore the most recent saved session in this directory; see [Saved sessions](#saved-sessions-and-resume) |
 | `--resume-claude [SESSION-ID]`, `--resume-codex [SESSION-ID]` | Import and restore a Claude Code or Codex session |
 | `--session-id UUID` | Save a new session under this ID |
-| `--fork-session` | With `--resume`, continue in a copy of the session |
+| `--fork-session` | With `--resume` or `--continue`, continue in a copy of the session |
 | `-w`, `--worktree [NAME]` | Start in a Git worktree; see [Git worktrees](#git-worktrees) |
+| `--update` | Install the newest CLAI from `updates.channel`, print how it went, and exit; see [Updating](#updating) |
 | `--request-limit N` | The full prompt's model-request budget |
 | `--database PATH` | Use another settings database (and session folder) |
 | `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell |
@@ -82,6 +84,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `model` | `openai-codex:gpt-6-astra` | Provider-qualified model for every turn. Overrides the model baked into the agent. |
 | `run.request_limit` | `10000` | Most model requests one prompt may make before the turn stops. |
 | `display.thinking` | `true` | Show the model's thinking as it streams. |
+| `display.task_models` | `true` | Name the model each subagent runs on in its start row, which waits for the child to report it. Off, the row prints at once without it. |
 | `display.theme` | `default` | Keep CLAI colours, or select a bundled Termflow palette with /theme. |
 | `display.spinner` | `working` | Working animation; /spinner previews the choices. An unknown name shows working. |
 | `display.splash` | `true` | Animate the startup splash. Takes effect next start. |
@@ -218,7 +221,7 @@ Install with `uv tool install --compile-bytecode pydantic-clai2` and CLAI can up
 
 ```text
 /set updates.channel main
-/update
+/update now
 ```
 
 To use another copy of the release, start CLAI with `CLAI_BLEEDING_URL` set to
@@ -239,32 +242,47 @@ CLAI_BLEEDING_URL=http://localhost:8000 clai2
 
 When a newer build exists, the status row shows `update <version or commit>: /update`.
 CLAI checks once at startup and again when you change the channel, and only for
-`uv tool` installs. Offline, it shows nothing. `/update` runs
-`uv tool install --force --compile-bytecode`, shows uv's output, then restarts CLAI as
-the new build with the same launch options, resuming the current conversation. The new
-build's bytecode is compiled during the install, so the restart does not compile it.
-Switching back to `stable` offers the latest release.
-Run from a source checkout, `/update` installs CLAI as a `uv tool` the same way and
-restarts into that.
+`uv tool` installs. Offline, it shows nothing.
 
-`/update` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
+`/update` opens the **About CLAI** menu: the running version, a line saying whether
+it is the latest on the channel or which newer one is out, and the `updates.channel` row.
+Opening it checks too, even from a source checkout, and waits up to a second for the
+answer; offline, the line says why it could not tell. **Update…** asks first, then
+closes the menu and installs. `/update now` installs without the menu.
+
+Installing runs `uv tool install --force --compile-bytecode`, shows uv's output, then
+restarts CLAI as the new build with the same launch options, resuming the current
+conversation. Bytecode compiles during installation, so the restart skips it. Switching
+back to `stable` offers the latest release. Run from a source checkout, it installs
+CLAI as a `uv tool` the same way and restarts into that.
+
+`clai2 --update` installs the same way without starting a session: it prints uv's output
+and a last line saying what it did, then exits instead of restarting, so the next `clai2`
+is the new build. It exits with status 1 when the check, uv, or finding uv failed. On
+Windows, `clai2 --update` exits with status 1 without installing: use `/update now` in
+an interactive session, which installs after CLAI exits. The flag cannot be combined with
+`config`, `plugins`, `--prompt`, `--web`, `--resume`, `--continue`,
+`--session-id`, `--agent`, `--worktree`, `--model`, `--request-limit`, or
+`--fork-session`.
+
+`/update now` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
 typed in the page or in the terminal: the page shows uv's progress and the result. After
 an install, CLAI restarts with the web UI on the same port and token, so the page
 reconnects by itself and names the new version. `clai2 --web` keeps `--web`, `--port`,
 and `--token-file`; a terminal session that ran `/web` comes back with the web UI running.
-Like any command, `/update` entered while a turn runs waits for the turn to end.
+Like any command, `/update now` entered while a turn runs waits for the turn to end.
 
 Windows does not let a program replace files it is running from, so there
-`/update` exits first and installs in a new PowerShell window; start `clai2`
+an install exits CLAI first and installs in a new PowerShell window; start `clai2`
 again when that window reports success.
 
 The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
-again afterwards. Without uv on `PATH`, `/update` prints the complete command to
+again afterwards. Without uv on `PATH`, an install prints the complete command to
 run yourself, in PowerShell syntax on Windows. For `main` installs, it also
 writes the overrides file and includes its path in the printed command.
 
-In the web UI, `/update` opens the Settings window's **About** section instead: the running
-version and `updates.channel`, with an **Update…** button that asks before it runs `/update`.
+In the web UI, `/update` opens the same menu as the Settings window's **About** section, whose
+**Update…** button asks before it runs `/update now`.
 
 ### Environment variables
 
@@ -391,6 +409,14 @@ older CLAI with a relative path does not load; remove it and enable it again
 from its repository. Project declarations rank just
 above the built-ins: a project may redeclare `coder` or `repo_context` with
 other options, and that replacement is also off until you enable it.
+
+`hooks` takes a table of commands to run before and after tool calls and as a
+turn starts and ends; see
+[lifecycle hooks](../PLUGINS.md#lifecycle-hooks-commands-from-settings). It is
+listed as the project plugin `project_hooks` and is off until
+`/plugins enable project_hooks`; unlike a plugin's declaration, any change to
+the table turns it off until you enable it again, and removing the table stops
+its commands (the listing keeps `project_hooks` until you remove it).
 
 The project file is read-only from inside CLAI. `/set KEY VALUE` writes your user
 settings and applies for the current session; `/config set` writes your user
@@ -1723,6 +1749,8 @@ whole request, which the model is told so it can make a stated choice and carry
 on. Several questions show progress in the title. The tool's transcript line
 names the questions by header, not their raw JSON. The editor's draft is
 preserved, and the question and your picks are printed to the transcript afterwards.
+Drag over the question, its header, or an option to select text; releasing copies it
+to the clipboard without choosing an answer. Transcript text remains selectable too.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
@@ -1782,6 +1810,8 @@ You can also redeclare the plugin with your own settings;
 | `protected_tokens` | `50000` | tokens of the most recent messages never compacted |
 | `context_window` | unset | overrides the catalog when it is wrong or silent for your model |
 | `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
+| `background_compaction` | `false` | experimental: write the summary in the background before it is due ([below](#background-compaction-experimental)) |
+| `background_start` | `0.85` | experimental: with `background_compaction`, the fraction of `threshold` at which the background summary starts |
 
 The status row shows compact used/max context tokens, such as `128k/1m`.
 The maximum comes from the request's model or the `context_window` override.
@@ -1799,6 +1829,28 @@ than 50,000 tokens, redeclare the plugin with a smaller `protected_tokens` value
 `/compact` does not override that protection. Run `/compact` to retry the chain,
 or `/new` to clear the history. The figure and colour
 refresh with the next request; `/compact` alone does not change them.
+
+#### Background compaction (experimental)
+
+With `background_compaction` set to `true` (in `/plugins configure compaction`), CLAI starts the
+summary early instead of waiting for `threshold`. Once a request, or the end of a turn, passes
+`background_start` of the threshold (by default 85% of 85%, about 72% of the window), the summary is
+written in the background. The turn keeps running, and the summary can finish while you read. A
+turn that ends already over the threshold starts none; the next request compacts as usual.
+
+The summary is held, not applied, so nothing changes until compaction is due. Then the held summary
+replaces the messages it was written from, and everything that came after it is kept word for word,
+with no wait for a model call. When the summary is still being written, compaction waits for it.
+`/compact` without a focus uses a held summary the same way; with a focus, it drops it and writes a
+new one.
+
+CLAI drops the held summary and compacts as usual when it no longer fits: the history was changed
+(`/compact`, a rewind), you switched model, the summary failed or was cancelled, or so much arrived
+since it started that the result would still be over the threshold. Leaving the conversation
+(`/new`, `/resume`), exiting CLAI, or reloading the plugin cancels it; a delegated task's is dropped
+at the end of the first turn after the task finishes. A summary that is never used still costs its tokens. Like any other summary call,
+it counts toward the usage of the turn that started it, even when it finishes after that turn. It
+only applies with the `summarization` strategy.
 
 ### Task delegation
 
@@ -1849,6 +1901,56 @@ without a user prompt, and one queued on a turn you cancel waits for your next p
 
 Task rows use the selected `/theme`: foreground and background modes, running
 activity, and failures each have their own role colour.
+
+#### Delegate models and review directory
+
+Enable **Sub-agents**, then configure **Delegate models** in `/plugins configure coder` to offer named model choices to
+`delegate_task`. An empty mapping keeps model inheritance unchanged. Each entry names a model
+(`PROVIDER[@ACCOUNT]:MODEL`) or saved chain, with an optional description and model settings:
+
+```json
+{
+  "custom": {
+    "model": "chain:my-chain"
+  }
+}
+```
+
+Choose your own menu keys and models. Create any referenced chain in `/model chains` first.
+Account selection, pooling, and fallback follow the
+same rules as `/model`; saved settings for the selected model or chain apply, followed by the
+entry's explicit settings. The parent's per-run model settings are not copied to a different model.
+
+With a configured menu, the parent can pass one of its keys as `model` on each call. Omitting `model`
+keeps the delegate's existing default; configuring the menu does not change the session model.
+
+Enable **Review specialist** separately in `/plugins configure coder` to add `Review`, a fresh,
+one-shot specialist with read-only file tools and
+repository instructions from its own workspace. It receives no parent conversation, plugin tools,
+shell, code execution, or delegation tools. Only `Review` accepts `working_directory`; `self`,
+`Explore`, `Plan`, and disk agents reject it. Directory selection requires a plain local parent workspace;
+the standard read-only wrapper is also accepted. Sandbox and custom policy wrappers are rejected because
+rebinding the directory would discard their restrictions.
+Relative paths resolve from the session directory; absolute paths and `~/` paths are accepted.
+The selected directory must exist. The parent stays in its original directory.
+
+For example, ask the parent to review a diff saved in another checkout:
+
+```python {test="skip"}
+delegate_task(
+    agent_name='Review',
+    task='Read changes.diff and review the affected code. Return findings with file paths.',
+    working_directory='/path/to/repository',
+)
+```
+
+`/tasks` shows the selected directory. Review cannot resume or fan out. Its file tools reject writes
+and paths outside their root, including symlink escapes. This is a restriction on the tools and
+workspace API, not operating-system isolation. Review uses normal model inheritance unless a call
+selects a configured menu option; enabling Review does not choose a model. Review requires
+**Sub-agents** and is off by default (`review_agent=false`). Its setting is tagged
+`coder-review-agent`, independently of the menu's `coder-delegate-models` tag. Older builds ignore
+settings they cannot read while preserving them for the next compatible build.
 
 #### Agent folders
 
@@ -1902,6 +2004,12 @@ Definition files are read as data and never executed.
   parent to continue the saved child. Explore and Plan cannot resume. The parent
   uses `delegate_task` with the same ID and agent name; it remains responsible
   for reviewing the child's result.
+
+The transcript shows a task's start row once the child first streams an event with its model name,
+for example `● Explore [ab12cd34] · claude-sonnet-4-5 inspect files`. The name is the model
+actually used by the child, not a delegation menu key. A child that ends or asks a question before
+reporting a model gets its start row without one, just before that row. Set `/set display.task_models false` to show
+start rows immediately without the model name instead.
 
 The editor panel shows the task tree, activity, elapsed time, and descendant
 counts. The footer shows the context of the newest foreground child; see
@@ -2051,6 +2159,7 @@ to a fresh session ID; it does not delete the previous session.
 ```bash
 clai2 --resume                 # browse saved sessions
 clai2 --resume SESSION-ID      # restore one session
+clai2 --continue               # restore the most recent session in this directory (-c)
 clai2 --session-id UUID        # start a new session saved under this ID
 clai2 --resume SESSION-ID --fork-session [--session-id UUID]  # continue in a copy
 ```
@@ -2062,6 +2171,13 @@ prompt. `--fork-session` copies the restored session to a new ID, the given
 `--session-id` or a random one, and continues there; the original stays as it was.
 With the browser (`--resume` without an ID), the selected session is copied.
 `--session-id` combines with `--resume` only together with `--fork-session`.
+
+`--continue` (`-c`) restores the session saved most recently in the directory
+CLAI starts in, as `claude --continue` does. Sessions from other directories and
+archived ones are skipped. When this directory has none, CLAI says so and starts
+a new session; `--session-id` then names it. `--continue` works with `-p` and
+`--web`, and takes `--fork-session` like `--resume SESSION-ID`. Only one of
+`--continue` and the `--resume` flags can be given.
 
 Inside CLAI, `/resume` opens the same browser and `/resume SESSION-ID` restores a
 session directly. Opening or restoring a session does not call the coding model
@@ -2188,12 +2304,16 @@ A saved session immediately gets a fallback title from its first prompt. A
 single background worker can replace it with a short title, subtitle, and up to
 four topic tags. The browser refreshes names while idle without moving selection.
 
-The worker uses the previous summary plus up to 2,400 characters of recent
-user/assistant text. It refreshes generated names after 16 content revisions;
-revisions, unlike message offsets, survive compaction. This is a bounded current
-summary, not a lossless incremental transcript archive. Opening the browser
-backfills up to ten eligible sessions. Queue length, request count, output size,
-and a 60-second deadline bound the work. Exiting cancels and joins the worker.
+The worker uses up to 2,400 characters of recent user/assistant text, plus the
+previous summary once a model has generated one. Until then, the fallback title
+is not offered as a name to keep. When the conversation is longer than that
+text, its first 400 characters are sent as well, so sessions begun from one
+template are told apart. It refreshes generated names after 16 content
+revisions; revisions, unlike message offsets, survive compaction. This is a
+bounded current summary, not a lossless incremental transcript archive. Opening
+the browser backfills up to ten eligible sessions. Queue length, request count,
+output size, and a 60-second deadline bound the work. Exiting cancels and joins
+the worker.
 
 ```text
 /set sessions.naming false
@@ -2284,7 +2404,8 @@ Cancelling a turn with Esc or Ctrl-C also cancels running forks. `/exit` and
 
 A fork is a turn for plugins: `turn_start` runs before it starts and can rewrite
 or cancel its prompt, which refuses the fork, and `turn_end` reports its outcome
-when it finishes. Forks share the foreground's plugin instances, so a tool that
+when it finishes. `fork_end` follows with the fork's answer, or why it failed, so
+the web UI shows it, and `/forks` there shows its table, as cards. Forks share the foreground's plugin instances, so a tool that
 asks you a question can open its picker from a fork.
 
 ### Git worktrees
@@ -2320,7 +2441,7 @@ uncommitted or untracked files, or a different commit checked out than at launch
 Ignored files do not count. If nothing changed in a worktree this launch created,
 CLAI removes it without asking, and deletes its `clai-NAME` branch too when this
 launch created that branch and Git agrees it is merged (`git branch -d`). This
-still applies after `/update` restarts CLAI in the worktree. An
+still applies after `/update now` restarts CLAI in the worktree. An
 unchanged worktree that CLAI reopened, or one you launched inside, is kept without
 asking.
 
@@ -2330,8 +2451,8 @@ removal runs without `--force`, so dirty or locked worktrees are kept with an
 explanation. The main checkout is never removed. Headless runs, piped input, and
 startup errors keep the worktree without prompting. `/new`, `/resume`, and `/reload` do not remove the checkout:
 they leave the shell using the same working directory.
-Enter a retained directory and run `clai2 --resume` to continue a saved session. `--worktree` cannot be
-combined with `--resume`, `config`, or `plugins`.
+Enter a retained directory and run `clai2 --continue` or `clai2 --resume` to continue a saved session.
+`--worktree` cannot be combined with `--resume`, `--continue`, `config`, or `plugins`.
 
 When you no longer need the checkout, use Git's own cleanup commands from your
 original repository root. Without `--force`, Git refuses to remove a dirty worktree:
@@ -2357,7 +2478,8 @@ others run turns. Each live session has its own conversation, folder, plugins,
 queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
 `.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
-asks which folder, offering every worktree of the repositories it has sessions in;
+asks which folder, offering every worktree of the repositories it has sessions in,
+and completing a typed path to any directory, with every worktree of each repository it finds;
 with `/web`, it starts in the folder of the session you are looking at.
 CLAI never changes its own working directory to do this. There is no limit on how
 many sessions run at once.
@@ -2390,14 +2512,15 @@ many sessions run at once.
   at a time, and its toolbar shows `N live` while more than one is. `/resume ID` of a
   session live in the browser shows that session in the terminal, even mid-turn,
   instead of copying it; the session shown before keeps running.
-- **`/update` and `/reload`** restart CLAI, so `/update` runs only in the session
+- **`/update now` and `/reload`** restart CLAI, so `/update now` runs only in the session
   the terminal shows, or under `clai2 --web` in the session it started with, and
   `/reload` only in the terminal. Elsewhere they refuse and say where to enter them.
   They also refuse while another session runs a turn, saying how many run, so try
-  again when they finish. With `/web` from a terminal, CLAI restarts in the folder it
-  started in, so they refuse in a shown session that works in another folder.
+  again when they finish; bare `/update` can still show the menu in the session
+  shown in the terminal. With `/web` from a terminal, CLAI restarts in the folder
+  it started in, so they refuse in a shown session that works in another folder.
   `/reload` keeps the terminal's conversation but closes the other live sessions and
-  stops the web UI; run `/web` again to reopen it. `/update` brings the web UI back.
+  stops the web UI; run `/web` again to reopen it. `/update now` brings the web UI back.
 - **Terminal menus and prompts.** A command that opens one, such as `/model add`,
   `/resume claude`, or `/set api_key`, opens it in the terminal that runs CLAI. When
   there is none, as for `clai2 --web` started from a script or service, the command
@@ -2567,8 +2690,9 @@ emitted.
 ### Herdr integration
 
 Enable `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane to report
-CLAI2's state, session reference, model/token metadata, and conversation title.
-It starts disabled and does nothing outside herdr. See
+CLAI2's state, session reference, model/token metadata, and conversation title,
+and to let herdr reopen the conversation after a herdr restart. It starts
+disabled and does nothing outside herdr. See
 [the plugin guide](../PLUGINS.md#herdr-integration) for details and limitations.
 
 ### Agent of Empires integration
@@ -2810,7 +2934,7 @@ and runs one turn through tools to completion. Only the final answer is printed
 to stdout, without Markdown rendering, wrapping, banners, thinking, or tool output.
 Errors go to stderr with a nonzero exit status; Ctrl-C exits with status 130.
 The turn is saved and can be resumed. With `-p`, `--resume` requires an explicit
-session ID; the browser cannot open. `--session-id` and `--fork-session` work as
+session ID; the browser cannot open. `--continue`, `--session-id`, and `--fork-session` work as
 interactively. Prompt text is literal, not a slash command.
 
 `-m` is the short form of `--model`. It overrides the saved, project, and
@@ -2943,7 +3067,7 @@ only. Structured outputs are supported and displayed after completion.
 
 ### Source layout
 
-The shell entry point lives in `_app.py`. Related implementations live in
+The shell entry point lives in `app.py`. Related implementations live in
 `cli/`, `config/`, `runtime/`, `models/`, `plugins/`, and `ui/` (`prompt/`,
 `menus/`, and `rendering/`). Built-in plugins live in `builtin_plugins/`; MCP has its own
 `mcp/` package. Plugin authors can still import `pydantic_clai2.plugins` and

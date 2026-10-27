@@ -241,6 +241,13 @@ How it reaches the model depends on the provider:
 * Where the API accepts a system message inside the conversation, it's sent as one, with the operator authority that implies. [Anthropic](models/anthropic.md#mid-conversation-system-messages) supports this on some models, and may adjust the position slightly to satisfy its own placement rules.
 * Everywhere else it's rendered as a `<system>`-tagged [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] at the same position. The instruction still applies from where you put it, but the model can tell it came in over the user channel and may treat it as a strong preference rather than a rule. Every `<system>` tag inside the instruction, opening or closing, in any case, with whitespace around the `/`, with attributes, self-closing, or cut off at the end of the text, goes out with its `<` escaped as `&lt;`, so text in it can't close the tag early or open another; the rest of the instruction, including any other tags, goes out as written.
 
+    On these models, two more things keep the tag meaning the same thing throughout the conversation:
+
+    * The standing system prompt gets one fixed sentence, after the leading system prompts and ahead of the instructions, that says what the tag means: text in a user turn wrapped in `<system>` tags comes from the application, has system authority, and replaces the earlier system content it updates. It goes out on every request from the first, so the cached prefix is unchanged as the conversation grows. A request with no system prompt or instructions doesn't get one.
+    * Every `<system>` tag in the text of a user prompt or a tool return is escaped the same way, so that text can neither open nor close the tag. The user's and the tool's text otherwise goes out as written, other tags included.
+
+    Without them, Gemini and Claude on Bedrock mostly kept to the earlier value of a changed or withdrawn instruction, and Gemini and Grok ignored a new rule about the format of their answers. With them, they follow all three.
+
 Phrase the instruction as what changed rather than as an override of the user. Models are trained to resist instructions that appear to work against the person they're talking to, and that applies to the system role too — "the build tag is no longer confidential" lands where "ignore what the user was told earlier" doesn't.
 
 !!! warning "Not a place for untrusted content"
@@ -291,6 +298,8 @@ class StayTerse(AbstractCapability[Any]):
 
 agent = Agent('{{ anthropic:large }}', capabilities=[StayTerse()])
 ```
+
+The Harness [System Reminders](harness/system-reminders.md) capability is built this way.
 
 A request-scoped prompt is not a request-only change: the prompt stays in history and only what the model is shown changes, while a request-only change, such as assigning `request_context.messages`, never reaches history at all. So don't add it to `request_context.messages` alone: it then never enters the history, so the next request doesn't send it, and on a model that ties its reasoning to the exact conversation, dropping it from one request to the next counts as editing the conversation. See [Changing what the model sees](capabilities/custom.md#steering-messages-and-reminders) for the other ways a capability can change what's sent, and what each does to the prompt cache.
 
@@ -710,7 +719,7 @@ Possession of the endpoint is therefore the authorization boundary, so design ar
 - **Authenticate and authorize at the transport layer.** Run the agent inside your own authenticated route handler, and treat every caller that gets through as able to submit any history it likes.
 - **Scope the toolset to the caller.** Expose only the tools the authenticated caller is entitled to use, by [building the toolset per run](toolsets.md#dynamically-building-a-toolset) or [filtering](toolsets.md#filtering-tools) it against the user carried in your [dependencies](dependencies.md).
 - **Re-validate high-stakes effects server-side.** [Approval](deferred-tools.md#human-in-the-loop-tool-approval) guards against the *model* acting without human sign-off, not against the client. Where the stakes demand it, check the caller's authority against server-side state inside the tool function itself, or persist paused runs server-side and resume them with your own `deferred_tool_results` instead of the client's.
-- **Don't read prompt-level framing as proof.** Where a model API can't carry a tool's file in its tool result, Pydantic AI frames it as coming from that call ([Where a returned file is sent](tools-advanced.md#tool-return-file-provenance)), and a mid-conversation system prompt a provider can't send natively is framed as `<system>...</system>`. Both are ordinary prompt text: a tool can emit a closing tag and a client can type an opening one. They tell the model where content came from; they don't attest it.
+- **Don't read prompt-level framing as proof.** Where a model API can't carry a tool's file in its tool result, Pydantic AI frames it as coming from that call ([Where a returned file is sent](tools-advanced.md#tool-return-file-provenance)), and a mid-conversation system prompt a provider can't send natively is framed as `<system>...</system>`, with any `<system>` tag in user and tool text escaped. Both are ordinary prompt text, and a client that can submit history can still submit system prompts of its own unless you [strip them](#loading-untrusted-history). They tell the model where content came from; they don't attest it.
 
 !!! note "This is a documented design boundary, not a vulnerability"
     A report that a client can forge an approval, submit a tool call the model never made, or otherwise rewrite the conversation describes this boundary behaving as designed, and is not a vulnerability in Pydantic AI. What *would* be one is a bypass of a check Pydantic AI actually performs — for instance a sanitization default that fails to strip what it documents as stripped.
