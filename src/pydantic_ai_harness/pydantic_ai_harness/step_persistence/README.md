@@ -98,6 +98,28 @@ still be looked up by the id passed to or returned from `Agent.run`.
 
 ## Durable execution
 
+`StepPersistence` and a durable execution engine recover from different
+failures:
+
+- **`StepPersistence`** saves message-history snapshots, a step-event trail,
+  and a tool-effect ledger to a store you choose, with no engine to run. After
+  a crash, your code decides what happens next: load the latest complete
+  snapshot's messages with `continue_run` or `fork_run` and pass them to a new
+  `Agent.run(message_history=...)`, in the same process or another one. A step
+  that was in flight is not retried: its tool calls show up as `started`
+  effects in the ledger, and you decide whether redoing them is safe.
+- **A durable engine** replays the run itself after a restart and retries the
+  call that was in flight, as
+  [Durable Execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/)
+  describes.
+
+Use `StepPersistence` alone when a run can be resumed or forked from its last
+settled step, for example by an orchestrator that continues a delegate's
+investigation. Use a durable engine when a run must finish without your code
+restarting it, including a step interrupted partway through. Use both to have
+the engine keep the run alive while the store keeps a history you can inspect,
+continue, or fork after the run ends.
+
 `StepPersistence` has the stable capability id `step_persistence`, so it can
 be attached alongside a Pydantic AI durability capability without passing
 `id=`. Pass an explicit id only when the same agent has more than one
@@ -873,6 +895,11 @@ keeps its messages, content revision, and activity timestamp. Saving new content
 unarchives it, since the conversation is in use again. Archiving deletes nothing.
 `listing(archived=False)` leaves archived conversations out, `archived=True` lists
 only those, and the default `None` lists both, as before archiving existed.
+
+An application that copies a conversation may set `ConversationSummary.forked_from`
+to the `id` of the conversation it copied; later saves keep it. It names the source
+conversation, not a message in it, and the application decides which copies record it.
+`listing(forked_from=...)` lists only the conversations recording that ID.
 
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.

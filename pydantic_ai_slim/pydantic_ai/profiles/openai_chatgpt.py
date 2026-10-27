@@ -12,7 +12,7 @@ def openai_chatgpt_model_profile(model_name: str) -> ModelProfile:
     [preview limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations):
     requests must stream and set `store=false`, explicit `system` messages are rejected in favor of
     `developer` ones, sampling, output-limit, and service-tier fields are rejected, only `POST /v1/responses` is served
-    (so there is no server-side input-token counting), and of the hosted tools only web search is
+    (so there is no server-side input-token counting or Batch API), and of the hosted tools only web search is
     accepted. `tool_search` is not accepted, so deferred tools fall back to local search.
     """
     return merge_profile(
@@ -31,6 +31,7 @@ def openai_chatgpt_model_profile(model_name: str) -> ModelProfile:
             openai_responses_requires_streaming=True,
             openai_responses_requires_store_false=True,
             openai_supports_input_token_counting=False,
+            openai_supports_batch_api=False,
             # `prompt_cache_retention` is rejected and the explicit caching fields are not documented as
             # supported, so the unified `cache` setting has nothing to turn on.
             openai_supports_prompt_cache_breakpoints=False,

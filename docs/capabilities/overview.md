@@ -16,7 +16,7 @@ Capabilities can provide any combination of:
 
 This makes them the primary extension point for Pydantic AI. Whether you're building a memory system, a guardrail, a cost tracker, or an approval workflow, a capability is the right abstraction.
 
-Capabilities can be always-on or [loaded by the model on demand](on-demand.md). The [capability index below](#available-capabilities) covers Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). [Third-party packages](third-party.md) provide many more capabilities, and you can define your own [declaratively](#bundling-behavior-with-capability) or by [subclassing](custom.md). To run agents durably across failures, restarts, and long waits, see [Durable Execution](../durable_execution/overview.md).
+Capabilities can be always-on or [loaded by the model on demand](on-demand.md): an on-demand (deferred) capability keeps its instructions and tools hidden until the model loads it, so use one to [gate a workflow's or skill's tools](on-demand.md#hide-tools-until-loaded) as a bundle, and [tool search](../tools-advanced.md#tool-search) to let the model find individual tools in a large catalog. The [capability index below](#available-capabilities) covers Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). [Third-party packages](third-party.md) provide many more capabilities, and you can define your own [declaratively](#bundling-behavior-with-capability) or by [subclassing](custom.md). To run agents durably across failures, restarts, and long waits, see [Durable Execution](../durable_execution/overview.md).
 
 ## Available capabilities
 
@@ -120,6 +120,7 @@ How the agent spends its context window: the difference between an agent that de
 | Capability | Package | What it does |
 |---|---|---|
 | [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) | Harness | The model writes one Python script that calls many tools inside a [Monty](https://github.com/pydantic/monty) sandbox: one round-trip instead of N, and intermediate results never enter the context window |
+| [IPython Code Mode](https://pydantic.dev/docs/ai/harness/ipython-code-mode/) | Harness | Code Mode with a persistent [IPython](https://ipython.org/) kernel in place of the Monty sandbox: full CPython and any installed package, with state kept between calls. For local agents only; not a sandbox |
 | [Tool Search](tool-search.md) | Core | Load tool definitions on demand instead of carrying hundreds in every prompt |
 | [Caching](caching.md) | Core | Provider-adaptive prompt caching of tools, instructions and the conversation, at a configurable retention |
 | [Compaction](compaction.md) | Core | Provider-native compaction on OpenAI and Anthropic; the provider summarizes history server-side |
@@ -152,6 +153,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Tool approval](../deferred-tools.md#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
 | [Handle Deferred Tool Calls](handle-deferred-tool-calls.md) | Core | Resolve approval-deferred tool calls programmatically |
 | [System Reminders](https://pydantic.dev/docs/ai/harness/system-reminders/) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
+| [Detect Loops](https://pydantic.dev/docs/ai/harness/detect-loops/) | Harness | Notice repeated tool calls, results, alternations, or responses, and nudge the model, stop the run, or call your handler |
 | [Trajectory Judge](https://pydantic.dev/docs/ai/harness/trajectory-judge/) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
 
 ### Self-extension
@@ -176,6 +178,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 | [Managed Prompt](https://pydantic.dev/docs/ai/harness/managed-prompt/) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |
 | [Repair Tool Arguments](https://pydantic.dev/docs/ai/harness/repair-tool-arguments/) | Harness | Repair malformed JSON tool arguments before schema validation |
 | [Thread Executor](thread-executor.md) | Core | Run sync tools on a shared thread pool |
+| [Batch Model Requests](../batch.md#agents) | Core | Send model requests through provider batch APIs, at batch prices |
 
 ### Loop customization
 

@@ -2,9 +2,16 @@
 
 import asyncio
 import math
+import sys
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    asynccontextmanager,
+    contextmanager,
+    nullcontext,
+)
 from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
@@ -21,10 +28,10 @@ from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, infer_model_profile
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_ai_harness.subagents import DelegationTask
+from pydantic_ai_harness.subagents import DelegationTask, TaskQuestionEvent
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
 from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff
@@ -45,41 +52,44 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.models import login_names
 from pydantic_clai2.models.chains import settings_model as chain_settings_model
-from pydantic_clai2.models.profiles import provider_of
+from pydantic_clai2.models.profiles import base_model, provider_of
 from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    InstallProgress,
     QueuedInput,
     Renderer,
     SessionEndReason,
     SessionStart,
-    TaskEvent,
+    TaskProgress,
     TurnEnd,
     TurnStart,
-    UpdateProgress,
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, SessionPlugins
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import LiveRuntime, handling
 from pydantic_clai2.runtime import image_codec
-from pydantic_clai2.runtime._session import (
+from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
+from pydantic_clai2.runtime.forks import Forks
+from pydantic_clai2.runtime.git_actions import git_commands
+from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
+from pydantic_clai2.runtime.process import ClaiProcess
+from pydantic_clai2.runtime.session import (
     Session,
     StockAgent,
     agent_capabilities,
     current_session_id,
 )
-from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
-from pydantic_clai2.runtime.forks import Forks
-from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
-from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
-from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
+from pydantic_clai2.runtime.tasks import Tasks, question_row, resume_prompt
 from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.menus.dialogs import run_settings_menu
 from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
+from pydantic_clai2.ui.menus.menu_worker import without_terminal
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions, models_menu
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
@@ -98,8 +108,8 @@ from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.prompt.terminal import Terminal
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.history import render_history
+from pydantic_clai2.ui.rendering.rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
@@ -111,7 +121,6 @@ OutputT = TypeVar('OutputT')
 _PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload', 'configure')
 _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unchanged.'
 _PLUGINS_WAIT = 'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.'
-_RESTARTS = 'Restarts CLAI: enter it in the session the terminal shows'
 
 
 async def _default_model(
@@ -134,10 +143,6 @@ async def _default_model_name(*, store: SettingsStore, fallback: Model | str | N
     if isinstance(saved, str):
         return saved
     return fallback if fallback is None or isinstance(fallback, str) else fallback.model_name
-
-
-def _refuse_restart(args: list[str]) -> str:
-    raise ValueError(_RESTART_ELSEWHERE)
 
 
 def _process(
@@ -249,6 +254,7 @@ def create_shell(
         tasks=process.tasks.owner,
     )
     commands = Commands(workspace=lambda: Path(session.workspace))
+    commands.register_many(git_commands(workspace=lambda: Path(session.workspace), model=session.resolved_model))
     commands.register(
         Command(
             name='effort',
@@ -403,6 +409,7 @@ def create_shell(
             name='usage',
             description='Show tokens and cost per turn',
             handler=lambda _: sessions.usage(console=console),
+            during_turn=True,
         )
     )
     commands.register(
@@ -410,15 +417,18 @@ def create_shell(
             name='cost',
             description='Show retained history cost and tokens',
             handler=lambda _: cost_line(session_usage(session.messages)),
+            during_turn=True,
         )
     )
     commands.register(Command(name='exit', description='Quit CLAI', handler=lambda _: 'Goodbye.'))
     updates = Updates(channel=lambda: context.settings.update_channel)
+
     commands.register(
         Command(
             name='update',
-            description='Install the newest CLAI from the updates.channel setting (stable or main)',
+            description='Show whether a newer CLAI is out on updates.channel (stable or main); /update now installs it',
             handler=lambda args: shell.update(args),
+            complete=lambda args: ('now',) if len(args) <= 1 else (),
             menu=lambda: update_menu(
                 context, updates, run=lambda text: shell.send_input(text), refusal=lambda: shell.restart_refusal()
             ),
@@ -455,10 +465,13 @@ def create_shell(
         running=lambda: shell.turning,
         default_model=partial(_default_model, store=store, models=models, fallback=agent.model),
         default_model_name=partial(_default_model_name, store=store, fallback=agent.model),
+        resolve_model=models.resolve,
+        model_settings=context.model_settings,
         inputs=lambda: shell,
+        forks=lambda: shell.forks.listing(),
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
-    updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
+    updates.report = lambda: loader.fire if loader.handles(InstallProgress) else None
     # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
     updates.capture = lambda: web_serving(loader) is not None
     updates.serving = lambda: web_serving(loader)
@@ -653,6 +666,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     submitted: list[str] | None = None
     """Prompts the running `/command` submitted with `host.submit_prompt`; `None` while no command runs."""
     reload_requested: bool = False
+    served: bool = False
+    """Whether it runs with no terminal of its own, as one the browser opened: it restarts CLAI only while shown."""
     editor: LivePrompt | None = None
     """The terminal's editor, while the terminal shows this session and its console is a terminal."""
     forks: Forks[DepsT, OutputT] = field(init=False)
@@ -660,6 +675,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
+    _measured_model: str | None = field(default=None, init=False, repr=False)
+    """The model whose completed turn measured the status row's figures; `None` once the model changes."""
     _inbox: PromptInbox = field(default_factory=PromptInbox, init=False, repr=False)
     """Input `send_input` entered while no editor reads keys, as in a shell driven only by a plugin."""
     turning: bool = field(default=False, init=False)
@@ -738,19 +755,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 await self.loader.load_all()
                 if resume is not None:
                     self.session.record_resumed()
-                for name in ('reload', 'update'):
-                    # Both restart CLAI, which only the session the terminal shows, or CLAI started with, can do.
-                    restart = next(command for command in self.commands if command.name == name)
-                    self.commands.unregister([name])
-                    self.commands.register(
-                        Command(
-                            name=name,
-                            description=_RESTARTS,
-                            handler=lambda args, restart=restart: (
-                                restart.handler if self.terminal is not None else _refuse_restart
-                            )(args),
-                        )
-                    )
+                self.served = True
                 ready()
                 reason = await self.run()
         except get_cancelled_exc_class():
@@ -761,12 +766,20 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 await self.close(reason)
         return reason
 
+    def join(self) -> None:
+        """Count this session among the process's live sessions, as again after a failed `/reload`; `close` leaves them."""
+        self.sessions.join()
+        self.tasks.join()
+        self.process.live.add(self)
+
     async def close(self, reason: SessionEndReason) -> None:
         """End this session's plugins and leave the process's live sessions."""
         self.process.live.leaving(self)
         try:
             await self.loader.close(reason)
         finally:
+            self.sessions.close()
+            self.tasks.close()
             self.process.live.remove(self)
 
     @contextmanager
@@ -817,9 +830,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             conversation_id=lambda: self.session.summary.id,
             router=self.process.tasks,
             fire=self.loader.fire,
-            listening=lambda: self.loader.handles(TaskEvent),
+            listening=lambda: self.loader.handles(TaskProgress),
             send_input=self.send_input,
             prompt_task=self.prompt_task,
+            show_task_models=lambda: self.context.settings.task_models,
         )
         self.status.subagent = self.tasks.focused
         self.forks = Forks(
@@ -963,9 +977,22 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         return 'Reloading CLAI2...'
 
     async def update(self, args: list[str]) -> str:
-        """`/update`, refused while another live session runs a turn, which the restart would end."""
-        self._refuse_restart_while_others_run()
-        return await self.updates.command(args)
+        """`/update` opens the update menu and `/update now` installs, refused while another session runs a turn.
+
+        The restart after an install would end that turn. The menu's Update action installs here once it has closed.
+        """
+        if args:
+            self._refuse_restart_while_others_run()
+            return await self.updates.command(args)
+        if self.terminal is None:
+            raise ValueError(self.restart_refusal() or 'The update menu needs a terminal; open About in the web UI.')
+        entered: list[str] = []
+        menu = update_menu(self.context, self.updates, run=entered.append, refusal=self.restart_refusal)
+        messages = await run_settings_menu(menu)
+        if not entered:
+            return '\n'.join(messages)
+        self.console.print('\n'.join(messages), markup=False, highlight=False)
+        return await self.update(['now'])
 
     def _refuse_restart_while_others_run(self) -> None:
         if (refusal := self.restart_refusal()) is not None:
@@ -973,8 +1000,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     def restart_refusal(self) -> str | None:
         """Why `/reload` and `/update` cannot restart CLAI from this session now; `None` when they can."""
-        if self.terminal is None and self.process.live.focused not in (None, self.live_session.id):
-            # The session CLAI started with, while the terminal shows another: the restart starts from that one.
+        if self.terminal is None and (self.served or self.process.live.focused not in (None, self.live_session.id)):
+            # Only the session the terminal shows, or with no terminal the one CLAI started with, restarts it.
             return _RESTART_ELSEWHERE
         home = self.terminal.home if self.terminal is not None else None
         if home is not None and home is not self and self.session.workspace != home.session.workspace:
@@ -1008,7 +1035,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                     if isinstance(self.agent, StockAgent):
                         self.session.delegations = owner
                     # Reports a task left while no CLAI ran are known once the owner opened.
-                    if self.editor is not None and owner.reports(conversation_id=self.session.summary.id):
+                    if self.editor is not None and self.tasks.waiting(self.session.summary.id):
                         self.editor.wake()
                     reason = await self._read_loop()
                     return reason
@@ -1059,7 +1086,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             # Input a plugin entered while the editor read for another session, or did not exist yet.
             for entry in self._inbox.take():
                 editor.submit(entry)
-            if self.tasks.owner.reports(conversation_id=self.session.summary.id):
+            if self.tasks.waiting(self.session.summary.id):
                 editor.wake()
         if self._reading is not None:
             self._reading.cancel()
@@ -1164,16 +1191,33 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.console.print()
             if await self._refused(text):
                 return
-            await self.loader.fire(await _execute_command(self.commands, text, console=self.console))
+            with self._without_terminal(text):
+                await self.loader.fire(await _execute_command(self.commands, text, console=self.console))
             self._show_status_segments()
 
     def show_model(self) -> None:
-        """Show the model the next prompt runs on in the status row, forgetting the last one's window if it changed."""
+        """Show the model the next prompt runs on in the status row, forgetting the last one's window if it changed.
+
+        Its known window, a plugin model's taken from its `settings_from` provider, and the conversation's last
+        response's context (zero when empty) show until a turn on it measures them.
+        """
         model = self.session.model or _model_label(self.agent)
         if model != self.status.model:
             self.status.context_window = None
             self.status.context_alert = False
+            self._measured_model = None
         self.status.model = model
+        agent_model = self.agent.model
+        if self.status.context_tokens is not None and model == self._measured_model:
+            # A request left the window unresolved, as for a fallback model: the selected one's would be a guess.
+            self.status.model_window = None
+        elif self.session.model is None and isinstance(agent_model, Model):
+            self.status.model_window = agent_model.context_window
+        else:
+            profiled = base_model(self.loader.settings_model(model))
+            self.status.model_window = infer_model_profile(profiled).get('context_window')
+        if self.status.context_tokens is None:
+            self.status.context_tokens = _last_context_tokens(self.session.messages)
 
     def _show_status_segments(self) -> None:
         """Paint the status segments of the plugins loaded now."""
@@ -1206,7 +1250,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 await self._rewind()
                 continue
             except PromptWakeup:
-                if not self.tasks.owner.reports(conversation_id=self.session.summary.id):
+                if not self.tasks.waiting(self.session.summary.id):
                     continue
                 with self._handling_input():
                     async with self.forks.busy():
@@ -1295,7 +1339,25 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _execute(self, text: str, ended: list[CommandEnd]) -> None:
         """Run a command, adding its `CommandEnd` to `ended` unless it is cancelled first."""
-        ended.append(await _execute_command(self.commands, text, console=self.console))
+        with self._without_terminal(text):
+            ended.append(await _execute_command(self.commands, text, console=self.console))
+
+    def _without_terminal(self, text: str) -> AbstractContextManager[None]:
+        """Fail the terminal menus and prompts command `text` opens while CLAI has no terminal for them.
+
+        That is when no terminal shows this session and stdin is not one either, as under `clai2 --web`
+        started from a script: a menu would read EOF and close as cancelled.
+        """
+        stdin = sys.stdin
+        if self.terminal is not None or (stdin is not None and not stdin.closed and stdin.isatty()):
+            return nullcontext()
+        return without_terminal(text, instead=self._page_menu(text))
+
+    def _page_menu(self, text: str) -> str | None:
+        """`/NAME` when `text` gives arguments to a command whose bare form opens its menu in the page."""
+        name, *args = text.split()
+        command = self.commands.get(name[1:])
+        return name if args and command is not None and command.menu is not None else None
 
     async def _live_command(self, text: str, editor: LivePrompt, ended: list[CommandEnd]) -> bool:
         """Run a slow `live` command such as `/compact` with the spinner up and its cancel keys working.
@@ -1432,7 +1494,20 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                     steering_send.close()
                     steering_receive.close()
                     send.close()
+        if ended.outcome == 'completed':
+            self._measured_model = model
         return ended
+
+
+def _last_context_tokens(messages: Sequence[ModelMessage]) -> int | None:
+    """The context a conversation's last response left, as a resumed one reads before its next turn.
+
+    An empty conversation reads `0`; one without a response that reported usage stays unknown.
+    """
+    if not messages:
+        return 0
+    response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
+    return None if response is None else context_tokens(response) or None
 
 
 def _report_interrupt(completed: bool, console: Console) -> None:
@@ -1517,6 +1592,23 @@ async def _prompt_with_steering(
     return result
 
 
+def _run_events(
+    observe: Callable[[AgentStreamEvent], Awaitable[None]], tasks: Tasks | None
+) -> Callable[[AgentStreamEvent], Awaitable[None]]:
+    """The main run's stream handler. With the tasks' feed, a task's question shows once, from that feed.
+
+    The run streams only the questions asked while it is open to them; the feed gets every one.
+    """
+    if tasks is None:
+        return observe
+
+    async def observe_run(event: AgentStreamEvent) -> None:
+        if not isinstance(event, TaskQuestionEvent):
+            await observe(event)
+
+    return observe_run
+
+
 async def _run_prompt(
     session: Session[DepsT, OutputT],
     text: str | None,
@@ -1531,8 +1623,9 @@ async def _run_prompt(
     tasks: Tasks | None = None,
     steering: tuple[MemoryObjectSendStream[str], MemoryObjectReceiveStream[str]] | None = None,
 ) -> TurnEnd:
+    # Without the tasks' feed, a task-control run of a custom agent still shows its tasks' questions.
     renderer = _stream_renderer(
-        console, settings=settings, renderers=[*renderers, task_row] if tasks is not None else renderers
+        console, settings=settings, renderers=[*renderers, tasks.row if tasks is not None else question_row]
     )
     status.streamed_chars = 0
     status.output_tokens = None
@@ -1561,9 +1654,16 @@ async def _run_prompt(
         if status.context_window is None:
             status.context_window = window
 
+    def usage(messages: Sequence[ModelMessage]) -> None:
+        total = session_usage(messages).total
+        status.cost = total.cost
+        status.cost_is_lower_bound = bool(total.unmeasured_requests)
+
     session.on_context_usage = context_usage
+    session.on_usage = usage
     session.on_context_window = context_window
-    session.on_stream_event = observe
+
+    session.on_stream_event = _run_events(observe, tasks)
     # A session the terminal does not show yet prints nowhere: no footer of its own may draw over the editor later.
     status_line = StatusLine(console, status, enabled=screen.editor is None and console.is_terminal, spinner=spinner)
 
@@ -1605,9 +1705,8 @@ async def _run_prompt(
         if tasks is not None:
             tasks.sink = None
         status.activity = 'ready'
-        total = session_usage(session.messages).total
-        status.cost = total.cost
-        status.cost_is_lower_bound = bool(total.unmeasured_requests)
+        usage(session.messages)
         session.on_context_usage = None
+        session.on_usage = None
         session.on_context_window = None
         await renderer.finish()

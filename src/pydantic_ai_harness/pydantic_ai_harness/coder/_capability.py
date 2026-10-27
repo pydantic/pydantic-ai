@@ -17,7 +17,7 @@ from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT, Shell
-from pydantic_ai_harness.subagents import SubAgents
+from pydantic_ai_harness.subagents import SubAgents, TaskControl
 from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate
 
 FILE_TOOL_NAMES: tuple[str, ...] = ('read_file', 'write_file', 'edit_file', 'list_files', 'grep')
@@ -99,6 +99,8 @@ class Coder(CombinedCapability[AgentDepsT]):
     passing it to `run()`. `sub_agents=False` leaves delegation out.
     `agent_folders` optionally adds disk-defined delegates using `SubAgents`' folder
     names or explicit workspace paths. It defaults to `None` (no disk discovery).
+    `task_control=TaskControl()` is passed to `SubAgents(task_control=...)`, so the agent can run
+    delegations in the background, steer, answer, and cancel them; it requires `sub_agents=True`.
 
     `caching=True` turns on prompt caching through the unified `cache` model setting,
     unless the model, the agent, or a capability listed before `Coder` already sets
@@ -115,8 +117,11 @@ class Coder(CombinedCapability[AgentDepsT]):
         repo_context: bool = True,
         sub_agents: bool = True,
         agent_folders: str | Sequence[str | Path] | None = None,
+        task_control: TaskControl | None = None,
         caching: bool = True,
     ) -> None:
+        if task_control is not None and not sub_agents:
+            raise ValueError('`task_control` requires `sub_agents=True`.')
         if workspace is not None:
             warn_argument_ignored(
                 'Coder',
@@ -149,7 +154,9 @@ class Coder(CombinedCapability[AgentDepsT]):
         if repo_context:
             capabilities.append(RepoContext[AgentDepsT](expose_inventory_tool=False))
         if sub_agents:
-            capabilities.append(SubAgents[AgentDepsT](include_self=True, agent_folders=agent_folders))
+            capabilities.append(
+                SubAgents[AgentDepsT](include_self=True, agent_folders=agent_folders, task_control=task_control)
+            )
         capabilities += [
             ClearToolResults[AgentDepsT](max_fraction=0.7),
             _BoundToolOutputs[AgentDepsT](

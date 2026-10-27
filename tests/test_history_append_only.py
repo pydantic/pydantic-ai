@@ -64,9 +64,11 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
+from ._inline_snapshot import snapshot
 from .append_only import (
     CLOCK,
     PROVIDERS,
@@ -87,6 +89,7 @@ from .append_only import (
     inject_clock,
     provider_imports_successful,
     run_conversation,
+    ui_imports_successful,
 )
 from .conftest import try_import
 
@@ -94,6 +97,10 @@ with try_import() as mcp_imports_successful:
     from fastmcp.server import FastMCP
 
     from pydantic_ai.mcp import MCPToolset
+
+# The module is skipped without the provider extras, so this needs no flag of its own.
+with try_import():
+    from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
 pytestmark = pytest.mark.skipif(not provider_imports_successful(), reason='anthropic or openai not installed')
 
@@ -145,6 +152,11 @@ FIXTURES: dict[str, Fixture] = {
 """Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
 
 EXEMPT: dict[str, Exempt] = {
+    'BatchModelRequests': Exempt(
+        "Sends each request through the provider's batch API, which the scenario doesn't serve. A batch item's body is "
+        "built by the same code as the model's own request, so it's the unbatched request's (see the providers' "
+        '`batch_encode` tests).'
+    ),
     'NativeOrLocalTool': Exempt(
         'Base class that needs a subclass; `WebSearch`, `WebFetch`, `XSearch` and `MCP` are its cases.'
     ),
@@ -170,6 +182,13 @@ KNOWN: dict[str, tuple[Known, ...]] = {
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
 ALLOWED: dict[str, Allowed] = {
+    'agent:effort_change': Allowed(
+        'docs/capabilities/thinking.md: an API without a mid-conversation effort channel gets each change as the request-level '
+        'effort, which is part of the cache key',
+        (('settings', 'setting:reasoning_effort'),),
+        max_moves=2,
+        providers=('openai-chat',),
+    ),
     'agent:dynamic_instructions': Allowed(
         'docs/agent.md: dynamic instructions are re-rendered for every request, after the static ones and outside '
         'the cached prefix; append mode is #8188',
@@ -219,9 +238,25 @@ def _dynamic_instructions(agent: Agent[Any, Any], clock: Clock) -> None:
         return f'The time is {clock.now:%H:%M}.'
 
 
+def _effort_by_step(ctx: RunContext[Any]) -> ModelSettings:
+    """Raise the effort as the conversation goes on: at a tool-result step of the first run, and as the second starts."""
+    responses = sum(isinstance(message, ModelResponse) for message in ctx.messages)
+    return ModelSettings(thinking='low' if responses == 0 else 'medium' if responses < 3 else 'high')
+
+
 AGENT_FEATURES: dict[str, Scenario] = {
     'agent:dynamic_system_prompt': Scenario(configure=_dynamic_system_prompt, check_ids=False),
     'agent:dynamic_instructions': Scenario(configure=_dynamic_instructions, check_ids=False),
+    # The models whose APIs can change effort mid-conversation (#10385); Chat Completions can't.
+    'agent:effort_change': Scenario(
+        run_kwargs={'model_settings': _effort_by_step},
+        model_names={'openai-responses': 'gpt-6.1-sol', 'openai-chat': 'gpt-6.1-sol'},
+        serialize_history=True,
+    ),
+    # A UI endpoint that keeps the history on the server (#11372): the client sends its whole conversation back,
+    # and `manage_message_history='server'` must still only ever append to the requests the stored history built.
+    'ui:server_held_history_vercel': Scenario(ui_adapter='vercel', serialize_history=True),
+    'ui:server_held_history_agui': Scenario(ui_adapter='agui', serialize_history=True),
 }
 """Agent features, not capabilities, that render state into the prompt, run through the same checks."""
 
@@ -337,6 +372,37 @@ RETRY_SCENARIOS: dict[str, Scenario] = {
 """Conversations that retry, continued from stored history. Each also runs with a request-scoped system prompt
 on every request, which a retried step must still leave out of the next request."""
 
+
+def _timekeeping() -> list[AbstractCapability[Any]]:
+    capability = Capability[Any](
+        id='timekeeping', defer_loading=True, description='Tell the time.', instructions='Give times in UTC.'
+    )
+
+    @capability.instructions
+    def now() -> str:
+        return f'The time is {CLOCK.now:%H:%M}.'
+
+    return [capability]
+
+
+LOADED_CAPABILITY_CASES: dict[str, tuple[Callable[[], list[AbstractCapability[Any]]], Scenario]] = {
+    # The clock moves on every request, so every request after the load records a change to its instructions.
+    'deferred:dynamic_instructions': (
+        _timekeeping,
+        Scenario(
+            turns=(
+                Turn(calls=(('load_capability', {'id': 'timekeeping'}),)),
+                Turn(calls=(_LOOK_UP,)),
+                Turn(text='Here is the weather.'),
+                Turn(calls=(('look_up', {'topic': 'sports'}),)),
+                Turn(text='Here is more.'),
+            ),
+            serialize_history=True,
+        ),
+    ),
+}
+"""Deferred capabilities the model loads mid-conversation, whose instructions then change."""
+
 RETRY_CASES: dict[str, tuple[Scenario, bool]] = {
     **{f'retry:{name}': (scenario, False) for name, scenario in RETRY_SCENARIOS.items()},
     **{f'retry:{name}+request-scoped': (scenario, True) for name, scenario in RETRY_SCENARIOS.items()},
@@ -348,14 +414,25 @@ CAPABILITIES = discover_capabilities(('pydantic_ai.capabilities', 'pydantic_ai.m
 def test_every_capability_has_a_case():
     """Every table entry names a capability that still exists, so renames and removals don't leave dead rows."""
     tables = FIXTURES.keys() | EXEMPT.keys() | KNOWN.keys() | ALLOWED.keys() | {name for name, _ in UNSUPPORTED}
-    stale = tables - CAPABILITIES.keys() - AGENT_FEATURES.keys() - RETRY_CASES.keys() - VARIANTS.keys()
+    stale = (
+        tables
+        - CAPABILITIES.keys()
+        - AGENT_FEATURES.keys()
+        - RETRY_CASES.keys()
+        - VARIANTS.keys()
+        - LOADED_CAPABILITY_CASES.keys()
+    )
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
 @pytest.mark.parametrize(
     'name',
-    sorted(CAPABILITIES.keys() - EXEMPT.keys()) + sorted(AGENT_FEATURES) + sorted(RETRY_CASES) + sorted(VARIANTS),
+    sorted(CAPABILITIES.keys() - EXEMPT.keys())
+    + sorted(AGENT_FEATURES)
+    + sorted(RETRY_CASES)
+    + sorted(VARIANTS)
+    + sorted(LOADED_CAPABILITY_CASES),
 )
 async def test_conversation_only_appends(
     name: str, provider: Provider, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
@@ -364,8 +441,13 @@ async def test_conversation_only_appends(
         pytest.skip(reason)
     if name == 'MCP' and not mcp_imports_successful():  # pragma: lax no cover
         pytest.skip('mcp not installed')
+    if name.startswith('ui:') and not ui_imports_successful():  # pragma: lax no cover
+        pytest.skip('ag-ui-protocol not installed')
     if name in AGENT_FEATURES:
         capabilities, scenario = [], AGENT_FEATURES[name]
+    elif name in LOADED_CAPABILITY_CASES:
+        build, scenario = LOADED_CAPABILITY_CASES[name]
+        capabilities = build()
     elif name in RETRY_CASES:
         scenario, nudged = RETRY_CASES[name]
         capabilities = [_RequestScopedNudge()] if nudged else []
@@ -880,3 +962,29 @@ def test_a_request_scoped_prompt_left_visible_fails():
     result = ConversationResult('anthropic', bodies, (b'', b''), [])
     with pytest.raises(pytest.fail.Exception, match=re.escape('request 1 still shows')):
         check_conversation('example', result)
+
+
+@pytest.mark.parametrize('protocol', ['vercel', 'agui'])
+async def test_server_held_ui_history_keeps_openai_responses_chaining(
+    protocol: Literal['vercel', 'agui'], monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
+):
+    """A later turn through a server-held UI endpoint continues the OpenAI Responses chain.
+
+    With `openai_previous_response_id='auto'`, a request chains only when the history it continues is the one
+    the previous response answered (#10509, #10656, #11331). The stored history keeps each response's
+    `provider_response_id` and history digest through a JSON round trip, so the second run's first request sends
+    `previous_response_id` and only its new turn, though the client sent its whole conversation.
+    """
+    if not ui_imports_successful():  # pragma: lax no cover
+        pytest.skip('ag-ui-protocol not installed')
+    scenario = Scenario(
+        ui_adapter=protocol,
+        serialize_history=True,
+        run_kwargs={'model_settings': OpenAIResponsesModelSettings(openai_previous_response_id='auto')},
+    )
+    result = await run_conversation('openai-responses', [], scenario, inject_clock(monkeypatch))
+
+    # The first run makes three requests; the fourth is the second run's first.
+    continued = json.loads(result.conversation[3])
+    assert continued['previous_response_id'] == 'resp_3'
+    assert continued['input'] == snapshot([{'role': 'user', 'content': 'And what else?'}])

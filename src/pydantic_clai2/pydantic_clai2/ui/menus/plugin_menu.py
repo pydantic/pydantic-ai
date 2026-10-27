@@ -17,7 +17,7 @@ from pydantic_clai2.ui.menus.field_menu import SAVE_AND_CLOSE_DETAILS, is_save_a
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 Apply = Callable[[Coroutine[object, object, object]], None]
 _HINT = 'Enter/Space on/off - c configure - r reload - d remove - Esc close'

@@ -27,7 +27,6 @@ from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import Plugin
-from pydantic_clai2.runtime._session import Session, fork_summary, interrupted_history
 from pydantic_clai2.runtime.imported_sessions import (
     IMPORT_SOURCES,
     ImportCatalog,
@@ -38,6 +37,7 @@ from pydantic_clai2.runtime.imported_sessions import (
     save_import,
 )
 from pydantic_clai2.runtime.launch import launch_session_id
+from pydantic_clai2.runtime.session import Session, fork_summary, interrupted_history
 from pydantic_clai2.runtime.session_naming import NamingClient, NamingResult, SessionNamer, generate_name
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -77,7 +77,7 @@ class Sessions(Generic[DepsT, OutputT]):
         self.naming = NamingClient(generate=self.generate, enabled=lambda: self.context.settings.session_namer)
         """How this session names the conversations it queues on `namer`."""
         self.namer = namer or SessionNamer(store=store)
-        self.namer.listeners.append(self.named)
+        self.join()
         self._newest_name: tuple[str, str] | None = None
         """The conversation and title `named` heard last, which wins over one still waiting for the terminal."""
         self.on_resume: Callable[[Sequence[ModelMessage]], Awaitable[None]] | None = None
@@ -86,6 +86,15 @@ class Sessions(Generic[DepsT, OutputT]):
         """Moves the session into a directory, so `/resume ID` continues one where it was saved; `clai2 --web` only."""
         self.show_live: Callable[[str], Awaitable[str | None]] = _not_shown
         """Shows in the terminal another live session holding a conversation, with the notice; `None` when none does."""
+
+    def join(self) -> None:
+        """Hear the titles `namer` announces; again once a closed session is live again, as after a failed `/reload`."""
+        if self.named not in self.namer.listeners:
+            self.namer.listeners.append(self.named)
+
+    def close(self) -> None:
+        """Stop hearing the titles `namer` announces, so nothing the process shares keeps this session alive."""
+        self.namer.listeners.remove(self.named)
 
     @property
     def follows_workspace(self) -> bool:
@@ -103,14 +112,22 @@ class Sessions(Generic[DepsT, OutputT]):
         """
         if (shown := await self.show_live(conversation_id)) is not None:
             return shown
+        # One another process runs continues in its existing fork, if any, which is then the one to show or hold.
+        continuation = await self.session.continuation(conversation_id)
+        target = continuation.conversation_id
+        if target != conversation_id and (shown := await self.show_live(target)) is not None:
+            return shown
         # Held from before moving directory, so no other session resumes it meanwhile.
-        with self.session.claim(conversation_id):
+        with self.session.claim(target):
             if self.relocate is not None and not allow_other_workspace:
-                workspace = (await self.store.get(conversation_id=conversation_id)).summary.workspace
+                workspace = (await self.store.get(conversation_id=target)).summary.workspace
                 if workspace != self.session.workspace:
                     await self.relocate(workspace)
             notice = await self.session.resume(
-                conversation_id, allow_other_workspace=allow_other_workspace, unarchive=unarchive
+                conversation_id,
+                allow_other_workspace=allow_other_workspace,
+                unarchive=unarchive,
+                continuation=continuation,
             )
         await self.show_resumed()
         return notice

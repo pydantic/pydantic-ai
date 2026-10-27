@@ -35,6 +35,7 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
+from .batch_model_requests import BatchModelRequests
 from .caching import Caching
 from .capability import Capability
 from .citations import Citations
@@ -79,6 +80,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         NativeTool,
+        BatchModelRequests,
         Caching,
         Citations,
         RaiseContentFilterError,
@@ -135,6 +137,7 @@ __all__ = [
     'on_event',
     'NativeOrLocalTool',
     'RaiseContentFilterError',
+    'BatchModelRequests',
     'Caching',
     'Capability',
     'Citations',
