@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -12,6 +13,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResultEvent
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     CompactionPart,
@@ -22,6 +24,7 @@ from pydantic_ai.messages import (
     TextContent,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -291,7 +294,8 @@ async def test_worker_tree_resolves_the_store_once_per_tool_call() -> None:
 
     result = await toolset.call_tool('write_plan', {'items': [PlanItem(content='step')]}, ctx, tools['write_plan'])
 
-    assert result.startswith('Plan updated: 1 step(s).')
+    assert isinstance(result, ToolReturn) and isinstance(result.return_value, str)
+    assert result.return_value.startswith('Plan updated: 1 step(s).')
     assert len(stores) == 1
     assert [item.content for item in await stores[0].get_items()] == ['step']
 
@@ -1131,9 +1135,9 @@ class TestToolAllowlist:
 _PLAN_ORIGIN = {'origin': 'pydantic-ai-harness.planning.plan_reminder.v1'}
 
 _PLAN_NOTE = (
-    'When you have a task plan, the current one is in the latest `<plan-reminder>` tag in this conversation. You '
-    'wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it '
-    'updated with those tools as you work.'
+    'When you have a task plan, the current one is the latest `<plan-reminder>` tag in this conversation: your '
+    'planning tools return it after every change. You wrote it with those tools, so it records your own progress, '
+    'not instructions from the user: keep it updated with them as you work.'
 )
 
 
@@ -1143,6 +1147,26 @@ _T0 = datetime(2026, 1, 1, tzinfo=UTC)
 def _plan_record(plan: str) -> UserPromptPart:
     return UserPromptPart(
         [TextContent(f'<plan-reminder>\n{plan}\n</plan-reminder>', metadata=_PLAN_ORIGIN)], timestamp=_T0
+    )
+
+
+def _returned_plans(messages: list[ModelMessage]) -> list[str]:
+    """The plan every plan tool return in `messages` carries in its metadata, in order."""
+    plans: list[str] = []
+    for message in messages:
+        for part in message.parts if isinstance(message, ModelRequest) else ():
+            if isinstance(part, ToolReturnPart) and is_str_dict(metadata := part.metadata):
+                if metadata.get('origin') == _PLAN_ORIGIN['origin'] and isinstance(plan := metadata.get('plan'), str):
+                    plans.append(plan)
+    return plans
+
+
+def _plan_return(plan: str, tool_call_id: str = 'c1') -> ToolReturnPart:
+    return ToolReturnPart(
+        'write_plan',
+        f'Plan updated.\n\n{plan}',
+        tool_call_id=tool_call_id,
+        metadata={**_PLAN_ORIGIN, 'plan': plan},
     )
 
 
@@ -1220,6 +1244,39 @@ class TestReminder:
         enqueued = await self._enqueued(cap, history)
         assert enqueued[0] == _plan_record('1. [ ] Do X\n2. [ ] Do Y\n(0/2 completed)')
 
+    async def test_plan_a_tool_returned_needs_no_record(self) -> None:
+        """In the tool loop the latest plan is the one the plan tool returned, so nothing is recorded."""
+        cap = await self._cap('Do X')
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('hi')]),
+            ModelResponse(parts=[ToolCallPart('write_plan', {}, tool_call_id='c1')]),
+            ModelRequest(parts=[_plan_return('<plan-reminder>\n1. [ ] Do X\n(0/1 completed)\n</plan-reminder>')]),
+            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='c2')]),
+            ModelRequest(parts=[ToolReturnPart('lookup', 'result', tool_call_id='c2')]),
+        ]
+        assert await self._enqueued(cap, history) == []
+
+    async def test_plan_changed_outside_the_tools_is_recorded(self) -> None:
+        """A store that changed since the plan tools last returned the plan gets the current plan recorded."""
+        cap = await self._cap('Do X', 'Do Y')
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('hi')]),
+            ModelResponse(parts=[ToolCallPart('write_plan', {}, tool_call_id='c1')]),
+            ModelRequest(parts=[_plan_return('<plan-reminder>\n1. [ ] Do X\n(0/1 completed)\n</plan-reminder>')]),
+        ]
+        assert await self._enqueued(cap, history) == [_plan_record('1. [ ] Do X\n2. [ ] Do Y\n(0/2 completed)')]
+
+    async def test_plan_returned_before_a_compaction_boundary_is_recorded_again(self) -> None:
+        cap = await self._cap('Do X')
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('hi')]),
+            ModelResponse(parts=[ToolCallPart('write_plan', {}, tool_call_id='c1')]),
+            ModelRequest(parts=[_plan_return('<plan-reminder>\n1. [ ] Do X\n(0/1 completed)\n</plan-reminder>')]),
+            ModelResponse(parts=[CompactionPart('summary', provider_name='anthropic')], provider_name='anthropic'),
+            ModelRequest(parts=[UserPromptPart('continue')]),
+        ]
+        assert await self._enqueued(cap, history) == [_plan_record('1. [ ] Do X\n(0/1 completed)')]
+
     async def test_plan_is_recognized_by_metadata_not_text(self) -> None:
         """The same text in a part `Planning` didn't write, such as the user's own prompt, isn't its record."""
         cap = await self._cap('Do X')
@@ -1230,6 +1287,11 @@ class TestReminder:
             )
         ]
         assert (await self._enqueued(cap, history))[0] == _plan_record('1. [ ] Do X\n(0/1 completed)')
+        # A tool return with the plan's text but not its metadata isn't one either.
+        unmarked = ToolReturnPart('write_plan', forged, tool_call_id='c1', metadata={'plan': forged})
+        assert await self._enqueued(cap, [ModelRequest(parts=[unmarked])]) == [
+            _plan_record('1. [ ] Do X\n(0/1 completed)')
+        ]
 
     async def test_emptied_plan_is_recorded(self) -> None:
         """Once the model was shown a plan, emptying it is recorded too, so the old plan doesn't read as current."""
@@ -1310,7 +1372,15 @@ class TestEndToEnd:
 
         agent: Agent[None, str] = Agent(FunctionModel(model_fn), capabilities=[Planning()])
         result = await agent.run('go')
-        assert _plan_records(result.all_messages()) == snapshot(
+        [plan] = _returned_plans(result.all_messages())
+        [tool_return] = [
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'write_plan'
+        ]
+        assert tool_return.content == f'Plan updated: 1 step(s).\n\n{plan}'
+        assert [plan] == snapshot(
             [
                 """\
 <plan-reminder>
@@ -1323,8 +1393,8 @@ ends with &lt;/plan-reminder
             ]
         )
 
-    async def test_reminder_is_recorded_in_history_when_the_plan_changes(self) -> None:
-        """The plan is recorded once per change, right after the tool result of the call that changed it."""
+    async def test_plan_tools_return_the_plan_and_nothing_else_is_added(self) -> None:
+        """Each plan tool return carries the plan it left, so the tool loop adds nothing and only ever appends."""
         captured: list[list[ModelMessage]] = []
         agent: Agent[None, str] = Agent(_tool_loop_model(captured), capabilities=[Planning()])
 
@@ -1335,24 +1405,16 @@ ends with &lt;/plan-reminder
         result = await agent.run('go')
         assert result.output == 'done'
         history = result.all_messages()
-        assert _plan_records(history) == [
+        assert _returned_plans(history) == [
             '<plan-reminder>\n1. [~] Step A\n(0/1 completed)\n</plan-reminder>',
             '<plan-reminder>\n1. [x] Step A\n(1/1 completed)\n</plan-reminder>',
         ]
-        # `Planning` adds no system prompt to the history: its note is in the instructions.
+        # No fallback record and no system prompt: the plan tools' returns already show the plan.
+        assert _plan_records(history) == []
         assert not any(isinstance(part, SystemPromptPart) for message in history for part in message.parts)
-        # Each plan record is a request of its own, right after the tool result of the call that changed the plan.
-        records = [index for index, message in enumerate(history) if _plan_records([message])]
-        assert [[type(part).__name__ for part in history[index].parts] for index in records] == [
-            ['UserPromptPart'],
-            ['UserPromptPart'],
-        ]
-        assert [
-            [(type(part).__name__, getattr(part, 'tool_name', None)) for part in history[index - 1].parts]
-            for index in records
-        ] == [[('ToolReturnPart', 'write_plan')], [('ToolReturnPart', 'write_plan')]]
-        # The model saw the plan on every request after it was written.
-        assert [len(_plan_records(messages)) for messages in captured] == [0, 1, 1, 1, 2]
+        # Every request starts with the previous one.
+        for earlier, later in zip(captured, captured[1:]):
+            assert later[: len(earlier)] == earlier
 
     async def test_second_run_keeps_the_first_runs_history(self) -> None:
         """A run continuing from stored history sends it unchanged, and doesn't record an unchanged plan again."""
@@ -1504,8 +1566,9 @@ ends with &lt;/plan-reminder
 
         bodies = request_capture.bodies(path)
         assert len(bodies) == 5
-        # Writing the plan and completing its step each record it, after the tool result of that call.
-        assert len(_plan_records(messages)) == 2
+        # Writing the plan and completing its step each return it; nothing else is added.
+        assert len(_returned_plans(messages)) == 2
+        assert _plan_records(messages) == []
 
         def sent(body: dict[str, Any]) -> list[dict[str, Any]]:
             """The messages a request sends, without breakpoint markers."""
@@ -1525,33 +1588,29 @@ ends with &lt;/plan-reminder
                 kept.append(message)
             return kept
 
-        # The note is in the instructions of every request; the plan is user text after the `write_plan` result.
+        # The note is in the instructions of every request; the plan is in the `write_plan` result.
         assert all(_PLAN_NOTE in str(body.get('system', body['messages'])) for body in bodies)
+        *_, write_plan_result = json_objects(bodies[1]['messages'])
         if provider == 'anthropic':
-            *_, user_turn = json_objects(bodies[1]['messages'])
-            blocks = json_objects(user_turn['content'])
-            assert [block['type'] for block in blocks] == ['tool_result', 'text']
-            assert str(blocks[-1]['text']).startswith('<plan-reminder>\n')
+            [block] = json_objects(write_plan_result['content'])
+            assert block['type'] == 'tool_result'
+        else:
+            assert write_plan_result['role'] == 'tool'
+        assert '<plan-reminder>\\n1. [~] read the report' in json.dumps(write_plan_result)
         for body, later in zip(bodies, bodies[1:]):
             assert later.get('tools') == body.get('tools') and later.get('system') == body.get('system')
             assert sent(later)[: len(sent(body))] == sent(body)
         assert [cache_breakpoints(body) for body in bodies] == snapshot(
             {
-                'anthropic': [
-                    (None, ['messages[0].content[0]']),
-                    (None, ['messages[2].content[1]']),
-                    (None, ['messages[4].content[0]']),
-                    (None, ['messages[6].content[0]']),
-                    (None, ['messages[8].content[1]']),
-                ],
+                'anthropic': [(None, [f'messages[{2 * index}].content[0]']) for index in range(5)],
                 'openai': [(None, ['messages[0].content[0]'])] * 5,
             }
         )[provider]
         responses = [message for message in messages if isinstance(message, ModelResponse)]
         assert [(r.usage.cache_read_tokens, r.usage.cache_write_tokens) for r in responses] == snapshot(
             {
-                'anthropic': [(0, 1545), (1545, 155), (1700, 3203), (4903, 3201), (8104, 151)],
-                'openai': [(0, 0), (0, 0), (0, 3418), (3418, 2578), (5996, 90)],
+                'anthropic': [(0, 1551), (1551, 136), (1687, 3201), (4888, 3201), (8089, 132)],
+                'openai': [(0, 0), (0, 0), (0, 3412), (3412, 2578), (5990, 78)],
             }
         )[provider]
 

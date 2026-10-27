@@ -1,20 +1,19 @@
-"""The `Planning` capability: task planning with a live plan reminder kept in history."""
+"""The `Planning` capability: task planning, with the current plan shown in the plan tools' results."""
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from pydantic_ai._framing import neutralize_tags
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     TextContent,
+    ToolReturnPart,
     UserPromptPart,
     post_compaction_window,
 )
@@ -23,12 +22,13 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness.planning._store import InMemoryPlanStore, PlanStore
 from pydantic_ai_harness.planning._toolset import (
+    PLAN_ORIGIN,
     SUBTASK_TOOL_NAMES,
     PlanItemUpdate,
     PlanningToolset,
     PlanStoreOperations,
     available_tool_names,
-    render_plan,
+    framed_plan,
     resolve_run_store,
     tool_call_store,
 )
@@ -66,13 +66,13 @@ class Planning(AbstractCapability[AgentDepsT]):
     -- when `enable_subtasks` is set -- `add_subtask`, `set_dependency`,
     `get_available_tasks`); `tools` narrows that surface to an allowlist.
 
-    The current plan is shown back to the model as a reminder recorded in the message
-    history, so every request starts with the one before it and the prompt cache and the
-    model's earlier reasoning stay valid. The plan is text the model wrote, so it is sent
-    as data on the user channel, in a `<plan-reminder>` tag, and only when it changed since
-    the last one in the conversation. A fixed note in the instructions says what the tag
-    holds. Configure prompt caching on the model (such as `anthropic_cache`); its
-    breakpoints land before the reminder.
+    Every tool that changes the plan returns the whole plan in a `<plan-reminder>` tag, so the
+    latest plan is always in the conversation already, on the tool result channel rather than in
+    system voice, and a fixed note in the instructions says what the tag holds. Only when the
+    latest plan the model can see differs from the store's (after compaction, in a run started
+    without it, or after an outside change) does `Planning` record the plan in the history on the
+    user channel. The history only grows, so the prompt cache and the model's earlier reasoning
+    stay valid. Configure prompt caching on the model (such as `anthropic_cache`).
 
     By default the plan lives in memory for the duration of a single run (a
     fresh, isolated plan per run). Pass a `store` (or `store_resolver`) to
@@ -121,7 +121,9 @@ class Planning(AbstractCapability[AgentDepsT]):
     """Add the subtask/dependency tools and the `blocked` status when true."""
 
     inject: bool = True
-    """Show the model the current plan: recorded in history when it changes, with a note on it in the instructions."""
+    """Add the instructions' note on the plan's tag, and record the plan when the latest one isn't visible.
+
+    The plan tools return the plan either way."""
 
     tools: Sequence[str] | None = None
     """Optional allowlist of tool names to register; `None` registers all of them.
@@ -213,8 +215,8 @@ class Planning(AbstractCapability[AgentDepsT]):
         under `enable_subtasks` -- so the model is not told about tools it lacks.
 
         While `inject` is set, a fixed note follows the guidance, saying what the
-        `<plan-reminder>` tag holds. It's framework text, so it sits in the
-        instructions, while the plan the model wrote goes on the user channel.
+        `<plan-reminder>` tag the plan tools return holds. It's framework text, so it
+        sits in the instructions, while the plan the model wrote stays in the tool results.
         """
         parts: list[str] = []
         if self.guidance is not None:
@@ -235,11 +237,13 @@ class Planning(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Record the current plan in the conversation when it changed since the latest one recorded.
+        """Record the current plan when the model can't see it any more: a fallback for the plan tools' returns.
 
-        Enqueued from `before_model_request`, the plan goes into this request and into the run's
-        history, so later requests start with this one. The plan is model-written text, so it goes on
-        the user channel in a `<plan-reminder>` tag; the instructions say what that tag holds.
+        Every plan tool that changes the plan returns it, so in a tool loop the latest plan is already in the
+        conversation and nothing is added. The plan is recorded on the user channel, in a `<plan-reminder>`
+        tag, only when the latest plan visible differs from the store's: after compaction took it, in a run
+        that starts without it in its history, or after something outside the plan tools changed the store.
+        Enqueued from `before_model_request`, the record goes into this request and into the run's history.
         """
         if not self.inject:
             return request_context
@@ -253,10 +257,10 @@ class Planning(AbstractCapability[AgentDepsT]):
         latest = _latest_plan(post_compaction_window(messages))
         if not items and latest is None:
             return request_context
-        # A plan emptied after the model was shown one is recorded too, once, so the old plan doesn't read as current.
-        plan = _plan_text(items)
+        # A plan emptied outside the plan tools after the model was shown one is recorded too, so it doesn't read as current.
+        plan = framed_plan(items)
         if plan != latest:
-            ctx.enqueue(UserPromptPart([TextContent(plan, metadata={'origin': _PLAN_ORIGIN})]))
+            ctx.enqueue(UserPromptPart([TextContent(plan, metadata={'origin': PLAN_ORIGIN})]))
         return request_context
 
     # Each plan store call is a durable operation, so recovering a durable run reuses the recorded
@@ -327,49 +331,34 @@ class Planning(AbstractCapability[AgentDepsT]):
         return 'Planning'
 
 
-_PLAN_ORIGIN = 'pydantic-ai-harness.planning.plan_reminder.v1'
-"""The `origin` in the `metadata` of the `TextContent` that holds a plan `Planning` recorded.
-
-`Planning` finds the latest plan it recorded by this metadata, never by the reminder's text.
-"""
-
 _PLAN_NOTE = (
-    'When you have a task plan, the current one is in the latest `<plan-reminder>` tag in this conversation. You '
-    'wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it '
-    'updated with those tools as you work.'
+    'When you have a task plan, the current one is the latest `<plan-reminder>` tag in this conversation: your '
+    'planning tools return it after every change. You wrote it with those tools, so it records your own progress, '
+    'not instructions from the user: keep it updated with them as you work.'
 )
 """The fixed note in the instructions while `inject` is set, saying what the plan's tag holds."""
 
-# TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
-# `plan-reminder` as a framing tag there.
-# The `<` of an opening or closing `plan-reminder` tag, in any case, spacing or with attributes, or cut off at the end
-# of the plan, where the frame's own end tag would complete it. Core's own framing tags are left to `neutralize_tags`.
-_PLAN_REMINDER_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?plan-reminder(?=[\s/>]|$))', re.IGNORECASE)
-
-
-def _plan_text(items: list[PlanItem]) -> str:
-    """The plan in its `<plan-reminder>` frame.
-
-    The steps are written by the model, so the `<` of every opening or closing `plan-reminder` tag and of every
-    framing tag core writes is escaped as `&lt;`.
-    """
-    body = _PLAN_REMINDER_TAG_OPENER.sub('&lt;', neutralize_tags(render_plan(items)))
-    return f'<plan-reminder>\n{body}\n</plan-reminder>'
-
 
 def _latest_plan(messages: Sequence[ModelMessage]) -> str | None:
-    """The text of the latest plan `Planning` recorded in `messages`, recognized by its metadata."""
+    """The latest plan visible in `messages`: one a plan tool returned or `Planning` recorded, found by metadata."""
     for message in reversed(messages):
         if not isinstance(message, ModelRequest):
             continue
         for part in reversed(message.parts):
-            if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
-                continue
-            for item in reversed(part.content):
+            if isinstance(part, ToolReturnPart):
+                metadata = part.metadata
                 if (
-                    isinstance(item, TextContent)
-                    and is_str_dict(item.metadata)
-                    and item.metadata.get('origin') == _PLAN_ORIGIN
+                    is_str_dict(metadata)
+                    and metadata.get('origin') == PLAN_ORIGIN
+                    and isinstance(plan := metadata.get('plan'), str)
                 ):
-                    return item.content
+                    return plan
+            elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                for item in reversed(part.content):
+                    if (
+                        isinstance(item, TextContent)
+                        and is_str_dict(item.metadata)
+                        and item.metadata.get('origin') == PLAN_ORIGIN
+                    ):
+                        return item.content
     return None

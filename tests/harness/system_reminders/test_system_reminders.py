@@ -18,12 +18,12 @@ from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
     ModelRequest,
-    ModelRequestPart,
     ModelResponse,
     SystemPromptPart,
     TextContent,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -1656,21 +1656,16 @@ class TestEndToEnd:
         agent: Agent[None, str] = Agent(FunctionModel(model_fn), deps_type=type(None), capabilities=capabilities)
         result = await agent.run('go')
         assert result.output == 'done'
-        # Both enqueue from `before_model_request`, after the tool result. The request's user content is sent ahead of
-        # its system prompts, so the plan comes first in either listing order.
+        # The plan is in the `write_plan` tool return, and the reminder is enqueued after it.
         last = captured['messages'][-1]
         assert isinstance(last, ModelRequest)
-
-        def kind(part: ModelRequestPart) -> str:
-            assert isinstance(part, UserPromptPart | SystemPromptPart)
-            content = part.content
-            text = content if isinstance(content, str) else ''.join(str(getattr(c, 'content', c)) for c in content)
-            return 'plan' if text.startswith('<plan-reminder>') else text
-
-        assert [kind(part) for part in last.parts[1:]] == ['plan', '<system>stay focused</system>']
-        # Both are kept in history: the plan as user-channel data, the reminders as request-scoped prompts.
+        tool_return = last.parts[0]
+        assert isinstance(tool_return, ToolReturnPart) and '<plan-reminder>' in str(tool_return.content)
+        assert [getattr(part, 'content', None) for part in last.parts[1:]] == ['<system>stay focused</system>']
+        # The reminders are kept in history as request-scoped prompts; `Planning` records nothing of its own.
         history = result.all_messages()
         assert 'done' in _all_text(history)
-        user_parts = [kind(part) for message in history for part in message.parts if isinstance(part, UserPromptPart)]
-        assert user_parts[1:] == ['plan']
+        assert [part.content for message in history for part in message.parts if isinstance(part, UserPromptPart)] == [
+            'go'
+        ]
         assert _request_scoped_texts(history) == ['stay focused', 'stay focused']

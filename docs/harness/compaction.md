@@ -680,7 +680,7 @@ A pinned part is never summarized away or dropped; if a strategy would have disc
 
 Pins use model-invisible `TextContent.metadata`, so their contents remain ordinary user context while compaction can distinguish them from user turns.
 
-The `Planning` capability does not need pinning: when compaction removes its latest plan record, the next request records the plan again from its store. Pinning is for durable task state and scratchpads that live *in* the history.
+The `Planning` capability does not need pinning: when compaction removes the plan tools' results that show the latest plan, the next request records the plan from its store. Pinning is for durable task state and scratchpads that live *in* the history.
 
 ## On-demand capabilities across compaction
 
