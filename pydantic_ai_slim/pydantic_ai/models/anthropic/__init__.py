@@ -387,13 +387,12 @@ _BATCH_UNSUPPORTED_CLIENTS = (
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
 # `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
-# Bedrock `anthropic_beta` body field and Vertex beta routes. The AWS-operated Bedrock Messages API
-# explicitly does not accept Anthropic beta headers, while Foundry has no published support for this
-# beta, so those two stay excluded until the provider contract changes or a live request verifies them.
-_THINKING_BINDING_UNSUPPORTED_CLIENTS = (
-    AsyncAnthropicBedrockMantle,
-    AsyncAnthropicFoundry,
-)
+# Bedrock `anthropic_beta` body field and Vertex beta routes. Verified live on the Bedrock Messages API
+# (`AsyncAnthropicBedrockMantle`) with `anthropic.claude-opus-5-5`: it takes `block_binding` under this beta in
+# the `anthropic-beta` header, and rejects a stale block or drops it as the Claude API does
+# (https://github.com/pydantic/pydantic-ai/issues/11481). Foundry has no published support for this beta, so it
+# stays excluded until the provider contract changes or a live request verifies it.
+_THINKING_BINDING_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 # The legacy Bedrock InvokeModel API (`AsyncAnthropicBedrock`) accepts the `bm25` tool-search variant wherever it
 # accepts `regex`, but an unset strategy resolves to `regex` there: it was the only variant Bedrock accepted,
 # and resolving to `bm25` would change the search algorithm for every request that doesn't set one. For the same
