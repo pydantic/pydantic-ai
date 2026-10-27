@@ -32,6 +32,7 @@ Update both the capability README and `docs/harness/<capability>.md` for every u
 public classes, parameters, defaults, tool names, extras, and safety semantics.
 ACP's README stays under `pydantic_ai_harness/experimental/acp/`; its docs page remains flat under `docs/harness/`.
 The two docs must agree with each other and the source. Document composition constraints and safety implications.
+Treat README, docs page, or example drift as a defect to fix before merge.
 
 Keep the packaged `pydantic-ai-harness` agent skill in sync too:
 `src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/`.

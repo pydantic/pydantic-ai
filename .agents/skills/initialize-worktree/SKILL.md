@@ -131,6 +131,7 @@ Ask: 'Based on my research, I assess this as [simple/complex]. [1-2 sentence rea
 
 ## Common PR Handoff
 
+Create a ready-for-review PR; use a draft only when the user explicitly asks.
 Follow [pushing-commits-to-the-repo](../pushing-commits-to-the-repo/SKILL.md) through pre-push review,
 PR creation, current-head CI and required reviews, feedback close-out, and final metadata.
 After PR creation, set `related_pr` in `.claude/skills/branch-context/issue-brief.md` to the PR URL.
