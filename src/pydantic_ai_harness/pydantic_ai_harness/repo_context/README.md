@@ -94,6 +94,11 @@ file; `'contents'` enqueues the file body. The note reaches message history
 before the next model request. Each directory is surfaced at most once per run.
 As with the walk-up, a symlinked instruction file is named after its target.
 
+With nested traversal on, the instructions also tell the model how instruction
+files relate: each applies to its own directory and everything below it, the
+more deeply nested file wins a conflict, and the user's direct instructions win
+over all of them. The statement is static, so it stays in the cached prefix.
+
 `FileSystem` emits these events directly. Hosts with other file tools can emit
 the same types by importing `FileReadEvent` and `DirectoryListedEvent` from
 `pydantic_ai_harness.filesystem`; set `root_dir` to the directory the event's

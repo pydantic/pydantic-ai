@@ -42,6 +42,12 @@ _POINTER_NOTE = (
     'A directory you just accessed has an instruction file, not loaded here. Its path is in the '
     '`<context-file>` tag that follows. Read the file if it is relevant to your task.'
 )
+_NESTED_PRECEDENCE = (
+    'Instruction files ({names}) apply to the directory they are in and everything below it. The files of '
+    'subdirectories are added to the conversation when you first read or list something under them. Where '
+    "instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions "
+    'take precedence over all of them.'
+)
 _DEFAULT_TRAVERSAL_TOOL_NAMES = frozenset({'list_directory', 'read_file'})
 _DEFAULT_TRAVERSAL_PATH_ARG = 'path'
 _TRAVERSAL_DEPRECATION = (
@@ -192,10 +198,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     def get_instructions(self) -> str | Callable[[RunContext[AgentDepsT]], str | None] | None:
         """Cache-stable instructions resolved after `before_run` loads workspace files."""
         if not self.autoload_instructions:
-            if not self.expose_inventory_tool:
-                return None
-            # The hint doesn't depend on the run, so it stays static and inside the cached prefix.
-            return self._inventory_hint()
+            # Neither part depends on the run, so they stay static and inside the cached prefix.
+            return '\n\n'.join(self._static_instructions()) or None
 
         def instructions(_ctx: RunContext[AgentDepsT]) -> str | None:
             return self._render_instructions()
@@ -212,9 +216,16 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if self._context_files:
             assert self._cached_working_dir is not None, '`before_run` resolves it before loading files'
             parts.append(render_context_files(self._context_files, relative_to=self._cached_working_dir))
+        parts.extend(self._static_instructions())
+        return '\n\n'.join(parts) or None
+
+    def _static_instructions(self) -> list[str]:
+        parts: list[str] = []
         if self.expose_inventory_tool:
             parts.append(self._inventory_hint())
-        return '\n\n'.join(parts) or None
+        if self.nested_traversal:
+            parts.append(_NESTED_PRECEDENCE.format(names=', '.join(f'`{name}`' for name in self.filenames)))
+        return parts
 
     def _inventory_hint(self) -> str:
         """Point at the inventory tool, and at the asset roots when a file reader can replace it.
