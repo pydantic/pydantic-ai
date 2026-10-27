@@ -30,9 +30,9 @@ the current ones first and search across all of them. A folder outside Git is a 
 A session remembers its checkout when it is saved, so one from a worktree you have since removed
 stays under its project, marked removed, in one **Removed worktrees** group after the live ones,
 closed until you open it; an older session from a removed folder is placed by where it was, or
-listed under Removed folders. A worktree's menu archives all of its sessions at once. Click one to
-switch to it, even while other sessions run turns: each session you open stays live and keeps
-working while you look at another. A dot by
+listed under Removed folders. A worktree's menu archives all of its sessions at once.
+Click one to switch to it, even while other sessions
+run turns: each session you open stays live and keeps working while you look at another. A dot by
 a live session shows that it runs a turn, pulsing; runs one with input queued behind it, ringed; or
 waits for your answer to a question, amber. Use a session's menu to rename, fork, archive, or delete
 it. Archiving hides a session from the sidebar and `/resume` without deleting anything; the archive
