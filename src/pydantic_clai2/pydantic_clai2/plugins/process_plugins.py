@@ -91,8 +91,8 @@ RETIRED_BUILTINS: dict[str, PluginSettings] = {
 APPROVED_AS_WRITTEN = frozenset({HOOKS_FACTORY})
 """Factories whose project declaration is itself what runs, so an approval covers that declaration exactly.
 
-A saved approval that differs from the project's current declaration is stale: the project's, switched off,
-takes its place until `/plugins enable` approves it again. Other project plugins keep a changed approval,
+A saved approval (same id and factory) that differs from the project's current declaration is stale: the
+project's, switched off, takes its place until `/plugins enable` approves it again. Other project plugins keep a changed approval,
 since their settings are the user's to edit.
 """
 
@@ -373,8 +373,10 @@ class ProcessPlugins(Generic[DepsT]):
         for name in folder.keys() - declared.keys():
             declared[name] = PluginSettings(id=name, factory=name, path=str(folder[name]))
         for name, pinned in project.items():
-            stale = name in declared and not same_plugin(declared[name], pinned) and name not in self.staged
-            if pinned.factory in APPROVED_AS_WRITTEN and stale:
+            # Only an approval of this factory goes stale; a drop-in or the user's own plugin under the id stays.
+            approval = declared.get(name)
+            stale = approval is not None and approval.factory == pinned.factory and not same_plugin(approval, pinned)
+            if pinned.factory in APPROVED_AS_WRITTEN and stale and name not in self.staged:
                 declared[name] = pinned
         for shipped in (project, self.builtin):
             for name in shipped.keys() - declared.keys():

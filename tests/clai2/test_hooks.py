@@ -180,6 +180,31 @@ async def test_a_timeout_stops_the_whole_command(tmp_path: Path) -> None:
     await gone(int((tmp_path / 'child').read_text()))
 
 
+async def test_an_interrupted_turn_stops_the_whole_command(tmp_path: Path) -> None:
+    output = io.StringIO()
+    plugin = hooks_plugin(tmp_path, {'turn_end': [{'command': 'sleep 30 & echo $! > child; wait'}]}, output)
+    child = tmp_path / 'child'
+    with anyio.CancelScope() as interrupt:
+        async with anyio.create_task_group() as group:
+            group.start_soon(plugin.dispatch, TurnEnd(text='hello', outcome='completed'))
+            with anyio.fail_after(10):
+                while not child.exists() or not child.read_text():
+                    await anyio.sleep(0.01)
+            interrupt.cancel()
+    assert interrupt.cancelled_caught and output.getvalue() == ''
+    await gone(int(child.read_text()))
+
+
+async def test_stdout_is_discarded(tmp_path: Path) -> None:
+    """Even more than a pipe holds: a pipe nobody read would leave the command waiting until its timeout."""
+    output = io.StringIO()
+    chatty: dict[str, JsonValue] = {'command': ['sh', '-c', 'echo leaked; head -c 200000 /dev/zero'], 'timeout': 20}
+    plugin = hooks_plugin(tmp_path, {'turn_end': [chatty]}, output)
+    with anyio.fail_after(10):
+        await plugin.dispatch(TurnEnd(text='hello', outcome='completed'))
+    assert output.getvalue() == ''
+
+
 async def gone(pid: int) -> None:
     """Wait until `pid` no longer exists; the killed child is reaped by init, which takes a moment."""
     with anyio.fail_after(5):
@@ -282,6 +307,7 @@ async def test_hook_runs_are_traced(tmp_path: Path) -> None:
     assert ok.attributes is not None and ok.attributes['clai.hook.outcome'] == 'ok'
     assert failed.attributes is not None and failed.attributes['clai.hook.outcome'] == 'failed'
     assert failed.attributes['clai.hook.command'] == 'exit 3' and failed.status.status_code == StatusCode.ERROR
+    assert failed.status.description == 'turn_end hook failed: exit 3: exit code 3'
 
 
 async def test_traces_leave_out_content_when_told_to(tmp_path: Path) -> None:
@@ -316,9 +342,8 @@ async def test_placeholders_never_choose_the_program(tmp_path: Path) -> None:
 
 
 def test_fill_and_summary() -> None:
-    assert fill('{path}:{line}:{flag}:{nested}', {'path': 'a.py', 'line': 3, 'flag': None, 'nested': {}}) == (
-        'a.py:3:{flag}:{nested}'
-    )
+    args: dict[str, object] = {'path': 'a.py', 'line': 3, 'flag': True, 'none': None, 'nested': {}}
+    assert fill('{path}:{line}:{flag}:{none}:{nested}', args) == 'a.py:3:True:{none}:{nested}'
     assert summary({'ok': True}) == '{"ok":true}'
     assert summary('x' * (RESULT_CHARS + 5)) == 'x' * RESULT_CHARS + '...'
 
@@ -453,6 +478,16 @@ async def test_project_hooks_run_only_once_approved_and_again_after_a_change(tmp
     await loader.fire(TurnEnd(text='hello', outcome='completed'))
     await loader.close('exit')
     assert (repo / 'second').exists()
+
+
+async def test_your_own_plugin_named_project_hooks_is_never_replaced(tmp_path: Path) -> None:
+    repo = repository(tmp_path, 'repo', touching('ran'))
+    store = SettingsStore(tmp_path / 'config.db')
+    mine = PluginSettings(id=PROJECT_HOOKS, factory='my_plugins.hooks')
+    store.save_plugin(mine)
+    loader = project_loader(store, repo, io.StringIO())
+    [entry] = [entry for entry in loader.entries() if entry.name == PROJECT_HOOKS]
+    assert entry.declaration == mine and not entry.project
 
 
 async def test_an_approval_never_runs_in_another_repository(tmp_path: Path) -> None:
