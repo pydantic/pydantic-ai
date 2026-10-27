@@ -136,11 +136,11 @@ def parse_ag_ui_version(version: str) -> tuple[int, ...]:
 def detect_ag_ui_version() -> str:
     """Detect the installed ag-ui-protocol version string.
 
-    Returns the raw installed version (e.g. `'0.1.13'`), or `'0.1.10'` as fallback.
+    Returns the raw installed version (e.g. `'0.1.13'`), or `'0.1.10'` when the package metadata isn't found.
     """
     try:
         return importlib.metadata.version('ag-ui-protocol')
-    except Exception:
+    except importlib.metadata.PackageNotFoundError:
         return '0.1.10'
 
 

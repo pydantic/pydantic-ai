@@ -7503,6 +7503,21 @@ def test_detect_ag_ui_version_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     assert detect_ag_ui_version() == snapshot('0.1.10')
 
 
+def test_detect_ag_ui_version_raises_other_metadata_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only a missing package falls back to `'0.1.10'`; any other failure to read the metadata is raised.
+
+    BlockBuster, for one, raises on the metadata read when this runs inside the event loop, which used to
+    report the installed version as `'0.1.10'`.
+    """
+
+    def _raise_blocking(_name: str) -> str:
+        raise RuntimeError('Blocking call to os.stat')
+
+    monkeypatch.setattr('pydantic_ai.ui.ag_ui._utils.importlib.metadata.version', _raise_blocking)
+    with pytest.raises(RuntimeError, match=r'Blocking call to os\.stat'):
+        detect_ag_ui_version()
+
+
 def test_detect_ag_ui_version_old(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that detect_ag_ui_version returns the raw installed version string."""
 
