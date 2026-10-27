@@ -21,6 +21,7 @@ from mcp.server.fastmcp import FastMCP
 
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ToolSearch, Toolset
+from pydantic_ai.embeddings import TestEmbeddingModel
 from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -66,6 +67,7 @@ from pydantic_ai_harness import (
 )
 from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
 from pydantic_ai_harness.github import GitHub
+from pydantic_ai_harness.knowledge import Knowledge, KnowledgeDocument
 from pydantic_ai_harness.linear import Linear
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
@@ -198,6 +200,9 @@ FIXTURES: dict[str, Fixture] = {
         SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
     ),
     'DeduplicateFileReads': _deduplicate_file_reads,
+    'Knowledge': lambda _: Knowledge(
+        [KnowledgeDocument('faq', 'Refunds take 14 days.')], embedder=TestEmbeddingModel()
+    ),
     'FallbackCompaction': lambda _: FallbackCompaction(
         fallback_chain=[SlidingWindowCompaction(max_messages=6, keep_messages=2)]
     ),
