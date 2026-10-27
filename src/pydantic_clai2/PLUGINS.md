@@ -446,8 +446,8 @@ Each entry takes:
 
 - `command`: a list of arguments, run without a shell, or a string, run by the
   shell as written. In a list, `{name}` in any argument after the program is
-  replaced by the tool argument `name` when it is a string or number, and is
-  otherwise left as written. A string command gets no replacements. Tool
+  replaced by the tool argument `name` when it is a string, number, or boolean,
+  and is otherwise left as written. A string command gets no replacements. Tool
   arguments come from the model, so keep them out of shell code: write
   `["sh", "-c", "ruff format -- \"$1\"", "sh", "{path}"]`, not `{path}`
   inside the script, and put `--` before a placeholder where the program takes

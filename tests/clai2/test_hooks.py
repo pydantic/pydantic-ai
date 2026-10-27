@@ -1,5 +1,6 @@
 """`hooks` tables run commands before and after tools and turns; a project's runs only once approved."""
 
+import asyncio
 import io
 import json
 import os
@@ -20,7 +21,15 @@ from pydantic_ai import Agent, ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2.builtin_plugins.hooks import RESULT_CHARS, HookOutcome, HookRun, HooksPlugin, fill, summary
+from pydantic_clai2.builtin_plugins.hooks import (
+    RESULT_CHARS,
+    HookOutcome,
+    HookRun,
+    HooksPlugin,
+    communicate,
+    fill,
+    summary,
+)
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.hooks import HOOKS_FACTORY, PROJECT_HOOKS, HookCommand, HookEvent
@@ -47,7 +56,7 @@ def hooks_plugin(workspace: Path, settings: dict[str, JsonValue], output: io.Str
 
 
 def note_agent(plugin: LoadedPlugin[None], written: list[str]) -> Agent[None, str]:
-    """An agent whose model calls `write_note(path='notes.txt', text='a')` once."""
+    """An agent whose model calls `write_note(path='a', text='a')` once."""
     agent = Agent(TestModel(call_tools=['write_note']), deps_type=type(None), capabilities=list(plugin.capabilities))
 
     @agent.tool_plain
@@ -89,6 +98,44 @@ async def test_before_tool_exit_2_blocks_the_call_and_the_model_gets_stderr(tmp_
     }
 
 
+async def test_a_block_without_stderr_gets_a_generic_result(tmp_path: Path) -> None:
+    output = io.StringIO()
+    plugin = hooks_plugin(tmp_path, {'before_tool': [{'command': ['sh', '-c', 'exit 2']}]}, output)
+    written: list[str] = []
+    result = await note_agent(plugin, written).run('write')
+    assert written == []
+    assert tool_return(result.all_messages()) == 'A before_tool hook blocked write_note.'
+    assert 'before_tool hook blocked write_note: sh -c exit 2' in output.getvalue()
+
+
+async def test_an_interrupt_while_a_command_fails_to_start_still_interrupts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The start's own failure must not replace the cancellation, or a stopped turn would carry on."""
+    started, fail = anyio.Event(), anyio.Event()
+
+    async def failing_start(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
+        started.set()
+        await fail.wait()
+        raise FileNotFoundError('missing-hook')
+
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', failing_start)
+    scopes: list[anyio.CancelScope] = []
+
+    async def hook() -> None:
+        with anyio.CancelScope() as scope:
+            scopes.append(scope)
+            await communicate(['missing-hook'], b'', cwd=tmp_path)
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(hook)
+        await started.wait()
+        scopes[0].cancel()
+        await anyio.wait_all_tasks_blocked()
+        fail.set()
+    assert scopes[0].cancelled_caught
+
+
 @pytest.mark.parametrize(('code', 'warned'), [(0, False), (1, True)])
 async def test_before_tool_other_exits_allow_the_call(tmp_path: Path, code: int, warned: bool) -> None:
     output = io.StringIO()
@@ -96,6 +143,7 @@ async def test_before_tool_other_exits_allow_the_call(tmp_path: Path, code: int,
     written: list[str] = []
     result = await note_agent(plugin, written).run('write')
     assert written == ['a'] and tool_return(result.all_messages()) == 'wrote a'
+    assert ('before_tool hook failed' in output.getvalue()) is warned
     assert ('before_tool hook failed: sh -c echo oops >&2; exit 1: oops' in output.getvalue()) is warned
 
 

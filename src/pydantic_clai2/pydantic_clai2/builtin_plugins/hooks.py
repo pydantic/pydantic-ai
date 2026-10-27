@@ -105,9 +105,12 @@ async def _run(command: str | list[str], *, cwd: Path, stdin: IO[bytes], stderr:
         returncode = await process.wait()
     except BaseException:
         with anyio.CancelScope(shield=True):
-            process = await spawn
-            await kill_process_tree(process)
-            await process.wait()
+            # Interrupted while it started, its start finishes first. A start that failed leaves nothing to stop,
+            # and what goes on is the interrupt, not that failure.
+            [started] = await asyncio.gather(spawn, return_exceptions=True)
+            if isinstance(started, asyncio.subprocess.Process):
+                await kill_process_tree(started)
+                await started.wait()
         raise
     return returncode, await anyio.to_thread.run_sync(_read, stderr)
 
