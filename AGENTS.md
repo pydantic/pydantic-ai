@@ -51,19 +51,7 @@ In this case, unless the user appears to be uniquely well-suited to build a feat
 
 ## Filing issues for maintainers
 
-Pydanty automates repository issue triage and PR creation.
-When filing an issue for a maintainer, honor any route they already selected.
-Otherwise, ask whether to send the issue to Pydanty's general queue or start work immediately with their current agent.
-Combine this choice with issue-draft approval when both are needed. An unanswered choice does not authorize either route.
-
-- **General queue:** create the approved issue without claiming it for local maintainer work, then explicitly request Pydanty triage. Do not also start local implementation.
-- **Immediate work:** assign the issue to the maintainer owning the work and keep Pydanty off it. Assign the resulting PR to the same maintainer.
-
-Assign the human maintainer, not an agent account. Do not transfer ownership or reroute an existing issue found during deduplication.
-Keep external contributors in normal triage.
-Use the [maintainer routing mechanics](.agents/skills/file-followup-issue/SKILL.md#maintainer-routing-mechanics) for issue labels and assignment.
-Follow-up issues must also pass that skill's scope gates.
-Follow the [PR skill](.agents/skills/pushing-commits-to-the-repo/SKILL.md#carry-maintainer-ownership-onto-the-pr) to carry immediate-work ownership onto the PR.
+When filing an issue for a maintainer, including a non-follow-up issue, use the [maintainer routing guidance](.agents/skills/file-followup-issue/SKILL.md#maintainer-routing-mechanics).
 
 # Philosophy
 

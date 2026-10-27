@@ -31,9 +31,6 @@ If a gate fails, do the alternative and **stop** — don't file:
    Preserve that issue's ownership and routing labels. Deduplication does not authorize a new route.
 
 2. **Confirm before creating** (outward action). Show the user the drafted title + body and get a yes.
-   For a maintainer, apply [the maintainer routing choice](../../../AGENTS.md#filing-issues-for-maintainers).
-   Honor an explicit route without asking again. Otherwise, ask for the route alongside draft approval.
-   Wait for both approval and a route before creating a maintainer's issue. Do not apply a trigger while the choice is unanswered.
 
 3. **Create** with the template below:
    Both title and body quote code and reviewer text, where `$(...)` and backticks would be
@@ -77,17 +74,16 @@ EOF
 
 ## Maintainer routing mechanics
 
-Use this section for any approved issue filed for a maintainer under [the root routing policy](../../../AGENTS.md#filing-issues-for-maintainers).
-The scope gates above apply only when filing a follow-up to the current PR.
+For issues filed on a maintainer's behalf, honor their chosen route; otherwise ask which route they want.
+Combine this choice with draft approval when both are needed. This routing also applies to non-follow-up issues.
 Confirm labels against the [checked-in catalog](../pushing-commits-to-the-repo/labels.tsv) before using them; a missing label fails the command.
 
 - **General queue:** create without `--assignee` or `pydanty:skip`, then run
   `gh issue edit <issue-number> --add-label pydanty:triage-issue`.
-  Team-authored issues skip automatic triage; the explicit label requests triage for the general queue.
-  Do not start local implementation. For a follow-up, return to the originating PR.
+  This explicitly requests Pydanty triage, which team-authored issues otherwise skip.
 - **Immediate work:** create with `--assignee <maintainer-login> --label pydanty:skip`.
   Assign the human maintainer who owns the work. The label suppresses Pydanty triage and `retry-pr` triggers.
-  The [PR skill](../pushing-commits-to-the-repo/SKILL.md#carry-maintainer-ownership-onto-the-pr) reads the issue's assignee and label when creating its PR.
+  Carry that ownership onto the PR using the [PR skill](../pushing-commits-to-the-repo/SKILL.md#carry-maintainer-ownership-onto-the-pr).
 
 Do not apply these maintainer routes for an external contributor. External contributors cannot
 apply repository labels, so leave their issues in normal triage.
