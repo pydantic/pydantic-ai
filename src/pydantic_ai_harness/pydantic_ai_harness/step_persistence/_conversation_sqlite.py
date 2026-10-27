@@ -24,6 +24,7 @@ from pydantic_ai_harness.step_persistence._conversation_codec import (
     missing_entries_error,
 )
 from pydantic_ai_harness.step_persistence._store import (
+    _BUSY_TIMEOUT_SECONDS,  # pyright: ignore[reportPrivateUsage]
     _DEFAULT_MEDIA_THRESHOLD_BYTES,  # pyright: ignore[reportPrivateUsage]
     _atomically,  # pyright: ignore[reportPrivateUsage]
     _AutoMedia,  # pyright: ignore[reportPrivateUsage]
@@ -143,10 +144,15 @@ class SqliteConversationStore(ConversationStore):
             return
         assert self._database is not None
         self._database.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self._database, isolation_level=None)
+        conn = sqlite3.connect(self._database, isolation_level=None, timeout=_BUSY_TIMEOUT_SECONDS)
         try:
-            conn.execute('PRAGMA journal_mode=WAL')
-            self._ensure_schema(conn)
+            if not self._schema_ready:
+                # SQLite reports two connections switching a new database to WAL at once as locked
+                # rather than waiting, so this store's connections set it up one at a time. The
+                # journal mode is kept in the file, so later connections needn't set it.
+                with self._lock:
+                    conn.execute('PRAGMA journal_mode=WAL')
+                    self._ensure_schema(conn)
             yield conn
         finally:
             conn.close()
