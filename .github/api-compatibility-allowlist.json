@@ -7,6 +7,18 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
     },
     {
+      "against": "v2.61.0",
+      "fingerprint": "6829b0f1c3cd0ca2dfb82010a1df520f263f796ce7429e6a60f3dee5e143e115",
+      "reason": "`clai2` imports Codex's responses under the `openai-codex` provider, which round-trips their encrypted reasoning and compaction summaries; the constant only names the provider imported histories use.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11388"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "e12a1ab5bc0dfcee1e154cc47716dc79454868b5516c50cf0318813c732badaa",
+      "reason": "Adds the rest of the context prefixes Codex marks its own user messages with; every existing entry is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11388"
+    },
+    {
       "against": "v2.59.0",
       "fingerprint": "e728299e8b022b01f0a06b3eb8cf95974e2e124d4408d8933c3b0b1485596485",
       "reason": "Adds `QueueChanged` to the web plugin's `ServerMessage` union; every existing member is unchanged.",
@@ -230,9 +242,21 @@
     },
     {
       "against": "v2.61.0",
-      "fingerprint": "959c6add2722f93b4354a2f8a86c7285af88baa197ddfbfaca4e339e67626255",
-      "reason": "Adds `ForkEnd` to the `clai2` plugin `HostEvent` union, for the new `on_fork_end` moment; every existing member is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11334"
+      "fingerprint": "54b11089348bd00c418f096431094cf982522914aa5ab18e3ed6f8912308f039",
+      "reason": "False positive: `pydantic_clai2.plugins.TaskEvent` was renamed to `TaskProgress` and still imports, from a module `__getattr__` that returns `TaskProgress` with a deprecation warning, which Griffe cannot see.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11354"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "99511dd22203858daeb3800da13abc3312a8f3a4641d0f95ce87fbd152a5e193",
+      "reason": "False positive: `pydantic_clai2.plugins.UpdateProgress` was renamed to `InstallProgress` and still imports, from a module `__getattr__` that returns `InstallProgress` with a deprecation warning, which Griffe cannot see.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11354"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "2503fd5e5d466d8a3f25796c723460b6ecb98e08842437a9241f3f860ee139a1",
+      "reason": "`HostEvent` names the renamed `TaskProgress` and `InstallProgress`, the same classes the deprecated `TaskEvent` and `UpdateProgress` names still resolve to, and adds `ForkEnd` for the new `on_fork_end` moment (https://github.com/pydantic/pydantic-ai/pull/11334); every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11354"
     },
     {
       "against": "v2.61.0",
