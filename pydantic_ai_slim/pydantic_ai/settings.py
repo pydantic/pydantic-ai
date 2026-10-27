@@ -328,8 +328,8 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * OpenAI (except for requests sent over a Responses WebSocket with `openai_transport='websocket'`, which are sent
-      once)
+    * OpenAI (Responses WebSockets retry only explicit 408, 409, 429 or 5xx rejection frames received before the
+      first response event; disconnects and errors after response events start propagate to the caller)
     * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic

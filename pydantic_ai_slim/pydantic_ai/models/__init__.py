@@ -16,6 +16,7 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
+from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timedelta
@@ -922,6 +923,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def settings(self) -> ModelSettings | None:
         """Get the model settings."""
         return self._settings
+
+    def _context(self) -> AbstractAsyncContextManager[Model]:
+        """Bind lifecycle calls to one scope, even when an exit stack closes it from another task."""
+        return _ModelContext(self)
 
     def _run_scope(self) -> AbstractAsyncContextManager[None]:
         """The context an agent run holds around its requests to this model, unless it runs in a durable workflow.
@@ -1951,6 +1956,34 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 return [InstructionPart(content=second.instructions)]
 
         return None
+
+
+_model_context_key: ContextVar[object | None] = ContextVar('_model_context_key', default=None)
+
+
+@dataclass
+class _ModelContext:
+    model: Model
+    key: object = field(default_factory=object)
+
+    async def __aenter__(self) -> Model:
+        token = _model_context_key.set(self.key)
+        try:
+            return await self.model.__aenter__()
+        finally:
+            _model_context_key.reset(token)
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        token = _model_context_key.set(self.key)
+        try:
+            return await self.model.__aexit__(exc_type, exc_val, exc_tb)
+        finally:
+            _model_context_key.reset(token)
 
 
 @dataclass

@@ -2657,6 +2657,44 @@ async def test_model_exit_uses_the_captured_lease_kind(allow_model_requests: Non
     assert model._websocket.states == {}  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_overlapping_model_contexts_release_their_own_lease(
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
+):
+    """An external owner exiting first cannot leave its ownership attached to another task's durable scope."""
+    from pydantic_ai.durable_exec._operation_backend import durable_unit_scope
+
+    model = websocket_model(http.provider())
+    external_entered = anyio.Event()
+    durable_entered = anyio.Event()
+    external_exited = anyio.Event()
+
+    async def external_owner() -> None:
+        async with model:
+            await model.request(user_prompt('first'), None, ModelRequestParameters())
+            external_entered.set()
+            await durable_entered.wait()
+        external_exited.set()
+
+    async def durable_owner() -> None:
+        await external_entered.wait()
+        with durable_unit_scope():
+            async with model:
+                durable_entered.set()
+                await external_exited.wait()
+                state = model._websocket.states[asyncio.get_running_loop()]  # pyright: ignore[reportPrivateUsage]
+                assert state.external_leases == 0
+                assert (await model.request(user_prompt('durable'), None, ModelRequestParameters())).text == 'from HTTP'
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(external_owner)
+            tasks.start_soon(durable_owner)
+    assert len(sockets.opened[0].sent) == 1
+    assert sockets.opened[0].close_count == 1
+    assert len(http.requests) == 1
+    assert model._websocket.states == {}  # pyright: ignore[reportPrivateUsage]
+
+
 @pytest.mark.parametrize('status', [408, 409, 429, 500, 503])
 @pytest.mark.parametrize('max_retries', [0, 1, None])
 @pytest.mark.parametrize('stream', [False, True])

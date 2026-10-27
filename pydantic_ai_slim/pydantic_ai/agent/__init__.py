@@ -3504,7 +3504,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             exit_stack = self._exit_stack
             if exit_stack is not None and name not in self._entered_models_by_name:
                 entered_model = models.infer_model(name)
-                await exit_stack.enter_async_context(entered_model)
+                await exit_stack.enter_async_context(entered_model._context())  # pyright: ignore[reportPrivateUsage]
                 self._entered_models_by_name[name] = entered_model
                 self._entered_model_ids.add(id(entered_model))
             return self._entered_models_by_name.get(name)
@@ -3526,7 +3526,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if self._selected_models.get(id(model)) is not model:
                 self._selected_models[id(model)] = model
                 return False
-            await exit_stack.enter_async_context(model)
+            await exit_stack.enter_async_context(model._context())  # pyright: ignore[reportPrivateUsage]
             self._entered_model_ids.add(id(model))
             return True
 
@@ -4640,7 +4640,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         model = (
                             static_selection if _is_model(static_selection) else models.infer_model(static_selection)
                         )
-                        await exit_stack.enter_async_context(model)
+                        await exit_stack.enter_async_context(model._context())  # pyright: ignore[reportPrivateUsage]
                         self._entered_model_ids.add(id(model))
                         if isinstance(static_selection, str):
                             self._entered_models_by_name[static_selection] = model
@@ -4784,7 +4784,7 @@ class _RunModelResources:
         if model_identity in self.entered_model_ids:
             return
         assert self._stack is not None
-        await self._stack.enter_async_context(selected_model)
+        await self._stack.enter_async_context(selected_model._context())  # pyright: ignore[reportPrivateUsage]
         self.entered_model_ids.add(model_identity)
 
     async def enter_selected_model(self, selected_model: models.Model) -> None:

@@ -148,6 +148,7 @@ from . import (
     StreamedResponse,
     ToolVisibility,
     _effort_window_baseline,  # pyright: ignore[reportPrivateUsage]
+    _model_context_key,  # pyright: ignore[reportPrivateUsage]
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
@@ -3007,7 +3008,9 @@ class _ResponsesWebSocketState:
     loop: asyncio.AbstractEventLoop
     leases: int = 0
     external_leases: int = 0
-    contexts: list[_ResponsesWebSocketLease] = field(default_factory=list['_ResponsesWebSocketLease'])
+    contexts: dict[object, list[_ResponsesWebSocketLease]] = field(
+        default_factory=dict[object, list['_ResponsesWebSocketLease']]
+    )
     in_flight: int = 0
     socket: ResponsesWebSocket | None = None
     open_lock: anyio.Lock | None = None
@@ -3145,7 +3148,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         acquired = self._websocket.acquire(external=not in_durable_unit())
         if acquired is not None:
-            acquired[0].contexts.append(acquired)
+            key = _model_context_key.get() or asyncio.current_task()
+            acquired[0].contexts.setdefault(key, []).append(acquired)
         return self
 
     async def __aexit__(
@@ -3160,7 +3164,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             pass
         else:
             state = self._websocket.states[loop]
-            await self._websocket.release(state.contexts.pop())
+            key = _model_context_key.get() or asyncio.current_task()
+            contexts = state.contexts[key]
+            acquired = contexts.pop()
+            if not contexts:
+                state.contexts.pop(key)
+            await self._websocket.release(acquired)
         return await super().__aexit__(exc_type, exc_val, exc_tb)
 
     def _run_scope(self) -> AbstractAsyncContextManager[None]:
