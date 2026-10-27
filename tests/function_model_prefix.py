@@ -15,7 +15,6 @@ from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 import pytest
-from pydantic_core import PydanticSerializationError
 
 from pydantic_ai._unsupported_settings import suppress_warnings
 from pydantic_ai._utils import is_str_dict
@@ -191,9 +190,9 @@ def _render_anthropic_body(model: Model, recorded: RecordedRequest) -> dict[str,
         coroutine.send(None)
     except _Captured as captured:
         return _without_cache_control(json.loads(json.dumps(captured.body, default=str)))
-    except (UserError, NotImplementedError, RuntimeError, PydanticSerializationError):
+    except (UserError, NotImplementedError, RuntimeError, ValueError):
         # What a request built for a test model can hold that Anthropic doesn't take: a setting, output mode or
-        # message part it rejects, a file type it can't read, or a tool return value it can't serialize.
+        # message part it rejects, a file type it can't read or infer, or a tool return value it can't serialize.
         return None
     # Building the body never waits on anything.
     coroutine.close()  # pragma: no cover
