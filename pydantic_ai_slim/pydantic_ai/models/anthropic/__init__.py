@@ -437,7 +437,7 @@ _CACHE_DIAGNOSTICS_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicVertex,
 )
 # The direct API's `count_tokens` accepts the web search, web fetch, code execution, tool search and advisor tools,
-# verified live. These clients' count endpoints haven't been verified to, so
+# verified live. These clients' count endpoints aren't verified to accept them, so
 # `anthropic_count_tokens_accepts_server_tools` stays off for them. The legacy Bedrock one rejects `defer_loading`
 # with a 400 whether or not the search tool is sent.
 _COUNT_TOKENS_SERVER_TOOLS_UNVERIFIED_CLIENTS = (
