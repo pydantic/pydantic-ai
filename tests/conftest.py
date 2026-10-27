@@ -63,6 +63,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from . import cassette_hooks, cost_guards
 from ._inline_snapshot import Builder, Custom, customize
 from .cassette_utils import check_cache_prefix_stability
+from .function_model_prefix import RequestRecorder, check_function_model_prefix_stability, patch_models
 
 # `logfire` builds its JSON schema lookup table on first use with a lazy `import pandas`
 # (`logfire/_internal/json_schema.py`), and importing pandas reads timezone data from disk. When
@@ -888,6 +889,27 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
         return
     # Playback never records, so the interactions cassetter loaded are exactly the file's contents.
     check_cache_prefix_stability(request.node, vcr)
+
+
+@pytest.fixture(autouse=True)
+def fail_function_model_prefix_violations(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    """Check the prompt-cache prefix of `FunctionModel` and `TestModel` conversations, which no cassette records."""
+    if request.node.get_closest_marker('benchmark') is not None:
+        # Recording copies every request inside the code a benchmark measures.
+        yield
+        return
+    recorder = RequestRecorder()
+    patch_models(monkeypatch, recorder)
+    yield
+    setup_report = getattr(request.node, 'rep_setup', None)
+    call_report = getattr(request.node, 'rep_call', None)
+    if any(
+        getattr(report, 'skipped', False) or getattr(report, 'failed', False) for report in (setup_report, call_report)
+    ):
+        return
+    check_function_model_prefix_stability(request.node, recorder.requests)
 
 
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.

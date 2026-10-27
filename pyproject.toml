@@ -370,6 +370,7 @@ include = [
     ".github/scripts/test_ci_content_classifier.py",
     ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
+    ".github/scripts/test_clai2_web_bundle.py",
 ]
 
 [tool.ruff.lint]
@@ -459,6 +460,7 @@ quote-style = "single"
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
 ".github/scripts/test_ci_matrix.py" = ["D"]
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
+".github/scripts/test_clai2_web_bundle.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
 "!tests/**/*.py" = ["TID253"]
@@ -498,9 +500,10 @@ venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
 executionEnvironments = [
-    # Imports `scripts/durable_exec_contract.py` by name. Pyright applies the first entry whose root
-    # contains a file, so this one precedes `tests`.
+    # These two import `scripts/durable_exec_contract.py` by name. Pyright applies the first entry whose
+    # root contains a file, so they precede `tests`.
     { root = "tests/durable_exec/test_durable_exec_contract_manifest.py", extraPaths = ["scripts", "examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = "tests/durable_exec/test_durable_exec_contract_touched.py", extraPaths = ["scripts", "examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = "tests", extraPaths = ["examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     # `scripts/typecheck_changed.py` reads `tomllib`, which is 3.11+. These two are
     # developer tooling rather than shipped code, and the script falls back to the full

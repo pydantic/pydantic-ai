@@ -3,6 +3,8 @@ import type { Snapshot } from './state'
 import { PROTOCOL } from './protocol'
 import type {
   AnswerBody,
+  ChangeScope,
+  Changes,
   CompletionInfo,
   Entered,
   JsonValue,
@@ -130,6 +132,9 @@ export function sessionApi(id: string | null) {
     interrupt: () => call<{ interrupted: boolean }>('POST', `${base}/interrupt`),
     /** One of the images a prompt in this session's transcript lists, as a `data:` URL; fetched once per page. */
     image: (id: string) => image(base, id),
+    /** The files this session changed in `scope`, each with its diff unless `diffs` is off, for the Changes panel. */
+    changes: (scope: ChangeScope, diffs = true) =>
+      call<Changes>('GET', `${base}/changes?scope=${scope}${diffs ? '' : '&diffs=false'}`),
     complete: (text: string) => call<CompletionInfo[]>('GET', `${base}/complete?text=${encodeURIComponent(text)}`),
     selectModel: (name: string) => call<void>('POST', `${base}/model`, { name }),
     answer: (request: string, answers: AnswerBody[] | null) =>
@@ -160,6 +165,8 @@ export const api = {
     call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}${archived ? '&include_archived=true' : ''}`),
   /** The sidebar's projects, with every worktree Git lists for each, for New session to offer. */
   checkouts: () => call<Project[]>('GET', '/api/sessions?include_worktrees=true'),
+  /** The directories a typed absolute path completes to, each repository with every worktree Git lists, for New session. */
+  directories: (path: string) => call<Project[]>('GET', `/api/directories?path=${encodeURIComponent(path)}`),
   transcript: (id: string) => call<Transcript>('GET', `/api/sessions/${id}`),
   /** Start a live session, in `workspace` when given; it answers the new session's conversation ID. */
   newSession: (workspace?: string) =>
@@ -170,6 +177,8 @@ export const api = {
   fork: (id: string) => call<{ id: string }>('POST', `/api/sessions/${id}/fork`),
   archive: (id: string) => call<void>('POST', `/api/sessions/${id}/archive`),
   unarchive: (id: string) => call<void>('POST', `/api/sessions/${id}/unarchive`),
+  /** Archive several sessions at once, such as every one of a worktree. */
+  archiveAll: (ids: string[]) => call<void>('POST', '/api/sessions/archive', { ids }),
   remove: (id: string) => call<void>('DELETE', `/api/sessions/${id}`),
   /** Answer a settings menu's dialog, which belongs to the page rather than to one session. */
   answerDialog: (id: string, value: string | null) => call<void>('POST', `/api/dialogs/${id}`, { value }),
@@ -220,6 +229,33 @@ export interface Watching {
   sessions: readonly string[]
 }
 
+function openSocket(): WebSocket {
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
+  return new WebSocket(`${scheme}://${location.host}/ws?token=${encodeURIComponent(token)}&protocol=${PROTOCOL}`)
+}
+
+/** The page's first WebSocket while nothing has adopted it, with what it heard so far. */
+let early: { events: Event[]; adopt: () => WebSocket } | null = null
+
+/**
+ * Open the page's first WebSocket now, as the bundle loads, rather than once the page has rendered: its snapshot is
+ * on its way meanwhile. The first `connect` adopts it, with the messages it heard before.
+ */
+export function preconnect(): void {
+  const socket = openSocket()
+  const events: Event[] = []
+  const types = ['open', 'message', 'close'] as const
+  const keep = (event: Event) => events.push(event)
+  for (const type of types) socket.addEventListener(type, keep)
+  early = {
+    events,
+    adopt: () => {
+      for (const type of types) socket.removeEventListener(type, keep)
+      return socket
+    },
+  }
+}
+
 /** Keep one WebSocket open, reconnecting with backoff; each connection starts with a snapshot.
 
 Each new connection watches `watching()`'s sessions again, after calling `onWatch` with the shown one, before any of
@@ -261,24 +297,34 @@ export function connect(
       delay = Math.min(delay * 2, 2000)
     }
   }
+  const opened = () => {
+    delay = 500
+    failures = 0
+    watched = null
+    const { shown, sessions } = watching()
+    if (shown !== null) onWatch(shown)
+    send(sessions)
+    onState('open')
+  }
+  const received = (event: MessageEvent<string>) => onMessage(JSON.parse(event.data) as ServerMessage)
+  const closed = () => {
+    if (stopped) return
+    onState('closed')
+    void retry()
+  }
   const open = () => {
     onState('connecting')
-    const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
-    socket = new WebSocket(`${scheme}://${location.host}/ws?token=${encodeURIComponent(token)}&protocol=${PROTOCOL}`)
-    socket.onopen = () => {
-      delay = 500
-      failures = 0
-      watched = null
-      const { shown, sessions } = watching()
-      if (shown !== null) onWatch(shown)
-      send(sessions)
-      onState('open')
-    }
-    socket.onmessage = (event: MessageEvent<string>) => onMessage(JSON.parse(event.data) as ServerMessage)
-    socket.onclose = () => {
-      if (stopped) return
-      onState('closed')
-      void retry()
+    const adopted = early
+    early = null
+    socket = adopted?.adopt() ?? openSocket()
+    socket.onopen = opened
+    socket.onmessage = received
+    socket.onclose = closed
+    // What the page's first socket heard before the page was ready for it, in order.
+    for (const event of adopted?.events ?? []) {
+      if (event.type === 'open') opened()
+      else if (event.type === 'message') received(event as MessageEvent<string>)
+      else closed()
     }
   }
   open()
