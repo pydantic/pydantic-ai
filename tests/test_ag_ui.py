@@ -9354,7 +9354,9 @@ async def test_run_finished_usage_aggregates_provider_model_pairs() -> None:
         assert len(responses) == 3
         responses[0].provider_name = 'provider-a'
         responses[0].model_name = 'model-a'
-        responses[0].usage = RequestUsage(input_tokens=10, output_tokens=2, cache_read_tokens=3)
+        responses[0].usage = RequestUsage(
+            input_tokens=10, output_tokens=2, output_reasoning_tokens=1, cache_read_tokens=3
+        )
         responses[1].provider_name = 'provider-a'
         responses[1].model_name = 'model-a'
         responses[1].usage = RequestUsage(input_tokens=5, cache_write_tokens=5)
@@ -9378,6 +9380,7 @@ async def test_run_finished_usage_aggregates_provider_model_pairs() -> None:
                 'inputTokens': 15,
                 'outputTokens': 2,
                 'totalTokens': 17,
+                'reasoningTokens': 1,
                 'cachedInputTokens': 3,
                 'cacheWriteInputTokens': 5,
             },

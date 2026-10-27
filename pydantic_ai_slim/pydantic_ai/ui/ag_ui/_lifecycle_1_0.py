@@ -73,6 +73,7 @@ def token_usage_from_messages(messages: Sequence[ModelMessage]) -> list[TokenUsa
                 total_tokens=_reported(usage.input_tokens + usage.output_tokens)
                 if _in_range(usage.input_tokens) and _in_range(usage.output_tokens)
                 else None,
+                reasoning_tokens=_reported(usage.output_reasoning_tokens),
                 cached_input_tokens=_reported(usage.cache_read_tokens),
                 cache_write_input_tokens=_reported(usage.cache_write_tokens),
             )
