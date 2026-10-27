@@ -1146,7 +1146,7 @@ class TestBridgeFailureModes:
                 return await agent.run('go')  # type: ignore[return-value]
             finally:
                 unwinding.set()
-                # Outlive the cancel budget: finish only once the handler has retired the loop.
+                # Outlive the cancel budget: finish only once the retirement is waiting on this run.
                 with suppress(asyncio.CancelledError):
                     await asyncio.Event().wait()
                 await retiring.wait()
@@ -1159,8 +1159,10 @@ class TestBridgeFailureModes:
         retire = loops.retire
 
         def retire_and_release(loop: asyncio.AbstractEventLoop, task: asyncio.Task[Any] | None) -> None:
-            loop.call_soon_threadsafe(retiring.set)
+            # Release the run after the retirement's cleanup is queued, so that cleanup is already
+            # waiting on the run when it finishes and schedules its follow-up task.
             retire(loop, task)
+            loop.call_soon_threadsafe(retiring.set)
 
         monkeypatch.setattr(loops, 'retire', retire_and_release)
 
@@ -1193,11 +1195,11 @@ class TestBridgeFailureModes:
         # nothing else references can be garbage-collected, running its `finally`, before the
         # retirement gets to cancel it.
         loop.call_soon_threadsafe(lambda: tasks.append(loop.create_task(pending_work())))
-        assert task_started.wait(timeout=5)
+        assert task_started.wait(timeout=_READINESS_WAIT_TIMEOUT)
 
         loops.retire(loop, None)
 
-        thread.join(timeout=5)
+        thread.join(timeout=_READINESS_WAIT_TIMEOUT)
         assert task_cancelled.is_set()
         assert tasks[0].cancelled()
         assert loop.is_closed()
