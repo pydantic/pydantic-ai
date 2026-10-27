@@ -3820,6 +3820,77 @@ async def _first_events(connection: OpenAILiveConnection, count: int) -> list[An
     return events
 
 
+async def _all_events(connection: OpenAILiveConnection) -> list[Any]:
+    with anyio.fail_after(5):
+        return [event async for event in connection]
+
+
+async def _no_reattach() -> Any:
+    """A sideband's re-attach, for a session that has ended, which nothing re-attaches to."""
+    raise AssertionError('re-attached to a session that ended')  # pragma: no cover
+
+
+@pytest.mark.parametrize('sideband', [True, False], ids=['sideband', 'websocket'])
+async def test_connection_lost_ends_a_sideband_cleanly_and_a_websocket_with_an_error(sideband: bool) -> None:
+    """Live reports a browser that closed its WebRTC connection as `connection_lost`, then drops the sideband without a
+    closing handshake. On a sideband that is the call ending, as on any hangup, while a WebSocket session that loses
+    its connection still reports it.
+    """
+    # Distinct ids: a sideband skips an event id it has already handled, as Live sends some again on a re-attach.
+    closed = {**_session_closed('connection_lost', 4), 'event_id': 'e2'}
+    dropping = _DroppingWebSocket([_output_transcript('Goodbye.', 'e1'), json.dumps(closed)])
+    connection = OpenAILiveConnection(dropping, reattach=_no_reattach if sideband else None)  # pyright: ignore[reportArgumentType]
+    events = await _all_events(connection)
+    if sideband:
+        # The final usage is recorded, the reply settled as finished, and the stream ends.
+        assert events == snapshot(
+            [
+                OutputTranscript(text='Goodbye.'),
+                SessionUsage(usage=RequestUsage(audio_seconds=4.0), response_scoped=False),
+                ResponseDone(),
+            ]
+        )
+    else:
+        # The connection a WebSocket session loses is its own: reported as lost, then as closed.
+        assert events == snapshot(
+            [
+                OutputTranscript(text='Goodbye.'),
+                SessionUsage(usage=RequestUsage(audio_seconds=4.0), response_scoped=False),
+                ResponseDone(interrupted=True),
+                RealtimeSessionErrorEvent(
+                    message='The OpenAI GPT-Live session ended: connection_lost.',
+                    code='live_session_connection_lost',
+                    recoverable=False,
+                ),
+                RealtimeSessionErrorEvent(
+                    message='OpenAI GPT-Live connection closed: no close frame received or sent', recoverable=False
+                ),
+            ]
+        )
+
+
+class _BrokenPipeWebSocket(_FakeWebSocket):
+    async def recv(self) -> str:
+        raise OSError('broken pipe')
+
+
+async def test_a_socket_error_ends_the_session_with_an_error() -> None:
+    """A link that fails below the WebSocket is a drop, however the session stood."""
+    events = await _all_events(OpenAILiveConnection(_BrokenPipeWebSocket([])))  # pyright: ignore[reportArgumentType]
+    assert events == [
+        RealtimeSessionErrorEvent(message='OpenAI GPT-Live connection closed: broken pipe', recoverable=False)
+    ]
+
+
+async def test_a_session_hung_up_elsewhere_ends_without_a_connection_error() -> None:
+    """Hung up through the REST API rather than this connection: Live sends `session.closed` and drops the socket
+    without a closing handshake, which is the session ending, not the connection failing.
+    """
+    dropping = _DroppingWebSocket([json.dumps(_session_closed('close_requested', 2))])
+    events = await _all_events(OpenAILiveConnection(dropping, reattach=_no_reattach))  # pyright: ignore[reportArgumentType]
+    assert events == snapshot([SessionUsage(usage=RequestUsage(audio_seconds=2.0), response_scoped=False)])
+
+
 async def test_a_drop_without_a_reconnect_policy_still_ends_the_session(model: OpenAILiveModel) -> None:
     with _patched_dials(_DroppingWebSocket([_started('s1')])):
         async with model.connect(
@@ -4516,17 +4587,13 @@ async def test_a_sideband_that_cannot_reattach_ends_the_session() -> None:
 
 @pytest.mark.parametrize('reason', ['close_requested', 'connection_lost'])
 async def test_a_sideband_does_not_reattach_to_a_session_that_ended(reason: str) -> None:
-    """The browser hanging up ends the session (`connection_lost`): there is nothing left to attach to."""
-
-    async def reattach() -> Any:
-        raise AssertionError('re-attached to a session that ended')  # pragma: no cover
-
+    """The browser hanging up ends the session (`connection_lost`): there is nothing left to attach to, and the
+    socket closing after it is the session's end, not a drop to recover from.
+    """
     dropping = _DroppingWebSocket([json.dumps(_session_closed(reason))])
-    connection = OpenAILiveConnection(dropping, reattach=reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
-    events = await _first_events(connection, 1 if reason == 'close_requested' else 2)
-    assert events[-1] == RealtimeSessionErrorEvent(
-        message='OpenAI GPT-Live connection closed: no close frame received or sent', recoverable=False
-    )
+    connection = OpenAILiveConnection(dropping, reattach=_no_reattach, reconnect={'base_delay': 0.0})  # pyright: ignore[reportArgumentType]
+    events = await _all_events(connection)
+    assert events == snapshot([])
 
 
 async def test_a_spoken_turn_without_a_transcript_replays_as_a_marker() -> None:

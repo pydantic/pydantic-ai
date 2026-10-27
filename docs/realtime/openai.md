@@ -592,7 +592,9 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   `live_session_expired` (the duration limit), `live_session_content` (the safety filter), or
   `live_session_connection_lost`. With a [`reconnect`](lifecycle.md#reconnecting) policy, an expired
   or lost WebSocket session is re-opened instead while the policy's reconnects last; one the safety
-  filter ended stays ended.
+  filter ended stays ended. On a [WebRTC sideband](#browser-webrtc), a lost connection is the browser's:
+  Live reports a browser that closed its connection as `connection_lost`, about half a minute later, and
+  the session ends as it would after any other hangup, without an error.
 - A delegated backend that fails, stops short, or reports an error is surfaced as a recoverable
   [`RealtimeSessionErrorEvent`][pydantic_ai.messages.RealtimeSessionErrorEvent] instead: the call
   goes on. When Live reports such a failure only as a session-level error that names no delegation
