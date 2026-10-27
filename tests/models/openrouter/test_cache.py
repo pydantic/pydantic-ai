@@ -1096,8 +1096,8 @@ async def test_openrouter_leading_cache_point_attaches_to_previous_user_message(
 ) -> None:
     """A `CachePoint` opening a later user message caches up to the end of the previous user message.
 
-    This is the shape of a tail reminder appended after the conversation (the harness `Planning` and
-    `SystemReminders` capabilities), which used to raise `UserError` here while Anthropic, Bedrock and OpenAI
+    This is the shape of a tail reminder appended after the conversation (the harness `Planning`
+    capability), which used to raise `UserError` here while Anthropic, Bedrock and OpenAI
     attach the breakpoint to the previous message. A tool result in between doesn't carry it, since OpenRouter
     doesn't document `cache_control` on tool messages. The recorded cache usage shows OpenRouter's Anthropic
     route honoring the moved breakpoint: the tokens it cached, read or written, are exactly the prefix through
@@ -1274,6 +1274,80 @@ async def test_openrouter_cache_point_after_empty_text_is_left_in_place(allow_mo
             {'type': 'text', 'text': 'more'},
         ],
     }
+
+
+async def test_openrouter_cache_instructions_add_a_point_after_appending_blocks(allow_model_requests: None) -> None:
+    """On Anthropic routes, the append blocks get a cache point after the static instructions' one.
+
+    Over Anthropic's four, the point after the append blocks is dropped before any message point, and the one after
+    the static instructions, which every conversation shares, stays. A mocked client: the property is which points
+    survive the trim, which the request body shows the same way.
+    """
+    mock_client = _done_mock_client()
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        instructions='Static instructions.',
+        model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True),
+    )
+
+    @agent.instructions(name='catalog', on_change='append')
+    def catalog() -> str:
+        return 'Catalog.'
+
+    @agent.instructions
+    def dynamic_context() -> str:
+        return 'Dynamic context.'
+
+    await agent.run('Hi')
+    await agent.run(['One', CachePoint(), 'Two', CachePoint(), 'Three', CachePoint(), 'Question'])
+
+    def cached(messages: list[dict[str, Any]]) -> list[str]:
+        return [
+            part['text']
+            for message in messages
+            if isinstance(content := message['content'], list)
+            for part in cast(list[dict[str, Any]], content)
+            if 'cache_control' in part
+        ]
+
+    within_budget, over_budget = (kwargs['messages'] for kwargs in get_mock_chat_completion_kwargs(mock_client))
+    assert cached(within_budget) == snapshot(
+        [
+            'Static instructions.',
+            """\
+<context id="agent:catalog">
+Catalog.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+        ]
+    )
+    assert cached(over_budget) == snapshot(['Static instructions.', 'One', 'Two', 'Three'])
+
+
+async def test_openrouter_cache_instructions_gemini_skips_appending_blocks(allow_model_requests: None) -> None:
+    """On Gemini routes, an `on_change='append'` block skips instruction caching like any dynamic instruction.
+
+    Gemini caches the whole system instruction as one block, so caching it with a per-user append block would write a
+    cache entry for every conversation.
+    """
+    mock_client = _done_mock_client()
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        instructions='Static instructions.',
+        model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True),
+    )
+
+    @agent.instructions(name='memory', on_change='append')
+    def memory() -> str:
+        return 'Memory.'
+
+    await agent.run('Hi')
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    assert 'cache_control' not in str(messages)
 
 
 # ===== Prompt caching: TTL ordering =====

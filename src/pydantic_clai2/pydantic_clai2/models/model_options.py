@@ -26,7 +26,8 @@ def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
         options.pop('temperature')
         options.pop('seed')
         options['thinking'] = ()
-        if provider in ('openrouter', 'vllm'):
+        # Azure runs on Chat Completions, so it gets rows for the family defaults it sends.
+        if provider in ('openrouter', 'vllm') or (provider == 'azure' and family_defaults):
             options = _openai_options(provider='openai-chat', name=name, family_defaults=family_defaults)
     options['cache'] = ()
     glm = _glm_version(name=name)

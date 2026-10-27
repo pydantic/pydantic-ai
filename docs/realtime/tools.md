@@ -68,11 +68,10 @@ settings = RealtimeModelSettings(tool_choice=ToolOrOutput(function_tools=['get_w
 ```
 
 A choice that forces a tool call — `'required'` or a list of tool names — raises a
-[`UserError`][pydantic_ai.exceptions.UserError] before connecting on OpenAI, Azure OpenAI, xAI, and
-ElevenLabs Agents. Applied to every response, including the one after a tool result, it would never let
-the model answer: it would keep calling tools until a [usage limit](../agent.md#usage-limits) ended the
-session. Gemini Live has no tool-choice configuration, so it ignores `'required'` and treats a list of
-tool names as a restriction, like `ToolOrOutput`. On [ElevenLabs Agents](elevenlabs.md#settings), a
+[`UserError`][pydantic_ai.exceptions.UserError] before connecting, on every provider. Applied to every
+response, including the one after a tool result, it would never let the model answer: it would keep
+calling tools until a [usage limit](../agent.md#usage-limits) ended the session. Gemini Live has no
+tool-choice configuration, so it couldn't force a call at all. On [ElevenLabs Agents](elevenlabs.md#settings), a
 restriction narrows the hosted agent's attached tools for the conversation, which needs the agent's
 *Tool IDs* override enabled. To choose the tools from the run context, filter them
 with a [filtered toolset](../toolsets.md#filtering-tools) or
@@ -277,11 +276,13 @@ if __name__ == '__main__':
 
 The default `priority='asap'` delivers after any active response finishes;
 `priority='when_idle'` waits until the model is idle, after all `'asap'` items. Neither priority
-interrupts assistant speech. Text (a `str` or [`TextContent`][pydantic_ai.messages.TextContent]) and system parts are joined into one user turn, with system
-parts wrapped in `<system>…</system>` to distinguish them from the person speaking. A system part
-marks where the text came from, not that it should be handled silently: the model still gets a turn
-and may reply, call a tool, or move on. To add context without prompting a turn, use
-[`send(..., respond=False)`](turns.md#text-turns) instead. Delivered turns become ordinary
+interrupts assistant speech. System parts enqueued on their own are delivered and recorded as
+[system prompts sent with `send()`](turns.md#system-prompts) are, on each provider's channel for the
+operator's own text. Enqueued together with text (a `str` or [`TextContent`][pydantic_ai.messages.TextContent]),
+they're joined into one user turn, wrapped in `<system>…</system>` to distinguish them from the person
+speaking. Either way, a system part marks where the text came from, not that it should be handled silently:
+the model still gets a turn and may reply, call a tool, or move on. To add context without prompting a turn,
+use [`send(..., respond=False)`](turns.md#text-turns) instead. Delivered turns with text become ordinary
 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]s in history, as in
 [injecting messages mid-run](../message-history.md#injecting-messages-mid-run). A message of user
 prompt parts that holds `TextContent` is recorded as those parts, so their metadata, which isn't sent
