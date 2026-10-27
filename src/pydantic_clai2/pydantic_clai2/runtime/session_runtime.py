@@ -136,6 +136,16 @@ _RESTART_ELSEWHERE = (
 )
 
 
+def _raised(refusal: Callable[[], str | None]) -> Callable[[], None]:
+    """`refusal`, raised: the web UI, which alone opens `Command.menu`, shows it as an error, not a saved row."""
+
+    def refuse() -> None:
+        if (refused := refusal()) is not None:
+            raise ValueError(refused)
+
+    return refuse
+
+
 async def _default_model_name(*, store: SettingsStore, fallback: Model | str | None) -> str | None:
     """The name of the model a new session starts with, as `/model` shows it; nothing is built or signed in."""
     saved = (await to_thread.run_sync(store.overrides)).get('model')
@@ -428,7 +438,10 @@ def create_shell(
             handler=lambda args: shell.update(args),
             complete=lambda args: ('now',) if len(args) <= 1 else (),
             menu=lambda: update_menu(
-                context, updates, run=lambda text: shell.send_input(text), refusal=lambda: shell.restart_refusal()
+                context,
+                updates,
+                run=lambda text: shell.send_input(text),
+                refusal=_raised(lambda: shell.restart_refusal()),
             ),
         )
     )
