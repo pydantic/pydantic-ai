@@ -635,6 +635,8 @@ export function App() {
               )}
               {chat.session && !preview && !workerTask && (
                 <GitChip
+                  // One per session, so an action still running for the last one cannot show over this one.
+                  key={chat.session.id}
                   session={chat.session.id}
                   // While a turn runs its edits are not done yet; each item after it may be a `/commit`'s.
                   refresh={chat.running ? -1 : entries.length}

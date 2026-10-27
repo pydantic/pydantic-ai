@@ -7,8 +7,9 @@ commit, raises `GitError` with what the command printed, so the user sees why.
 
 import os
 import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from pathlib import Path
 from subprocess import DEVNULL
 from urllib.parse import urlsplit
@@ -21,6 +22,7 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 from pydantic_clai2 import gh_cli
 from pydantic_clai2.commands import Command
 
@@ -116,8 +118,17 @@ def _label(args: Sequence[str]) -> str:
     return f'{Path(args[0]).name} {subcommand}'.strip()
 
 
+def _without_api_keys(environment: Mapping[str, str]) -> dict[str, str]:
+    """`environment` minus LLM API keys, as the model's own commands get it: hooks and helpers Git runs need none."""
+    return {
+        name: value
+        for name, value in environment.items()
+        if not any(fnmatchcase(name, pattern) for pattern in LLM_API_KEY_ENV_PATTERNS)
+    }
+
+
 def _git_environment() -> dict[str, str]:
-    environment = {**os.environ, 'GIT_TERMINAL_PROMPT': '0', 'GIT_OPTIONAL_LOCKS': '0'}
+    environment = {**_without_api_keys(os.environ), 'GIT_TERMINAL_PROMPT': '0', 'GIT_OPTIONAL_LOCKS': '0'}
     # Never wait on a password or passphrase prompt nobody can see; the user's own SSH command is theirs.
     environment.setdefault('GIT_SSH_COMMAND', 'ssh -o BatchMode=yes')
     return environment
@@ -309,22 +320,29 @@ async def commit(workspace: Path, *, message: str, files: Sequence[str] | None =
     chosen = _selected(status, files)
     if not chosen:
         raise ValueError('There is nothing to commit.')
+    # Git finishes a merge only with every change, never with paths named.
+    merging = await _try_git(root, 'rev-parse', '--quiet', '--verify', 'MERGE_HEAD') is not None
+    if merging and len(chosen) < len(status.files):
+        raise ValueError('A merge is in progress: commit every changed file to finish it.')
     # New files must be known to Git before `commit PATHS` takes them; a deleted or renamed-away one is
     # known already, and `add` would refuse it.
     present = [file.path for file in chosen if (root / file.path).is_symlink() or (root / file.path).exists()]
     if present:
         await _git(root, 'add', '--all', '--pathspec-from-file=-', '--pathspec-file-nul', input=_pathspecs(present))
-    paths = [path for file in chosen for path in (file.path, file.original) if path is not None]
-    await _git(
-        root,
-        'commit',
-        '--quiet',
-        f'--message={message}',
-        '--pathspec-from-file=-',
-        '--pathspec-file-nul',
-        timeout=LONG_TIMEOUT,
-        input=_pathspecs(paths),
-    )
+    if merging:
+        await _git(root, 'commit', '--quiet', f'--message={message}', timeout=LONG_TIMEOUT)
+    else:
+        paths = [path for file in chosen for path in (file.path, file.original) if path is not None]
+        await _git(
+            root,
+            'commit',
+            '--quiet',
+            f'--message={message}',
+            '--pathspec-from-file=-',
+            '--pathspec-file-nul',
+            timeout=LONG_TIMEOUT,
+            input=_pathspecs(paths),
+        )
     return f'Committed {(await _git(root, "log", "-1", "--no-color", "--format=%h %s")).strip()}'
 
 
@@ -359,7 +377,8 @@ async def open_pull_request(workspace: Path, *, title: str, body: str) -> str:
     root, status = await _repository(workspace, pull_request=True)
     if status.pull_request is not None or status.branch is None:
         raise RuntimeError(status.pull_request)
-    if status.upstream is None or status.ahead:
+    # `gh pr create --head` pushes nothing: the branch must be on origin under its own name, up to date.
+    if status.upstream != f'origin/{status.branch}' or status.ahead:
         await _git(root, 'push', '--set-upstream', 'origin', f'refs/heads/{status.branch}', timeout=LONG_TIMEOUT)
     gh = gh_cli.gh_command()
     assert gh is not None  # `pull_request` said why otherwise.
@@ -372,7 +391,7 @@ async def open_pull_request(workspace: Path, *, title: str, body: str) -> str:
         f'--title={title}',
         '--body-file=-',
         timeout=LONG_TIMEOUT,
-        env=gh_cli.gh_environment(),
+        env=_without_api_keys(gh_cli.gh_environment()),
         input=body.strip().encode(),
     )
     if ran.code != 0:
@@ -402,9 +421,13 @@ async def _changes(root: Path, files: list[ChangedFile], *, every: bool) -> str:
     tracked = [path for file in files if file.status != '?' for path in (file.path, file.original) if path is not None]
     parts: list[str] = []
     if tracked:
-        head = await _try_git(root, 'rev-parse', '--verify', '--quiet', 'HEAD')
+        # Before the first commit, against the empty tree, so edits made since staging count, as they are committed.
+        base = (
+            await _try_git(root, 'rev-parse', '--verify', '--quiet', 'HEAD')
+            or (await _git(root, 'hash-object', '-t', 'tree', '--stdin', input=b'')).strip()
+        )
         paths = () if every else ('--', *tracked)
-        parts.append(await _git(root, 'diff', '--no-color', '--no-ext-diff', 'HEAD' if head else '--cached', *paths))
+        parts.append(await _git(root, 'diff', '--no-color', '--no-ext-diff', base, *paths))
     for file in files:
         if file.status == '?':
             text = await to_thread.run_sync(_read_start, root / file.path)

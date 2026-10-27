@@ -156,6 +156,16 @@ async def test_a_conflict_is_unmerged(repo: Path) -> None:
     assert status.files == [ChangedFile(path='notes.txt', status='U')]
     assert status.ahead == 1, 'main is ahead of origin/main'
 
+    # Resolved, the merge is finished only with every change, as Git allows.
+    (repo / 'notes.txt').write_text('both\n')
+    git(repo, 'add', 'notes.txt')
+    (repo / 'extra.txt').write_text('extra\n')
+    with pytest.raises(ValueError, match='A merge is in progress'):
+        await commit(repo, message='Merge other', files=['notes.txt'])
+    await commit(repo, message='Merge other')
+    assert len(git(repo, 'log', '-1', '--format=%P').split()) == 2
+    assert git(repo, 'show', 'HEAD:extra.txt') == 'extra\n'
+
 
 async def test_commit_only_the_chosen_files_then_the_chip_counts_the_commit(repo: Path) -> None:
     """The issue's acceptance: after the agent edits files, committing them leaves `0 changed, 1 ahead`."""
@@ -277,6 +287,18 @@ async def test_a_failing_hook_says_why(repo: Path) -> None:
         await commit(repo, message='Change the notes')
 
 
+async def test_git_and_its_hooks_never_see_api_keys(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'sk-secret')
+    hook = repo / '.git' / 'hooks' / 'pre-commit'
+    hook.write_text(f'#!/bin/sh\nenv > "{repo.parent / "hook-env"}"\n')
+    hook.chmod(0o755)
+    (repo / 'notes.txt').write_text('changed\n')
+    await commit(repo, message='Change the notes')
+    seen = (repo.parent / 'hook-env').read_text()
+    assert 'GIT_TERMINAL_PROMPT=0' in seen
+    assert 'sk-secret' not in seen
+
+
 async def test_push_confirms_the_default_branch_and_sets_the_upstream(repo: Path) -> None:
     (repo / 'notes.txt').write_text('changed\n')
     await commit(repo, message='Change the notes')
@@ -377,6 +399,15 @@ async def test_open_a_pull_request(repo: Path, gh_state: Path) -> None:
         await open_pull_request(repo, title='Again', body='')
 
 
+async def test_a_branch_tracking_another_one_is_pushed_under_its_own_name(repo: Path, gh_state: Path) -> None:
+    git(repo, 'checkout', '-q', '-b', 'feature', '--track', 'origin/main')
+    status = await git_status(repo)
+    assert status is not None
+    assert (status.upstream, status.ahead, status.pull_request) == ('origin/main', 0, None)
+    assert await open_pull_request(repo, title='Feature', body='') == PR_URL
+    assert git(repo, 'ls-remote', str(repo.parent / 'remote.git'), 'refs/heads/feature').strip()
+
+
 async def test_run_failures(tmp_path: Path) -> None:
     with pytest.raises(GitError, match=r'sleep 5 did not finish within 0.01 seconds'):
         await git_actions._run(tmp_path, 'sleep', '5', timeout=0.01)  # pyright: ignore[reportPrivateUsage]
@@ -440,9 +471,11 @@ async def test_draft_a_commit_message_before_the_first_commit(tmp_path: Path, gh
     subprocess.run(['git', 'init', '-b', 'main', str(fresh)], check=True, capture_output=True)
     (fresh / 'first.txt').write_text('first\n')
     git(fresh, 'add', 'first.txt')
+    # Edited after staging: the commit takes this, so the draft shows it.
+    (fresh / 'first.txt').write_text('first\nlater\n')
     drafter = Drafter(fenced=False)
     assert await draft_commit_message(fresh, model=drafter.resolved) == 'Edit the notes\n\nAnd add one.'
-    assert '+first' in drafter.prompts[-1]
+    assert '+later' in drafter.prompts[-1]
 
 
 async def test_draft_a_pull_request_from_the_branch(repo: Path, tmp_path: Path) -> None:
