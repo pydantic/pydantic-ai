@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Required, cast
-from urllib.parse import urlencode, urlparse, urlunparse
+from urllib.parse import quote, urlencode, urlparse, urlunparse
 
 from anyio.to_thread import run_sync
 from openai import AsyncOpenAI
@@ -33,7 +33,7 @@ from ._openai_protocol import (
     turn_detection_config,
     with_realtime_query,
 )
-from ._openai_webrtc import relay_sdp_offer as _relay_sdp_offer
+from ._openai_webrtc import hang_up_call as _hang_up_call, relay_sdp_offer as _relay_sdp_offer
 from ._utils import resolve_advertised_tools
 from .codec import OutputTranscript, RealtimeCodecEvent
 from .model import RealtimeClientSecret, WebRTCAnswer
@@ -712,11 +712,16 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             sdp_offer=sdp_offer,
         )
 
-    def _check_hang_up(self, session: RealtimeProviderSession) -> None:
-        # Azure OpenAI's calls can't be ended from the server yet: the call ends when the browser hangs up.
-        raise UserError(
-            'Hanging up an Azure OpenAI WebRTC call from the server is not supported yet, so `hang_up()` is '
-            'unavailable. The call ends when the browser hangs up.'
+    async def hang_up(self, session: RealtimeProviderSession) -> None:
+        self._check_hang_up(session)
+        # Like the offer relay, this is Azure's `/openai/v1` API, whatever `api_version` the provider's client
+        # is configured with: the classic `/openai/realtime/calls/{id}/hangup?api-version=...` is a 404.
+        await _hang_up_call(
+            http_client=self._http_client,
+            hangup_url=self._webrtc_url(f'realtime/calls/{quote(session.session_id, safe="")}/hangup'),
+            headers=await self._webrtc_headers(),
+            model_name=self.model_name,
+            ended_code='call_id_not_found',
         )
 
     async def create_client_secret(

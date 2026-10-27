@@ -23,7 +23,7 @@ from pgtask import Task, get_current_task
 
 from pydantic_ai import Agent, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
+from pydantic_ai.exceptions import ModelRetry, RunCancelled, ToolFailed, UserError
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -566,8 +566,12 @@ class TestToolResults:
         [
             (ModelRetry('nope, try again'), snapshot({'kind': 'model_retry', 'message': 'nope, try again'})),
             (ToolFailed('no such record'), snapshot({'kind': 'tool_failed', 'message': 'no such record'})),
+            (
+                RunCancelled('the sub-agent stopped'),
+                snapshot({'kind': 'run_cancelled', 'message': 'the sub-agent stopped', 'timed_out': False}),
+            ),
         ],
-        ids=['model_retry', 'tool_failed'],
+        ids=['model_retry', 'tool_failed', 'run_cancelled'],
     )
     async def test_failed_tool_result_is_checkpointed_and_replayed(
         self, pgtask_db: PGTaskDatabase, error: Exception, stored: object

@@ -1,9 +1,11 @@
 import type {
   Dialog,
+  ForkEntry,
   Item,
   ItemMessage,
   LiveEntry,
   OrchestratorEvent,
+  QueuedItem,
   Questions,
   ServerMessage,
   SessionInfo,
@@ -24,6 +26,10 @@ export interface NoticeEntry {
   command: string | null
   /** For `/usage` and `/cost`: the figures their text reports, shown as a card. */
   usage: UsageReport | null
+  /** For `/forks`: the rows of its table, shown as a card. */
+  forks: ForkEntry[] | null
+  /** A background `/fork` that ended; `text` is its answer, why it failed, or empty when it was cancelled. */
+  fork: ForkEntry | null
 }
 
 export interface TurnSummary {
@@ -51,6 +57,8 @@ export interface Chat {
   tasks: TaskEntry[]
   /** What each running task has done so far, by task ID; a finished task's saved history is fetched instead. */
   taskItems: Record<string, Entry[]>
+  /** The input waiting for the running turn or command, oldest first, as the session's prompt holds it. */
+  queue: QueuedItem[]
 }
 
 export const initialChat: Chat = {
@@ -62,9 +70,23 @@ export const initialChat: Chat = {
   turnStartedAt: null,
   tasks: [],
   taskItems: {},
+  queue: [],
 }
 
 export type Snapshot = Extract<ServerMessage, { type: 'snapshot' }>
+
+/** How many sessions the page keeps watching, the shown one included, so switching back to one shows it at once. */
+const KEPT = 5
+
+/** Watch `id` first, before the sessions watched already; the least recently shown beyond `KEPT` are dropped. */
+function watchFirst(watched: string[], id: string): string[] {
+  return [id, ...watched.filter((other) => other !== id)].slice(0, KEPT)
+}
+
+/** Only the chats of the watched sessions, as no other would stay current. */
+function keptChats(chats: Record<string, Chat>, watched: string[]): Record<string, Chat> {
+  return Object.fromEntries(watched.flatMap((id) => (id in chats ? [[id, chats[id] as Chat]] : [])))
+}
 
 export interface State {
   /** The live session the main pane shows, by conversation ID; `null` until the first snapshot. */
@@ -84,9 +106,12 @@ export interface State {
    */
   stray: Snapshot | null
   /**
-   * The shown session's chat, by conversation ID; the page watches no other, so no other chat would stay current.
-   * Until a newly shown session's snapshot comes, this is still the previous one's.
+   * The sessions the page watches, most recently shown first, at most `KEPT`: the server keeps sending each one's
+   * messages, so its chat stays current and showing it again needs no new snapshot. One that closed stays until it
+   * is dropped, as the session switching conversation may list its new one in `live` before sending its snapshot.
    */
+  watched: string[]
+  /** The watched sessions' chats, by conversation ID; one that was just shown has none until its snapshot comes. */
   chats: Record<string, Chat>
   /** The sessions live in this CLAI, by conversation ID, with what each is doing. */
   live: Record<string, LiveEntry>
@@ -112,6 +137,7 @@ export const initial: State = {
   confirmed: false,
   previous: null,
   stray: null,
+  watched: [],
   chats: {},
   live: {},
   dialogs: [],
@@ -159,7 +185,7 @@ export function applyItem(entries: Entry[], message: ItemMessage): Entry[] {
   if (message.type === 'item') return [...entries, message.item]
   const change = (edit: (item: Item) => Item) => update(entries, message.id, edit)
   switch (message.type) {
-    case 'delta':
+    case 'text_delta':
       return change((item) => ({ ...item, text: item.text + message.text }))
     case 'tool_output':
       return change((item) => ({ ...item, output: item.output + message.text }))
@@ -169,14 +195,14 @@ export function applyItem(entries: Entry[], message: ItemMessage): Entry[] {
       return change((item) => ({ ...item, args: item.args + message.text }))
     case 'tool_args':
       return change((item) => ({ ...item, args: message.args }))
-    case 'call':
+    case 'sub_call':
       return change((item) => ({ ...item, calls: [...item.calls, message.call] }))
-    case 'call_output':
+    case 'sub_call_output':
       return change((item) => ({
         ...item,
         calls: item.calls.map((call) => (call.id === message.call_id ? { ...call, output: call.output + message.text } : call)),
       }))
-    case 'call_done':
+    case 'sub_call_done':
       return change((item) => ({
         ...item,
         calls: item.calls.map((call) =>
@@ -207,24 +233,24 @@ function taskChanged(chat: Chat, task: TaskEntry): Chat {
 export function reduceChat(chat: Chat, message: SessionMessage): Chat {
   switch (message.type) {
     case 'item':
-    case 'delta':
+    case 'text_delta':
     case 'tool_output':
     case 'tool_done':
     case 'args_delta':
     case 'tool_args':
-    case 'call':
-    case 'call_output':
-    case 'call_done':
+    case 'sub_call':
+    case 'sub_call_output':
+    case 'sub_call_done':
     case 'shell_done':
     case 'diff':
       return { ...chat, entries: applyItem(chat.entries, message) }
     case 'task':
       return taskChanged(chat, message.task)
-    case 'task_event': {
+    case 'task_items': {
       const items = message.messages.reduce(applyItem, chat.taskItems[message.id] ?? [])
       return { ...chat, taskItems: { ...chat.taskItems, [message.id]: items } }
     }
-    case 'turn_start':
+    case 'turn_started':
       // A turn a finished task woke has no prompt of its own.
       return {
         ...chat,
@@ -232,7 +258,7 @@ export function reduceChat(chat: Chat, message: SessionMessage): Chat {
         turnStartedAt: Date.now(),
         entries: message.item ? [...chat.entries, message.item] : chat.entries,
       }
-    case 'turn_end': {
+    case 'turn_ended': {
       const entries = chat.entries.map((entry) =>
         entry.kind === 'tool' && (entry.state === 'running' || entry.calls.some((call) => call.state === 'running'))
           ? {
@@ -266,18 +292,36 @@ export function reduceChat(chat: Chat, message: SessionMessage): Chat {
         level: message.level,
         command: message.command,
         usage: message.usage,
+        forks: message.forks,
+        fork: message.fork,
       }
       return { ...chat, entries: [...chat.entries, notice] }
     }
     case 'title':
       return chat.session ? { ...chat, session: { ...chat.session, title: message.title } } : chat
+    case 'queue':
+      return { ...chat, queue: message.queue }
+  }
+}
+
+/** A session's chat as its snapshot has it, keeping when its running turn started, by this page's clock. */
+function snapshotChat(message: Snapshot, previous: Chat | undefined, notice: NoticeEntry | null): Chat {
+  return {
+    session: message.session,
+    entries: notice ? [...message.items, notice] : message.items,
+    running: message.running,
+    status: message.status,
+    questions: message.questions,
+    turnStartedAt: message.running ? (previous?.turnStartedAt ?? null) : null,
+    tasks: message.tasks,
+    taskItems: message.task_items,
+    queue: message.queue,
   }
 }
 
 /** Show a snapshot: its session's chat starts over from it, and it carries the page-wide state too. */
 function applySnapshot(state: State, message: Snapshot): State {
   const id = message.session.id
-  const previous = state.chats[id]
   // A CLAI that `/update` restarted comes back as a new version, which the page says once it has reconnected.
   const updated = state.version !== null && message.version !== state.version
   const notice: NoticeEntry = {
@@ -287,17 +331,13 @@ function applySnapshot(state: State, message: Snapshot): State {
     level: 'info',
     command: null,
     usage: null,
+    forks: null,
+    fork: null,
   }
-  const chat: Chat = {
-    session: message.session,
-    entries: updated ? [...message.items, notice] : message.items,
-    running: message.running,
-    status: message.status,
-    questions: message.questions,
-    turnStartedAt: message.running ? (previous?.turnStartedAt ?? null) : null,
-    tasks: message.tasks,
-    taskItems: message.task_items,
-  }
+  // A conversation the shown session switched from is watched no more: this one took its place.
+  const watched = watchFirst(state.watched.filter((other) => other !== message.replaces), id)
+  const chat = snapshotChat(message, state.chats[id], updated ? notice : null)
+  const chats = keptChats({ ...state.chats, [id]: chat }, watched)
   return {
     ...state,
     shown: id,
@@ -305,7 +345,8 @@ function applySnapshot(state: State, message: Snapshot): State {
     confirmed: false,
     previous: null,
     stray: null,
-    chats: { [id]: chat },
+    watched,
+    chats,
     dialogs: message.dialogs,
     theme: message.theme,
     followsWorkspace: message.follows_workspace,
@@ -314,11 +355,26 @@ function applySnapshot(state: State, message: Snapshot): State {
   }
 }
 
+/** A watched session in the background sent its snapshot: its chat starts over from it, and nothing else changes. */
+function backgroundSnapshot(state: State, message: Snapshot): State {
+  const id = message.session.id
+  const replaced = message.replaces ?? null
+  // The session's new conversation takes the old one's place, and is listed only there.
+  const watched =
+    replaced === null || !state.watched.includes(replaced)
+      ? state.watched
+      : state.watched.filter((other) => other !== id).map((other) => (other === replaced ? id : other))
+  const chats = keptChats({ ...state.chats, [id]: snapshotChat(message, state.chats[id], null) }, watched)
+  return { ...state, watched, chats }
+}
+
 /** The awaited session will not answer: show what came instead, or what showed before if it is live, or nothing. */
 function giveUp(state: State): State {
   if (state.stray) return applySnapshot(state, state.stray)
   const back = state.previous !== null && state.previous in state.live ? state.previous : null
-  return { ...state, shown: back, awaiting: null, confirmed: false, previous: null }
+  const watched = state.watched.filter((id) => id !== state.awaiting)
+  const chats = keptChats(state.chats, watched)
+  return { ...state, shown: back, awaiting: null, confirmed: false, previous: null, watched, chats }
 }
 
 /** Apply one server message or page action to the page's state. */
@@ -327,13 +383,23 @@ export function reduce(state: State, action: Action): State {
     case 'show': {
       // Shown and watched already: no new snapshot answers, so there is nothing to wait for.
       if (!action.reconnect && action.id === state.shown && state.awaiting === null) return state
+      const watched = watchFirst(state.watched, action.id)
+      const chats = keptChats(state.chats, watched)
+      // Watched and live, so its chat is current: it shows at once, and no snapshot comes to wait for.
+      if (!action.reconnect && action.id in chats && action.id in state.live)
+        return { ...state, shown: action.id, awaiting: null, confirmed: false, previous: null, stray: null, watched, chats }
       // A reconnect's first `live` is current, so a session missing from it has closed.
       const confirmed = action.reconnect || action.id in state.live
       const previous = state.previous ?? state.shown
-      return { ...state, shown: action.id, awaiting: action.id, confirmed, previous, stray: null }
+      return { ...state, shown: action.id, awaiting: action.id, confirmed, previous, stray: null, watched, chats }
     }
     case 'snapshot': {
       const id = action.session.id
+      const replaced = action.replaces ?? null
+      // A session watched in the background: its fresh snapshot, or its new conversation's when it switched (`/new`).
+      const background = (other: string | null) =>
+        other !== null && other !== state.awaiting && other !== state.shown && state.watched.includes(other)
+      if (background(id) || background(replaced)) return backgroundSnapshot(state, action)
       // While a watch is unanswered, another session's snapshot is the one a reconnect sends first, kept in case.
       if (id !== state.awaiting && state.awaiting !== null) return { ...state, stray: action }
       // Otherwise it is the shown session's, the first one, or the shown session's new conversation (`/new`).

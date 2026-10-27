@@ -1,3 +1,4 @@
+# description: Selects priority-labeled issues and pull requests, posts the routing intent to the triage Slack channel, and assigns the maintainer.
 name: Semantic owner routing
 
 on:

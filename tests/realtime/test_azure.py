@@ -481,6 +481,8 @@ def test_voice_live_temperature_dropped_while_reasoning(
         # Reasoning cascade chat models take their thinking support from the chat model profile.
         ('gpt-5', 'high', 'high'),
         ('gpt-5', False, 'none'),
+        # Voice Live gets the effort the realtime path maps `max` to, never `max` itself.
+        ('gpt-5.2', 'max', 'xhigh'),
         ('gpt-5.2', True, 'medium'),
         # Non-reasoning models: Voice Live accepts the effort for `gpt-4.1`, then fails every response.
         ('gpt-4.1', 'high', None),

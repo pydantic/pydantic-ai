@@ -101,10 +101,11 @@ def replay() -> Iterator[_Replay]:
     client.close()
 
 
-def _fold(events: list[dict[str, Any]]) -> dict[str, Any]:
+def _fold(events: list[dict[str, Any]], *, keeps_whitespace_blocks: bool) -> dict[str, Any]:  # noqa: C901
     """Fold `ConverseStream` events into the `Converse` response they stream."""
     blocks: dict[int, dict[str, Any]] = {}
     tool_inputs: dict[int, str] = {}
+    citations: dict[int, list[dict[str, Any]]] = {}
     response: dict[str, Any] = {}
     for event in events:
         if start := event.get('contentBlockStart'):
@@ -119,6 +120,8 @@ def _fold(events: list[dict[str, Any]]) -> dict[str, Any]:
             block = blocks.setdefault(index, {})
             if 'text' in delta:
                 block['text'] = block.get('text', '') + delta['text']
+            if 'citation' in delta:
+                citations.setdefault(index, []).append(delta['citation'])
             if 'toolUse' in delta:
                 tool_inputs[index] += delta['toolUse'].get('input', '')
             if 'toolResult' in delta:
@@ -138,9 +141,19 @@ def _fold(events: list[dict[str, Any]]) -> dict[str, Any]:
             response |= {key: metadata[key] for key in ('usage', 'metrics', 'trace') if key in metadata}
     for index, tool_input in tool_inputs.items():
         blocks[index]['toolUse']['input'] = json.loads(tool_input) if tool_input else {}
+    # `Converse` returns a cited text block as `citationsContent`, holding the text and its citations.
+    for index, block_citations in citations.items():
+        text = blocks[index].pop('text', '')
+        blocks[index]['citationsContent'] = {'content': [{'text': text}], 'citations': block_citations}
     # `Converse` leaves out the whitespace-only text blocks that `ConverseStream` sends, like Qwen3's `''` and `'\n\n'`
-    # (live-verified on Qwen3 models; see `test_bedrock_qwen_stream_whitespace_text_blocks`).
-    content = [block for _, block in sorted(blocks.items()) if 'text' not in block or block['text'].strip()]
+    # (live-verified on Qwen3 models; see `test_bedrock_qwen_stream_whitespace_text_blocks`). It keeps Claude's: the
+    # `' '` between two cited blocks comes back from `Converse` too (recorded in `test_citations.py` before Claude
+    # requests were streamed).
+    content = [
+        block
+        for _, block in sorted(blocks.items())
+        if keeps_whitespace_blocks or 'text' not in block or block['text'].strip()
+    ]
     return {'output': {'message': {'role': 'assistant', 'content': content}}, **response}
 
 
@@ -170,7 +183,10 @@ async def _streamed_and_complete(
     def recorded_response() -> dict[str, Any]:
         output = replay.client.converse_stream(modelId=model_name, messages=[])
         # The request ID comes from the HTTP headers, which a stream and a complete response share.
-        return _fold([dict(event) for event in output['stream']]) | {'ResponseMetadata': output['ResponseMetadata']}
+        events = [dict(event) for event in output['stream']]
+        return _fold(events, keeps_whitespace_blocks='anthropic' in model_name) | {
+            'ResponseMetadata': output['ResponseMetadata']
+        }
 
     response = cast('ConverseResponseTypeDef', await anyio.to_thread.run_sync(recorded_response))
     complete = await model._process_response(response)  # pyright: ignore[reportPrivateUsage]

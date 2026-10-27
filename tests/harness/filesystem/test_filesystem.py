@@ -7,6 +7,7 @@ import hashlib
 import os
 import posixpath
 import re
+import socket
 import stat
 from collections.abc import Sequence
 from dataclasses import replace
@@ -58,9 +59,6 @@ from pydantic_ai_harness.filesystem._toolset import (
     _NOT_A_PATH,  # pyright: ignore[reportPrivateUsage]
     _OUTSIDE_WORKSPACE,  # pyright: ignore[reportPrivateUsage]
     FileSystemToolset,
-    _content_hash,  # pyright: ignore[reportPrivateUsage]
-    _format_lines,  # pyright: ignore[reportPrivateUsage]
-    _is_binary,  # pyright: ignore[reportPrivateUsage]
     _sanitize_recoverable_error,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.shell._toolset import ShellToolset
@@ -196,69 +194,88 @@ def _reported_hash(result: str | list[str | BinaryContent]) -> str:
     return result.partition('hash:')[2].split()[0].rstrip(']')
 
 
-class TestFormatLines:
-    def test_basic_formatting(self) -> None:
-        text = 'line1\nline2\nline3\n'
-        result = _format_lines(text.splitlines(keepends=True), 0, 10)
-        assert '     1\tline1\n' in result
-        assert '     2\tline2\n' in result
-        assert '     3\tline3\n' in result
-
-    def test_offset(self) -> None:
-        text = 'a\nb\nc\nd\ne\n'
-        result = _format_lines(text.splitlines(keepends=True), 2, 2)
-        assert '     3\tc\n' in result
-        assert '     4\td\n' in result
-        assert '... (1 more lines. Use offset=4 to continue reading.)' in result
-
-    def test_offset_exceeds_length(self) -> None:
-        text = 'a\nb\n'
-        with pytest.raises(ValueError, match='Offset 5 exceeds file length'):
-            _format_lines(text.splitlines(keepends=True), 5, 10)
-
-    def test_empty_file(self) -> None:
-        result = _format_lines([], 0, 10)
-        assert result == '(empty file)\n'
-
-    def test_no_trailing_newline(self) -> None:
-        text = 'no newline'
-        result = _format_lines(text.splitlines(keepends=True), 0, 10)
-        assert result.endswith('\n')
-
-    def test_continuation_hint(self) -> None:
-        text = '\n'.join(f'line{i}' for i in range(10))
-        result = _format_lines(text.splitlines(keepends=True), 0, 3)
-        assert '... (7 more lines. Use offset=3 to continue reading.)' in result
+def _hash(text: str) -> str:
+    """The documented content hash of `text` as the tools write it: SHA-256 of its UTF-8 bytes, first 12 hex chars."""
+    return hashlib.sha256(text.encode()).hexdigest()[:12]
 
 
-class TestIsBinary:
-    def test_text_content(self) -> None:
-        assert _is_binary(b'hello world\n') is False
+class TestReadFileLineFormat:
+    """`read_file` numbers each line and tells the model where to continue reading."""
 
-    def test_binary_content(self) -> None:
-        assert _is_binary(b'hello\x00world') is True
+    @pytest.mark.parametrize(
+        ('text', 'offset', 'limit', 'expected'),
+        [
+            pytest.param('a\nb\nc\n', 0, None, '     1\ta\n     2\tb\n     3\tc\n', id='numbered-from-one'),
+            pytest.param('no newline', 0, None, '     1\tno newline\n', id='no-trailing-newline'),
+            pytest.param('a\nb\nc\n', 0, 3, '     1\ta\n     2\tb\n     3\tc\n', id='exact-fit'),
+            pytest.param('a\nb\nc\n', 1, 2, '     2\tb\n     3\tc\n', id='exact-fit-from-offset'),
+            pytest.param(
+                'a\nb\nc\n',
+                0,
+                2,
+                '     1\ta\n     2\tb\n... (1 more lines. Use offset=2 to continue reading.)\n',
+                id='one-line-remaining',
+            ),
+            pytest.param(
+                'a\nb\nc\nd\ne\n',
+                2,
+                2,
+                '     3\tc\n     4\td\n... (1 more lines. Use offset=4 to continue reading.)\n',
+                id='window-from-offset',
+            ),
+        ],
+    )
+    async def test_lines_are_numbered_with_a_continuation_hint(
+        self, tmp_path: Path, text: str, offset: int, limit: int | None, expected: str
+    ) -> None:
+        (tmp_path / 'f.txt').write_text(text)
+        lines = len(text.splitlines())
+        result = await _unhashed_toolset().read_file(
+            'f.txt', offset=offset, limit=limit, workspace=LocalWorkspaceBackend(tmp_path)
+        )
+        assert result == f'[f.txt | {lines} lines]\n{expected}'
 
-    def test_null_after_sample(self) -> None:
-        data = b'x' * 9000 + b'\x00'
-        assert _is_binary(data) is False
+    async def test_continuation_hint_names_the_next_offset(self, tmp_path: Path) -> None:
+        (tmp_path / 'f.txt').write_text('\n'.join(f'line{i}' for i in range(10)))
+        result = await _unhashed_toolset().read_file('f.txt', limit=3, workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, str)
+        assert result.endswith('     3\tline2\n... (7 more lines. Use offset=3 to continue reading.)\n')
 
-    def test_null_at_boundary(self) -> None:
-        data = b'x' * 8191 + b'\x00'
-        assert _is_binary(data) is True
+    async def test_empty_file(self, tmp_path: Path) -> None:
+        (tmp_path / 'empty.txt').write_text('')
+        result = await _unhashed_toolset().read_file('empty.txt', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == '[empty.txt | 0 lines]\n(empty file)\n'
 
-    def test_empty(self) -> None:
-        assert _is_binary(b'') is False
+    @pytest.mark.parametrize('offset', [2, 5])
+    async def test_offset_at_or_past_the_end_is_a_retry(self, tmp_path: Path, offset: int) -> None:
+        (tmp_path / 'f.txt').write_text('a\nb\n')
+        with pytest.raises(ModelRetry, match=rf'^Offset {offset} exceeds file length \(2 lines\)\.$'):
+            await _unhashed_toolset().read_file('f.txt', offset=offset, workspace=LocalWorkspaceBackend(tmp_path))
 
 
-class TestContentHash:
-    def test_deterministic(self) -> None:
-        assert _content_hash('hello') == _content_hash('hello')
+class TestReadFileBinaryDetection:
+    """A null byte in the first 8192 bytes makes `read_file` describe the file instead of numbering its lines."""
 
-    def test_different_content(self) -> None:
-        assert _content_hash('hello') != _content_hash('world')
-
-    def test_length(self) -> None:
-        assert len(_content_hash('test')) == 12
+    @pytest.mark.parametrize(
+        ('data', 'header'),
+        [
+            pytest.param(b'hello world\n', '[sample.dat | 1 lines]', id='text'),
+            pytest.param(b'hello\x00world', '[sample.dat | application/octet-stream | 11 bytes]', id='null-byte'),
+            pytest.param(
+                b'x' * 8191 + b'\x00',
+                '[sample.dat | application/octet-stream | 8192 bytes]',
+                id='null-at-last-sampled-byte',
+            ),
+            pytest.param(b'x' * 8192 + b'\x00', '[sample.dat | 1 lines]', id='null-just-past-sample'),
+            pytest.param(b'x' * 9000 + b'\x00', '[sample.dat | 1 lines]', id='null-well-past-sample'),
+            pytest.param(b'', '[sample.dat | 0 lines]', id='empty'),
+        ],
+    )
+    async def test_null_byte_in_sample_means_binary(self, tmp_path: Path, data: bytes, header: str) -> None:
+        (tmp_path / 'sample.dat').write_bytes(data)
+        result = await _unhashed_toolset().read_file('sample.dat', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, str)
+        assert result.partition('\n')[0] == header
 
 
 @pytest.fixture
@@ -437,18 +454,6 @@ class TestPathSecurity:
         result = (await toolset._resolve_path(await toolset._scope(ws), 'hello.txt'))[0]  # pyright: ignore[reportPrivateUsage]
         assert result == str(fs_root / 'hello.txt')
 
-    def test_first_matching_pattern_match(self, toolset: FileSystemToolset[None]) -> None:
-        result = toolset._first_matching_pattern('secret.key', ['*.txt', '*.key'])  # pyright: ignore[reportPrivateUsage]
-        assert result == '*.key'
-
-    def test_first_matching_pattern_no_match(self, toolset: FileSystemToolset[None]) -> None:
-        result = toolset._first_matching_pattern('readme.md', ['*.txt', '*.key'])  # pyright: ignore[reportPrivateUsage]
-        assert result is None
-
-    def test_first_matching_pattern_empty(self, toolset: FileSystemToolset[None]) -> None:
-        result = toolset._first_matching_pattern('anything.py', [])  # pyright: ignore[reportPrivateUsage]
-        assert result is None
-
     async def test_nested_path_resolves(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         result = (await toolset._resolve_path(await toolset._scope(ws), 'subdir/nested.py'))[0]  # pyright: ignore[reportPrivateUsage]
         assert result.endswith('/subdir/nested.py')
@@ -573,91 +578,63 @@ class TestRootDir:
 
 
 class TestAccessPatterns:
-    async def test_denied_pattern_blocks(self, fs_root: Path) -> None:
+    async def test_denied_and_read_only_patterns_ignore_case(self, tmp_path: Path) -> None:
+        # On a case-insensitive filesystem `PRIVATE/notes.txt` is `private/notes.txt`, and the workspace
+        # reports a path in the case it was written, so the patterns have to match either spelling.
+        # The access check comes before any I/O, so this holds on a case-sensitive filesystem too.
+        toolset = FileSystem[None](denied_patterns=['private']).get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+        ws = LocalWorkspaceBackend(tmp_path)
+        with pytest.raises(ModelRetry, match=r"'PRIVATE/notes\.txt' is denied by pattern 'private'"):
+            await toolset.read_file('PRIVATE/notes.txt', workspace=ws)
+        with pytest.raises(ModelRetry, match=r"'\.GIT/config' is protected \(matches '\*\*/\.git'\)"):
+            await toolset.write_file('.GIT/config', '[core]\n', workspace=ws)
+        with pytest.raises(ModelRetry, match=r"'apps/\.Env' is protected \(matches '\*\*/\.env'\)"):
+            await toolset.write_file('apps/.Env', 'X=1\n', workspace=ws)
+        # Folding turns `ß` into `ss`, which `?` no longer matches, so the original spelling still counts.
+        single = FileSystem[None](read_only_patterns=['private/?.txt']).get_toolset()
+        assert isinstance(single, FileSystemToolset)
+        with pytest.raises(ModelRetry, match=r"'private/ß\.txt' is protected \(matches 'private/\?\.txt'\)"):
+            await single.write_file('private/ß.txt', 'X=1\n', workspace=ws)
+
+    async def test_default_read_only_patterns_protect_a_git_file(self, tmp_path: Path) -> None:
+        # In a git worktree or submodule `.git` is a file naming the git directory; rewriting it
+        # would point git at a config the agent wrote.
+        (tmp_path / '.git').write_text('gitdir: ../repo/.git/worktrees/wt\n')
+        (tmp_path / 'sub' / '.git').mkdir(parents=True)
+        (tmp_path / '.github').mkdir()
+        toolset = FileSystem[None]().get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+        ws = LocalWorkspaceBackend(tmp_path)
+        with pytest.raises(ModelRetry, match=r"'\.git' is protected \(matches '\*\*/\.git'\)"):
+            await toolset.write_file('.git', 'gitdir: evil\n', workspace=ws)
+        with pytest.raises(ModelRetry, match=r"'sub/\.git/config' is protected"):
+            await toolset.write_file('sub/.git/config', '[core]\n', workspace=ws)
+        assert 'Wrote' in await toolset.write_file('.github/CODEOWNERS', '* @me\n', workspace=ws)
+
+    async def test_denied_error_names_the_matching_pattern(self, fs_root: Path, ws: LocalWorkspaceBackend) -> None:
+        (fs_root / 'secret.key').write_text('KEY\n')
+        (fs_root / 'readme.md').write_text('docs\n')
         ts = FileSystemToolset(
             root_dir=fs_root,
             allowed_patterns=[],
-            denied_patterns=['*.secret'],
+            denied_patterns=['*.txt', '*.key'],
             read_only_patterns=[],
             max_read_lines=2000,
             max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
-        with pytest.raises(PermissionError, match='denied by pattern'):
-            ts._check_access('data.secret')  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(ModelRetry, match=r"^Path 'secret\.key' is denied by pattern '\*\.key'\.$"):
+            await ts.read_file('secret.key', workspace=ws)
+        assert 'docs' in await ts.read_file('readme.md', workspace=ws)
 
-    async def test_denied_pattern_passes_non_matching(self, fs_root: Path) -> None:
-        ts = FileSystemToolset(
-            root_dir=fs_root,
-            allowed_patterns=[],
-            denied_patterns=['*.secret'],
-            read_only_patterns=[],
-            max_read_lines=2000,
-            max_list_results=1000,
-            max_search_results=1000,
-            max_find_results=1000,
-        )
-        # Path that doesn't match any denied pattern should pass
-        ts._check_access('data.txt')  # pyright: ignore[reportPrivateUsage]
-
-    async def test_allowed_pattern_permits(self, fs_root: Path) -> None:
-        ts = FileSystemToolset(
-            root_dir=fs_root,
-            allowed_patterns=['*.py'],
-            denied_patterns=[],
-            read_only_patterns=[],
-            max_read_lines=2000,
-            max_list_results=1000,
-            max_search_results=1000,
-            max_find_results=1000,
-        )
-        # Should not raise for .py files
-        ts._check_access('test.py')  # pyright: ignore[reportPrivateUsage]
-
-    async def test_allowed_pattern_blocks_non_matching(self, fs_root: Path) -> None:
-        ts = FileSystemToolset(
-            root_dir=fs_root,
-            allowed_patterns=['*.py'],
-            denied_patterns=[],
-            read_only_patterns=[],
-            max_read_lines=2000,
-            max_list_results=1000,
-            max_search_results=1000,
-            max_find_results=1000,
-        )
-        with pytest.raises(PermissionError, match='does not match any allowed'):
-            ts._check_access('data.txt')  # pyright: ignore[reportPrivateUsage]
-
-    async def test_protected_pattern_blocks_write(self, toolset: FileSystemToolset[None]) -> None:
-        with pytest.raises(PermissionError, match='protected'):
-            toolset._check_access('.git/config', write=True)  # pyright: ignore[reportPrivateUsage]
-
-    async def test_protected_pattern_allows_read(self, toolset: FileSystemToolset[None]) -> None:
-        # Should not raise for read
-        toolset._check_access('.git/config', write=False)  # pyright: ignore[reportPrivateUsage]
-
-    async def test_env_file_protected(self, toolset: FileSystemToolset[None]) -> None:
-        with pytest.raises(PermissionError, match='protected'):
-            toolset._check_access('.env', write=True)  # pyright: ignore[reportPrivateUsage]
-
-    async def test_write_non_protected_with_patterns_configured(self, toolset: FileSystemToolset[None]) -> None:
-        # write=True on a path that doesn't match any protected pattern should pass
-        toolset._check_access('hello.txt', write=True)  # pyright: ignore[reportPrivateUsage]
-
-    async def test_access_with_no_denied_patterns(self, fs_root: Path) -> None:
-        ts = FileSystemToolset(
-            root_dir=fs_root,
-            allowed_patterns=[],
-            denied_patterns=[],
-            read_only_patterns=[],
-            max_read_lines=2000,
-            max_list_results=1000,
-            max_search_results=1000,
-            max_find_results=1000,
-        )
-        # No denied, no protected, no allowed → should pass for any path
-        ts._check_access('anything.txt', write=True)  # pyright: ignore[reportPrivateUsage]
+    async def test_protected_pattern_allows_reads_but_blocks_writes(
+        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend
+    ) -> None:
+        assert '[core]' in await toolset.read_file('.git/config', workspace=ws)
+        with pytest.raises(ModelRetry, match=r"^Path '\.git/config' is protected \(matches '\.git/\*'\)\.$"):
+            await toolset.write_file('.git/config', '[core]\nhooksPath = evil\n', workspace=ws)
 
     async def test_no_patterns_allows_reads_and_writes(self, fs_root: Path, ws: LocalWorkspaceBackend) -> None:
         ts = FileSystemToolset(
@@ -829,6 +806,101 @@ class TestReadFile:
         result = await toolset.read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
         assert result == '[big.png | image/png | 5000008 bytes]\nToo large to view: the limit is 5000000 bytes.\n'
 
+    async def test_limit_is_capped_by_max_read_lines(self, tmp_path: Path) -> None:
+        (tmp_path / 'big.txt').write_text(''.join(f'line {number}\n' for number in range(50)))
+        toolset = FileSystemToolset(
+            allowed_patterns=[],
+            denied_patterns=[],
+            max_read_lines=10,
+            max_list_results=1000,
+            max_search_results=1000,
+            max_find_results=1000,
+            content_hashes=False,
+        )
+        result = await toolset.read_file('big.txt', limit=1000, workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, str)
+        assert result.splitlines()[-2:] == ['    10\tline 9', '... (40 more lines. Use offset=10 to continue reading.)']
+
+    async def test_lines_are_split_on_line_feeds_only(self, tmp_path: Path) -> None:
+        # `rg` and `grep` number lines by line feeds alone, so `read_file` must too, or a model
+        # paging by the line number a search reported lands on the wrong line.
+        (tmp_path / 'feed.c').write_text('a = 1;\n\x0c b = 2;\x1c\u2028c\nneedle = 3;\n', encoding='utf-8')
+        toolset = _unhashed_toolset()
+        ws = LocalWorkspaceBackend(tmp_path)
+        assert await toolset.read_file('feed.c', offset=2, workspace=ws) == '[feed.c | 3 lines]\n     3\tneedle = 3;\n'
+        walked = await toolset.search_files('needle', workspace=ReadOnlyWorkspace(Workspace(ws)))
+        assert walked == 'feed.c:3:needle = 3;'
+        assert 'lines: 3' in await toolset.file_info('feed.c', workspace=ws)
+
+    async def test_crlf_lines_match_without_their_carriage_return(self, tmp_path: Path) -> None:
+        (tmp_path / 'dos.txt').write_bytes(b'first\r\nneedle\r\n')
+        walked = await _unhashed_toolset().search_files(
+            'needle$', workspace=ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+        )
+        assert walked == 'dos.txt:2:needle'
+
+    async def test_oversized_file_is_described_without_reading_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr('pydantic_ai_harness.filesystem._toolset._MAX_READ_FILE_BYTES', 10)
+        (tmp_path / 'huge.log').write_text('x' * 11)
+        (tmp_path / 'small.txt').write_text('x' * 10)
+        toolset = _unhashed_toolset()
+        unreadable = FailingWorkspace(tmp_path, {'read_bytes': AssertionError('the file was read')}, where='huge.log')
+        assert await toolset.read_file('huge.log', workspace=unreadable) == (
+            '[huge.log | 11 bytes]\nToo large to read: the limit is 10 bytes. Find the lines you need with a search '
+            'tool, or read a byte range with a shell tool if you have one.\n'
+        )
+        assert (await toolset.file_info('huge.log', workspace=unreadable)).splitlines() == [
+            'path: huge.log',
+            'type: file',
+            'size: 11 bytes',
+            'contents: not read (over 10 bytes)',
+        ]
+        assert (
+            await toolset.read_file('small.txt', workspace=unreadable) == '[small.txt | 1 lines]\n     1\txxxxxxxxxx\n'
+        )
+
+    async def test_oversized_file_without_a_reported_size_is_described(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Without a size from `stat`, the file has to be read to be measured, but it is still not shown.
+        monkeypatch.setattr('pydantic_ai_harness.filesystem._toolset._MAX_READ_FILE_BYTES', 10)
+        (tmp_path / 'huge.log').write_text('x' * 11)
+
+        class SizelessWorkspace(LocalWorkspaceBackend):
+            async def stat(self, path: str) -> FileEntry:
+                return replace(await super().stat(path), size=None)
+
+        assert await _unhashed_toolset().read_file('huge.log', workspace=SizelessWorkspace(tmp_path)) == (
+            '[huge.log | 11 bytes]\nToo large to read: the limit is 10 bytes. Find the lines you need with a search '
+            'tool, or read a byte range with a shell tool if you have one.\n'
+        )
+
+    @pytest.mark.skipif(not hasattr(os, 'mkfifo'), reason='needs FIFOs')
+    async def test_special_file_is_a_retry(self, tmp_path: Path) -> None:
+        os.mkfifo(tmp_path / 'pipe')
+        toolset = _unhashed_toolset()
+        ws = LocalWorkspaceBackend(tmp_path)
+        with pytest.raises(ModelRetry, match=r'^The path is not a regular file') as error:
+            await toolset.read_file('pipe', workspace=ws)
+        _assert_no_host_root(str(error.value), tmp_path)
+        with pytest.raises(ModelRetry, match=r'^The path is not a regular file'):
+            await toolset.write_file('pipe', 'x', workspace=ws)
+
+    @pytest.mark.skipif(not hasattr(socket, 'AF_UNIX') or os.name == 'nt', reason='needs Unix sockets')
+    async def test_socket_is_a_retry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Opening a socket fails with an errno of its own before core checks the file type.
+        monkeypatch.chdir(tmp_path)  # A relative name keeps the socket path within the length limit.
+        with socket.socket(socket.AF_UNIX) as server:
+            server.bind('sock')
+            toolset = _unhashed_toolset()
+            ws = LocalWorkspaceBackend(tmp_path)
+            for read in (toolset.read_file, toolset.file_info):
+                with pytest.raises(ModelRetry, match=r'^The path is not a regular file') as error:
+                    await read('sock', workspace=ws)
+                _assert_no_host_root(str(error.value), tmp_path)
+
     async def test_read_traversal_blocked(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         with pytest.raises(ModelRetry):
             await toolset.read_file('../../../etc/passwd', workspace=ws)
@@ -937,8 +1009,7 @@ class TestWriteFile:
         self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
     ) -> None:
         # Get current hash
-        content = (fs_root / 'hello.txt').read_text()
-        current_hash = _content_hash(content)
+        current_hash = _hash((fs_root / 'hello.txt').read_text())
 
         # Write with correct hash succeeds
         await toolset.write_file('hello.txt', 'updated\n', expected_hash=current_hash, workspace=ws)
@@ -983,8 +1054,7 @@ class TestEditFile:
     async def test_edit_conflict_detection(
         self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
     ) -> None:
-        content = (fs_root / 'hello.txt').read_text()
-        current_hash = _content_hash(content)
+        current_hash = _hash((fs_root / 'hello.txt').read_text())
         result = await toolset.edit_file('hello.txt', 'Hello', 'Hi', expected_hash=current_hash, workspace=ws)
         assert 'hash:' in result
 
@@ -1114,7 +1184,7 @@ class TestConcurrentChanges:
         toolset = FileSystem[None]().get_toolset()
         assert isinstance(toolset, FileSystemToolset)
         workspace = HeldWriteWorkspace({'/work/a.py': b'import old\n'}, held='/work/a.py')
-        original_hash = _content_hash('import old\n')
+        original_hash = _hash('import old\n')
 
         async def write() -> None:
             with pytest.raises(ModelRetry, match='Conflict'):
@@ -1166,7 +1236,7 @@ class TestContentHashNewlineAgreement:
     ) -> None:
         content = 'alpha\r\nbeta\r\n'
         write_hash = _reported_hash(await toolset.write_file('crlf-new.txt', content, workspace=ws))
-        assert write_hash == _content_hash(content)
+        assert write_hash == _hash(content)
 
         read_result = await toolset.read_file('crlf-new.txt', workspace=ws)
         assert _reported_hash(read_result) == write_hash
@@ -1182,7 +1252,7 @@ class TestContentHashNewlineAgreement:
         read_hash = _reported_hash(await toolset.read_file('crlf-cc.txt', workspace=ws))
 
         result = await toolset.write_file('crlf-cc.txt', 'gamma\r\ndelta\r\n', expected_hash=read_hash, workspace=ws)
-        assert _reported_hash(result) == _content_hash('gamma\r\ndelta\r\n')
+        assert _reported_hash(result) == _hash('gamma\r\ndelta\r\n')
         assert (fs_root / 'crlf-cc.txt').read_bytes() == b'gamma\r\ndelta\r\n'
 
     async def test_lf_write_still_writes_plain_newlines(
@@ -1191,7 +1261,7 @@ class TestContentHashNewlineAgreement:
         """LF content is untouched by the no-translation write path."""
         content = 'alpha\nbeta\n'
         write_hash = _reported_hash(await toolset.write_file('lf-new.txt', content, workspace=ws))
-        assert write_hash == _content_hash(content)
+        assert write_hash == _hash(content)
         assert (fs_root / 'lf-new.txt').read_bytes() == b'alpha\nbeta\n'
         assert _reported_hash(await toolset.read_file('lf-new.txt', workspace=ws)) == write_hash
 
@@ -1421,6 +1491,74 @@ class TestSearchFiles:
         assert await toolset.search_files('needle', path='large.txt', workspace=workspace) == (
             '[1 files skipped (too large or unreadable): large.txt]'
         )
+
+    @pytest.mark.parametrize(
+        ('pattern', 'refused'),
+        [
+            ('(a+)+$', True),
+            ('(a*)*b', True),
+            ('(?:x|a{2,})+', True),
+            ('((a+)b)*', True),
+            (r'(\w+\s?)*$', True),
+            ('(a+){1,30}$', True),
+            ('(.*a){12}$', True),
+            ('(a{2})+', True),
+            (r'(?:\d{1,3}\.){3}\d{1,3}', False),
+            (r'(?:\d{4}){2}', False),
+            ('(?:[A-Fa-f0-9]{2}){1,8}', False),
+            ('(a{1,2}){50}$', True),
+            (r'((\d{1,3}){3}){3}', True),
+            ('(a{2}|a){3}', True),
+            (r'(\d{1,3}){1000}', True),
+            (r'(?:a{1,2}){10}(?:a{1,2}){10}$', True),
+            (r'(a{1,2}){10}$', True),
+            (r'(?:\d{1,3}\.){3}(?:\d{1,3}\.){1}\d', False),
+            ('(a+){0,1}', False),
+            ('(a+){1}', False),
+            ('(a?)+', True),
+            ('(a?b?)+$', True),
+            ('^(a{0,1}){100}a{100}$', True),
+            ('^(?:(?:a?){2}){40}b$', True),
+            ('^(?:a{2}a?){40}$', True),
+            ('(?:a+?)+$', True),
+            ('(?:ab)?c(?:de)?', False),
+            ('(?P<word>foo|bar)+', False),
+            ('(?:foo|bar)+?x', False),
+            ('colou?r', False),
+            ('(ab)+c*', False),
+            ('(?x) needle # trailing )', False),
+            ('(?x)(a+) +$', True),
+            ('(?x)(a+) # one or more\n +$', True),
+            ('(?x: (a+) + )$', True),
+            ('(?x) ( a + )', False),
+            ('(?i-x: (a+) + )', False),
+            ('(?x:(a+) # c\n)+', True),
+            ('[(?x]#(a+)+$', True),
+            (r'\(?x#(a+)+$', True),
+            ('(?x:a)#(a+)+$', True),
+            ('(?#[ comment )(a+)+$', True),
+            (r'(?#\))needle', False),
+            (r'(a+(?#\))b)+$', True),
+            ('(a+)(?#c)+$', True),
+            ('(?x)(a+) (?#c) +$', True),
+            (r'\(a+\)+', False),
+            ('([+*])+', False),
+            ('([]+)])+', False),
+            ('([^]+])+', False),
+            (r'([\]+])+', False),
+        ],
+    )
+    async def test_nested_repetition_is_refused_when_searching_in_python(
+        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend, pattern: str, refused: bool
+    ) -> None:
+        # Python's backtracking `re` can take exponential time on `(a+)+$` and has no timeout, and it
+        # runs on the event loop, so one model call would stall every run sharing it.
+        walked = ReadOnlyWorkspace(Workspace(ws))
+        if refused:
+            with pytest.raises(ModelRetry, match='repeats a group that itself repeats'):
+                await toolset.search_files(pattern, workspace=walked)
+        else:
+            assert 'repeats a group' not in await toolset.search_files(pattern, workspace=walked)
 
     async def test_search_basic(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         result = await toolset.search_files('Hello', workspace=ws)
@@ -1978,54 +2116,6 @@ class TestFileInfo:
 
 
 class TestMutationKillers:
-    async def test_format_lines_offset_equals_total(self) -> None:
-        text = 'a\nb\n'  # 2 lines
-        with pytest.raises(ValueError, match='Offset 2 exceeds file length'):
-            _format_lines(text.splitlines(keepends=True), 2, 10)
-
-    async def test_format_lines_exact_fit_no_continuation(self) -> None:
-        text = 'a\nb\nc\n'  # 3 lines
-        result = _format_lines(text.splitlines(keepends=True), 0, 3)
-        assert '... (' not in result
-        assert 'more lines' not in result
-
-    async def test_format_lines_exact_fit_from_offset(self) -> None:
-        text = 'a\nb\nc\n'  # 3 lines
-        result = _format_lines(text.splitlines(keepends=True), 1, 2)  # lines 2-3, 0 remaining
-        assert '... (' not in result
-        assert 'more lines' not in result
-
-    async def test_format_lines_one_line_remaining(self) -> None:
-        text = 'a\nb\nc\n'  # 3 lines
-        result = _format_lines(text.splitlines(keepends=True), 0, 2)
-        assert '... (1 more lines. Use offset=2 to continue reading.)' in result
-
-    async def test_format_lines_line_number_starts_at_one(self) -> None:
-        text = 'first\nsecond\n'
-        result = _format_lines(text.splitlines(keepends=True), 0, 10)
-        assert '     1\tfirst\n' in result
-        assert '     0\t' not in result
-
-    async def test_format_lines_offset_line_numbering(self) -> None:
-        text = 'a\nb\nc\n'
-        result = _format_lines(text.splitlines(keepends=True), 1, 2)
-        assert '     2\tb\n' in result
-        assert '     3\tc\n' in result
-
-    async def test_is_binary_exactly_at_sample_boundary(self) -> None:
-        # Null byte at position 8191 (index 8191, within first 8192 bytes)
-        data = b'x' * 8191 + b'\x00'
-        assert _is_binary(data) is True
-        # Null byte at position 8192 (outside the sample)
-        data2 = b'x' * 8192 + b'\x00'
-        assert _is_binary(data2) is False
-
-    async def test_content_hash_returns_exactly_12_chars(self) -> None:
-        h = _content_hash('test content')
-        assert len(h) == 12
-        # Verify it's hex characters
-        assert all(c in '0123456789abcdef' for c in h)
-
     async def test_write_file_with_hash_on_new_file(
         self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
     ) -> None:
@@ -2142,20 +2232,6 @@ class TestMutationKillers:
         with pytest.raises(ModelRetry, match='protected'):
             await toolset.write_file('.env.local', 'HACKED\n', workspace=ws)
 
-    async def test_format_lines_join_separator(self) -> None:
-        """Verify the result doesn't contain garbage between lines."""
-        text = 'a\nb\nc\n'
-        result = _format_lines(text.splitlines(keepends=True), 0, 3)
-        # Lines should be directly adjacent (no separator between them)
-        assert '     1\ta\n     2\tb\n     3\tc\n' in result
-
-    async def test_format_lines_no_trailing_newline_preserves_content(self) -> None:
-        text = 'no newline'
-        result = _format_lines(text.splitlines(keepends=True), 0, 10)
-        # The content must still be present
-        assert 'no newline' in result
-        assert result.endswith('\n')
-
     async def test_read_file_hash_is_real_hash(
         self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend
     ) -> None:
@@ -2163,7 +2239,7 @@ class TestMutationKillers:
         # The actual hash should be a hex string, not 'None'
         assert 'hash:None' not in result
         # Verify the hash matches what we'd compute
-        expected_hash = _content_hash('Hello, world!\n')
+        expected_hash = _hash('Hello, world!\n')
         assert f'hash:{expected_hash}' in result
 
     async def test_read_file_non_ascii_content(
@@ -2213,13 +2289,6 @@ class TestMutationKillers:
         assert result.startswith('Edited hello.txt.')
         assert 'hash:' in result
         assert 'hash:None' not in result
-
-    def test_format_lines_no_double_trailing_newline(self) -> None:
-        """Text that already ends with newline must NOT get a second one appended."""
-        text = 'hello\n'
-        result = _format_lines(text.splitlines(keepends=True), 0, 10)
-        # Exact match: no trailing double newline
-        assert result == '     1\thello\n'
 
     async def test_list_directory_exact_size(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         result = await toolset.list_directory('.', workspace=ws)
@@ -2398,7 +2467,7 @@ class TestFileSystemCapability:
 
     def test_read_only_defaults(self) -> None:
         fs = FileSystem()
-        assert '**/.git/*' in fs.read_only_patterns
+        assert '**/.git' in fs.read_only_patterns
         assert '**/.env' in fs.read_only_patterns
 
     def test_protected_patterns_is_a_deprecated_alias(self) -> None:
@@ -2436,6 +2505,13 @@ class TestFileSystemCapability:
     def test_non_positive_max_find_results_rejected(self) -> None:
         with pytest.raises(ValueError, match='max_find_results must be a positive integer'):
             FileSystem(max_find_results=-1)
+
+    def test_boolean_limits_rejected(self) -> None:
+        # `bool` is an `int` subclass, so `True` would otherwise pass as a limit of 1.
+        with pytest.raises(ValueError, match='max_read_lines must be a positive integer, got True'):
+            FileSystem(max_read_lines=True)
+        with pytest.raises(ValueError, match='max_retries must be a non-negative integer, got False'):
+            FileSystem(max_retries=False)
 
     def test_non_integer_max_read_lines_rejected(self) -> None:
         # Runtime validation: dataclass annotations are advisory, so a string

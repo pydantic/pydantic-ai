@@ -81,10 +81,11 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
     [`ToolCallJudge`][pydantic_ai_harness.tool_call_judge.ToolCallJudge] when calls should also
     be blocked.
 
-    `tools` is a
-    [`ToolSelector`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.ToolSelector):
-    `'all'` (the default), a list of tool names, a metadata match, or a predicate. Approval
-    requests for other tools go to the person unreviewed.
+    `tools` is a [`ToolSelector`][pydantic_ai.tools.ToolSelector]: `'all'` (the default), a list
+    of tool names, a metadata match, or a predicate. Approval requests for other tools go to the
+    person unreviewed. `'all'` also covers approval requests raised by a `ToolGuardrail` or a
+    `ToolCallJudge`, and by any approval-required tool added later, all under the one `question`,
+    so name the tools the question was written for.
 
     By default the reviewer is shown only the tool name and the arguments the person would be
     shown. Set `include_conversation=True` when the question cannot be answered from the call
@@ -104,6 +105,7 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
 
     reviewer = ApprovalReviewer(
         'anthropic:claude-haiku-5-5',
+        tools=['run_shell'],
         question='Could this destroy data, spend money, or leak secrets?',
     )
     agent = Agent(
@@ -132,14 +134,17 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
     """Token budget for the conversation, when `include_conversation` is set.
 
     The rendered transcript is clamped to its most recent tokens (estimated at ~4 characters
-    per token), so the reviewer sees the latest turns and per-review cost stays bounded.
+    per token), so the reviewer sees the latest turns. The call's own arguments are always sent
+    in full.
     """
 
     on_review: Callable[[ApprovalReview], None] | None = field(default=None, repr=False)
     """Optional callback invoked with each review, for application code and tests.
 
-    Under durable execution it runs again on every replay, with the recorded review, so a callback
-    that writes to an external sink should deduplicate on `tool_call_id`.
+    An exception it raises is not caught: it ends the run, and approvals already made in the same
+    batch are not applied. Under durable execution it runs again on every replay, with the
+    recorded review, so a callback that writes to an external sink should deduplicate on
+    `tool_call_id`.
     """
 
     _reviewer: Agent[None, JudgeAnswer] = field(init=False, repr=False, compare=False)

@@ -5,7 +5,7 @@
 ## Code Style
 
 <!-- rule:409 -->
-- Keep PRs focused on their stated purpose — exclude unrelated changes even if conceptually related — Simplifies review, prevents unintended side effects, and makes rollbacks cleaner when each PR has a single clear objective
+- Keep implementation changes focused on the PR's stated purpose. Allow small, accurate documentation and comment improvements that clarify behavior or rationale, including unchanged behavior in another module. Judge these additions by reader value, correctness, and review burden. Request a separate PR when an addition introduces an independent behavior change, design decision, or substantial review work. A package boundary or label alone does not justify splitting a documentation clarification.
 <!-- rule:910 -->
 - Wrap code identifiers in backticks in user-facing messages (errors, warnings, logs) — Improves readability and clearly distinguishes code elements from prose, making error messages easier to parse and debug
 <!-- rule:193 -->
@@ -135,4 +135,5 @@ Check these when working in specific areas:
 - **[Async & Concurrency](concurrency.md)**: When spawning tasks, using task groups or cancel scopes, creating locks/events/streams, writing async context managers or generators, crossing a thread or event-loop boundary, or testing any of it
 - **[Message History & Prompt Caching](message-history-and-caching.md)**: When enqueuing, editing, or rendering messages, contributing instructions or tools, wrapping content in tags, or converting history to or from a UI protocol
 - **[Pydantic AI Slim Architecture](pydantic-ai-slim.md)**: When changing agents, tools, output, message history, providers, profiles, capabilities, toolsets, UI adapters, or durable execution
+- **[Provider Adapters](provider-adapters.md)**: When mapping messages to or from a provider's wire format in a model adapter, adding a capability check, or adding a profile flag an adapter reads
 <!-- /braindump -->

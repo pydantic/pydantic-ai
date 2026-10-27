@@ -57,10 +57,14 @@ from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised
 from pydantic_clai2.runtime.monty_cells import MONTY_CELL, MontyCell
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, git_checkout, project_identity
 from pydantic_clai2.runtime.repl_state import ReplStates
+from pydantic_clai2.runtime.task_prompts import TASK_PROMPT, TaskPrompt
 from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
+
+STEERING = 'clai2_steering'
+"""Request metadata marking the user's steering message, so a UI can tell it from input a capability enqueues."""
 _CURRENT_SESSION_ID: ContextVar[str | None] = ContextVar('clai2_session_id', default=None)
 
 
@@ -107,7 +111,9 @@ async def _unless_locked(
     try:
         await write
     except sqlite3.OperationalError as error:
-        if error.sqlite_errorcode & 0xFF not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+        # One raised by hand rather than by SQLite carries no code; it is no lock either.
+        code = getattr(error, 'sqlite_errorcode', None)
+        if code is None or code & 0xFF not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
             raise
         # Below `WARNING`, so mid-turn `logging` does not fall back to printing it over the live display.
         logging.getLogger(__name__).info('Skipped saving a %s: %s', kind, error)
@@ -441,10 +447,12 @@ class Session(Generic[DepsT, OutputT]):
         self._record_resumed: Callable[[], None] | None = None
         self._accepting_steering = False
         self._run_context: RunContext[DepsT] | None = None
-        self._pending_steering: list[Sequence[UserContent]] = []
+        self._pending_steering: list[ModelRequest] = []
         self._monty_notes: list[tuple[str, str]] = []
         """Cells the user ran in Monty since the last prompt, with the conversation they ran in."""
         self.on_context_usage: Callable[[int], None] | None = None
+        self.on_usage: Callable[[Sequence[ModelMessage]], None] | None = None
+        """Told the conversation so far, history included, after each model response of a streamed run."""
         self.on_context_window: Callable[[int], None] | None = None
         """Told the context window of each streamed request's model, when its profile knows one."""
         self.on_setup_error: Callable[[CapabilitySetupError], None] | None = None
@@ -740,10 +748,11 @@ class Session(Generic[DepsT, OutputT]):
             return False
         # A blank text beside images is left out: some providers reject an empty text block.
         content: Sequence[UserContent] = [*([text] if text or not images else []), *images]
+        request = ModelRequest(parts=[UserPromptPart(content if images else text)], metadata={STEERING: True})
         if self._run_context is None:
-            self._pending_steering.append(content)
+            self._pending_steering.append(request)
         else:
-            self._run_context.enqueue(*content, priority='asap')
+            self._run_context.enqueue(request, priority='asap')
         return True
 
     async def run_in_monty(self, code: str) -> MontyCell:
@@ -775,6 +784,35 @@ class Session(Generic[DepsT, OutputT]):
             self._running = False
         self._monty_notes.append((self.summary.id, cell.note()))
         return cell
+
+    async def prompt_task(self, *, agent_name: str, task_id: str, text: str) -> None:
+        """Resume a finished task with `text` as the user's message, outside the conversation; see `task_prompts`.
+
+        Returns once the task settles, and raises `ValueError` with the delegate tool's reason when it
+        refuses to resume the task. The conversation's history and turns are left as they are, so
+        this may run beside a turn.
+        """
+        if self.delegations is None:
+            raise RuntimeError('This session delegates no tasks.')
+        script = TaskPrompt(agent_name=agent_name, task_id=task_id, text=text)
+        with session_context(self.summary.id), self.delegations.bind():
+            run_model, capabilities = self._bind()
+            capabilities.append(script)
+            self._add_local_workspace(capabilities)
+            await self.agent.run(
+                "Resume the user's task.",
+                output_type=str,
+                deps=self.deps,
+                # The session's model, which a task that inherits its parent's runs on.
+                model=run_model,
+                message_history=[],
+                conversation_id=self.summary.id,
+                capabilities=capabilities,
+                usage_limits=self.usage_limits,
+                metadata={TASK_PROMPT: True},
+            )
+        if script.refused is not None:
+            raise ValueError(script.refused)
 
     def _add_local_workspace(self, capabilities: list[AgentCapability[DepsT]]) -> bool:
         """Add CLAI's `LocalWorkspace` to a run's `capabilities` unless a configured one supplies it; whether it did."""
@@ -896,14 +934,20 @@ class Session(Generic[DepsT, OutputT]):
     async def _stream(self, ctx: RunContext[DepsT], events: AsyncIterable[AgentStreamEvent]) -> None:
         self._accepting_steering = True
         self._run_context = ctx
-        for content in self._pending_steering:
-            ctx.enqueue(*content, priority='asap')
+        for request in self._pending_steering:
+            ctx.enqueue(request, priority='asap')
         self._pending_steering.clear()
         if self.on_context_window is not None and (window := ctx.model.context_window):
             self.on_context_window(window)
 
         async def observed() -> AsyncIterable[AgentStreamEvent]:
+            reported: ModelResponse | None = None
             async for event in events:
+                if self.on_usage is not None:
+                    latest = next((m for m in reversed(ctx.messages) if isinstance(m, ModelResponse)), None)
+                    if latest is not None and latest is not reported:
+                        reported = latest
+                        self.on_usage(ctx.messages)
                 if self.on_context_usage is not None:
                     for message in reversed(ctx.messages):
                         if isinstance(message, ModelResponse) and message.usage.input_tokens:

@@ -28,6 +28,8 @@ from pydantic_ai.capabilities import (
     Caching,
     Capability,
     CapabilityOrdering,
+    Citations,
+    FileUnderstanding,
     Hooks,
     ImageGeneration,
     Instrumentation,
@@ -125,6 +127,10 @@ def _check_content_filter(merged: RaiseContentFilterError) -> None:
     assert merged.id == 'raise_content_filter_error'
 
 
+def _check_citations(merged: Citations) -> None:
+    assert merged.id == 'citations'
+
+
 def _check_x_search(merged: XSearch) -> None:
     assert merged.allowed_x_handles == ['a', 'b']
     assert isinstance(merged.native, XSearchTool)
@@ -133,6 +139,10 @@ def _check_x_search(merged: XSearch) -> None:
 
 def _check_image_generation(merged: ImageGeneration) -> None:
     assert merged.quality == 'high'
+
+
+def _check_file_understanding(merged: FileUnderstanding) -> None:
+    assert merged.instructions == 'One sentence.', 'a scalar takes the later value'
 
 
 def _check_instrumentation(merged: Instrumentation) -> None:
@@ -195,6 +205,14 @@ COMBINE_POLICY: dict[str, Policy] = {
         ),
         _check_image_generation,
     ),
+    'FileUnderstanding': Combines(
+        'an agent describes files one way',
+        lambda: (
+            FileUnderstanding(fallback_subagent_model='openai:gpt-5.6-sol'),
+            FileUnderstanding(fallback_subagent_model='openai:gpt-5.6-sol', instructions='One sentence.'),
+        ),
+        _check_file_understanding,
+    ),
     'Instrumentation': Combines(
         'an agent is instrumented one way',
         lambda: (
@@ -207,6 +225,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one reinjection policy per agent',
         lambda: (ReinjectSystemPrompt(), ReinjectSystemPrompt(replace_existing=True)),
         _check_reinject,
+    ),
+    'Citations': Combines(
+        'carries no configuration at all, so two are interchangeable',
+        lambda: (Citations(), Citations()),
+        _check_citations,
     ),
     'RaiseContentFilterError': Combines(
         'carries no configuration at all, so two are interchangeable',
@@ -245,6 +268,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     'HandleDeferredToolCalls': Anonymous('`CombinedCapability` chains handlers via `remaining`'),
     'ResolveModelId': Anonymous('returns `None` to let a later capability resolve; chaining is the feature'),
     'SelectModel': Anonymous('receives the lower-precedence model; chaining is designed'),
+    'BatchModelRequests': Anonymous(
+        'each instance is its own batching pool; a model already batched is not batched again'
+    ),
     'ProcessHistory': Anonymous('history processors stack'),
     'ProcessEventStream': Anonymous('event-stream processors stack'),
     'PrepareTools': Anonymous('tool preparers stack'),

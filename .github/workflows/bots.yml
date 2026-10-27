@@ -1,3 +1,4 @@
+# description: Sets a pull request's size and category labels, and runs douwebot when the douwebot or douwebot:review-agent-config label is applied.
 name: PR Bots
 
 on:

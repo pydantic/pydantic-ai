@@ -20,9 +20,11 @@ from typing import (
 )
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic_core import to_jsonable_python
 from typing_extensions import TypeVar
 
 from pydantic_ai import CancellationToken, DeferredToolRequests, DeferredToolResults, _instructions
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
@@ -35,13 +37,15 @@ from pydantic_ai.messages import (
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
+    ModelSettingsDeltaPart,
     RetryFeedbackPart,
     RetryInfo,
+    StructuredContent,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
     ToolRetryCause,
     _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
-    sanitize_messages,
+    _sanitize_messages,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -52,6 +56,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ._event_stream import NativeEvent, OnCancelFunc, OnCompleteFunc, UIEventStream
+from ._utils import get_ui_message_id, set_ui_message_id, without_ui_message_id
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -86,6 +91,7 @@ DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 _TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 """The tool-name shape accepted by the strictest supported model providers."""
 _TOOL_AVAILABILITY_DELTA_PART_ADAPTER = TypeAdapter(ToolAvailabilityDeltaPart)
+_MODEL_SETTINGS_DELTA_PART_ADAPTER = TypeAdapter(ModelSettingsDeltaPart)
 _RETRY_FEEDBACK_PART_ADAPTER = TypeAdapter(RetryFeedbackPart)
 
 
@@ -235,6 +241,7 @@ def compaction_payload(part: CompactionPart) -> dict[str, Any]:
             'id': part.id,
             'provider_name': part.provider_name,
             'provider_details': part.provider_details,
+            'metadata': part.metadata,
         }.items()
         if value is not None
     }
@@ -259,6 +266,46 @@ def compaction_part_from_payload(payload: Mapping[str, Any]) -> CompactionPart |
         return None
 
 
+_STRUCTURED_CONTENT_ADAPTER: TypeAdapter[StructuredContent] = TypeAdapter(StructuredContent)
+
+
+def structured_content_payload(item: StructuredContent) -> dict[str, Any]:
+    """The part of a structured content item a UI protocol has no field for, to carry beside its text.
+
+    The item is sent as an ordinary text part holding its `content`, so a frontend shows it like any other user
+    text; this payload rides along in that part's metadata. The value is dumped as JSON-compatible data, and
+    `tag` and `description` are omitted when unset. Like `TextContent.metadata`, `metadata` does not travel.
+    """
+    payload: dict[str, Any] = {'value': to_jsonable_python(item.value)}
+    if item.tag is not None:
+        payload['tag'] = item.tag
+    if item.description is not None:
+        payload['description'] = item.description
+    return payload
+
+
+def structured_content_from_payload(payload: object, text: str) -> StructuredContent | str:
+    """Rebuild a [`StructuredContent`][pydantic_ai.messages.StructuredContent] from a text part and its payload.
+
+    The text part's own text is the item's `content`, so what the frontend showed is what the model is sent.
+    Like `compaction_part_from_payload`, validation here is shape hygiene at the UI boundary, not a security gate:
+    the item is user content, which the client could send as text anyway. A malformed payload leaves the plain
+    text, rather than raising out of `load_messages` and taking the whole request with it.
+    """
+    if not is_str_dict(payload):
+        return text
+    fields = {key: payload[key] for key in ('value', 'tag', 'description') if key in payload}
+    try:
+        return _STRUCTURED_CONTENT_ADAPTER.validate_python({**fields, 'content': text})
+    except ValidationError:
+        return text
+
+
+def is_request_compaction_part(part: CompactionPart) -> bool:
+    """Whether *part* can sit in a `ModelRequest`: a summary no provider produced, with no provider data."""
+    return part.provider_name is None and part.id is None and part.provider_details is None
+
+
 def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:
     """Build a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] from a UI payload.
 
@@ -273,6 +320,35 @@ def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvai
     part.tools_added = [name for name in part.tools_added if _TOOL_NAME_PATTERN.fullmatch(name)]
     if part.tool_call_id is not None and not part.tool_call_id.strip():
         part.tool_call_id = None
+    return part
+
+
+def model_settings_delta_payload(part: ModelSettingsDeltaPart) -> dict[str, Any]:
+    """Serialize a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] for a UI data channel.
+
+    The part rides through the client like a `ToolAvailabilityDeltaPart`, because the request after a round trip
+    has to send the settings changes, and the request-level settings, that the earlier requests were sent with:
+    leaving it out would change the prompt cache prefix.
+    """
+    return {'settings': dict(part.settings), 'top_level': part.top_level}
+
+
+def model_settings_delta_from_payload(payload: Mapping[str, Any]) -> ModelSettingsDeltaPart | None:
+    """Build a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] from a UI payload, or `None` if it's malformed.
+
+    Client-driven like `tool_availability_delta_from_payload`, and bounded: each setting is validated against
+    `RecordedModelSettings` (an effort against the effort levels; unknown keys are dropped), and a forged change
+    is superseded by the one the next request records for the settings the server actually resolves.
+    """
+    try:
+        part = _MODEL_SETTINGS_DELTA_PART_ADAPTER.validate_python(
+            {'settings': payload.get('settings'), 'top_level': payload.get('top_level', False)}
+        )
+    except ValidationError:
+        return None
+    # A change records at least one setting, and only a window's opening part goes back to no effort level.
+    if not part.settings or ('thinking' in part.settings and part.settings['thinking'] is None and not part.top_level):
+        return None
     return part
 
 
@@ -645,14 +721,20 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
           unless [`strip_workspace_refs`][pydantic_ai.ui.UIAdapter.strip_workspace_refs] is `False`.
         - Tool calls at the end of the history are kept when they correspond to a resolution in
           `deferred_tool_results`, so human-in-the-loop resumption continues to work.
+        - The UI message id that [`load_messages`][pydantic_ai.ui.UIAdapter.load_messages] keeps on each
+          message survives, so [`dump_messages`][pydantic_ai.ui.UIAdapter.dump_messages] can still give it
+          back. It's the client's own id, and the adapters read nothing else from that reserved namespace.
         """
         resolved_tool_call_ids: set[str] = set()
         if deferred_tool_results is not None:
             resolved_tool_call_ids.update(deferred_tool_results.approvals)
             resolved_tool_call_ids.update(deferred_tool_results.calls)
 
-        return sanitize_messages(
-            messages,
+        # The reserved namespace is dropped from client messages, but the UI message id in it is the one
+        # `load_messages` wrote itself, so it's set aside here and put back on whatever message survives.
+        ui_message_ids = [get_ui_message_id(message) for message in messages]
+        sanitized, sources = _sanitize_messages(
+            [without_ui_message_id(message) for message in messages],
             strip_system_prompts=self.manage_system_prompt == 'server',
             strip_instructions=self.manage_system_prompt == 'server',
             allowed_file_url_schemes=self.allowed_file_url_schemes,
@@ -661,6 +743,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             strip_workspace_refs=self.strip_workspace_refs,
             resolved_tool_call_ids=resolved_tool_call_ids,
         )
+        for message, source in zip(sanitized, sources):
+            if (ui_message_id := ui_message_ids[source]) is not None:
+                set_ui_message_id(message, ui_message_id)
+        return sanitized
 
     def transform_stream(
         self,

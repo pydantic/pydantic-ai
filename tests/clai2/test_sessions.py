@@ -39,7 +39,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness import Coder
-from pydantic_ai_harness.step_persistence import ContinuableSnapshot, StepEvent, StepPersistence
+from pydantic_ai_harness.step_persistence import ContinuableSnapshot, SqliteStepStore, StepEvent, StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
@@ -322,6 +322,18 @@ async def test_step_records_another_writer_locks_out_do_not_fail_the_turn(
 async def test_step_store_still_raises_errors_other_than_a_lock(tmp_path: Path) -> None:
     store = SessionStepStore(database=tmp_path)
     with pytest.raises(sqlite3.OperationalError, match='unable to open database file'):
+        await store.append_event(StepEvent(run_id='r1', kind='run_started', step_index=0))
+
+
+async def test_step_store_still_raises_an_operational_error_sqlite_did_not_raise(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fail(self: SqliteStepStore, event: StepEvent) -> None:
+        raise sqlite3.OperationalError('raised by hand')
+
+    monkeypatch.setattr(SqliteStepStore, 'append_event', fail)
+    store = SessionStepStore(database=tmp_path / 'sessions.db')
+    with pytest.raises(sqlite3.OperationalError, match='raised by hand'):
         await store.append_event(StepEvent(run_id='r1', kind='run_started', step_index=0))
 
 
@@ -731,9 +743,7 @@ async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: 
     assert 'delegate_task' not in {tool.name for tool in model.last_model_request_parameters.function_tools}
     session.plugins = []
     await session.prompt('disabled')
-    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {
-        'read_clai_customization_guide'
-    }
+    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {'load_capability'}
     assert session.summary.id
     assert (
         sum(
@@ -745,9 +755,7 @@ async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: 
         == 5
     )
     await agent.run('original remains unchanged')
-    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {
-        'read_clai_customization_guide'
-    }
+    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {'load_capability'}
 
 
 @pytest.mark.parametrize('base_clai_agent', [False, True])

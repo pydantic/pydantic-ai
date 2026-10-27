@@ -1,3 +1,4 @@
+# description: Publishes pydantic-clai2 and its pinned workspace sdists, plus clai2-bleeding.json, as the moving clai2-bleeding prerelease.
 name: CLAI2 bleeding
 
 # Publishes what `/update` installs on CLAI's `main` channel: sdists of `pydantic-clai2` and of
@@ -20,6 +21,7 @@ on:
       - pydantic_ai_slim/**
       - pydantic_graph/**
       - .github/workflows/clai2-bleeding.yml
+      - .github/workflows/clai2-web.yml
   workflow_dispatch: {}
 
 permissions:
@@ -31,8 +33,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    name: validate the published commit
+    if: github.ref == 'refs/heads/main' || github.repository != 'pydantic/pydantic-ai'
+    uses: ./.github/workflows/clai2-web.yml
+
   publish:
     name: publish clai2-bleeding
+    needs: validate
     if: github.ref == 'refs/heads/main' || github.repository != 'pydantic/pydantic-ai'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -43,6 +51,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ github.sha }}
           # The packages read their versions from tags and history.
           fetch-depth: 0
           persist-credentials: false
@@ -59,6 +68,8 @@ jobs:
           uv venv "$smoke_dir"
           uv pip install --python "$smoke_dir/bin/python" dist/bleeding/*.tar.gz
           "$smoke_dir/bin/clai2" --help
+          "$smoke_dir/bin/python" -I src/pydantic_clai2/scripts/check_web_assets.py \
+            src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
 
       - name: Move the tag and replace the release assets
         env:
