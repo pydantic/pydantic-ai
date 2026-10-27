@@ -196,17 +196,18 @@ class LazySandbox(RunOnlyWorkspaceBackend):
 
 
 async def test_a_sandbox_created_on_first_use_shows_inside_that_operation(tmp_path: Path) -> None:
+    """The first call creates the sandbox under its own span; the next call reuses it."""
     instrumentation, exporter = instrumented(include_content=False)
     agent = Agent(TestModel(call_tools=['look']), capabilities=[instrumentation])
 
     @agent.tool
     async def look(ctx: RunContext[Any]) -> bool:
-        return await ctx.workspace.exists('notes.txt')
+        return await ctx.workspace.exists('notes.txt') or await ctx.workspace.exists('other.txt')
 
     await agent.run('go', workspace=LazySandbox(LocalWorkspaceBackend(tmp_path)))
 
     assert [span['name'] for span in workspace_spans(exporter, tmp_path)] == snapshot(
-        ['workspace exists', '  workspace create', '  workspace run']
+        ['workspace exists', '  workspace create', '  workspace run', 'workspace exists', '  workspace run']
     )
     [create] = [span for span in exporter.get_finished_spans() if span.name == 'workspace create']
     assert create.attributes == snapshot(
