@@ -1900,9 +1900,9 @@ Enable **Sub-agents**, then configure **Delegate models** in `/plugins configure
 }
 ```
 
-Create `review-light` in `/model chains` first. Maintain its members as the models your review
-policy requires. Before dispatch, verify that the chain still selects the current tier. CLAI does
-not discover the latest release automatically. Account selection, pooling, and fallback follow the
+Create `review-light` in `/model chains` first. Before dispatch, check that the chain contains the
+models you intend to use. Update its members when you want a newer model; CLAI does not discover
+new releases automatically. Account selection, pooling, and fallback follow the
 same rules as `/model`; saved settings for the selected model or chain apply, followed by the
 entry's explicit settings. The parent's per-run model settings are not copied to a different model.
 
@@ -1918,17 +1918,14 @@ rebinding the directory would discard their restrictions.
 Relative paths resolve from the session directory; absolute paths and `~/` paths are accepted.
 The selected directory must exist. The parent stays in its original directory.
 
-For a pre-push review, prepare an immutable review bundle under the policy-base checkout, within
-the reviewer's file root. Include the task, policy/merge/candidate commit and tree IDs, exact diff,
-settled decisions, discussion, and completed verification. Exclude implementation continuity state
-and prior local reports. Ask the parent to dispatch:
+For example, ask the parent to review a diff saved in another checkout:
 
 ```python {test="skip"}
 delegate_task(
     agent_name='Review',
-    task='Read the immutable bundle in review-bundle/ and return actionable findings as text.',
+    task='Read changes.diff and review the affected code. Return findings with file paths.',
     model='review-light',
-    working_directory='/path/to/policy-base',
+    working_directory='/path/to/repository',
 )
 ```
 

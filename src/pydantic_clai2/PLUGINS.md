@@ -1182,8 +1182,8 @@ only that specialist accepts `working_directory`, with a plain local parent work
 wrapped in `ReadOnlyWorkspace`). Sandbox and custom policy wrappers are rejected. Its read-only
 file tools and repository context use the selected directory. It inherits no plugin tools or
 parent history. The setting is tagged `coder-delegate-models`, so older builds ignore it without
-deleting it. The [reference](docs/reference.md#delegate-models-and-review-directory) covers bundle
-preparation and maintaining a current review-model chain.
+deleting it. The [reference](docs/reference.md#delegate-models-and-review-directory) covers directory
+selection and saved model chains.
 
 `agent_folders` is stored as a JSON list of folder names or paths for disk-defined
 agents (Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
