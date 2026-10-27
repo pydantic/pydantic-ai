@@ -1304,6 +1304,35 @@ async def test_response_over_limit_is_kept_in_captured_messages(
         )
 
 
+async def test_response_over_limit_with_model_retry_is_kept_in_captured_messages() -> None:
+    """A response that triggered ModelRetry from a hook but crosses a limit is still kept in captured messages."""
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('retry me')])
+
+    class RetryHook:
+        async def after_model_request(
+            self, ctx: RunContext[object], *, request_context: object, response: ModelResponse
+        ) -> ModelResponse:
+            raise ModelRetry('Retrying due to validation error')
+
+    agent = Agent(FunctionModel(model_function, model_name='gpt-4o'), hooks=[RetryHook()])
+
+    run_usage = RunUsage()
+    with capture_run_messages() as messages:
+        with pytest.raises(UsageLimitExceeded):
+            await agent.run(
+                'Hello',
+                usage=run_usage,
+                usage_limits=UsageLimits(input_tokens_limit=10),
+            )
+
+    assert len(messages) == 2
+    assert isinstance(messages[0], ModelRequest)
+    assert isinstance(messages[1], ModelResponse)
+    assert messages[1].state == 'interrupted'
+    assert run_usage.requests == 1
+
+
 # ── per_request_input_tokens_limit ──────────────────────────────────────
 
 

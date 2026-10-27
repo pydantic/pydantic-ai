@@ -1827,13 +1827,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                                 raise
                             model_response = e.response
                     except exceptions.ModelRetry as e:
-                        self._enforce_usage_limits(ctx, accounted_responses)
                         # `_handler_response` is unset only if the handler failed between stream
                         # teardown and `sr.get()` (e.g. a custom model's `get()` raising on a
                         # partially-consumed stream) and a wrap hook converted that failure to
                         # `ModelRetry` — then there's no response to preserve in history.
                         if _handler_response is not None:  # pragma: no branch
                             self._append_response(ctx, _handler_response, record_usage=not _handler_usage_recorded)
+                        try:
+                            self._enforce_usage_limits(ctx, accounted_responses)
+                        except exceptions.UsageLimitExceeded:
+                            if _handler_response is not None:
+                                ctx.state.message_history[-1] = replace(_handler_response, state='interrupted')
+                            raise
                         await self._build_retry_node(ctx, e)
                     else:
                         self.last_request_context = wrap_request_context
@@ -1969,11 +1974,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             except exceptions.ModelRetry:
                 raise  # Propagate to outer handler
         except exceptions.ModelRetry as e:
-            self._enforce_usage_limits(ctx, accounted_responses)
             # `ModelRetry` from any model lifecycle hook retries the model request.
             # If the handler was called, preserve the response in history for context.
             if _handler_response is not None:
                 self._append_response(ctx, _handler_response, record_usage=not _handler_usage_recorded)
+            try:
+                self._enforce_usage_limits(ctx, accounted_responses)
+            except exceptions.UsageLimitExceeded:
+                if _handler_response is not None:
+                    ctx.state.message_history[-1] = replace(_handler_response, state='interrupted')
+                raise
             return await self._build_retry_node(ctx, e)
 
         return await self._finish_handling(
