@@ -88,7 +88,7 @@ export function MenuForm({
     void load()
   }, [load, version])
 
-  const edited = (key: string, result: MenuEdited, owner: SessionApi, inline: boolean) => {
+  const edited = (key: string, result: MenuEdited, owner: SessionApi, inline: boolean, before: string | undefined) => {
     if (owner === shown.current) {
       ++request.current
       setMenu(result.menu)
@@ -98,8 +98,8 @@ export function MenuForm({
     // An action the user backed out of says nothing, and saved nothing.
     if (!text) return
     onNotice(text)
-    // Only a value edit saved its row; an action's answer, such as Update… refused, is the toast alone.
-    if (!inline) return
+    // An action saved its row only if the row's value changed; one that did not, such as Update… refused, is the toast alone.
+    if (!inline && result.menu?.fields.find((field) => field.key === key)?.value === before) return
     setSaved(key)
     window.setTimeout(() => setSaved((current) => (current === key ? null : current)), 1600)
   }
@@ -107,8 +107,10 @@ export function MenuForm({
   const run = async (key: string, edit: () => Promise<MenuEdited>, inline: boolean) => {
     setBusy(key)
     const owner = session
+    // The row's value in the owner's menu, which the answer's menu, also the owner's, is compared with.
+    const before = menu?.fields.find((field) => field.key === key)?.value
     try {
-      edited(key, await edit(), owner, inline)
+      edited(key, await edit(), owner, inline, before)
     } catch (error) {
       // A value the menu rejects shows by its row; anything else, such as a failed sign-in, as a toast.
       if (inline) setErrors((current) => ({ ...current, [key]: message(error) }))

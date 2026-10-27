@@ -673,6 +673,17 @@ async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) 
         await channel.get_by_role('combobox').select_option(value)
         await expect(channel.locator('.setting-state.saved')).to_be_visible()
 
+    # So does an action that changed its row's value, such as the system prompt's Edit….
+    await page.evaluate("location.hash = '#settings/system-prompt'")
+    instructions = settings.locator('.setting').filter(has=page.locator('.setting-label', has_text='Your instructions'))
+    for text, toast in (('Answer briefly.', 'Saved your instructions.'), ('', 'Removed your instructions.')):
+        await instructions.get_by_role('button', name='Edit Your instructions').click()
+        dialog = page.get_by_role('dialog', name='Edit your instructions')
+        await dialog.get_by_role('textbox').fill(text)
+        await dialog.get_by_role('button', name='Save').click()
+        await expect(page.locator('.toast')).to_contain_text(toast)
+        await expect(instructions.locator('.setting-state.saved')).to_be_visible()
+
 
 async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
