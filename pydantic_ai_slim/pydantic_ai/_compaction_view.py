@@ -22,9 +22,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal, cast
+from typing import Literal, TypeVar
 
-from .messages import ModelMessage, ModelRequest, ModelRequestPart, ModelResponse, ModelResponsePart
+from .messages import ModelMessage, ModelRequest, ModelResponse
+
+T = TypeVar('T')
 
 __all__ = ('CompactionView',)
 
@@ -41,9 +43,9 @@ class _Aligned:
 
 
 def _align(
-    originals: Sequence[object],
-    view: Sequence[object],
-    parts_of: Callable[[object], Sequence[object]] | None = None,
+    originals: Sequence[T],
+    view: Sequence[T],
+    parts_of: Callable[[T], Sequence[object]] | None = None,
 ) -> list[_Aligned]:
     """Align `view` with `originals` by identity: what each view item is, and which originals it stands for.
 
@@ -99,24 +101,26 @@ def _align(
     return aligned
 
 
-def _message_parts(message: object) -> Sequence[object]:
-    return cast(ModelMessage, message).parts
-
-
 def _without_insertions(original: ModelMessage, copy: ModelMessage) -> ModelMessage:
     """`copy` without the parts it only adds to `original`: the original's parts as this request shows them.
 
     Returns `original` itself when `copy` only added parts.
     """
-    if type(original) is not type(copy):
-        return copy
-    parts = [part for part, aligned in zip(copy.parts, _align(original.parts, copy.parts)) if aligned.kind != 'insert']
-    if len(parts) == len(original.parts) and all(a is b for a, b in zip(parts, original.parts)):
-        return original
-    if isinstance(original, ModelRequest):
-        return replace(original, parts=cast(list[ModelRequestPart], parts))
-    assert isinstance(original, ModelResponse)
-    return replace(original, parts=cast(list[ModelResponsePart], parts))
+    if isinstance(original, ModelRequest) and isinstance(copy, ModelRequest):
+        request_parts = _shown_parts(original.parts, copy.parts)
+        return original if request_parts is None else replace(copy, parts=request_parts)
+    if isinstance(original, ModelResponse) and isinstance(copy, ModelResponse):
+        response_parts = _shown_parts(original.parts, copy.parts)
+        return original if response_parts is None else replace(copy, parts=response_parts)
+    return copy
+
+
+def _shown_parts(original: Sequence[T], copy: Sequence[T]) -> list[T] | None:
+    """The parts of `copy` that aren't only added to `original`, or `None` when they're the original's own parts."""
+    parts = [part for part, aligned in zip(copy, _align(original, copy)) if aligned.kind != 'insert']
+    if len(parts) == len(original) and all(a is b for a, b in zip(parts, original)):
+        return None
+    return parts
 
 
 @dataclass
@@ -142,7 +146,7 @@ class CompactionView:
     def of(cls, history: Sequence[ModelMessage], view: Sequence[ModelMessage]) -> CompactionView:
         history = list(history)
         view = list(view)
-        aligned = _align(history, view, _message_parts)
+        aligned = _align(history, view, lambda message: message.parts)
         messages: list[ModelMessage] = []
         origins: list[tuple[int, int]] = []
         persistent: dict[int, ModelMessage] = {}
