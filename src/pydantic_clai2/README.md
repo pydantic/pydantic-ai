@@ -38,18 +38,20 @@ in a project you trust.
 CLAI needs Python 3.11 or newer. Install it with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv tool install pydantic-clai2
+uv tool install --compile-bytecode pydantic-clai2
 ```
 
-This gives you the `clai2` command (and `pydantic-clai2`, which does the same). To try it
-without installing, run `uvx pydantic-clai2`.
+This gives you the `clai2` command (and `pydantic-clai2`, which does the same).
+`--compile-bytecode` makes the install take a little longer so the first start doesn't, and
+`/update` uses it too. To try CLAI without installing, run `uvx pydantic-clai2`; set
+`UV_COMPILE_BYTECODE=1` to compile the bytecode up front there too.
 
 CLAI comes with the OpenAI and Anthropic SDKs. Other providers may need their SDK
 installed too; `/model` tells you which one when you pick the model. TypeSafe's Jev
 models need an extra:
 
 ```bash
-uv tool install 'pydantic-clai2[typesafe]'
+uv tool install --compile-bytecode 'pydantic-clai2[typesafe]'
 ```
 
 ## First run
@@ -263,7 +265,8 @@ them, using your current model. Press <kbd>/</kbd> to search, <kbd>→</kbd> to 
 
 ![The /resume session browser with projects and named sessions](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/resume.png)
 
-From your shell, `clai2 --resume` opens the same browser. `/resume claude` and
+From your shell, `clai2 --resume` opens the same browser, and `clai2 --continue` (`-c`)
+restores the most recent session in the current directory. `/resume claude` and
 `/resume codex` continue a session you started in Claude Code or Codex.
 
 With `/web` running, the browser can open other sessions while this one runs. `/resume`
@@ -291,7 +294,8 @@ closes; it stays saved, so click it to pick it up again. See
 
 `/usage` shows the tokens and cost of each turn, and `/cost` the total. Costs come from
 public price data; a model without a price, like the scripted one in these screenshots,
-shows `unknown`.
+shows `unknown`. Both answer at once, even while a turn runs, and cover the turns that
+have finished.
 
 When a response omits usage, `/usage` and `/cost` label known totals as lower bounds,
 and the status row prefixes a known cost with `>=`.
@@ -371,7 +375,7 @@ The second line adds web search from
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). It needs the `exa` extra and an `EXA_API_KEY`:
 
 ```bash
-uv tool install pydantic-clai2 --with 'pydantic-ai-harness[exa]'
+uv tool install --compile-bytecode pydantic-clai2 --with 'pydantic-ai-harness[exa]'
 export EXA_API_KEY=...
 ```
 

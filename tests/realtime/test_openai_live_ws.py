@@ -13,7 +13,7 @@ import fractions
 import importlib
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -174,10 +174,11 @@ async def test_audio_in_delegated_tool_round(
         repriced = calc_price(response.usage, response.provider_details['delegated_model'], provider_id='openai')
         assert response.usage.cost == repriced.total_price
     # Live goes on speaking after the backend asked for the tool, and after its result went back (" now." comes
-    # after the backend's terminal): that is the reply that called it, ahead of the result, not the answer.
-    assert [part.transcript for part in tool_call_response.parts if isinstance(part, SpeechPart)] == snapshot(
-        ['Okay, checking the forecast', ' now.']
-    )
+    # after the backend's terminal): that is the reply that called it, ahead of the result, not the answer. The call
+    # lands mid-sentence, so the speech is one part, ahead of it, rather than cut in two at it.
+    assert [
+        part.transcript if isinstance(part, SpeechPart) else type(part).__name__ for part in tool_call_response.parts
+    ] == snapshot(['Okay, checking the forecast now.', 'ToolCallPart'])
     # And Live speaks the backend's answer, which is the point of delegating.
     answer = spoken_reply.parts[0]
     assert isinstance(answer, SpeechPart) and answer.speaker == 'assistant'
@@ -280,9 +281,9 @@ async def test_typed_question_runs_the_agents_tool(
     ] == snapshot(
         [
             ['user-prompt: What is the weather in London?'],
-            ['speech:  Let me check the', 'tool-call: get_weather {"city":"London"}', 'speech:  current weather in'],
+            ['speech:  Let me check the current weather in London.', 'tool-call: get_weather {"city":"London"}'],
             ['tool-return: It is foggy and 12 degrees Celsius in London.'],
-            ['speech:  London. It\u2019s foggy and 12 degrees Celsius.'],
+            ['speech:  It\u2019s foggy and 12 degrees Celsius.'],
         ]
     )
     # Closing asked Live to end the session, which it confirmed.
@@ -731,6 +732,89 @@ async def test_webrtc_sideband_runs_the_delegated_tool_round(
 
 
 @pytest.mark.vcr
+async def test_webrtc_sideband_reattaches_after_a_drop(
+    openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    realtime_recording: bool,
+) -> None:
+    """With a `reconnect` policy, a dropped sideband re-attaches to the call's session, which carried on without it.
+
+    The sideband drops while the backend waits on a tool. The session is the same one, so the tool's result
+    still goes out, on the new sideband, and the backend answers with it. Live sends the re-attached sideband
+    the last few seconds of events again, which are skipped: the history is the one a call without a drop records.
+    """
+    provider, cassette = openai_live_ws_sideband_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(
+            openai_live_turn_silence_ms=1000, reconnect={'base_delay': 0.0, 'jitter': False}
+        ),
+    )
+    agent = Agent(_BACKEND, instructions='You answer weather questions. Use the `lookup_forecast` tool.')
+    dropped = anyio.Event()
+
+    @agent.tool_plain
+    async def lookup_forecast(city: str) -> str:
+        """Look up tomorrow's forecast for a city."""
+        await dropped.wait()
+        return f'{city}: 14 degrees Celsius, light rain.'
+
+    realtime = agent.realtime(model)
+    pcm = assets_path.joinpath('weather_question_24khz.pcm').read_bytes()
+
+    @asynccontextmanager
+    async def browser() -> AsyncGenerator[_BrowserPeer]:
+        if realtime_recording:  # pragma: no cover
+            async with _speaking_browser(pcm) as peer:
+                yield peer
+            return
+        yield REAL_SDP_OFFER, _no_browser_to_connect, lambda: None
+
+    events: list[Any] = []
+    async with browser() as (offer, connect, speak):
+        answer = await realtime.answer_webrtc_offer(offer)
+        await connect(answer.sdp)
+
+        async with realtime.session(provider_session=answer.session) as session:
+            speak()
+            with anyio.fail_after(60):
+                async for event in session:  # pragma: no branch
+                    events.append(event)
+                    if isinstance(event, FunctionToolCallEvent):
+                        await cassette.disconnect()
+                    elif isinstance(event, RealtimeSessionReconnectEvent):
+                        dropped.set()
+                    elif isinstance(event, RealtimeTurnCompleteEvent) and any(
+                        isinstance(e, FunctionToolResultEvent) for e in events
+                    ):
+                        break
+
+    reconnects = [event for event in events if isinstance(event, RealtimeSessionReconnectEvent)]
+    assert reconnects == [RealtimeSessionReconnectEvent(state_restored=True)]
+    messages = session.all_messages()
+    parts = [part for message in messages for part in message.parts]
+
+    def spoken(speaker: str) -> str:
+        transcripts = (
+            part.transcript or '' for part in parts if isinstance(part, SpeechPart) and part.speaker == speaker
+        )
+        return ' '.join(' '.join(transcripts).split())
+
+    # Every word once: what Live sent again after the re-attach was skipped. (The user is still speaking when the
+    # model starts to answer here, so how many turns their words fall into depends on timing.)
+    assert spoken('user') == snapshot('What will the weather be in Amsterdam tomorrow Please look it up')
+    # The call asked for before the drop was answered after it, once.
+    assert [part.tool_name for part in parts if isinstance(part, ToolCallPart)] == ['lookup_forecast']
+    assert [part.outcome for part in parts if isinstance(part, ToolReturnPart)] == ['success']
+    answer = messages[-1]
+    assert isinstance(answer, ModelResponse)
+    assert spoken('assistant').count("I'll look it up.") == 1
+    last = answer.parts[-1]
+    assert isinstance(last, SpeechPart) and '14' in (last.transcript or '')
+
+
+@pytest.mark.vcr
 async def test_webrtc_call_continues_the_bound_history(
     openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
     assets_path: Path,
@@ -807,6 +891,45 @@ async def test_webrtc_hang_up_ends_the_call(
 
     # The call is gone now: hanging it up again, without a sideband, finds nothing to end.
     await realtime.hang_up(answer.session)
+
+
+@pytest.mark.vcr
+async def test_webrtc_browser_hang_up_ends_the_session(
+    openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+    realtime_recording: bool,
+) -> None:
+    """A browser that hangs up ends the server's sideband session as any hangup does, without an error.
+
+    Live reports the browser's lost connection as `session.closed` with `connection_lost`, about half a minute
+    later, then drops the sideband without a closing handshake.
+    """
+    provider, _ = openai_live_ws_sideband_cassette
+    model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
+    realtime = Agent(_BACKEND, instructions='Answer in a few words.').realtime(model)
+
+    @asynccontextmanager
+    async def browser() -> AsyncGenerator[_BrowserPeer]:
+        if realtime_recording:  # pragma: no cover
+            async with _speaking_browser(b'') as peer:
+                yield peer
+            return
+        yield REAL_SDP_OFFER, _no_browser_to_connect, lambda: None
+
+    async with AsyncExitStack() as browser_call:
+        offer, connect, _ = await browser_call.enter_async_context(browser())
+        answer = await realtime.answer_webrtc_offer(offer)
+        await connect(answer.sdp)
+        async with realtime.session(provider_session=answer.session) as session:
+            if realtime_recording:  # pragma: no cover
+                await anyio.sleep(2)
+            # The browser hangs up.
+            await browser_call.aclose()
+            with anyio.fail_after(90):
+                # The browser said nothing, so the call ends without an event, and above all without an error.
+                events = [event async for event in session]
+
+    assert session.closed
+    assert events == []
 
 
 _FAVORITE_COLOR = [

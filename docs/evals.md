@@ -278,6 +278,8 @@ _(This example is complete, it can be run "as is")_
 
 See [Quick Start](evals/quick-start.md) for more examples and [Concurrency & Performance](evals/how-to/concurrency.md) to learn about controlling parallel execution.
 
+To evaluate an agent at batch prices, add [`BatchModelRequests`](batch.md) to it: cases run concurrently, so their model requests share batches, and the evaluation takes as long as its batches do.
+
 ## API Reference
 
 For comprehensive coverage of all classes, methods, and configuration options, see the detailed [API Reference documentation](api/pydantic_evals/dataset.md).

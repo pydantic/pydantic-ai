@@ -17,7 +17,6 @@ from urllib.parse import SplitResult, urlsplit
 
 from pydantic import BaseModel
 
-from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL
 from pydantic_clai2.plugins.menus import Dialogs, Option
 
 _MCP_PATH = '/mcp'
@@ -97,10 +96,14 @@ def destination_problem(text: str) -> str | None:
 
 
 REGIONS: dict[str, Destination] = {
-    'Logfire US': parse_destination(LOGFIRE_US_MCP_URL),
-    'Logfire EU': parse_destination(LOGFIRE_EU_MCP_URL),
+    'Logfire US': Destination(base_url='https://logfire-us.pydantic.dev'),
+    'Logfire EU': Destination(base_url='https://logfire-eu.pydantic.dev'),
 }
-"""The hosted regions, from the MCP URLs harness `LogfireMCP` publishes."""
+"""The hosted regions, whose MCP URLs are harness's `LOGFIRE_US_MCP_URL` and `LOGFIRE_EU_MCP_URL`.
+
+Spelled out rather than imported: `pydantic_ai_harness.logfire_mcp` loads the MCP client, and `observability`
+imports this module at every startup.
+"""
 
 
 async def choose_destination(dialogs: Dialogs, *, current: Destination | None, then: str) -> Destination | None:

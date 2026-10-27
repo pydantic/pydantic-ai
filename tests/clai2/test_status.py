@@ -3,6 +3,7 @@
 import asyncio
 import io
 import re
+from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import cast
@@ -129,6 +130,42 @@ async def test_retained_cost_lower_bound_survives_measured_turn_and_resets(
     ]
 
 
+async def test_cost_updates_after_each_model_response_within_a_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class PriceResponses(AbstractCapability[None]):
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            response.usage.cost = Decimal('0.01')
+            return response
+
+    inputs(monkeypatch, ['one', '/exit'])
+    agent = Agent(TestModel(custom_output_text='answer'), deps_type=type(None), capabilities=[PriceResponses()])
+    readings: list[tuple[Decimal | None, bool]] = []
+
+    @agent.tool_plain
+    def probe() -> str:
+        readings.append((shell.status.cost, shell.status.cost_is_lower_bound))
+        return 'ok'
+
+    shell = create_shell(
+        agent,
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+    )
+    await shell.run()
+    # The tool runs between the turn's two model responses; the first one's cost is already shown.
+    assert readings == [(Decimal('0.01'), False)]
+    assert shell.status.cost == Decimal('0.02')
+
+
 def test_an_estimated_context_figure_is_marked() -> None:
     status = Status(model='m', context_tokens=13_416, context_window=1_000_000, context_estimated=True)
     assert 'context: ~13k/1m tokens' in status.text()
@@ -231,6 +268,82 @@ async def test_model_change_clears_the_previous_context_window(tmp_path: Path, m
     shell.commands.register(Command(name='inspect', description='Read status', handler=inspect))
     await shell.run()
     assert readings == [(1_000_000, True), (None, False)]
+
+
+async def _context_readings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    script: list[str],
+    capabilities: Sequence[AbstractCapability[None]] = (),
+) -> list[str]:
+    """The status row's `context` figure at each `/inspect` of `script`, on a model with a 1m window.
+
+    `/unresolve` acts as a gauge that could not resolve the window; `/default` goes back to the agent's model.
+    """
+    inputs(monkeypatch, [*script, '/exit'])
+    shell = create_shell(
+        Agent(
+            TestModel(model_name='original', profile={'context_window': 1_000_000}),
+            deps_type=type(None),
+            capabilities=capabilities,
+        ),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+    )
+    readings: list[str] = []
+
+    def unresolve(args: list[str]) -> str:
+        shell.status.context_window = None
+        return ''
+
+    def default(args: list[str]) -> str:
+        shell.session.model = None
+        return ''
+
+    def inspect(args: list[str]) -> str:
+        readings.append(re.sub(r'.*context: (\S+) tokens.*', r'\1', shell.status.text()))
+        return ''
+
+    shell.commands.register(Command(name='unresolve', description='Act as an unresolved gauge', handler=unresolve))
+    shell.commands.register(Command(name='default', description='Use the agent model', handler=default))
+    shell.commands.register(Command(name='inspect', description='Read status', handler=inspect))
+    await shell.run()
+    return readings
+
+
+async def test_the_shell_shows_the_known_window_before_the_first_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new conversation reads `0/WINDOW` at once, and a model change shows the new model's window."""
+    script = ['/inspect', '/set model anthropic:claude-sonnet-4-5', '/inspect', '/set model test', '/inspect']
+    assert await _context_readings(tmp_path, monkeypatch, script) == ['0/1m', '0/200k', '0/?']
+
+
+async def test_a_window_a_turn_left_unresolved_stays_unknown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Once a turn ran, only its requests' window shows; a new conversation or model shows the model's again."""
+    script = ['hello', '/unresolve', '/inspect', '/new', '/inspect', 'hello', '/set model test', '/default', '/inspect']
+    readings = await _context_readings(tmp_path, monkeypatch, script)
+    assert [reading.partition('/')[2] for reading in readings] == ['?', '1m', '1m']
+    assert readings[1] == '0/1m'
+
+
+async def test_a_turn_failing_before_its_request_keeps_the_known_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Unavailable(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            raise RuntimeError('provider down')
+
+    readings = await _context_readings(tmp_path, monkeypatch, ['hello', '/inspect'], capabilities=[Unavailable()])
+    assert readings == ['0/1m']
 
 
 @pytest.mark.parametrize(

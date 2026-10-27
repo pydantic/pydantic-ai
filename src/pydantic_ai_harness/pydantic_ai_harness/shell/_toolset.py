@@ -444,6 +444,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             ctx,
             command,
             base=await self._jobs_base(ctx),
+            job_id=_job_id(ctx),
             cwd=await ctx.workspace.working_dir(),
             env=self._resolve_env(),
             mode=mode,
@@ -467,11 +468,6 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             A message containing the unique command ID for later check/stop calls.
         """
         self._check_command(command)
-        # Activity retries share the same tool-call identity, not just the run:
-        # separate starts in one run still need distinct job directories.
-        job_id = None
-        if ctx.run_id is not None and ctx.tool_call_id is not None:
-            job_id = hashlib.sha256(f'{ctx.run_id}:{ctx.tool_call_id}'.encode()).hexdigest()[:32]
         job = await Job.launch(
             ctx.workspace,
             command,
@@ -481,7 +477,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             combined=False,
             file_limit=self._max_file_bytes,
             log_limit=self._max_log_bytes,
-            job_id=job_id,
+            job_id=_job_id(ctx),
         )
         return f'Started background command: {command!r}\nID: {posixpath.basename(job.directory)}'
 
@@ -549,6 +545,18 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         if exit_code is not None:
             parts.append(f'[exit code: {exit_code}]' + file_limit_status(exit_code, self._max_file_bytes))
         return '\n'.join(parts)
+
+
+def _job_id(ctx: RunContext[AgentDepsT]) -> str | None:
+    """The job directory name for this tool call, or `None` to have `Job.launch` pick a random one.
+
+    Derived from the run and tool call, not the run alone, so separate launches in one run get distinct
+    directories while a retried activity or a replayed workflow (where `Job.launch` is called again but its
+    workspace call returns the recorded result) names the job it launched the first time.
+    """
+    if ctx.run_id is None or ctx.tool_call_id is None:
+        return None
+    return hashlib.sha256(f'{ctx.run_id}:{ctx.tool_call_id}'.encode()).hexdigest()[:32]
 
 
 def _labelled(stdout: str, stderr: str, *, empty: str | None, trailer: str | None = None) -> str:

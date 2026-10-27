@@ -148,6 +148,12 @@ CI runs the repository-wide typecheck, test, and combined coverage gates.
 Do not run repository-wide Pyright, pytest, or coverage locally.
 If CI reports a coverage gap, run coverage only for the flagged file or focused test.
 
+The durable-exec contract manifest (`scripts/durable_exec_contract.json`) records the core
+definitions the Harness durable engines (`absurd`, `aws_lambda`, `pgtask`, `render`) depend on, and
+harness-only PRs run `tests/durable_exec/test_durable_exec_contract_manifest.py`, which fails when
+an engine change leaves it stale: see
+[Core changes that engines depend on](../../pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md#core-changes-that-engines-depend-on).
+
 ### Workspace and Python versions
 
 ```bash
