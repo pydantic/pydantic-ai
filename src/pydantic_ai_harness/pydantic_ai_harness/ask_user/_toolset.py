@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import inspect
 from typing import overload
 
 import anyio
 from typing_extensions import TypeIs
 
-from pydantic_ai._utils import takes_run_context
 from pydantic_ai.exceptions import CallDeferred
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._callable import takes_context
 from pydantic_ai_harness.ask_user._events import AskUserAnsweredEvent, AskUserRequestedEvent
 from pydantic_ai_harness.ask_user._types import (
     TOOL_NAME,
@@ -49,17 +48,7 @@ def ask_user_result(request: AskUserRequest, response: AskUserResponse) -> dict[
 
 
 def _takes_context(answerer: AnyAnswerer[AgentDepsT]) -> TypeIs[ContextAnswerer[AgentDepsT]]:
-    try:
-        signature = inspect.signature(answerer)
-        signature.bind(None, None)
-    except (TypeError, ValueError):
-        # Request-only answerers need no resolvable runtime annotations.
-        return False
-    try:
-        signature.bind(None)
-    except TypeError:
-        return True
-    return takes_run_context(answerer)
+    return takes_context(answerer) is True
 
 
 class AskUserToolset(FunctionToolset[AgentDepsT]):

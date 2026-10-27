@@ -362,7 +362,8 @@ class TestContextAnswerer:
         assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
 
     @pytest.mark.parametrize('context', [False, True])
-    async def test_annotation_disambiguates_optional_second_argument(self, context: bool) -> None:
+    @pytest.mark.parametrize('typing_only', [False, True])
+    async def test_annotation_disambiguates_optional_second_argument(self, context: bool, typing_only: bool) -> None:
         async def context_answer(ctx: RunContext[str], request: AskUserRequest | None = None) -> AskUserResponse:
             assert ctx.deps == 'owner'
             assert request is not None
@@ -372,12 +373,41 @@ class TestContextAnswerer:
             assert extra is None
             return await ScriptedAnswerer()(request)
 
+        if typing_only:
+            context_answer.__annotations__.update(ctx='RunContext[TypingOnlyDeps]', request='TypingOnlyRequest | None')
+            plain_answer.__annotations__['extra'] = 'ImportedOnlyForTyping'
         agent = Agent(
             calling(raw_questions()),
             deps_type=str,
             capabilities=[AskUser(answerer=context_answer if context else plain_answer)],
         )
         result = await agent.run('go', deps='owner')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
+    @pytest.mark.parametrize('variadic_only', [False, True])
+    async def test_variadic_request_only_callbacks_keep_one_argument(self, variadic_only: bool) -> None:
+        async def variadic(*requests: AskUserRequest) -> AskUserResponse:
+            assert len(requests) == 1
+            return await ScriptedAnswerer()(requests[0])
+
+        async def with_first(request: AskUserRequest, *extra: object) -> AskUserResponse:
+            assert not extra
+            return await ScriptedAnswerer()(request)
+
+        agent = Agent(
+            calling(raw_questions()), capabilities=[AskUser(answerer=variadic if variadic_only else with_first)]
+        )
+        result = await agent.run('go')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
+    async def test_unannotated_optional_argument_preserves_request_only_call(self) -> None:
+        async def answer(request: AskUserRequest, extra: object = None) -> AskUserResponse:
+            assert extra is None
+            return await ScriptedAnswerer()(request)
+
+        del answer.__annotations__['request']
+        agent = Agent(calling(raw_questions()), capabilities=[AskUser(answerer=answer)])
+        result = await agent.run('go')
         assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
 
     async def test_request_only_annotations_need_not_resolve_at_runtime(self) -> None:

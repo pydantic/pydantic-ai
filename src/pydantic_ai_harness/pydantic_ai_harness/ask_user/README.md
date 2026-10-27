@@ -77,8 +77,8 @@ An answerer with two required positional parameters receives `(ctx, request)`, s
 functions and callable objects are supported, including two-argument lambdas.
 
 If a callable accepts both one and two positional arguments, annotate its first parameter as
-`RunContext[DepsT]` to select the context form; otherwise it receives only the request. Import
-these disambiguating annotation types at runtime, not only inside `if TYPE_CHECKING:`.
+`RunContext[DepsT]` to select the context form; otherwise it receives only the request. Only the
+first annotation is inspected; an unresolved annotation naming `RunContext` also selects the context form.
 
 ```python
 from pydantic_ai import Agent, RunContext
