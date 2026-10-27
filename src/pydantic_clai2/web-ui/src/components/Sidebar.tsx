@@ -162,7 +162,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const [projects, setProjects] = useState<Project[]>(() => stored<Project[]>('clai-sidebar-cache', []))
   /** The search the listed sessions answer, so Enter never opens a result of an earlier one. */
   const [answered, setAnswered] = useState('')
-  const openFirst = useRef(false)
+  /** The search whose first result Enter asked to open before its results arrived. */
+  const openFirst = useRef<string | null>(null)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() =>
     stored<Record<string, boolean>>('clai-sidebar-collapsed', {}),
   )
@@ -251,8 +252,10 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   }, [menu])
 
   useEffect(() => {
-    if (!openFirst.current || answered !== query) return
-    openFirst.current = false
+    // Typing on, or clearing the search, drops the request; only its own results open.
+    if (openFirst.current !== query) openFirst.current = null
+    if (openFirst.current === null || answered !== query) return
+    openFirst.current = null
     aside.current?.querySelector<HTMLElement>('.projects .session-main')?.click()
   }, [projects, answered, query])
 
@@ -260,23 +263,25 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   // The row picked last is the selection, highlighted at once, before its session opens.
   const selected = opening ?? viewing ?? shown
 
-  // What the shown or previewed session says is read as it changes.
-  const readRow = rows.find((row) => row.id === (viewing ?? shown))
+  // What the shown or previewed session says is read as it changes, unless the orchestrator covers it.
+  const readRow = orchestrating ? undefined : rows.find((row) => row.id === (viewing ?? shown))
   useEffect(() => {
     if (readRow) setSeen((current) => markSeen(current, [readRow]))
   }, [readRow])
 
+  // Unread is kept apart from the glyph, so a failed turn you have not seen is both red and unread.
+  const unread = useMemo(
+    () => new Set(rows.filter((row) => row.id !== readRow?.id && isUnread(row, seen)).map((row) => row.id)),
+    [rows, readRow, seen],
+  )
   const states = useMemo(() => {
     const found: Record<string, Status> = {}
-    for (const row of rows) found[row.id] = status(row, live, row.id !== readRow?.id && isUnread(row, seen))
+    for (const row of rows) found[row.id] = status(row, live, unread.has(row.id))
     return found
-  }, [rows, live, readRow, seen])
+  }, [rows, live, unread])
   const needsYou = useCallback(
-    (row: Row) => {
-      const state = states[row.id] ?? null
-      return state === 'unread' || WORKING.includes(state)
-    },
-    [states],
+    (row: Row) => unread.has(row.id) || WORKING.includes(states[row.id] ?? null),
+    [states, unread],
   )
   // The row picked from Attention stays there while it opens and shows, though it no longer needs you.
   const shownSections = useMemo(
@@ -347,7 +352,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     return (
       <div
         key={session.id}
-        className={`session ${current ? 'current' : ''} ${state === 'unread' ? 'unread' : ''} ${session.archived ? 'archived' : ''} ${session.missing ? 'missing' : ''}`}
+        className={`session ${current ? 'current' : ''} ${unread.has(session.id) ? 'unread' : ''} ${session.archived ? 'archived' : ''} ${session.missing ? 'missing' : ''}`}
         data-session={session.id}
         aria-busy={session.id === opening || undefined}
       >
@@ -398,7 +403,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
             <button onClick={() => void act(async () => onView({ id: (await api.fork(session.id)).id, title: session.title, workspace: session.workspace }))}>
               Fork
             </button>
-            {state === 'unread' && <button onClick={() => markRead([session])}>Mark as read</button>}
+            {unread.has(session.id) && <button onClick={() => markRead([session])}>Mark as read</button>}
             {session.archived ? (
               <button onClick={() => void act(() => api.unarchive(session.id))}>Unarchive</button>
             ) : (
@@ -451,7 +456,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const heading = (section: Section, closed: boolean): ReactNode => {
     if (section.kind === 'list') return null
     const key = `section:${section.key}`
-    const unread = section.rows.filter((row) => states[row.id] === 'unread')
+    const unreadRows = section.rows.filter((row) => unread.has(row.id))
     const removed = section.key === REMOVED
     return (
       <div className="project-head">
@@ -485,7 +490,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
             >
               Archive chats
             </button>
-            {unread.length > 0 && <button onClick={() => markRead(unread)}>Mark all as read</button>}
+            {unreadRows.length > 0 && <button onClick={() => markRead(unreadRows)}>Mark all as read</button>}
           </div>
         )}
       </div>
@@ -571,7 +576,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
               if (event.key === 'Enter' && answered !== query) {
                 // The results for what was typed are still on their way: open the first once they arrive.
                 event.preventDefault()
-                openFirst.current = true
+                openFirst.current = query
               } else if (first) {
                 event.preventDefault()
                 if (event.key === 'Enter') first.click()
