@@ -2388,6 +2388,9 @@ class TestCodeMode:
         assert 'demo_tool' not in run_code_desc
         assert 'load_capability' not in run_code_desc
 
+    @pytest.mark.moves_cache_prefix(
+        reason='with the default `dynamic_catalog=False`, loading a capability rewrites the `run_code` description'
+    )
     async def test_loaded_capability_tool_folds_into_run_code(self) -> None:
         """Once the model loads a deferred capability, its tools become callable from `run_code`.
 
@@ -4717,6 +4720,9 @@ class TestDynamicCatalog:
         assert [match['name'] for r in search_returns for match in r.content['discovered_tools']] == ['get-weather']
         assert [p for m in result.all_messages() for p in m.parts if isinstance(p, SystemPromptPart)] == []
 
+    @pytest.mark.moves_cache_prefix(
+        reason='a selector that flips on reveal moves the tools prefix, which this test pins'
+    )
     async def test_a_selector_that_flips_on_reveal_moves_the_tools_prefix(self) -> None:
         """A callable selector that only sandboxes a tool once it's revealed costs the cached `tools` prefix.
 
