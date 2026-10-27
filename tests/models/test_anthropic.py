@@ -4399,9 +4399,9 @@ async def test_anthropic_citations_with_forced_tool_without_document_or_web_fetc
 ) -> None:
     """With no document or Web Fetch tool, a forced tool call is allowed.
 
-    That includes web search, which the setting sends with direct calls on models with the `20260209` web tools:
-    Anthropic cites direct web search calls whether or not citations were asked for, so the markup can reach a forced
-    tool's arguments either way.
+    That includes web search, which the setting sends with direct calls on models with the `20260209` web tools: in
+    live runs on Claude Haiku 5.5, Sonnet 4.6 and Opus 4.8, the model searched directly and kept the markup out of the
+    forced tool's arguments, unlike with a document.
 
     Unit test: it pins that the run goes ahead, and the callers sent.
     """
@@ -15375,32 +15375,6 @@ async def test_anthropic_container_from_message_history(allow_model_requests: No
     assert completion_kwargs['container'] == 'container_from_history'
 
 
-async def test_anthropic_container_from_message_history_not_sent_for_function_tool(allow_model_requests: None):
-    """A function tool named `code_execution` isn't code execution, so the container id from history isn't sent.
-
-    Unit test: no recording sends a function tool named after a server tool.
-    """
-    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
-    mock_client = MockAnthropic.create_mock(c)
-    agent = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)))
-
-    @agent.tool_plain
-    def code_execution(code: str) -> str:  # pragma: no cover
-        return code
-
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='hello')]),
-        ModelResponse(
-            parts=[TextPart(content='world')],
-            provider_name='anthropic',
-            provider_details={'container_id': 'container_from_history'},
-        ),
-    ]
-    await agent.run('follow up', message_history=history)
-
-    assert get_mock_chat_completion_kwargs(mock_client)[0]['container'] is OMIT
-
-
 async def test_anthropic_container_setting_false_ignores_history(allow_model_requests: None):
     """Test that anthropic_container=False ignores container_id from history."""
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
@@ -15628,29 +15602,6 @@ async def test_anthropic_code_execution_tool_container_reuse(
             ),
         ]
     )
-
-
-@pytest.mark.vcr()
-async def test_anthropic_container_from_history_not_sent_without_code_execution(
-    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
-):
-    """A follow-up without code execution doesn't send the container id from history.
-
-    Anthropic rejects it with `400 Container identifier can only be provided when using the code execution tool`.
-    """
-    model = anthropic_model('claude-sonnet-5-5', capture=True)
-    first = await Agent(model, capabilities=[NativeTool(CodeExecutionTool())]).run(
-        'Use the code execution tool to compute 3 * 12390.'
-    )
-    second = await Agent(model).run('Say the result in one sentence.', message_history=first.all_messages())
-
-    first_response = message(first.all_messages(), ModelResponse, index=-1)
-    assert first_response.provider_details is not None
-    assert isinstance(first_response.provider_details.get('container_id'), str)
-    assert [('container' in body, 'tools' in body) for body in request_capture.bodies('/v1/messages')] == snapshot(
-        [(False, True), (False, False)]
-    )
-    assert second.output == snapshot('The result of 3 × 12390 is 37,170.')
 
 
 async def test_anthropic_system_prompts_and_instructions_ordering():

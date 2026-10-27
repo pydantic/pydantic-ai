@@ -1,4 +1,4 @@
-"""Unit tests for Anthropic `CodeExecutionTool.files` uploads, and for container reuse and recovery."""
+"""Tests for Anthropic `CodeExecutionTool.files` uploads, and for container reuse and recovery."""
 
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, WebSearchTool
 
-from ...conftest import try_import
-from ..conftest import cache_breakpoints, content_blocks, message_shape
+from ...conftest import RequestCapture, message, try_import
+from ..conftest import AnthropicModelFactory, cache_breakpoints, content_blocks, message_shape
 
 with try_import() as anthropic_imports_successful:
     from anthropic import (
@@ -445,6 +445,7 @@ class HistoryContainerCase:
     model_name: str
     container_sent: bool
     citations: bool = False
+    suspended: bool = False
     expected_tools: list[tuple[str, list[str] | None]] = field(default_factory=list[tuple[str, list[str] | None]])
 
 
@@ -454,6 +455,8 @@ HISTORY_CONTAINER_CASES = [
     HistoryContainerCase('vertex', 'vertex', 'claude-sonnet-4-6', container_sent=True),
     HistoryContainerCase('mantle', 'mantle', 'anthropic.claude-sonnet-4-6', container_sent=True),
     HistoryContainerCase('foundry', 'foundry', 'claude-sonnet-4-6', container_sent=True),
+    HistoryContainerCase('api-suspended', 'api', 'claude-sonnet-4-6', container_sent=False, suspended=True),
+    HistoryContainerCase('vertex-suspended', 'vertex', 'claude-sonnet-4-6', container_sent=True, suspended=True),
     HistoryContainerCase(
         'mantle-direct-web-search',
         'mantle',
@@ -471,11 +474,13 @@ async def test_anthropic_history_container_without_code_execution_by_client(
 ):
     """A request without code execution doesn't send the history container where the API is known to reject it.
 
-    The direct API and the legacy Bedrock InvokeModel API reject it. Vertex AI, the Bedrock Messages API and Foundry
-    haven't been verified, so they keep sending it, unless the request sends web tools that default to code execution
-    with direct calls only, as `Citations()` does.
+    That includes the container of a suspended response the run resumes. The direct API and the legacy Bedrock
+    InvokeModel API reject it. Vertex AI, the Bedrock Messages API and Foundry haven't been verified, so they keep
+    sending it, unless the request sends web tools that default to code execution with direct calls only, as
+    `Citations()` does.
 
-    Unit test: recording the other clients needs their credentials, and the claim is the request shape.
+    Unit test: recording the other clients needs their credentials, recording a suspended response needs a live
+    `pause_turn`, and the claim is the request shape.
     """
     bodies: list[dict[str, Any]] = []
 
@@ -500,6 +505,7 @@ async def test_anthropic_history_container_without_code_execution_by_client(
             parts=[TextPart(content='Earlier answer.')],
             provider_name='anthropic',
             provider_details={'container_id': 'container_from_history'},
+            state='suspended' if case.suspended else 'complete',
         ),
     ]
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http_client:
@@ -519,7 +525,7 @@ async def test_anthropic_history_container_without_code_execution_by_client(
             [NativeTool(WebSearchTool()), Citations()] if case.citations else []
         )
         await Agent(model, deps_type=type(None), capabilities=capabilities).run(
-            'Follow up.', message_history=history, model_settings={'max_tokens': 1024}
+            None if case.suspended else 'Follow up.', message_history=history, model_settings={'max_tokens': 1024}
         )
 
     [body] = bodies
@@ -527,3 +533,52 @@ async def test_anthropic_history_container_without_code_execution_by_client(
     container_sent = 'container' in body
     assert container_sent == case.container_sent
     assert [(tool['type'], tool.get('allowed_callers')) for tool in tools] == case.expected_tools
+
+
+async def test_anthropic_container_from_message_history_not_sent_for_function_tool(allow_model_requests: None):
+    """A function tool named `code_execution` isn't code execution, so the container id from history isn't sent.
+
+    Unit test: no recording sends a function tool named after a server tool.
+    """
+    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    agent = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)))
+
+    @agent.tool_plain
+    def code_execution(code: str) -> str:  # pragma: no cover
+        return code
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hello')]),
+        ModelResponse(
+            parts=[TextPart(content='world')],
+            provider_name='anthropic',
+            provider_details={'container_id': 'container_from_history'},
+        ),
+    ]
+    await agent.run('follow up', message_history=history)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['container'] is OMIT
+
+
+@pytest.mark.vcr()
+async def test_anthropic_container_from_history_not_sent_without_code_execution(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A follow-up without code execution doesn't send the container id from history.
+
+    Anthropic rejects it with `400 Container identifier can only be provided when using the code execution tool`.
+    """
+    model = anthropic_model('claude-sonnet-5-5', capture=True)
+    first = await Agent(model, capabilities=[NativeTool(CodeExecutionTool())]).run(
+        'Use the code execution tool to compute 3 * 12390.'
+    )
+    second = await Agent(model).run('Say the result in one sentence.', message_history=first.all_messages())
+
+    first_response = message(first.all_messages(), ModelResponse, index=-1)
+    assert first_response.provider_details is not None
+    assert isinstance(first_response.provider_details.get('container_id'), str)
+    assert [('container' in body, 'tools' in body) for body in request_capture.bodies('/v1/messages')] == snapshot(
+        [(False, True), (False, False)]
+    )
+    assert second.output == snapshot('The result of 3 × 12390 is 37,170.')
