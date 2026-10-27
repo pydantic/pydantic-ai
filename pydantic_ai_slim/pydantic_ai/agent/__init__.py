@@ -4955,6 +4955,21 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             # Including one the run's capabilities replaced, which would otherwise never be closed.
             for built_model in self.run_built_models:
                 await self.model_resources.enter_model(built_model)
+
+            agent_run: AgentRun[_PreparedDepsT, _PreparedOutputT] | None = None
+
+            async def settle_ended_pending(exc_type: type[BaseException] | None, *_: object) -> None:
+                # After the run's hooks and the caller's block, so it knows how the run ended, and before its models
+                # are exited, so a pending response the run didn't end with can still be withdrawn through them.
+                if graph_deps.ended_pending is None:
+                    return
+                assert agent_run is not None
+                result = agent_run.result
+                await _agent_graph.settle_ended_pending(
+                    graph_deps, result.output if result is not None else None, failed=exc_type is not None
+                )
+
+            stack.push_async_exit(settle_ended_pending)
             graph_run = await stack.enter_async_context(
                 self.graph.iter(
                     inputs=self.user_prompt_node,
