@@ -17,10 +17,10 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 
 ### One method per part type, one dispatch per message kind
 
-- Map each part type in its own method. Call those methods from one exhaustive dispatch per message kind: an `isinstance` chain or a `match` over the part union, ending in `assert_never`. Precedents: `models/anthropic.py::AnthropicModel._map_model_response` and `models/openai.py::OpenAIChatModel._MapModelResponseContext.map_assistant_message`. — A new part type then adds one flat arm and one method, not a branch nested inside the loop.
+- Map each part type in its own method. Call those methods from one exhaustive dispatch per message kind: an `isinstance` chain or a `match` over the part union, ending in `assert_never`. Precedents: `models/anthropic/__init__.py::AnthropicModel._map_model_response` and `models/openai.py::OpenAIChatModel._MapModelResponseContext.map_assistant_message`. — A new part type then adds one flat arm and one method, not a branch nested inside the loop.
 - A per-part method with one call site is an arm of the dispatch. Make it a method on the model class, never a `def` nested in the mapper. An arm of one statement stays inline in the dispatch. — A nested function counts toward the mapper's complexity, so it removes nothing.
-- Keep the request-wide state those methods share in a private dataclass that holds data only. Build it once before the loop: the facts each part is mapped against (resolved flags, tool definitions by name) and the wire lists being built. The per-part methods live on the model class. Precedent: `models/anthropic.py::_MapMessagesContext`. — `_MapModelResponseContext` carries methods because `OpenRouterModel` and `SnowflakeModel` subclass it to override them; a context that nothing subclasses holds data only.
-- Map each wire item of a response in one function, and call it from both `_process_response` and the stream. Precedent: `models/anthropic.py::_map_server_tool_use_block` and its sibling `_map_*_block` functions. — `request()` and `request_stream()` must build the same parts, and two copies of a mapping drift.
+- Keep the request-wide state those methods share in a private dataclass that holds data only. Build it once before the loop: the facts each part is mapped against (resolved flags, tool definitions by name) and the wire lists being built. The per-part methods live on the model class. Precedent: `models/anthropic/__init__.py::_MapMessagesContext`. — `_MapModelResponseContext` carries methods because `OpenRouterModel` and `SnowflakeModel` subclass it to override them; a context that nothing subclasses holds data only.
+- Map each wire item of a response in one function, and call it from both `_process_response` and the stream. Precedent: `models/anthropic/_native_tools.py::map_server_tool_use_block` and its sibling `map_*_block` functions. — `request()` and `request_stream()` must build the same parts, and two copies of a mapping drift.
 - In a stream, map each event type in its own sync method that returns an `Iterable` of events, and forward it from `_get_event_iterator` in one loop. Precedent: `models/openai.py::OpenAIStreamedResponse._map_part_delta`. — An async generator can't `yield from`, so every parts-manager call made directly in `_get_event_iterator` needs its own re-yield loop; a sync method can `yield from` each one.
 
 ### Lower a part type most APIs can't render, before the adapter
@@ -39,7 +39,7 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
   - a fact that depends on the SDK client class in the model's `_instance_profile_defaults()`, which the user's `profile=` still overrides;
   - a limit the client class can't get past, such as a native tool it can't send, in the model's `profile` property, which applies after the user's `profile=`.
 
-  Precedents: `models/anthropic.py::AnthropicModel._instance_profile_defaults` and `AnthropicModel.profile`. — `Provider.model_profile()` is a static method that sees only the model name, so it can't hold a client-class fact. Those two model methods are the only places that see both.
+  Precedents: `models/anthropic/__init__.py::AnthropicModel._instance_profile_defaults` and `AnthropicModel.profile`. — `Provider.model_profile()` is a static method that sees only the model name, so it can't hold a client-class fact. Those two model methods are the only places that see both.
 - Express a difference between model families as a `Literal`-valued flag, never as a model-name prefix check in the adapter. Precedent: `bedrock_thinking_variant` in `providers/bedrock.py::BedrockModelProfile`.
 
 ### Tool-call IDs
@@ -52,13 +52,13 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 
 - Replay a part's provider data only when the part's `provider_name` is this adapter's `self.system`. When an adapter accepts more than one name, define that set once and read it at every replay site. Precedent: `models/google.py::GoogleModel._matching_provider_names`. — Each copy of an alias set drifts on its own.
 - Put an opaque payload the API checks on replay (a signature, an encrypted blob) in the part's `signature` field when the part has one. Put any other replay data in `provider_details`.
-- Read each replay field back through one function that validates it before use, with a Pydantic model or an explicit type check. Never read it through scattered, unvalidated `.get()` calls. Precedents: `models/_reasoning_details.py::into_reasoning_detail` and `models/anthropic.py::_get_anthropic_code_execution_tool_name`. — History comes back from storage and from UI clients, so one function has to catch a malformed value, by raising or by falling back to a safe default, not each place that reads it.
+- Read each replay field back through one function that validates it before use, with a Pydantic model or an explicit type check. Never read it through scattered, unvalidated `.get()` calls. Precedents: `models/_reasoning_details.py::into_reasoning_detail` and `models/anthropic/_native_tools.py::get_anthropic_code_execution_tool_name`. — History comes back from storage and from UI clients, so one function has to catch a malformed value, by raising or by falling back to a safe default, not each place that reads it.
 - Mark a variant of a part in `provider_details`, never with a sentinel `id`, for the same `pydantic_ai/AGENTS.md` rule.
 
 ### Thinking round-trips
 
 - Send a `ThinkingPart` on a signed or encrypted reasoning channel only when this adapter owns it and it carries the signature or encrypted content the API checks.
-- Render every `ThinkingPart` the adapter doesn't send on its native channel with `_thinking_part.py::render_replayed_thinking`, and place it where its second return value says. Never join `thinking_tags` by hand. Precedent: `models/anthropic.py::AnthropicModel._map_thinking_part`. — The helper owns the tags and `mimics_assistant_message_formatting`; a hand-written join ignores that flag.
+- Render every `ThinkingPart` the adapter doesn't send on its native channel with `_thinking_part.py::render_replayed_thinking`, and place it where its second return value says. Never join `thinking_tags` by hand. Precedent: `models/anthropic/__init__.py::AnthropicModel._map_thinking_part`. — The helper owns the tags and `mimics_assistant_message_formatting`; a hand-written join ignores that flag.
 - Send nothing for a `ThinkingPart` that has neither content nor replay data.
 
 ### Native tool parts
@@ -66,7 +66,7 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 - Map native tool parts through one module-level table per adapter, from the native tool's `kind` to its wire name, and derive the reverse table from it. Precedent: `models/google.py::_TOOL_TYPE_TO_NATIVE_TOOL_NAME` and `_NATIVE_TOOL_NAME_TO_TOOL_TYPE`. — A branch per kind that only swaps a name adds a level of nesting for a lookup.
 - Branch on the kind only where the wire shape differs.
 - On replay, skip native tool parts from another provider. Raise `UnexpectedModelBehavior` for this adapter's own part when its kind is missing from the table. Precedent: `models/google.py::_native_tool_call_part_dict`. — An own part with an unknown kind is history this code didn't write, and a guessed wire shape sends a malformed request.
-- Pair native calls with their results in one pass over the built wire messages, after mapping. Precedent: `models/anthropic.py::_drop_unpaired_native_tool_calls`. — Pairing decided inside each arm repeats the decision per kind.
+- Pair native calls with their results in one pass over the built wire messages, after mapping. Precedent: `models/anthropic/_message_passes.py::drop_unpaired_native_tool_calls`. — Pairing decided inside each arm repeats the decision per kind.
 
 ### Empty content
 
@@ -83,7 +83,7 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 
 ### Prompt-cache markers
 
-- Enforce the API's breakpoint limit with `models/_prompt_cache.py::excess_cache_points`. The adapter passes a wire accessor that recognizes a breakpoint, and strips the excess in its own format. Precedent: `models/anthropic.py::AnthropicModel._limit_cache_points`. — Breakpoint arithmetic written per adapter has already produced several copies of the same rule.
+- Enforce the API's breakpoint limit with `models/_prompt_cache.py::excess_cache_points`. The adapter passes a wire accessor that recognizes a breakpoint, and strips the excess in its own format. Precedent: `models/anthropic/__init__.py::AnthropicModel._limit_cache_points`. — Breakpoint arithmetic written per adapter has already produced several copies of the same rule.
 - Put a new cache algorithm that two adapters need in `models/_prompt_cache.py`, with a public name and adapter-supplied wire accessors. Never copy it into a second adapter.
 - An adapter without prompt caching drops `CachePoint`s. The `CachePoint` docstring promises that models without caching filter them out.
 - Anchor every breakpoint by message identity: see the injection rule in `models/AGENTS.md` and [Message History & Prompt Caching](message-history-and-caching.md).

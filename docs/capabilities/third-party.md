@@ -1,5 +1,5 @@
 ---
-description: "Find community capability packages for Pydantic AI, covering SQL analytics and RAG."
+description: "Find community capability packages for Pydantic AI, covering Agent Skills, SQL analytics and RAG."
 ---
 
 # Third-Party Capabilities
@@ -7,6 +7,12 @@ description: "Find community capability packages for Pydantic AI, covering SQL a
 [Capabilities](overview.md) are the recommended way for third-party packages to extend Pydantic AI, since they can bundle tools with hooks, instructions, and model settings. See [Extensibility](../extensibility.md) for the full ecosystem, including [third-party toolsets](../toolsets.md#third-party-toolsets) that can also be wrapped as capabilities.
 
 Before reaching for a package here, check the [capability index](overview.md#available-capabilities), which covers Pydantic AI and [Pydantic AI Harness](../harness/index.md), the official capability library, including planning, compaction, sub-agents, guardrails, file system and shell access, and sandboxes. This page lists community packages for use cases those don't cover, or that build on them.
+
+## Agent Skills
+
+Pydantic AI Harness's [`Skills`](../harness/skills.md) turns each `SKILL.md` package in a workspace directory into an [on-demand capability](on-demand.md) that the model loads when it needs it. Building on `Skills`:
+
+* [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) by [Doug Trajano](https://github.com/DougTrajano) - `SkillsCapability` hands `SKILL.md` discovery, validation, and instruction rendering to `Skills` and adds what it leaves out. `read_skill_resource` and `run_skill_script` tools reach a loaded skill's bundled `references/`, `assets/`, and `scripts/` files, with `${SKILL_DIR}` placeholders substituted for real paths, and scripts run through a pluggable executor with container and virtual-filesystem sandboxes. Remote skill libraries come from `GitSkillsRegistry` and `S3SkillsRegistry`, and skills defined in Python can sit in the same catalog as `SKILL.md` skills.
 
 ## Data & Analytics {#data-analytics}
 

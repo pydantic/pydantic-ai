@@ -1,0 +1,681 @@
+version: 1
+interactions:
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01KuU3cwSs1XKQCnu3akbicy/results
+    headers:
+      accept:
+      - application/binary
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-disposition:
+      - attachment; filename*=utf-8''msgbatch_01KuU3cwSs1XKQCnu3akbicy_results.jsonl
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/x-jsonl
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |
+        {"custom_id":"batch-ok","result":{"type":"succeeded","message":{"model":"claude-haiku-4-5-20251001","id":"msg_011CgGL7En171B1hBsvLnzHd","type":"message","role":"assistant","content":[{"type":"text","text":"OK."}],"container":null,"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"usage":{"input_tokens":11,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"batch","inference_geo":"not_available","speed":"standard"},"diagnostics":null}}}
+        {"custom_id":"batch-unknown-model","result":{"type":"errored","error":{"type":"error","error":{"details":null,"type":"not_found_error","message":"model: not-a-real-anthropic-model"},"request_id":null}}}
+        {"custom_id":"batch-too-many-tokens","result":{"type":"errored","error":{"type":"error","error":{"details":null,"type":"invalid_request_error","message":"max_tokens: 10000000 > 64000, which is the maximum allowed number of output tokens for claude-haiku-4-5-20251001"},"request_id":null}}}
+  recorded_at: 2026-10-22T00:31:03.567637+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01KuU3cwSs1XKQCnu3akbicy?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01KuU3cwSs1XKQCnu3akbicy
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 3
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:30.400736+00:00
+        expires_at: 2026-10-23T00:28:30.400736+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:28:45.733134+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01KuU3cwSs1XKQCnu3akbicy?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01KuU3cwSs1XKQCnu3akbicy
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 3
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:30.400736+00:00
+        expires_at: 2026-10-23T00:28:30.400736+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:29:00.985585+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01KuU3cwSs1XKQCnu3akbicy?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01KuU3cwSs1XKQCnu3akbicy
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 3
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:30.400736+00:00
+        expires_at: 2026-10-23T00:28:30.400736+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:29:16.259445+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01KuU3cwSs1XKQCnu3akbicy?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01KuU3cwSs1XKQCnu3akbicy
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 3
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:30.400736+00:00
+        expires_at: 2026-10-23T00:28:30.400736+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:29:31.534265+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01KuU3cwSs1XKQCnu3akbicy?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01KuU3cwSs1XKQCnu3akbicy
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 3
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:30.400736+00:00
+        expires_at: 2026-10-23T00:28:30.400736+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:29:46.790544+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01KuU3cwSs1XKQCnu3akbicy?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01KuU3cwSs1XKQCnu3akbicy
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 3
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:30.400736+00:00
+        expires_at: 2026-10-23T00:28:30.400736+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:30:02.059439+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01KuU3cwSs1XKQCnu3akbicy?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01KuU3cwSs1XKQCnu3akbicy
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 3
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:30.400736+00:00
+        expires_at: 2026-10-23T00:28:30.400736+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:30:17.339423+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01KuU3cwSs1XKQCnu3akbicy?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01KuU3cwSs1XKQCnu3akbicy
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 3
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:30.400736+00:00
+        expires_at: 2026-10-23T00:28:30.400736+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:30:32.601704+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01KuU3cwSs1XKQCnu3akbicy?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      retry-after:
+      - "10"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01KuU3cwSs1XKQCnu3akbicy
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 3
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:30.400736+00:00
+        expires_at: 2026-10-23T00:28:30.400736+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:30:47.873750+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01KuU3cwSs1XKQCnu3akbicy?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01KuU3cwSs1XKQCnu3akbicy
+        type: message_batch
+        processing_status: ended
+        request_counts:
+          processing: 0
+          succeeded: 1
+          errored: 2
+          canceled: 0
+          expired: 0
+        ended_at: 2026-10-22T00:30:56.021072+00:00
+        created_at: 2026-10-22T00:28:30.400736+00:00
+        expires_at: 2026-10-23T00:28:30.400736+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: >-
+          https://api.anthropic.com/v1/messages/batches/msgbatch_01KuU3cwSs1XKQCnu3akbicy/results
+  recorded_at: 2026-10-22T00:31:03.146660+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/messages/batches/msgbatch_01KuU3cwSs1XKQCnu3akbicy?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01KuU3cwSs1XKQCnu3akbicy
+        type: message_batch
+        processing_status: ended
+        request_counts:
+          processing: 0
+          succeeded: 1
+          errored: 2
+          canceled: 0
+          expired: 0
+        ended_at: 2026-10-22T00:30:56.021072+00:00
+        created_at: 2026-10-22T00:28:30.400736+00:00
+        expires_at: 2026-10-23T00:28:30.400736+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: >-
+          https://api.anthropic.com/v1/messages/batches/msgbatch_01KuU3cwSs1XKQCnu3akbicy/results
+  recorded_at: 2026-10-22T00:31:03.322804+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages/batches?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "532"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        requests:
+        - custom_id: batch-ok
+          params:
+            max_tokens: 8
+            messages:
+            - role: user
+              content:
+              - text: Reply with OK.
+                type: text
+            model: claude-haiku-4-5
+        - custom_id: batch-too-many-tokens
+          params:
+            max_tokens: 10000000
+            messages:
+            - role: user
+              content:
+              - text: Reply with OK.
+                type: text
+            model: claude-haiku-4-5
+        - custom_id: batch-unknown-model
+          params:
+            max_tokens: 8
+            messages:
+            - role: user
+              content:
+              - text: Reply with OK.
+                type: text
+            model: not-a-real-anthropic-model
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: msgbatch_01KuU3cwSs1XKQCnu3akbicy
+        type: message_batch
+        processing_status: in_progress
+        request_counts:
+          processing: 3
+          succeeded: 0
+          errored: 0
+          canceled: 0
+          expired: 0
+        ended_at: null
+        created_at: 2026-10-22T00:28:30.400736+00:00
+        expires_at: 2026-10-23T00:28:30.400736+00:00
+        archived_at: null
+        cancel_initiated_at: null
+        results_url: null
+  recorded_at: 2026-10-22T00:28:30.461849+00:00

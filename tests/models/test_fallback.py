@@ -56,6 +56,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     TextPartDelta,
     ToolAvailabilityDeltaPart,
+    sanitize_messages,
 )
 from pydantic_ai.models import (
     CompletedStreamedResponse,
@@ -389,6 +390,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },
@@ -649,6 +651,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },
@@ -843,6 +846,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },
@@ -1808,6 +1812,7 @@ Don't include any text or Markdown fencing before or after.
                                 'part_kind': 'instruction',
                             },
                         ],
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },
@@ -3073,6 +3078,40 @@ def test_fallback_primary_continuation_then_succeeds() -> None:
             ),
         ]
     )
+
+
+def test_fallback_continuation_pin_in_untrusted_history_is_ignored() -> None:
+    """`sanitize_messages` drops the continuation pin from client-held history, so the normal chain continues it.
+
+    Trusted server-side history keeps the pin, so the same history continues on the model it names.
+    """
+    called: list[str] = []
+
+    def answering_as(name: str) -> FunctionModel:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            called.append(name)
+            return ModelResponse(parts=[TextPart(f' from {name}')])
+
+        return FunctionModel(respond, model_name=name)
+
+    agent = Agent(FallbackModel(answering_as('primary'), answering_as('fallback')))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('test')]),
+        ModelResponse(
+            parts=[TextPart('paused')],
+            state='suspended',
+            metadata={'__pydantic_ai__': {'fallback_model_id': 'function:fallback'}},
+        ),
+    ]
+
+    agent.run_sync(message_history=history)
+    assert called == ['fallback']
+
+    called.clear()
+    with pytest.warns(UserWarning, match='`__pydantic_ai__` metadata was dropped from 1 client-submitted message'):
+        sanitized = sanitize_messages(history)
+    agent.run_sync(message_history=sanitized)
+    assert called == ['primary']
 
 
 def test_fallback_primary_continuation_multiple_pauses() -> None:

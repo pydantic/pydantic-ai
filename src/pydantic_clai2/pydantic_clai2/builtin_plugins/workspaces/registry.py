@@ -1,8 +1,7 @@
-"""The live workspaces, one folder each under CLAI's state directory, readable by you alone.
+"""The workspaces, one folder each under CLAI's state directory, readable by you alone.
 
-`$XDG_STATE_HOME/pydantic-clai2/workspaces/registry/ID/` holds `workspace.json` (the record), and while
-its CLAI runs, `token` (that CLAI's access token) and `session.log` (its output). Every CLAI process
-reads the same folders, so a workspace made in one session is listed, opened, and destroyed from another.
+`$XDG_STATE_HOME/pydantic-clai2/workspaces/registry/ID/workspace.json` holds the record. Every CLAI process
+reads the same folders, so a workspace made in one session is listed and destroyed from another.
 """
 
 import os
@@ -18,9 +17,6 @@ from pydantic import TypeAdapter, ValidationError
 
 from pydantic_clai2.builtin_plugins.workspaces.kinds import Teardown
 from pydantic_clai2.config.settings_store import state_dir
-
-WorkspaceStatus = Literal['ready', 'running', 'stopped']
-"""`ready` until its CLAI first starts, `running` while it runs, `stopped` once it ended."""
 
 _ID = re.compile(r'[a-z0-9][a-z0-9-]{0,47}')
 
@@ -38,24 +34,13 @@ def check_id(workspace_id: str) -> str:
 
 
 @dataclass(frozen=True, kw_only=True)
-class SessionProcess:
-    """A workspace's CLAI: a `clai2 --web` serving on loopback, with its own token kept in `token_file`."""
-
-    pid: int
-    port: int
-    token_file: Path
-    log: Path
-    started: datetime
-
-    @property
-    def url(self) -> str:
-        """The page's address, without the token."""
-        return f'http://127.0.0.1:{self.port}/'
-
-
-@dataclass(frozen=True, kw_only=True)
 class Workspace:
-    """One workspace: where its checkout is, what it was made from, and its CLAI while one runs."""
+    """One workspace: where its checkout is, what it was made from, and the session the orchestrator runs there.
+
+    A record an older CLAI wrote, with a `status` and the process of a CLAI of its own, reads the same: keys this
+    one does not know are ignored. The reverse does not hold: an older CLAI requires that `status`, so it neither
+    lists nor destroys a workspace this one created or saved again.
+    """
 
     id: str
     kind: str
@@ -68,12 +53,10 @@ class Workspace:
     path: Path
     root: Path
     """The folder its checkout was made in; destroying it removes nothing outside."""
-    status: WorkspaceStatus
     created: datetime
     teardown: Teardown
-    model: str = ''
-    """The model its CLAI starts with; empty for your saved default."""
-    session: SessionProcess | None = None
+    conversation: str | None = None
+    """The saved session the orchestrator started in the checkout, which it opens again; `None` before one."""
 
 
 _RECORD = TypeAdapter(Workspace)
@@ -86,7 +69,7 @@ class Registry:
         self.directory = directory
 
     def folder(self, workspace_id: str) -> Path:
-        """The folder of a workspace's record, token, and log."""
+        """The folder of a workspace's record."""
         return self.directory / check_id(workspace_id)
 
     def save(self, workspace: Workspace) -> None:
@@ -115,7 +98,7 @@ class Registry:
         return sorted(found, key=lambda workspace: workspace.created)
 
     def forget(self, workspace_id: str) -> None:
-        """Delete a workspace's record, token, and log."""
+        """Delete a workspace's folder, and what an older CLAI kept there."""
         shutil.rmtree(self.folder(workspace_id), ignore_errors=True)
 
 

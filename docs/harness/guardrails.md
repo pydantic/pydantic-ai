@@ -526,6 +526,12 @@ Tool spans add a `guardrail.tool` attribute naming the tool. `approve` records `
 
 `OutputGuardrail` declares `position='outermost', wrapped_by=[Instrumentation]`, so an enclosing `Instrumentation` span captures its block and redact spans whatever order the capabilities are listed in. `InputGuardrail` declares `position='innermost'`, so any capability that rewrites the user prompt (a prompt rewriter, a history processor) runs first and the guard sees the rewritten text. A `UserPromptPart` another capability adds to the request only, such as a `SystemReminders` reminder or a `Planning` plan, is not the user's prompt: the guard neither screens nor rewrites it. When an outer capability sends the model a copy of the prompt part, a redaction also reaches the original in the run's message history, which later steps replay. Every copy with the same text gets the same replacement. For a copy with changed text the guard is called again on the original's own text, so a guard with side effects or a per-call cost runs twice for that request; only a redaction from that call is written to the history, `allow` leaves the original as it was, and `block` blocks the run before anything is rewritten. A request rebuilt with a new prompt part is not tied to the history, so only the part sent to the model is rewritten. `ToolGuardrail` is also `position='innermost'`, which puts it last among argument hooks (it sees the arguments every other capability has finished modifying) and first among result hooks (it sees the raw tool result, before a capability such as [`ToolOutputLimits`](tool-output-limits.md) truncates or offloads it).
 
+## Relationship to `pydantic-ai-shields`
+
+[`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields), a community package by [Vstorm](https://vstorm.co/), ships each detector as its own capability. The equivalents here are functions instead, which is what lets several run as one chain, share a redaction, and sit beside a guard you wrote.
+
+Two things it has that this deliberately does not. Its `PromptInjection` matches phrases like "ignore previous instructions": injection is ordinary language, so a pattern list catches the examples and misses the attack while flagging a pasted log, and a check that reads as protection without being it is worse than none. Its `NoRefusals` blocks the model from declining, which is a decision about what an agent may say rather than a guardrail on data, and not one to make a default.
+
 ## API
 
 ```python {test="skip"}

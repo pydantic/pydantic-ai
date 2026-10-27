@@ -585,3 +585,41 @@ def test_sanitize_messages_keeps_text_content_without_metadata_silently():
         sanitized = sanitize_messages(messages)
 
     assert message(sanitized, ModelRequest).parts == [UserPromptPart([TextContent('plain')], timestamp=IsDatetime())]
+
+
+def test_sanitize_messages_drops_reserved_metadata():
+    """The framework-reserved `__pydantic_ai__` metadata key is dropped from client messages, keeping application keys.
+
+    Pydantic AI and its capabilities keep state there that they act on in later runs, so a client must not be able
+    to set it. A message left with no metadata gets `None`.
+    """
+    request = ModelRequest(
+        parts=[UserPromptPart('hi')],
+        metadata={'__pydantic_ai__': {'file_understanding': {'file_understanding': {}}}, 'tenant': 'acme'},
+    )
+    response = ModelResponse(
+        parts=[TextPart('hello')], metadata={'__pydantic_ai__': {'fallback_model_id': 'function:fallback'}}
+    )
+    app_only = ModelRequest(parts=[UserPromptPart('again')], metadata={'tenant': 'acme'})
+
+    with pytest.warns(
+        UserWarning, match=r'Framework-reserved `__pydantic_ai__` metadata was dropped from 2 client-submitted message'
+    ):
+        sanitized = sanitize_messages([request, response, app_only])
+
+    assert [m.metadata for m in sanitized] == snapshot([{'tenant': 'acme'}, None, {'tenant': 'acme'}])
+    # The caller's own messages are not mutated.
+    assert request.metadata == snapshot(
+        {'__pydantic_ai__': {'file_understanding': {'file_understanding': {}}}, 'tenant': 'acme'}
+    )
+    assert response.metadata == snapshot({'__pydantic_ai__': {'fallback_model_id': 'function:fallback'}})
+
+
+def test_sanitize_messages_keeps_application_metadata_silently():
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hi')], metadata={'tenant': 'acme'})]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = sanitize_messages(messages)
+
+    assert message(sanitized, ModelRequest).metadata == {'tenant': 'acme'}

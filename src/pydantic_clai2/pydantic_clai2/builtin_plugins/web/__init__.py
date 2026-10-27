@@ -23,16 +23,18 @@ from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer, rende
 from pydantic_clai2.builtin_plugins.web.app import ASGIApp, create_app
 from pydantic_clai2.builtin_plugins.web.server import LOOPBACK, WebServer
 from pydantic_clai2.builtin_plugins.web.service import Observer, WebService
+from pydantic_clai2.builtin_plugins.web.workspaces import conversation_switched
 from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    ForkEnd,
+    InstallProgress,
     Plugin,
     PluginHost,
     SessionEnd,
-    TaskEvent,
+    TaskProgress,
     TurnEnd,
-    UpdateProgress,
 )
 from pydantic_clai2.ui.browser import open_browser
 
@@ -192,13 +194,20 @@ class WebPlugin(Plugin[WebSettings]):
         self.service.turn_ended()
 
     async def on_conversation_changed(self, event: ConversationChanged) -> None:
-        self.service.conversation_changed(event)
+        try:
+            # Before the page and the orchestrator follow the switch, so they find the workspace naming it.
+            await conversation_switched(self.service, event)
+        finally:
+            self.service.conversation_changed(event)
 
     async def on_command_end(self, event: CommandEnd) -> None:
         self.service.command_ended(event)
 
-    async def on_task_event(self, event: TaskEvent) -> None:
-        self.service.task_event(event)
+    async def on_task_progress(self, event: TaskProgress) -> None:
+        self.service.task_progress(event)
 
-    async def on_update_progress(self, event: UpdateProgress) -> None:
-        self.service.update_progress(event)
+    async def on_fork_end(self, event: ForkEnd) -> None:
+        self.service.fork_ended(event)
+
+    async def on_install_progress(self, event: InstallProgress) -> None:
+        self.service.install_progress(event)

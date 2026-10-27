@@ -1,5 +1,6 @@
 import { createContext } from 'react'
 import type { Snapshot } from './state'
+import { PROTOCOL } from './protocol'
 import type {
   AnswerBody,
   CompletionInfo,
@@ -19,7 +20,6 @@ import type {
   TaskTranscript,
   Transcript,
   WatchMessage,
-  WorkspacesInfo,
 } from './protocol'
 
 // The page's token: the server puts it in a meta tag; `npm run dev` serves its own page, so the address has it.
@@ -158,6 +158,8 @@ export const api = {
   state: () => call<Snapshot>('GET', '/api/state'),
   sessions: (query: string, archived = false) =>
     call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}${archived ? '&include_archived=true' : ''}`),
+  /** The sidebar's projects, with every worktree Git lists for each, for New session to offer. */
+  checkouts: () => call<Project[]>('GET', '/api/sessions?include_worktrees=true'),
   transcript: (id: string) => call<Transcript>('GET', `/api/sessions/${id}`),
   /** Start a live session, in `workspace` when given; it answers the new session's conversation ID. */
   newSession: (workspace?: string) =>
@@ -182,8 +184,8 @@ export const api = {
   /** Run a finished task again with `text` as your message, on its own; it answers once the task runs. */
   promptTask: (id: string, text: string) => call<void>('POST', `/api/tasks/${id}/prompt`, { text }),
   panels: () => call<PanelInfo[]>('GET', '/api/panels'),
-  workspaces: () => call<WorkspacesInfo>('GET', '/api/workspaces'),
-  openWorkspace: (id: string) => call<{ url: string }>('POST', `/api/workspaces/${encodeURIComponent(id)}/open`),
+  /** Make a workspace's session live, starting one in its checkout if it has none; it answers its conversation ID. */
+  openWorkspace: (id: string) => call<Opened>('POST', `/api/workspaces/${encodeURIComponent(id)}/open`),
 }
 
 /** The orchestrator chat: its own agent and conversation, beside the session. */
@@ -193,22 +195,6 @@ export const orchestrator = {
   interrupt: () => call<{ interrupted: boolean }>('POST', '/api/orchestrator/interrupt'),
   answer: (id: string, answers: AnswerBody[] | null) => call<void>('POST', '/api/orchestrator/answer', { id, answers }),
   clear: () => call<void>('POST', '/api/orchestrator/clear'),
-}
-
-/** Start a workspace's CLAI if needed and open its own page in a new tab. */
-export async function openWorkspacePage(id: string): Promise<void> {
-  // Opened now, while the click still counts as one, and pointed at the page once its CLAI answers.
-  const tab = window.open('', '_blank')
-  try {
-    const { url } = await api.openWorkspace(id)
-    if (tab) {
-      tab.opener = null
-      tab.location.href = url
-    } else window.location.assign(url)
-  } catch (error) {
-    tab?.close()
-    throw error
-  }
 }
 
 /** Interrupt the running turn, reporting a failure, such as a server that has gone, through `onError`. */
@@ -222,31 +208,39 @@ export async function interrupt(onError: (message: string) => void, stop: () => 
 
 export type Connection = 'connecting' | 'open' | 'closed' | 'expired'
 
-/** The open WebSocket: `watch` names the live session the page shows, so only its messages come. */
+/** The open WebSocket: `watch` names the live sessions the page keeps, so only their messages come. */
 export interface Socket {
-  watch: (id: string) => void
+  watch: (ids: readonly string[]) => void
   close: () => void
+}
+
+/** What a new connection watches again: the sessions the page keeps, and the one of them it shows. */
+export interface Watching {
+  shown: string | null
+  sessions: readonly string[]
 }
 
 /** Keep one WebSocket open, reconnecting with backoff; each connection starts with a snapshot.
 
-Each new connection watches `watching()` again, after calling `onWatch` with it, before any of its messages arrive.
+Each new connection watches `watching()`'s sessions again, after calling `onWatch` with the shown one, before any of
+its messages arrive.
 A CLAI restarted since this page loaded has a new token: after a few failed attempts this checks, and
 reports `expired` instead of retrying forever.
  */
 export function connect(
   onMessage: (message: ServerMessage) => void,
   onState: (state: Connection) => void,
-  watching: () => string | null,
+  watching: () => Watching,
   onWatch: (id: string) => void,
 ): Socket {
   let socket: WebSocket | null = null
-  // The session this connection watches, so asking again for the same one sends nothing.
+  // The sessions this connection watches, so asking again for the same ones sends nothing.
   let watched: string | null = null
-  const send = (id: string) => {
-    if (socket?.readyState !== WebSocket.OPEN || id === watched) return
-    watched = id
-    const message: WatchMessage = { type: 'watch', sessions: [id] }
+  const send = (ids: readonly string[]) => {
+    const key = [...ids].sort().join(' ')
+    if (socket?.readyState !== WebSocket.OPEN || ids.length === 0 || key === watched) return
+    watched = key
+    const message: WatchMessage = { type: 'watch', sessions: [...ids] }
     socket.send(JSON.stringify(message))
   }
   let stopped = false
@@ -270,16 +264,14 @@ export function connect(
   const open = () => {
     onState('connecting')
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
-    socket = new WebSocket(`${scheme}://${location.host}/ws?token=${encodeURIComponent(token)}`)
+    socket = new WebSocket(`${scheme}://${location.host}/ws?token=${encodeURIComponent(token)}&protocol=${PROTOCOL}`)
     socket.onopen = () => {
       delay = 500
       failures = 0
       watched = null
-      const id = watching()
-      if (id !== null) {
-        onWatch(id)
-        send(id)
-      }
+      const { shown, sessions } = watching()
+      if (shown !== null) onWatch(shown)
+      send(sessions)
       onState('open')
     }
     socket.onmessage = (event: MessageEvent<string>) => onMessage(JSON.parse(event.data) as ServerMessage)

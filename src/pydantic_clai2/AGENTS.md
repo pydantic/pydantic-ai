@@ -32,7 +32,7 @@ capability, or `@on_event` on your own capability); `get_commands` for
 `/commands`; `render` for custom output; `get_status_segments`, `get_spinners`,
 `get_model_providers`, and `get_side_panels` (pages the web UI shows beside the
 chat); `configure` for a settings menu; `on_session_start`,
-`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`, and `on_update_progress` for CLAI's own moments;
+`on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`, `on_fork_end`, and `on_install_progress` for CLAI's own moments;
 `prepare` for async reads the `get_*` methods depend on. The
 settings model is the class's type parameter (`Plugin[Settings]`), validated into
 `self.settings`. `self.host` is a `PluginHost`, the plugin's runtime context
@@ -78,8 +78,8 @@ they agree in the same PR.
   returned the thing from a `get_*` method or it did not; `has_configure` and
   `has_render` compare against the base-class default.
 - **Only shell-owned moments.** `on_session_start`, `on_session_end`,
-  `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`,
-  `on_update_progress`.
+  `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`,
+  `on_fork_end`, `on_install_progress`.
   Startup load failures happen before an agent run, so core's `before_run` cannot
   observe them. The loader reports them after trying every enabled plugin so
   observability can receive failures that preceded its own load. Which conversation
@@ -90,9 +90,11 @@ they agree in the same PR.
   Esc cancels: a refused `/plugins` fires its refusal instead, and a cancelled command
   fires nothing. A delegated task's own events never enter the parent run's stream, and a
   background task outlives that run, so no hook of the parent sees them; `Tasks.observe`,
-  the harness owner's one observer, fires `TaskEvent`. `/update` is a command, so no core
+  the harness owner's one observer, fires `TaskProgress`. A `/fork` runs a separate session in the
+  background, so its run's hooks belong to that session and nothing of the parent sees it end;
+  `Forks._run` fires `ForkEnd`. `/update` is a command, so no core
   hook sees its install either, and `CommandEnd` comes only once uv has finished; `Updates.command`
-  fires `UpdateProgress` as it goes. Additional moments need the same
+  fires `InstallProgress` as it goes. Additional moments need the same
   justification: say which core hook you checked and why it does not fit.
 
 ## Loading and unloading
@@ -190,8 +192,12 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
 - **Shipped plugins register first, in declared order.** The menu's alphabetical
   order is for scanning only. Registration order is the order instructions,
   renderers, and status segments are consulted in, so `coder`'s guidance leads
-  the prompt. `customization_guide()` orders itself after the guidance plugins
-  contribute and before harness `RepoContext`, so the CLAI hint never leads.
+  the prompt.
+- **Integrations are deferred.** Only the coding loop and run plumbing are eager.
+  The customization guide (`clai_customization`) and every hosted integration
+  plugin pass `defer_loading=True` on the capability they build (on the one a
+  `for_run` function returns, never on the `DynamicCapability`), so each costs one
+  catalog line until the model calls `load_capability`. A new integration does the same.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
   `config/builtins.py` lists the library's built-ins (re-exported by `_app.py`,
   kept apart so `clai2 plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
@@ -245,9 +251,18 @@ when harness `estimate_message_tokens` (provider-reported usage) says it shrank,
 and passes `runtime/agent_instrumentation.tracer()` so it is traced. Only `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` select truncation after a
 summary failure; other exceptions propagate. Its `configure` is a `FieldMenu`
-over `CompactionSettings`; the loader's reload builds the new chain. The status
+over `CompactionSettings`; the loader's reload builds the new chain. Background
+compaction is harness `FallbackCompaction(background_start=...)`, not CLAI code: the plugin
+only passes the setting, closes the chain in `on_session_end`, discards the summaries of
+conversations other than the shown one and its running tasks at each turn end and conversation
+change (not per task event, which would build one for every streamed event), and has `/compact` try the
+chain's `take_background_compaction` (without a focus) or `discard_background_compaction`
+(with one) before the capped chain. The status
 row's window does not depend on it: `Session.on_context_window` reports each
 streamed request model's window, and the shell fills it in when no gauge has.
+Until a turn on the selected model runs in the conversation, `show_model` sets
+`Status.model_window` from its profile (`infer_model_profile`), which the row and
+web UI show while `context_window` is `None`; after one, an unresolved window stays `?`.
 
 ## Adding or changing a CLAI moment or contribution
 
@@ -467,9 +482,12 @@ Wheel and drag reports arrive in bursts, so they paint once after the input
 callback (`PromptSurface._paint_soon`), never once per report.
 An idle session must cost next to no CPU, since users keep dozens open. The
 editor's timed repaint (`LivePrompt.tick`) runs ten times a second only while a
-turn runs or the panel animates, and once a second (`IDLE_REPAINT`) otherwise;
+turn runs or the panel animates, and once a second (`IDLE_REPAINT`) otherwise,
+sleeping in between; a read wakes it, since the work it starts animates.
 `PromptSurface.paint` skips a frame identical to the last one. Input, output,
-and resizes paint at once. Do not add a timer that repaints unconditionally.
+and resizes paint at once; output inside a frame interval paints when it ends
+(`PromptSurface.changed`), without waiting for a tick. Do not add a timer that
+repaints unconditionally, or one that wakes an idle editor more than once a second.
 Mouse reporting stops most terminals from selecting text, so a left-button drag
 selects painted cells in `PromptSurface` and its release copies them through
 `text_clipboard.copy_text`. Do not drop the drag modes (`?1002h`) or copy-out breaks.

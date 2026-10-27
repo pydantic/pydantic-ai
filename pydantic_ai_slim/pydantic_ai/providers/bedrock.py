@@ -236,7 +236,7 @@ class BedrockModelProfile(ModelProfile, total=False):
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
     - `'openai_responses'`: Uses `{'reasoning': {'effort': 'none'|'low'|'medium'|'high'|'xhigh'}}`, the Responses API
       shape that the OpenAI GPT-5.6 and GPT-6 models take on Converse.
-    - `'qwen'`: Uses `{'reasoning_config': 'low'|'high'}`
+    - `'qwen'`: Uses `{'reasoning_config': 'none'|'low'|'high'}`
     - `'xai'`: Uses `{'reasoning': {'effort': 'low'|'medium'|'high'|'xhigh'}}`
     - `None`: No unified thinking support.
 
@@ -452,15 +452,15 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Qwen model used via Bedrock."""
     models_that_support_structured_output = ('qwen3',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    # Bedrock-Converse exposes only `reasoning_config ∈ {low, high}` for Qwen3 — no disable value.
-    supports_reasoning = 'qwq' in model_name or 'qwen3' in model_name
+    # Converse takes `reasoning_config` as `none`, `low`, `medium`, or `high`, and Qwen3 reasons only when asked to, so
+    # thinking can be turned off. Qwen3-Coder returns no reasoning at any level.
+    supports_reasoning = ('qwq' in model_name or 'qwen3' in model_name) and 'qwen3-coder' not in model_name
     return merge_profile(
         _strip_builtin_tools(qwen_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_supports_leading_assistant_message=True,
             bedrock_thinking_variant='qwen',
             supports_thinking=supports_reasoning,
-            thinking_always_enabled=supports_reasoning,
             json_schema_transformer=(
                 _BedrockJsonSchemaTransformerWithoutContains
                 if supports_structured_output
@@ -635,7 +635,7 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     # Keep other proprietary GPT models gated until their Converse support is confirmed.
     if not model_name.startswith('gpt-oss'):
         return BedrockModelProfile(bedrock_supported_on_converse=False)
-    # Converse rejects `reasoning_effort='none'` — mark always-on.
+    # Converse rejects `reasoning_effort='none'`, so gpt-oss can't turn reasoning off.
     return BedrockModelProfile(
         bedrock_thinking_variant='openai',
         supports_thinking=True,

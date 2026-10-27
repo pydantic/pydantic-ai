@@ -42,6 +42,15 @@ ignore_deprecation = pytest.mark.filterwarnings('ignore::pydantic_ai._warnings.P
 class TestHTTPX2TenacityTransport:
     """`httpx2` retry transports use the same Tenacity configuration as their `httpx` predecessors."""
 
+    def test_default_wrapped_transports_use_pydantic_ai_pool_limits(self, transport_limits: list[httpx2.Limits]):
+        """Without `wrapped`, each transport sends through one with the pool limits of Pydantic AI's own clients."""
+        sync_transport = HTTPX2TenacityTransport(config=RetryConfig())
+        async_transport = AsyncHTTPX2TenacityTransport(config=RetryConfig())
+
+        assert isinstance(sync_transport.wrapped, httpx2.HTTPTransport)
+        assert isinstance(async_transport.wrapped, httpx2.AsyncHTTPTransport)
+        assert transport_limits == [httpx2.Limits(max_connections=1000, max_keepalive_connections=100)] * 2
+
     def test_sync_transport_passes_response_without_validator_and_closes_wrapped_transport(self):
         request = httpx2.Request('GET', 'https://example.com')
         response = httpx2.Response(200, request=request)

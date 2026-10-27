@@ -40,6 +40,7 @@ from pydantic_ai import (
     PartEndEvent,
     RetryFeedbackPart,
     RetryInfo,
+    RunContext,
     TextContent,
     TextPart,
     TextPartDelta,
@@ -54,7 +55,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
-from pydantic_ai.capabilities import NativeTool, Thinking, ToolSearch
+from pydantic_ai.capabilities import AbstractCapability, NativeTool, Thinking, ToolSearch
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import (
@@ -5865,6 +5866,83 @@ async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> 
     assert get_mock_responses_kwargs(mock_client)[0]['tool_choice'] == 'auto'
 
 
+@pytest.mark.parametrize('provider_name', ['openai', 'ollama'])
+async def test_chat_tool_choice_subset_per_step_tools_stability(allow_model_requests: None, provider_name: str) -> None:
+    """A per-step `tool_choice` subset keeps `tools` byte-identical across steps on OpenAI's own API.
+
+    OpenAI Chat Completions restricts the subset with `allowed_tools`, so the tools section of the prompt cache
+    survives. OpenAI-compatible APIs aren't known to honor it (OpenRouter and xAI ignore it), so they still get a
+    filtered `tools` array.
+    """
+
+    class RestrictFirstStep(AbstractCapability[Any]):
+        def get_model_settings(self):
+            def settings(ctx: RunContext[Any]) -> ModelSettings:
+                return ModelSettings(tool_choice=['tool_a', 'tool_b']) if ctx.run_step == 1 else ModelSettings()
+
+            return settings
+
+    mock_client = MockOpenAI.create_mock(
+        [
+            completion_message(
+                ChatCompletionMessage(
+                    content=None,
+                    role='assistant',
+                    tool_calls=[
+                        ChatCompletionMessageFunctionToolCall(
+                            id='1', function=Function(arguments='{}', name='tool_a'), type='function'
+                        )
+                    ],
+                )
+            ),
+            completion_message(ChatCompletionMessage(content='done', role='assistant')),
+        ]
+    )
+    provider = (
+        OpenAIProvider(openai_client=mock_client)
+        if provider_name == 'openai'
+        else OllamaProvider(openai_client=mock_client)
+    )
+    agent = Agent(OpenAIChatModel('gpt-5-mini', provider=provider), capabilities=[RestrictFirstStep()])
+
+    @agent.tool_plain
+    def tool_a() -> str:
+        return 'a'
+
+    @agent.tool_plain
+    def tool_b() -> str:  # pragma: no cover
+        return 'b'
+
+    @agent.tool_plain
+    def tool_c() -> str:  # pragma: no cover
+        return 'c'
+
+    result = await agent.run('Hello')
+    assert result.output == 'done'
+
+    first, second = get_mock_chat_completion_kwargs(mock_client)
+    tool_names = [[t['function']['name'] for t in kwargs['tools']] for kwargs in (first, second)]
+    if provider_name == 'openai':
+        assert first['tools'] == second['tools']
+        assert tool_names[0] == snapshot(['tool_a', 'tool_b', 'tool_c'])
+        assert first['tool_choice'] == snapshot(
+            {
+                'type': 'allowed_tools',
+                'allowed_tools': {
+                    'mode': 'required',
+                    'tools': [
+                        {'type': 'function', 'function': {'name': 'tool_a'}},
+                        {'type': 'function', 'function': {'name': 'tool_b'}},
+                    ],
+                },
+            }
+        )
+    else:
+        assert tool_names == snapshot([['tool_a', 'tool_b'], ['tool_a', 'tool_b', 'tool_c']])
+        assert first['tool_choice'] == snapshot('required')
+    assert second['tool_choice'] == 'auto'
+
+
 async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
@@ -5912,6 +5990,25 @@ async def test_openai_text_verbosity_chat_completions(
         {key: value for key, value in body.items() if key == 'verbosity'}
         for body in request_capture.bodies('/chat/completions')
     ] == [{'verbosity': 'low'}, {}]
+
+
+async def test_openai_chat_thinking_false_on_always_reasoning_model(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """o4-mini can't stop reasoning and accepts `low` through `high`, so `thinking=False` sends `low` and keeps
+    dropping sampling parameters, since reasoning stays on."""
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIChatModel('o4-mini', provider=provider))
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        result = await agent.run(
+            'What is the capital of France? Answer in one word.',
+            model_settings=ModelSettings(thinking=False, temperature=0.5),
+        )
+    assert result.output == snapshot('Paris')
+    body = request_capture.body('/chat/completions')
+    assert body['reasoning_effort'] == 'low'
+    assert 'temperature' not in body
 
 
 async def test_openai_gpt_5_2_temperature_allowed_by_default(allow_model_requests: None):

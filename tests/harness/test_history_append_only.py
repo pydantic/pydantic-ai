@@ -35,6 +35,7 @@ from pydantic_ai_harness import (
     ClearToolResults,
     CodeMode,
     Coder,
+    CompactOnRequest,
     DayAI,
     DeduplicateFileReads,
     FallbackCompaction,
@@ -192,6 +193,7 @@ FIXTURES: dict[str, Fixture] = {
     'ClampOversizedMessages': lambda _: ClampOversizedMessages(max_part_chars=100_000),
     'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
     'Coder': _workspace(Coder),
+    'CompactOnRequest': lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
     'ConversationSearch': lambda _: ConversationSearch(
         SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
     ),
@@ -226,6 +228,16 @@ FIXTURES: dict[str, Fixture] = {
 """Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
 
 VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
+    # Starts a background summary on almost every request but never reaches its trigger: a held summary
+    # must not move the history before compaction is due.
+    'FallbackCompaction(background_start=...)': (
+        lambda _: FallbackCompaction(
+            fallback_chain=[SummarizingCompaction(TestModel(), max_messages=1, keep_messages=1)],
+            max_tokens=100_000,
+            background_start=0.0001,
+        ),
+        Scenario(),
+    ),
     'CodeMode(dynamic_catalog=True)': (
         lambda _: [
             CodeMode(dynamic_catalog=True),
@@ -246,6 +258,7 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
 
 SCENARIOS: dict[str, Scenario] = {
     'CodeMode': Scenario(look_up=_run_look_up),
+    'CompactOnRequest': Scenario(state_calls=(('compact_context', {'focus': 'the forecast'}),)),
     'DeduplicateFileReads': Scenario(
         state_calls=(('read_file', {'path': 'notes.md'}), ('read_file', {'path': 'notes.md'}))
     ),
@@ -287,43 +300,7 @@ _ISSUES = 'https://github.com/pydantic/pydantic-ai/issues/'
 _PULLS = 'https://github.com/pydantic/pydantic-ai/pull/'
 
 
-_MEMORY_OPENAI_MOVES: dict[Provider, dict[str, int]] = {
-    'openai-chat': {'user-prompt': 2, 'model-response': 3, 'tool-return': 4},
-    'openai-responses': {'user-prompt': 2, 'model-response': 4, 'tool-return': 4},
-}
-"""How many messages of each kind `Memory`'s snapshot rewrites or pushes back on the OpenAI APIs."""
-
-KNOWN: dict[str, tuple[Known, ...]] = {
-    'CodeMode(dynamic_catalog=True)': (
-        Known('ids', f'{_ISSUES}8965', 'instructions', 'instruction:anonymous@1'),
-        # Discovering a deferred tool rewrites the catalog block in the system prompt and folds the tool into
-        # `run_code` by dropping its declaration. On Responses the native client-executed `tool_search` is also
-        # swapped for the local `search_tools` function, which moves `run_code` up.
-        Known('prefix', f'{_ISSUES}8965', 'system', 'instruction:anonymous@1'),
-        Known('prefix', f'{_ISSUES}8965', 'deferred-tools', 'tool:forecast', providers=('anthropic',)),
-        *(
-            Known('prefix', f'{_ISSUES}8965', 'tools', f'tool:{name}', providers=('openai-responses',))
-            for name in ('forecast', 'tool_search', 'run_code')
-        ),
-    ),
-    # Anthropic attaches the snapshot to the turn's user prompt, so the write, the next turn and the second write
-    # each rewrite one. The OpenAI APIs send it as a message after the user prompt, so each change also pushes
-    # every later message back a position.
-    'Memory': (
-        Known('prefix', f'{_ISSUES}8996', 'messages', 'user-prompt', count=3, providers=('anthropic',)),
-        *(
-            Known('prefix', f'{_ISSUES}8996', 'messages', identity, count=count, providers=(provider,))
-            for provider, counts in _MEMORY_OPENAI_MOVES.items()
-            for identity, count in counts.items()
-        ),
-    ),
-    # The summary goes into the standing system prompt instead of joining history: ahead of the agent's
-    # instructions (which it pushes back) on Anthropic and Chat, and as a leading system message on Responses.
-    'SummarizingCompaction': (
-        Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', count=2, providers=('anthropic', 'openai-chat')),
-        Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', providers=('openai-responses',)),
-    ),
-}
+KNOWN: dict[str, tuple[Known, ...]] = {}
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
 _COMPACTION = 'Compaction rewrites history by design, once per time its threshold is crossed'
@@ -333,6 +310,10 @@ _HISTORY = (('messages', 'user-prompt'), ('messages', 'model-response'), ('messa
 
 ALLOWED: dict[str, Allowed] = {
     'ClearToolResults': Allowed(_COMPACTION, _HISTORY),
+    'CompactOnRequest': Allowed(
+        'Compaction rewrites history by design, once per accepted `compact_context` request from the model',
+        _HISTORY,
+    ),
     'DeduplicateFileReads': Allowed(
         'Clears superseded file reads in place, as documented, when the model reads a file again',
         (('messages', 'tool-return'),),
@@ -361,11 +342,12 @@ ALLOWED: dict[str, Allowed] = {
         providers=('openai-responses', 'openai-chat'),
     ),
     'SystemReminders': Allowed(
-        f'Request-only reminders at the end of each request, behind a cache breakpoint; moving to '
-        f'request-scoped system prompts in {_PULLS}9712',
-        (('messages', 'user-prompt'), ('messages', 'tool-return')),
+        f'Request-scoped system prompt ({_PULLS}9712): sent for one request, then left out. Anthropic clears it '
+        'natively with `clear_at`; elsewhere it is a request-only tail',
+        (('messages', 'system-prompt'),),
         tail=True,
-        records=('request-only user prompt',),
+        records=('request-scoped system prompt',),
+        providers=('openai-responses', 'openai-chat'),
     ),
 }
 """Documented prefix movers, checked exactly."""

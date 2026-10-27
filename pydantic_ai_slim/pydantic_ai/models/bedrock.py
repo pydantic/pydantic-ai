@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from itertools import count
+from itertools import chain, count
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, assert_never, cast, overload
 from urllib.parse import parse_qs, urlparse
@@ -73,12 +73,14 @@ from pydantic_ai import (
     _utils,
     usage,
 )
+from pydantic_ai._gateway_cost import fill_gateway_header_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._thinking_part import render_replayed_thinking
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
+    ModelNotFoundError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -103,9 +105,11 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models._prompt_cache import (
     excess_cache_points,
+    instruction_cache_boundaries,
     previous_tail_needing_breakpoint,
     raise_earlier_cache_ttls,
     split_cache_setting,
+    split_instruction_cache_points,
 )
 from pydantic_ai.models._tool_choice import (
     FORCING_UNSUPPORTED_REASON,
@@ -207,6 +211,8 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
         if isinstance(status_code, int):
             suggested_model_id = None
             if message == 'The provided model identifier is invalid.':
+                # Bedrock sends an unknown model ID as a 400 `ValidationException`, identifiable only by its message.
+                category = ModelNotFoundError
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
             hint = (
                 _DATA_RETENTION_HINT if isinstance(message, str) and 'data retention mode' in message.lower() else None
@@ -336,6 +342,49 @@ _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
 _SUPPORTED_VIDEO_FORMATS = ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
 _SUPPORTED_DOCUMENT_FORMATS = ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
 _ADAPTIVE_THINKING_SETTING = "bedrock_additional_model_requests_fields={'thinking': {'type': 'adaptive'}}"
+
+_GPT_OSS_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    **OPENAI_REASONING_EFFORT_MAP,
+    # gpt-oss on Converse accepts only `low`, `medium`, and `high`: it rejects `minimal` and `xhigh` as invalid
+    # values and `none` as unsupported, so `thinking=False` reasons as little as it can.
+    False: 'low',
+    'minimal': 'low',
+    'xhigh': 'high',
+    'max': 'high',
+}
+"""Maps unified thinking values to the `reasoning_effort` that gpt-oss accepts on Converse."""
+
+_QWEN_REASONING_CONFIG_MAP: dict[ThinkingLevel, str] = {
+    False: 'none',
+    True: 'high',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+    'max': 'high',
+}
+"""Maps unified thinking values to Qwen's `reasoning_config` on Converse.
+
+Converse accepts `none`, `low`, `medium`, and `high`, but only `high` produced reasoning in live checks, so `medium`
+folds up to it rather than sending a level that doesn't reason.
+"""
+
+_GROK_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    # Grok always reasons on Converse and accepts `low`/`medium`/`high`/`xhigh`, so `thinking=False` and `minimal`
+    # reason as little as it can and `max` folds to `xhigh`. `True` picks `medium` like the other always-on
+    # effort-based variants.
+    False: 'low',
+    True: 'medium',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'xhigh',
+    'max': 'xhigh',
+}
+"""Maps unified thinking values to Grok's `reasoning.effort` on Converse."""
+
 _BEDROCK_USAGE_FIELDS = frozenset(
     {'inputTokens', 'outputTokens', 'totalTokens', 'cacheReadInputTokens', 'cacheWriteInputTokens'}
 )
@@ -1318,7 +1367,7 @@ class BedrockConverseModel(Model[BaseClient]):
             provider_details['trace'] = response['trace']
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
-        return ModelResponse(
+        model_response = ModelResponse(
             parts=items,
             usage=u,
             model_name=self.model_name,
@@ -1328,6 +1377,9 @@ class BedrockConverseModel(Model[BaseClient]):
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
+        # boto3 drops the Pydantic AI Gateway's cost from `usage`, but keeps its response header.
+        fill_gateway_header_cost(model_response, response.get('ResponseMetadata', {}).get('HTTPHeaders'))
+        return model_response
 
     def _build_additional_model_request_fields(
         self,
@@ -1372,41 +1424,24 @@ class BedrockConverseModel(Model[BaseClient]):
         if variant == 'anthropic' and 'thinking' not in existing:
             _add_anthropic_thinking_fields(existing, thinking, profile)
         elif variant == 'openai' and 'reasoning_effort' not in existing:
-            if thinking is not False:  # Bedrock doesn't accept reasoning_effort='none'
-                existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
+            existing['reasoning_effort'] = _GPT_OSS_REASONING_EFFORT_MAP[thinking]
         elif variant == 'openai_responses' and 'reasoning' not in existing:
-            # GPT-5.6 and GPT-6 reject `effort='minimal'`, so it maps to the closest level they accept.
-            effort = 'low' if thinking == 'minimal' else OPENAI_REASONING_EFFORT_MAP[thinking]
+            if thinking is False and profile.get('thinking_always_enabled', False):
+                # GPT-6 Astra and GPT-6.1 Sol reject `effort='none'`, so they reason as little as they can.
+                effort = 'low'
+            elif thinking == 'minimal':
+                # GPT-5.6 and GPT-6 reject `effort='minimal'`, so it maps to the closest level they accept.
+                effort = 'low'
+            else:
+                effort = OPENAI_REASONING_EFFORT_MAP[thinking]
             existing['reasoning'] = {'effort': effort}
         elif variant == 'qwen' and 'reasoning_config' not in existing:
-            if thinking is not False:
-                # Qwen only supports low/high; map others to closest
-                level_map: dict[ThinkingLevel, str] = {
-                    True: 'high',
-                    'minimal': 'low',
-                    'low': 'low',
-                    'medium': 'high',
-                    'high': 'high',
-                    'xhigh': 'high',
-                    'max': 'high',
-                }
-                existing['reasoning_config'] = level_map[thinking]
+            existing['reasoning_config'] = _QWEN_REASONING_CONFIG_MAP[thinking]
         elif variant == 'xai' and 'reasoning' not in existing:
-            # Grok always reasons on Converse, so `thinking=False` is silently ignored (like gpt-oss). `True` leaves
-            # the effort out where the profile records that the model's own default applies then (Grok 4.7: `high`).
-            if thinking is not False and not (thinking is True and profile.get('grok_default_effort_omitted', False)):
-                # Grok accepts `low`/`medium`/`high`/`xhigh` but not `minimal`, so that folds to `low` and `max`
-                # to `xhigh`; `True` picks `medium` like the other always-on effort-based variants.
-                effort_map: dict[ThinkingLevel, str] = {
-                    True: 'medium',
-                    'minimal': 'low',
-                    'low': 'low',
-                    'medium': 'medium',
-                    'high': 'high',
-                    'xhigh': 'xhigh',
-                    'max': 'xhigh',
-                }
-                existing['reasoning'] = {'effort': effort_map[thinking]}
+            # `True` leaves the effort out where the profile records that the model's own default applies then
+            # (Grok 4.7: `high`).
+            if not (thinking is True and profile.get('grok_default_effort_omitted', False)):
+                existing['reasoning'] = {'effort': _GROK_REASONING_EFFORT_MAP[thinking]}
 
         return existing or None
 
@@ -1908,17 +1943,22 @@ class BedrockConverseModel(Model[BaseClient]):
             and (cache_instructions := settings.get('bedrock_cache_instructions'))
             and profile.get('bedrock_supports_prompt_caching', False)
         ):
-            cache_point = cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
-            if instruction_parts and any(p.dynamic for p in instruction_parts):
-                # Insert cache point after the last static instruction (static parts are sorted first)
-                num_pre_instruction_blocks = len(system_prompt) - len(instruction_parts)
-                num_static = sum(1 for p in instruction_parts if not p.dynamic)
-                cache_idx = num_pre_instruction_blocks + num_static
-                if cache_idx > 0:
-                    system_prompt.insert(cache_idx, cache_point)
-            else:
-                # All static or no instruction_parts: cache point at end.
-                system_prompt.append(cache_point)
+            # After the literal instructions (or the system prompt when there are none), and after the append
+            # blocks; see `instruction_cache_boundaries`. `_limit_cache_points` drops the second first.
+            parts = instruction_parts or []
+            num_pre_instruction_blocks = len(system_prompt) - len(parts)
+            static_parts, stable_parts = instruction_cache_boundaries(parts)
+            static_idx = num_pre_instruction_blocks + static_parts
+            stable_idx = num_pre_instruction_blocks + stable_parts
+            # Inserted back to front, so the earlier index still points at the same block.
+            if stable_idx > static_idx:
+                system_prompt.insert(
+                    stable_idx, cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
+                )
+            if static_idx > 0:
+                system_prompt.insert(
+                    static_idx, cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
+                )
 
         if processed_messages and (cache_messages := settings.get('bedrock_cache_messages')):
             if profile.get('bedrock_supports_prompt_caching', False):
@@ -2190,22 +2230,25 @@ class BedrockConverseModel(Model[BaseClient]):
     ) -> None:
         """Limit the number of cache points in the request to Bedrock's maximum.
 
-        System prompt and tool definition cache points always take priority; excess message
-        cache points are removed oldest-first. A Bedrock cache point is a standalone
-        `cachePoint` content block, so excess blocks are dropped from their content lists.
+        Tool definition cache points and the first instruction cache point always take priority; excess
+        message cache points are removed oldest-first, after the instruction cache point behind the
+        `on_change='append'` blocks (see `split_instruction_cache_points`). A Bedrock cache point is a
+        standalone `cachePoint` content block, so excess blocks are dropped from their content lists.
 
         Raises:
             UserError: If system_prompt and tools combined already exceed the budget.
                       This indicates a configuration error that cannot be auto-fixed.
         """
-        reserved = sum(1 for block in system_prompt if 'cachePoint' in block)
+        reserved, optional_points = split_instruction_cache_points(
+            [block for block in system_prompt if 'cachePoint' in block]
+        )
         reserved += sum(1 for tool in tools if 'cachePoint' in tool)
 
         message_contents = [
             content for message in reversed(bedrock_messages) if isinstance(content := message.get('content'), list)
         ]
         excess = excess_cache_points(
-            (block for content in message_contents for block in reversed(content)),
+            chain((block for content in message_contents for block in reversed(content)), optional_points),
             # Bedrock enforces a maximum of 4 cache points per request.
             max_points=4,
             reserved=reserved,
@@ -2214,7 +2257,7 @@ class BedrockConverseModel(Model[BaseClient]):
         )
         if excess:
             excess_ids = {id(block) for block in excess}
-            for content in message_contents:
+            for content in [*message_contents, system_prompt]:
                 content[:] = [block for block in cast('list[Any]', content) if id(block) not in excess_ids]
 
 
@@ -2450,9 +2493,16 @@ def _add_anthropic_thinking_fields(existing: dict[str, Any], thinking: ThinkingL
     """Translate unified `thinking` into the Anthropic `thinking` (and `output_config.effort`) request fields."""
     if profile.get('bedrock_supports_adaptive_thinking', False):
         if thinking is False:
-            # Omitting `thinking` leaves it on for models that think by default. `Model.prepare_request`
-            # has already dropped `False` for models that can't turn thinking off.
-            if profile.get('thinking_enabled_by_default', False):
+            if profile.get('thinking_always_enabled', False):
+                # A model that can't turn thinking off thinks as little as it can: adaptively at the lowest effort.
+                # A model without an effort setting is left at its default.
+                if profile.get('bedrock_supports_effort', False):
+                    existing['thinking'] = {'type': 'adaptive'}
+                    existing.setdefault('output_config', {'effort': 'low'})
+            elif profile.get('anthropic_disables_thinking_with_between_tools', False):
+                existing['thinking'] = {'type': 'between_tools'}
+            elif profile.get('thinking_enabled_by_default', False):
+                # Omitting `thinking` leaves it on for models that think by default.
                 existing['thinking'] = {'type': 'disabled'}
         else:
             existing['thinking'] = {'type': 'adaptive'}
@@ -2504,7 +2554,7 @@ def _effective_thinking_type(
     if unified_thinking:
         return 'adaptive' if is_anthropic and profile.get('bedrock_supports_adaptive_thinking', False) else 'enabled'
     # Claude models that think by default keep thinking without a setting, and those that can't turn it off
-    # ignore `thinking=False`, as on the direct Anthropic API.
+    # still think at their lowest effort with `thinking=False`, as on the direct Anthropic API.
     if (
         is_anthropic
         and (unified_thinking is None or profile.get('thinking_always_enabled', False))

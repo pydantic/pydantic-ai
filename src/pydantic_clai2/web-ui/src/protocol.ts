@@ -1,5 +1,8 @@
 // Mirrors pydantic_clai2/builtin_plugins/web/protocol.py.
 
+/** The wire version the page names in the WebSocket URL; a page without it gets the tags from before it. */
+export const PROTOCOL = 2
+
 export type ItemKind = 'user' | 'assistant' | 'thinking' | 'tool'
 export type ToolState = 'running' | 'done' | 'error' | 'interrupted'
 
@@ -127,6 +130,18 @@ export interface TurnUsage {
   cost: string | null
 }
 
+/** A background `/fork`, as a `/forks` row lists it. */
+export interface ForkEntry {
+  id: number
+  model: string
+  prompt: string
+  status: 'running' | 'done' | 'failed' | 'cancelled'
+  /** Seconds it has run so far, or ran in all once it ended. */
+  elapsed: number
+  /** The saved conversation `/resume` continues it in, once it has saved one. */
+  session_id: string | null
+}
+
 /** What `/usage` and `/cost` report about the retained history. */
 export interface UsageReport {
   turns: TurnUsage[]
@@ -159,7 +174,7 @@ export interface ThemeInfo {
   palette: Palette | null
 }
 
-export type TaskOutcome = 'ok' | 'timeout' | 'budget' | 'failed' | 'contained' | 'cancelled' | 'error'
+export type DelegationOutcome = 'ok' | 'timeout' | 'budget' | 'failed' | 'contained' | 'cancelled' | 'error'
 
 /** A delegated task, as the sidebar's Workers tree shows it. */
 export interface TaskEntry {
@@ -169,7 +184,7 @@ export interface TaskEntry {
   model: string | null
   prompt: string
   status: 'running' | 'finished'
-  outcome: TaskOutcome | null
+  outcome: DelegationOutcome | null
   started_at: string
   finished_at: string | null
   background: boolean
@@ -190,13 +205,13 @@ export interface TaskTranscript {
 /** A message that changes one transcript's items, the session's or a task's. */
 export type ItemMessage =
   | { type: 'item'; item: Item }
-  | { type: 'delta'; id: string; text: string }
+  | { type: 'text_delta'; id: string; text: string }
   | { type: 'tool_output'; id: string; text: string }
   | { type: 'args_delta'; id: string; text: string }
   | { type: 'tool_args'; id: string; args: string }
-  | { type: 'call'; id: string; call: SubCall }
-  | { type: 'call_output'; id: string; call_id: string; text: string }
-  | { type: 'call_done'; id: string; call_id: string; text: string; state: ToolState }
+  | { type: 'sub_call'; id: string; call: SubCall }
+  | { type: 'sub_call_output'; id: string; call_id: string; text: string }
+  | { type: 'sub_call_done'; id: string; call_id: string; text: string; state: ToolState }
   | { type: 'tool_done'; id: string; text: string; state: ToolState }
   | { type: 'shell_done'; id: string; exit_code: number | null }
   | { type: 'diff'; id: string; diff: Diff }
@@ -204,8 +219,8 @@ export type ItemMessage =
 /** A transcript's item, turn, and question messages, which the session and the orchestrator chat both get. */
 export type ChatMessage =
   | ItemMessage
-  | { type: 'turn_start'; item: Item | null }
-  | { type: 'turn_end'; outcome: 'completed' | 'failed' | 'cancelled'; error: string | null; usage: Usage | null }
+  | { type: 'turn_started'; item: Item | null }
+  | { type: 'turn_ended'; outcome: 'completed' | 'failed' | 'cancelled'; error: string | null; usage: Usage | null }
   | { type: 'question'; questions: Questions }
   | { type: 'question_closed'; id: string }
 
@@ -249,10 +264,18 @@ export type SessionMessage = (
   | ChatMessage
   | { type: 'queue'; queue: QueuedItem[] }
   | { type: 'status'; status: StatusInfo }
-  | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null; usage: UsageReport | null }
+  | {
+      type: 'notice'
+      text: string
+      level: 'info' | 'error'
+      command: string | null
+      usage: UsageReport | null
+      forks: ForkEntry[] | null
+      fork: ForkEntry | null
+    }
   | { type: 'title'; title: string | null }
   | { type: 'task'; task: TaskEntry }
-  | { type: 'task_event'; id: string; messages: ItemMessage[] }
+  | { type: 'task_items'; id: string; messages: ItemMessage[] }
 ) & {
   /**
    * The session's conversation ID, as the sidebar and `live` name it. The server always sends it; it is optional here
@@ -292,6 +315,8 @@ export type ServerMessage =
       /** The running CLAI's version, or a `main` build's short commit. */
       version: string
       update: UpdateInfo | null
+      /** The conversation the session held before, when it switched to this one; its watchers watch this one now. */
+      replaces?: string | null
     }
   | SessionMessage
   | { type: 'orchestrator'; message: OrchestratorEvent }
@@ -426,24 +451,6 @@ export interface MenuField {
   button: string
   /** Choosing it opens another menu, which `MenuTarget.path` reaches, instead of editing a value. */
   menu: boolean
-}
-
-/** A workspace as the sidebar lists it; never its token. */
-export interface WorkspaceRow {
-  id: string
-  kind: string
-  repo: string
-  branch: string
-  path: string
-  status: 'ready' | 'running' | 'stopped'
-  /** Its page's address without the token, while its CLAI runs. */
-  url: string | null
-}
-
-/** The sidebar's Workspaces section: shown while the `workspaces` plugin is on. */
-export interface WorkspacesInfo {
-  enabled: boolean
-  workspaces: WorkspaceRow[]
 }
 
 export interface MenuInfo {
