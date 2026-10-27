@@ -311,6 +311,46 @@ ends with &lt;/context-file
         await cap.before_run(ctx)
         assert 'home instructions' in (_render_capability_instructions(cap, ctx) or '')
 
+    @pytest.mark.parametrize('git_entry', ['directory', 'file'])
+    async def test_walk_up_stops_at_the_nearest_root_marker(
+        self, tmp_path: Path, git_entry: Literal['directory', 'file']
+    ) -> None:
+        _write(tmp_path / 'AGENTS.md', 'outside the repo')
+        repo = tmp_path / 'repo'
+        if git_entry == 'directory':
+            (repo / '.git').mkdir(parents=True)
+        else:
+            _write(repo / '.git', 'gitdir: /elsewhere/.git/worktrees/repo')
+        _write(repo / 'AGENTS.md', 'repo root')
+        _write(repo / 'packages' / 'AGENTS.md', 'packages')
+        _write(repo / 'packages' / 'foo' / 'AGENTS.md', 'foo package')
+        cap = RepoContext[object](root_markers=('.git',))
+        ctx = _run_context(workspace=Workspace(LocalWorkspaceBackend(repo / 'packages' / 'foo')))
+        await cap.before_run(ctx)
+        rendered = _render_capability_instructions(cap, ctx) or ''
+        bodies = [block.split('\n')[1] for block in rendered.split('\n\n')]
+        assert bodies == ['repo root', 'packages', 'foo package']
+
+    async def test_root_markers_without_a_marked_ancestor_scan_only_the_working_dir(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'AGENTS.md', 'parent')
+        _write(tmp_path / 'project' / 'AGENTS.md', 'project')
+        cap = RepoContext[object](root_markers=('.git',))
+        ctx = _run_context(workspace=Workspace(LocalWorkspaceBackend(tmp_path / 'project')))
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) == snapshot("""\
+<context-file path="AGENTS.md">
+project
+</context-file>\
+""")
+
+    def test_root_markers_rejects_a_bare_string(self) -> None:
+        with pytest.raises(UserError, match=r"takes a sequence of names, e\.g\. `\('\.git',\)`"):
+            RepoContext[object](root_markers='.git')
+
+    def test_home_dir_and_root_markers_are_exclusive(self, tmp_path: Path) -> None:
+        with pytest.raises(UserError, match='either `home_dir` or `root_markers`'):
+            RepoContext[object](home_dir=tmp_path, root_markers=('.git',))
+
 
 class TestToolset:
     def test_get_toolset_none_by_default(self, tmp_path: Path) -> None:

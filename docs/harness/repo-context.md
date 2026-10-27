@@ -43,6 +43,8 @@ Loads `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor up t
 
 When `home_dir` is `None` (the default), only the working directory is scanned -- no walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.
 
+To walk up to the repository root instead, pass `root_markers=('.git',)`: the walk-up stops at the nearest directory, starting at the working directory, that contains one of the named entries. A `.git` file, as in a linked worktree, counts like a `.git` directory. When no such directory exists, only the working directory is scanned. `root_markers` and `home_dir` cannot be combined.
+
 ### 2. Asset inventory (off by default)
 
 Set `expose_inventory_tool=True` to expose `inventory_agent_context()`, which reports where the repo's CE assets live -- the `.claude`/`.agents`/`.codex`/`.grok` roots and, within each, the `skills/` (`SKILL.md`), `agents/` (`.md`), and `settings.json` (hooks) it contains. It returns a structured `AgentContextInventory`; it locates assets and does not parse them.
@@ -123,6 +125,7 @@ Injecting file contents into the system prompt costs prompt-cache stability: a c
 ```python {test="skip"}
 RepoContext(
     home_dir=None,                  # str | Path | None -- shallowest workspace dir to stop walk-up at, inclusive
+    root_markers=(),                # Sequence[str] -- stop the walk-up at the nearest dir containing one, e.g. ('.git',)
     filenames=('CLAUDE.md', 'AGENTS.md'),
     autoload_instructions=True,     # Strategy 1
     expose_inventory_tool=False,    # Strategy 2

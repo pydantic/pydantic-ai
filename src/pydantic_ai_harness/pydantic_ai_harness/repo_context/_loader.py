@@ -54,6 +54,21 @@ def _walk_dirs(workspace_dir: Path, home_dir: Path | None) -> list[Path]:
     return list(reversed(chain))
 
 
+async def find_root(workspace: Workspace, working_dir: Path, markers: Sequence[str]) -> Path | None:
+    """The nearest of `working_dir` and its ancestors that contains an entry named in `markers`, or `None`.
+
+    An entry of any kind counts, so a linked worktree's `.git` file marks its root like a `.git` directory.
+    """
+    for directory in (working_dir, *working_dir.parents):
+        for marker in markers:
+            try:
+                await workspace.stat(str(directory / marker))
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            return directory
+    return None
+
+
 async def _real_file(workspace: Workspace, path: Path) -> Path | None:
     """The file `path` names, after symlinks, when it is a regular file in `path`'s own directory, else `None`.
 

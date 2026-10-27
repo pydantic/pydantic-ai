@@ -72,6 +72,7 @@ class TestCoder:
 
     @pytest.mark.parametrize('extra_limits', [False, True])
     async def test_durable_binding(self, tmp_path: Path, extra_limits: bool) -> None:
+        (tmp_path / '.git').mkdir()
         durability = RecordingDurability()
         capabilities: list[AbstractCapability[object]] = [
             LocalWorkspace(tmp_path),
@@ -85,8 +86,7 @@ class TestCoder:
         assert result.output == 'done'
         assert [(name, getattr(args[0], 'method', None)) for name, args in durability.calls] == [
             ('coder__capability__workspace.call', 'ensure'),
-            ('coder__capability__workspace.call', 'stat'),
-            ('coder__capability__workspace.call', 'stat'),
+            *[('coder__capability__workspace.call', 'stat')] * 5,
             ('coder__model.request_stream', None),
         ]
 

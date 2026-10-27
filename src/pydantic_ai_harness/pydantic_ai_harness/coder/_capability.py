@@ -152,7 +152,14 @@ class Coder(CombinedCapability[AgentDepsT]):
             ),
         ]
         if repo_context:
-            capabilities.append(RepoContext[AgentDepsT](expose_inventory_tool=False))
+            capabilities.append(
+                RepoContext[AgentDepsT](
+                    expose_inventory_tool=False,
+                    root_markers=('.git',),
+                    nested_traversal=True,
+                    nested_inject='contents',
+                )
+            )
         if sub_agents:
             capabilities.append(
                 SubAgents[AgentDepsT](include_self=True, agent_folders=agent_folders, task_control=task_control)

@@ -11,6 +11,7 @@ from typing import Any, Literal
 from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, on_event
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import SystemPromptPart, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
@@ -23,6 +24,7 @@ from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
     discover_instruction_files,
     find_dir_context_file,
+    find_root,
     has_context_file,
     render_context_file,
     render_context_file_path,
@@ -64,7 +66,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     1. Walk-up instruction autoload (`autoload_instructions`, on by default):
        load `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor
-       up to `home_dir`, deduped, ancestor-first. These are read once at run start
+       up to `home_dir` (or the nearest ancestor holding one of `root_markers`),
+       deduped, ancestor-first. These are read once at run start
        and injected as system instructions via `get_instructions`, so they stay in
        the cached prefix, stable within a run; a change between runs of a
        conversation is appended rather than rewritten.
@@ -115,7 +118,15 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     """The shallowest workspace directory to stop the walk-up at, inclusive, as a workspace path.
 
     A relative path resolves against the working directory. `None` (the default)
-    scans only the working directory -- no walk-up.
+    scans only the working directory -- no walk-up -- unless `root_markers` is set.
+    """
+
+    root_markers: Sequence[str] = ()
+    """Entry names that mark the repository root, e.g. `('.git',)`, as an alternative to `home_dir`.
+
+    The walk-up stops at the nearest directory, starting at the working directory, that contains one of
+    them. When no such directory exists, only the working directory is scanned. Cannot be combined with
+    `home_dir`.
     """
 
     filenames: Sequence[str] = ('CLAUDE.md', 'AGENTS.md')
@@ -161,6 +172,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     _sniff_traversal_tools: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if isinstance(self.root_markers, str):
+            raise UserError(f'`RepoContext.root_markers` takes a sequence of names, e.g. `({self.root_markers!r},)`.')
+        if self.home_dir is not None and self.root_markers:
+            raise UserError('`RepoContext` takes either `home_dir` or `root_markers` to stop the walk-up, not both.')
         if self.workspace_dir is not None:
             warn_argument_ignored('RepoContext', 'workspace_dir', SET_WORKING_DIR_ON_THE_WORKSPACE)
         self._sniff_traversal_tools = (
@@ -191,6 +206,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         home = None
         if self.home_dir is not None:
             home = Path(await workspace.resolve(workspace_path(Path(self.home_dir))))
+        elif self.root_markers:
+            home = await find_root(workspace, working_dir, self.root_markers)
         self._context_files = await discover_instruction_files(workspace, working_dir, home, self.filenames)
         # The walk-up loaded the working directory's instruction files (or an identical ancestor copy), so nested
         # traversal has nothing to add there. A file that appears there later in the run is still surfaced.

@@ -90,7 +90,8 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
 
 Keyword-only options: `instructions=None` (appended to the default guidance),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
-`repo_context=True`, `sub_agents=True`, `agent_folders=None`, `task_control=None` (a `TaskControl`
+`repo_context=True` (`RepoContext` walking up to the repository root and surfacing nested instruction
+files as the agent reads), `sub_agents=True`, `agent_folders=None`, `task_control=None` (a `TaskControl`
 is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`.
 
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless
@@ -515,7 +516,8 @@ from pydantic_ai_harness import RepoContext
 RepoContext(home_dir='..', nested_traversal=True)  # walk up one level; follow traversal
 ```
 
-`home_dir=None` (default) scans only the working directory; set it to walk up to that ancestor. It is
+`root_markers=('.git',)` walks up to the repository root instead (`Coder` uses this); it cannot be combined
+with `home_dir`. `home_dir=None` (default) scans only the working directory; set it to walk up to that ancestor. It is
 a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserError`.
 `nested_traversal=True` surfaces the instruction files between the working directory and whatever
 `FileSystem` reads or lists, shallowest first and each directory once per run (`nested_inject='pointer'`
