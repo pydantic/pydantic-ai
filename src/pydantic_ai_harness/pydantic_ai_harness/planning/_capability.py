@@ -8,8 +8,8 @@ from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
-from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.framing import neutralize_tags
 from pydantic_ai.messages import (
     CachePoint,
     ModelRequest,
@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness import _framing_tags  # noqa: F401  # pyright: ignore[reportUnusedImport]  # registers every harness tag
 from pydantic_ai_harness.planning._store import InMemoryPlanStore, PlanStore
 from pydantic_ai_harness.planning._toolset import (
     SUBTASK_TOOL_NAMES,
@@ -308,8 +309,7 @@ class Planning(AbstractCapability[AgentDepsT]):
         return 'Planning'
 
 
-# TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
-# `plan-reminder` as a framing tag there.
+# TODO: register the tag in `_framing_tags` and render it with `wrap()` once #11521 renames it to snake_case.
 # The `<` of an opening or closing `plan-reminder` tag, in any case, spacing or with attributes, or cut off at the end
 # of the plan, where the frame's own end tag would complete it. Core's own framing tags are left to `neutralize_tags`.
 _PLAN_REMINDER_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?plan-reminder(?=[\s/>]|$))', re.IGNORECASE)

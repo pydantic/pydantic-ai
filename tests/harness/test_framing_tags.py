@@ -161,6 +161,24 @@ def _imports_framing(tree: ast.Module) -> bool:
     return any(isinstance(node, ast.ImportFrom) and node.module == 'pydantic_ai.framing' for node in ast.walk(tree))
 
 
+def test_harness_imports_only_the_public_framing_module() -> None:
+    """Harness uses `pydantic_ai.framing`, never core's private `pydantic_ai._framing`."""
+    assert [
+        relative
+        for relative, source in _sources()
+        if any(
+            (isinstance(node, ast.ImportFrom) and node.module == 'pydantic_ai._framing')
+            or (
+                isinstance(node, ast.ImportFrom)
+                and node.module == 'pydantic_ai'
+                and any(a.name == '_framing' for a in node.names)
+            )
+            or (isinstance(node, ast.Import) and any(a.name == 'pydantic_ai._framing' for a in node.names))
+            for node in ast.walk(ast.parse(source))
+        )
+    ] == []
+
+
 def test_every_module_that_frames_registers_the_harness_tags() -> None:
     """Rendering or escaping text registers every harness tag first, whichever capability does it.
 

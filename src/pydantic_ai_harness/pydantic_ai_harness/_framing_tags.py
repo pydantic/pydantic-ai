@@ -15,6 +15,9 @@ some other way, never by hand.
 
 from __future__ import annotations
 
+# TODO: once `CapabilityPart` (#11029) lands, the "Framing data in prompt text" section of
+# `docs/capabilities/custom.md` should point capability authors there first, and present `pydantic_ai.framing`
+# for second-model prompts and frames inside tool results.
 import re
 from typing import Final
 
