@@ -24,7 +24,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.native_tools import CodeExecutionTool, WebSearchTool
+from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebSearchTool
 
 from ...conftest import RequestCapture, message, try_import
 from ..conftest import AnthropicModelFactory, cache_breakpoints, content_blocks, message_shape
@@ -446,8 +446,12 @@ class HistoryContainerCase:
     container_sent: bool
     citations: bool = False
     suspended: bool = False
+    native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
+    model_settings: AnthropicModelSettings | None = None
     expected_tools: list[tuple[str, list[str] | None]] = field(default_factory=list[tuple[str, list[str] | None]])
 
+
+_CODE_EXECUTION_WIRE_TOOL: dict[str, object] = {'type': 'code_execution_20250825', 'name': 'code_execution'}
 
 HISTORY_CONTAINER_CASES = [
     HistoryContainerCase('api', 'api', 'claude-sonnet-4-6', container_sent=False),
@@ -465,6 +469,46 @@ HISTORY_CONTAINER_CASES = [
         citations=True,
         expected_tools=[('web_search_20260209', ['direct'])],
     ),
+    HistoryContainerCase(
+        'api-extra-body-code-execution',
+        'api',
+        'claude-sonnet-4-6',
+        container_sent=True,
+        suspended=True,
+        model_settings={'extra_body': {'tools': [_CODE_EXECUTION_WIRE_TOOL]}},
+        expected_tools=[('code_execution_20250825', None)],
+    ),
+    HistoryContainerCase(
+        'api-extra-body-replaces-code-execution',
+        'api',
+        'claude-sonnet-4-6',
+        container_sent=False,
+        native_tools=[CodeExecutionTool()],
+        model_settings={'extra_body': {'tools': [{'type': 'web_search_20250305', 'name': 'web_search'}]}},
+        expected_tools=[('web_search_20250305', None)],
+    ),
+    HistoryContainerCase(
+        'mantle-extra-body-direct-web-search',
+        'mantle',
+        'anthropic.claude-sonnet-4-6',
+        container_sent=True,
+        citations=True,
+        model_settings={
+            'extra_body': {
+                'tools': [{'type': 'web_search_20260209', 'name': 'web_search', 'allowed_callers': ['direct']}]
+            }
+        },
+        expected_tools=[('web_search_20260209', ['direct'])],
+    ),
+    HistoryContainerCase(
+        'api-empty-callers',
+        'api',
+        'claude-sonnet-4-6',
+        container_sent=False,
+        native_tools=[WebSearchTool()],
+        model_settings={'anthropic_web_tools_allowed_callers': []},
+        expected_tools=[('web_search_20260209', [])],
+    ),
 ]
 
 
@@ -477,7 +521,7 @@ async def test_anthropic_history_container_without_code_execution_by_client(
     That includes the container of a suspended response the run resumes. The direct API and the legacy Bedrock
     InvokeModel API reject it. Vertex AI, the Bedrock Messages API and Foundry haven't been verified, so they keep
     sending it, unless the request sends web tools that default to code execution with direct calls only, as
-    `Citations()` does.
+    `Citations()` does. Tools in `extra_body` replace the built ones on the wire, so they decide instead.
 
     Unit test: recording the other clients needs their credentials, recording a suspended response needs a live
     `pause_turn`, and the claim is the request shape.
@@ -521,11 +565,11 @@ async def test_anthropic_history_container_without_code_execution_by_client(
             ),
         }
         model = AnthropicModel(case.model_name, provider=AnthropicProvider(anthropic_client=clients[case.client]()))
-        capabilities: list[AbstractCapability[None]] = (
-            [NativeTool(WebSearchTool()), Citations()] if case.citations else []
-        )
-        await Agent(model, deps_type=type(None), capabilities=capabilities).run(
-            None if case.suspended else 'Follow up.', message_history=history, model_settings={'max_tokens': 1024}
+        capabilities: list[AbstractCapability[None]] = [NativeTool(tool) for tool in case.native_tools]
+        if case.citations:
+            capabilities += [NativeTool(WebSearchTool()), Citations()]
+        await Agent(model, deps_type=type(None), capabilities=capabilities, model_settings={'max_tokens': 1024}).run(
+            None if case.suspended else 'Follow up.', message_history=history, model_settings=case.model_settings
         )
 
     [body] = bodies
@@ -533,6 +577,83 @@ async def test_anthropic_history_container_without_code_execution_by_client(
     container_sent = 'container' in body
     assert container_sent == case.container_sent
     assert [(tool['type'], tool.get('allowed_callers')) for tool in tools] == case.expected_tools
+
+
+def _pause_turn_segment(text: str, stop_reason: str, stream: bool) -> httpx2.Response:
+    """One `pause_turn` segment of a turn whose code execution container is `container_A`."""
+    container = {'id': 'container_A', 'expires_at': '2026-11-01T00:00:00Z'}
+    usage = {'input_tokens': 5, 'output_tokens': 1}
+    if not stream:
+        return httpx2.Response(
+            200,
+            json={
+                'id': f'msg_{text}',
+                'type': 'message',
+                'role': 'assistant',
+                'model': 'claude-sonnet-4-6',
+                'content': [{'type': 'text', 'text': text}],
+                'stop_reason': stop_reason,
+                'usage': usage,
+                'container': container,
+            },
+        )
+    events: list[dict[str, Any]] = [
+        {
+            'type': 'message_start',
+            'message': {
+                'id': f'msg_{text}',
+                'type': 'message',
+                'role': 'assistant',
+                'model': 'claude-sonnet-4-6',
+                'content': [],
+                'stop_reason': None,
+                'usage': usage,
+                'container': container,
+            },
+        },
+        {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+        {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': text}},
+        {'type': 'content_block_stop', 'index': 0},
+        {'type': 'message_delta', 'delta': {'stop_reason': stop_reason, 'stop_sequence': None}, 'usage': usage},
+        {'type': 'message_stop'},
+    ]
+    body = ''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events)
+    return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=body.encode())
+
+
+@pytest.mark.parametrize('stream', [pytest.param(False, id='request'), pytest.param(True, id='stream')])
+async def test_anthropic_pause_turn_reconnect_keeps_extra_body_code_execution_container(
+    allow_model_requests: None, stream: bool
+):
+    """A `pause_turn` reconnect sends the container when code execution reaches the wire through `extra_body`.
+
+    Unit test: a live `pause_turn` with a container can't be requested reliably, and the claim is the request shape.
+    """
+    bodies: list[dict[str, Any]] = []
+    segments = iter([('Working.', 'pause_turn'), ('Done.', 'end_turn')])
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return _pause_turn_segment(*next(segments), stream=stream)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http_client:
+        model = AnthropicModel(
+            'claude-sonnet-4-6',
+            provider=AnthropicProvider(anthropic_client=AsyncAnthropic(api_key='x', http_client=http_client)),
+        )
+        settings: AnthropicModelSettings = {'max_tokens': 1024, 'extra_body': {'tools': [_CODE_EXECUTION_WIRE_TOOL]}}
+        agent = Agent(model, model_settings=settings)
+        if stream:
+            async with agent.run_stream('Run the code.') as result:
+                output = await result.get_output()
+        else:
+            output = (await agent.run('Run the code.')).output
+
+    assert output == 'Working.Done.'
+    assert [(body.get('container'), body['tools']) for body in bodies] == [
+        (None, [_CODE_EXECUTION_WIRE_TOOL]),
+        ('container_A', [_CODE_EXECUTION_WIRE_TOOL]),
+    ]
 
 
 async def test_anthropic_container_from_message_history_not_sent_for_function_tool(allow_model_requests: None):

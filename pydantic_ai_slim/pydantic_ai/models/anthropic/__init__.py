@@ -640,7 +640,8 @@ class AnthropicModelSettings(ModelSettings, total=False):
     or a web tool that code execution may call (see
     [`anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers]).
     The Anthropic API and legacy Bedrock reject a container on any other request, so Pydantic AI
-    doesn't send it there. An id recovered that way is the only container
+    doesn't send it there. Tools passed as `extra_body['tools']` replace the ones Pydantic AI builds,
+    so those are the tools that decide. An id recovered that way is the only container
     Pydantic AI may replace on its own: if a request carrying both that id and
     `CodeExecutionTool` uploads comes back `500`, the id is dropped and the request is
     sent once more so the upload lands in a fresh container. Nothing else is replaced —
@@ -780,6 +781,21 @@ def _extra_body_thinking(model_settings: AnthropicModelSettings) -> dict[str, ob
     if not _is_str_mapping(thinking):
         return None
     return dict(thinking)
+
+
+def _extra_body_tools(model_settings: AnthropicModelSettings) -> list[Mapping[str, object]] | None:
+    """The `tools` a caller hand-rolled in `extra_body`, if any, which the API receives in place of the built list.
+
+    The SDK merges `extra_body` over the request body one key at a time, so a `tools` entry there replaces the built
+    list rather than extending it. Anything in it that isn't a tool object is left for the API to reject.
+    """
+    extra_body = model_settings.get('extra_body')
+    if not _is_str_mapping(extra_body) or 'tools' not in extra_body:
+        return None
+    tools = extra_body['tools']
+    if not isinstance(tools, Sequence) or isinstance(tools, str):
+        return []
+    return [tool for tool in tools if _is_str_mapping(tool)]  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
 
 
 def _is_str_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
@@ -1923,7 +1939,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         An id from history, including a `pause_turn` reconnect id, isn't reused on a request without code execution
         where the API rejects it (`anthropic_rejects_container_without_code_execution`), such as a follow-up with no
         tools, or on any API when the request sends web tool versions that default to code execution with direct
-        calls only, as it does when it asks for citations.
+        calls only, as it does when it asks for citations. The tools that decide are the ones the API receives:
+        `extra_body['tools']` replaces the built list.
         """
         if (container := model_settings.get('anthropic_container')) is not None:
             if container is False:
@@ -1931,9 +1948,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             if isinstance(container, dict) and set(container) == {'id'} and (cid := container.get('id')):
                 return cid, False
             return container, False
-        if not provisions_code_execution(tools) and (
+        # The direct-only carve-out covers only web tools Pydantic AI itself sends, so a caller's hand-rolled
+        # `extra_body` tools keep the unverified clients' behavior.
+        extra_body_tools = _extra_body_tools(model_settings)
+        if not provisions_code_execution(tools if extra_body_tools is None else extra_body_tools) and (
             self.profile.get('anthropic_rejects_container_without_code_execution', True)
-            or any(tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES for tool in tools)
+            or (extra_body_tools is None and any(tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES for tool in tools))
         ):
             return None, False
         # On pause_turn continuation, pass just the container ID string to reconnect.
@@ -2246,7 +2266,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # The native memory tool is client-executed and surfaces as a regular `tool_use` block.
         enabled_server_tool_names.discard('memory')
 
-        if provisions_code_execution(native_tools):
+        extra_body_tools = _extra_body_tools(model_settings)
+        if provisions_code_execution(native_tools if extra_body_tools is None else extra_body_tools):
             enabled_server_tool_names.update({'code_execution', 'bash_code_execution', 'text_editor_code_execution'})
         return frozenset(enabled_server_tool_names)
 

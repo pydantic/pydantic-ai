@@ -2,9 +2,9 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import Any, Literal, TypeAlias, assert_never, cast, get_args
+from typing import Any, Literal, TypeAlias, TypeGuard, assert_never, cast, get_args
 
 import pydantic_core
 from anthropic.types.beta import (
@@ -97,19 +97,27 @@ _CODE_EXECUTION_TOOL_TYPES = frozenset(
 )
 
 
-def provisions_code_execution(tools: Sequence[BetaToolUnionParam]) -> bool:
-    """Whether Anthropic gives a request with these tools a code execution container.
+def is_str_sequence(value: object) -> TypeGuard[Sequence[str]]:
+    """Whether a value is a sequence of strings, as `allowed_callers` is on the wire, and not a bare string."""
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        return False
+    return all(isinstance(item, str) for item in value)  # pyright: ignore[reportUnknownVariableType]
+
+
+def provisions_code_execution(tools: Sequence[Mapping[str, object]]) -> bool:
+    """Whether Anthropic gives a request with these wire tools a code execution container.
 
     `CodeExecutionTool` does, and so does a tool that code execution may call: one whose `allowed_callers` names a
     code execution caller, on any version, or one of `CODE_EXECUTING_WEB_TOOL_TYPES` sent without `allowed_callers`.
-    Tools are matched by wire type, since a function tool can have any name.
+    Tools are matched by wire type, since a function tool can have any name. The tools can come from a caller's
+    `extra_body`, so each field is read as the JSON the API receives, where a `null` `allowed_callers` is the default.
     """
     return any(
         tool.get('type') in _CODE_EXECUTION_TOOL_TYPES
         or (
-            any(caller != 'direct' for caller in tool['allowed_callers'])
-            if 'allowed_callers' in tool
-            else tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES
+            tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES
+            if (callers := tool.get('allowed_callers')) is None
+            else is_str_sequence(callers) and any(caller != 'direct' for caller in callers)
         )
         for tool in tools
     )

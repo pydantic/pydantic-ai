@@ -37,6 +37,7 @@ with try_import() as imports_successful:
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic._native_tools import provisions_code_execution
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = [
@@ -44,6 +45,7 @@ pytestmark = [
 ]
 
 _TOOL_CALL_ID = 'srvtoolu_test'
+_CODE_EXECUTION_WIRE_TOOL: dict[str, object] = {'type': 'code_execution_20250825', 'name': 'code_execution'}
 ServerToolName = Literal[
     'advisor',
     'web_search',
@@ -226,6 +228,25 @@ async def test_anthropic_filters_unconfigured_native_tool_calls(
             True,
             id='setting-takes-precedence-over-citations',
         ),
+        pytest.param(
+            [WebSearchTool()],
+            {'citations': True, 'extra_body': {'tools': [_CODE_EXECUTION_WIRE_TOOL]}},
+            True,
+            id='extra-body-code-execution-with-cited-web-search',
+        ),
+        pytest.param(
+            [],
+            {'citations': True, 'extra_body': {'tools': [_CODE_EXECUTION_WIRE_TOOL]}},
+            True,
+            id='extra-body-code-execution-alone',
+        ),
+        pytest.param(
+            [WebSearchTool()],
+            {'extra_body': {'tools': [{'type': 'web_search_20250305', 'name': 'web_search'}]}},
+            False,
+            id='extra-body-replaces-code-execution',
+        ),
+        pytest.param([WebSearchTool()], {'extra_body': {'tools': None}}, False, id='extra-body-null-tools'),
     ],
 )
 async def test_anthropic_web_tool_callers_gate_implicit_code_execution(
@@ -237,6 +258,8 @@ async def test_anthropic_web_tool_callers_gate_implicit_code_execution(
 ):
     """`code_execution` is implicitly enabled by the web tools only while one of them allows a code execution caller.
 
+    Tools in `extra_body` replace the built ones on the wire, so they decide instead.
+
     Unit test because a sandbox `code_execution` call can't be requested reliably from the live API when the web tools
     only allow direct calls.
     """
@@ -244,6 +267,56 @@ async def test_anthropic_web_tool_callers_gate_implicit_code_execution(
         stream, 'code_execution', {'code': 'print(1)'}, '{"code":"print(1)"}', native_tools, model_settings
     )
     assert [call.tool_name for call in calls] == (['code_execution'] if expected_call else [])
+
+
+@pytest.mark.parametrize(
+    ('tools', 'expected'),
+    [
+        pytest.param([], False, id='no-tools'),
+        pytest.param([_CODE_EXECUTION_WIRE_TOOL], True, id='code-execution'),
+        pytest.param([{'type': 'web_search_20260209', 'name': 'web_search'}], True, id='default-callers'),
+        pytest.param(
+            [{'type': 'web_search_20260209', 'name': 'web_search', 'allowed_callers': None}], True, id='null-callers'
+        ),
+        pytest.param(
+            [{'type': 'web_search_20260209', 'name': 'web_search', 'allowed_callers': list[str]()}],
+            False,
+            id='empty-callers',
+        ),
+        pytest.param(
+            [{'type': 'web_fetch_20260209', 'name': 'web_fetch', 'allowed_callers': ['direct']}],
+            False,
+            id='direct-callers',
+        ),
+        pytest.param(
+            [{'type': 'web_fetch_20260209', 'name': 'web_fetch', 'allowed_callers': 'direct'}],
+            False,
+            id='direct-callers-as-string',
+        ),
+        pytest.param(
+            [{'type': 'web_search_20250305', 'name': 'web_search', 'allowed_callers': ['code_execution_20260120']}],
+            True,
+            id='previous-version-code-execution-caller',
+        ),
+        pytest.param(
+            [{'type': 'web_search_20250305', 'name': 'web_search', 'allowed_callers': ['direct']}],
+            False,
+            id='previous-version-direct-callers',
+        ),
+        pytest.param(
+            [{'name': 'code_execution', 'input_schema': {'type': 'object'}}],
+            False,
+            id='function-tool-named-code-execution',
+        ),
+    ],
+)
+def test_provisions_code_execution_reads_wire_shapes(tools: list[dict[str, object]], expected: bool):
+    """Whether a request's wire tools get a code execution container, for tool shapes only `extra_body` can send.
+
+    Unit test: a hand-rolled `extra_body['tools']` list is raw JSON, so these shapes don't come out of the typed
+    request builder.
+    """
+    assert provisions_code_execution(tools) is expected
 
 
 async def test_anthropic_keeps_server_tool_call_with_matching_result(allow_model_requests: None):
