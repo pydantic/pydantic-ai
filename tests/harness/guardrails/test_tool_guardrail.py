@@ -40,6 +40,7 @@ from pydantic_ai_harness.guardrails import (
     ToolGuardrail,
     ToolResultInfo,
 )
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 
 def _recording_tracer() -> tuple[Tracer, InMemorySpanExporter]:
@@ -1074,6 +1075,7 @@ class TestHiddenNameWarning:
 
         assert raised == []
 
+    @pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
     async def test_a_hidden_tool_that_appears_after_an_absent_step_is_not_warned_about(self):
         ready = False
         safe_tools = FunctionToolset[None]()

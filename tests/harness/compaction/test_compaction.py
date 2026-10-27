@@ -127,6 +127,7 @@ from pydantic_ai_harness.memory import InMemoryStore
 from pydantic_ai_harness.step_persistence import InMemoryStepStore, StepPersistence
 from pydantic_ai_harness.subagents import DelegationTask, is_task_report
 from tests.conftest import legacy_retry_prompt_part, try_import
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness.conftest import agent_run_names
 
 with try_import() as anthropic_imports:
@@ -276,6 +277,10 @@ def _tool_return(tool_name: str, call_id: str, content: str = 'ok') -> ModelRequ
 
 def _summary_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('summary')])
+
+
+_LONG_REPLY = 'A reply long enough that a short summary of it makes the history smaller. ' * 4
+"""An assistant turn worth summarizing: automatic compaction only commits a history that got smaller."""
 
 
 def _retry_history() -> list[ModelMessage]:
@@ -2279,7 +2284,7 @@ def _recording_agent(
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         sent.append(messages)
-        return ModelResponse(parts=[TextPart('ok')])
+        return ModelResponse(parts=[TextPart(_LONG_REPLY)])
 
     agent = Agent(FunctionModel(respond), deps_type=type(None), system_prompt=system_prompt, capabilities=[compaction])
     return agent, sent
@@ -2404,6 +2409,7 @@ class TestClearToolResults:
         with pytest.raises(ValueError, match='min_clear_tokens must be non-negative'):
             ClearToolResults(max_messages=1, min_clear_tokens=-1)
 
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_max_messages_clears_in_batches_without_rewriting_every_step(self):
         """Once past `max_messages`, consecutive requests append to history rather than rewriting it.
 
@@ -3461,7 +3467,7 @@ class TestSummarizingCompactionPreserveBranches:
         comp = SummarizingCompaction(
             model='test:m', max_messages=2, keep_messages=1, preserve_first_user_message=True, incremental=False
         )
-        messages: list[ModelMessage] = [_assistant('a'), _assistant('b'), _assistant('c')]
+        messages: list[ModelMessage] = [_assistant('a'), _assistant(_LONG_REPLY), _assistant('c')]
         rc = _make_request_context(messages)
         ctx = _make_ctx(messages)
 
@@ -4046,7 +4052,7 @@ class TestSummarizingReceipts:
             bridge_prefix=False,
             preserve_first_user_message=False,
         )
-        messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
+        messages: list[ModelMessage] = [_user('a'), _assistant(_LONG_REPLY), _user('c'), _assistant('d')]
         rc = _make_request_context(messages)
         ctx = _make_ctx(messages)
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('SUMMARY')):
@@ -4069,7 +4075,7 @@ class TestSummarizingReceipts:
                 bridge_prefix=False,
                 preserve_first_user_message=False,
             )
-            messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
+            messages: list[ModelMessage] = [_user('a'), _assistant(_LONG_REPLY), _user('c'), _assistant('d')]
             rc = _make_request_context(messages)
             with patch('pydantic_ai.Agent', return_value=_patched_summary_agent(_run())):
                 result = await comp.before_model_request(_make_ctx(rc.messages), rc)
@@ -4089,7 +4095,7 @@ class TestSummarizingReceipts:
             bridge_prefix=False,
             preserve_first_user_message=False,
         )
-        messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
+        messages: list[ModelMessage] = [_user('a'), _assistant(_LONG_REPLY), _user('c'), _assistant('d')]
         rc = _make_request_context(messages)
         ctx = _make_ctx(messages)
         ctx.capabilities = {'sp': _FakeTranscriptStore('librarian-42')}
@@ -4638,10 +4644,10 @@ class TestBridgePrefix:
             preserve_first_user_message=False,
         )
         tail: list[ModelMessage] = (
-            [_assistant('b'), _assistant('d')]
+            [_assistant(_LONG_REPLY), _assistant('d')]
             if run_model is None
             else [
-                ModelResponse(parts=[TextPart(content='b')], model_name=run_model),
+                ModelResponse(parts=[TextPart(content=_LONG_REPLY)], model_name=run_model),
                 ModelResponse(parts=[TextPart(content='d')], model_name=run_model),
             ]
         )
@@ -4931,7 +4937,7 @@ class TestStructuralFeaturesThroughAgent:
 
         result = await agent.run(
             'go',
-            message_history=[_user('a'), _assistant('b'), _user('c'), _assistant('d')],
+            message_history=[_user('a'), _assistant(_LONG_REPLY), _user('c'), _assistant('d')],
         )
 
         assert len(prompts) == 1
@@ -5067,7 +5073,7 @@ class TestStructuralFeaturesThroughAgent:
 
         result = await agent.run(
             'go',
-            message_history=[_user('a'), _assistant('b'), _user('c'), _assistant('d')],
+            message_history=[_user('a'), _assistant(_LONG_REPLY), _user('c'), _assistant('d')],
         )
 
         assert result.output == 'done'
@@ -5136,7 +5142,9 @@ class TestStructuralFeaturesThroughAgent:
             _recording_model(seen),
             capabilities=[SummarizingCompaction(model=_recording_summarizer(prompts), max_messages=2, keep_messages=1)],
         )
-        first = await agent.run('one', message_history=[_user('a'), _assistant('b'), _user('c'), _assistant('d')])
+        first = await agent.run(
+            'one', message_history=[_user('a'), _assistant(_LONG_REPLY), _user('c'), _assistant('d')]
+        )
         assert len(prompts) == 1
         assert '<previous_summary>' not in prompts[0]
 
@@ -5323,7 +5331,9 @@ recent
                 )
             ],
         )
-        first = await agent.run('one', message_history=[_user('a'), _assistant('b'), _user('c'), _assistant('d')])
+        first = await agent.run(
+            'one', message_history=[_user('a'), _assistant(_LONG_REPLY), _user('c'), _assistant('d')]
+        )
         await agent.run('two', message_history=first.all_messages())
 
         assert len(prompts) == 2
@@ -5341,7 +5351,7 @@ recent
             ],
         )
         first = ModelRequest(parts=[SystemPromptPart(content='Be terse.'), *_user('a').parts])
-        result = await agent.run('go', message_history=[first, _assistant('b'), _user('c'), _assistant('d')])
+        result = await agent.run('go', message_history=[first, _assistant(_LONG_REPLY), _user('c'), _assistant('d')])
 
         standing, first_user, summary, *_ = result.all_messages()
         assert isinstance(standing, ModelRequest)

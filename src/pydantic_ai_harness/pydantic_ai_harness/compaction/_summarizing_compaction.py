@@ -60,6 +60,7 @@ from pydantic_ai_harness.compaction._receipts import (
     record_receipt,
 )
 from pydantic_ai_harness.compaction._shared import (
+    compact_if_smaller,
     compact_with_span,
     context_for_request,
     estimate_token_count,
@@ -1025,7 +1026,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             request_ctx,
             strategy='SummarizingCompaction',
             messages=messages,
-            compact=lambda: self.compact(messages, request_ctx),
+            compact=lambda: self._compact_if_smaller(messages, request_ctx),
             tokenizer=self.tokenizer,
         )
         ctx.messages[:] = compacted
@@ -1035,6 +1036,19 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             estimate_token_count(compacted, self.tokenizer),
         )
         return replace(request_context, messages=compacted)
+
+    async def _compact_if_smaller(
+        self, messages: list[ModelMessage], ctx: RunContext[AgentDepsT]
+    ) -> list[ModelMessage]:
+        """`compact`, or *messages* unchanged when the compacted history would not be smaller."""
+        compacted = await compact_if_smaller(
+            ctx,
+            strategy='SummarizingCompaction',
+            messages=messages,
+            compact=lambda: self.compact(messages, ctx),
+            tokenizer=self.tokenizer,
+        )
+        return messages if compacted is None else compacted
 
     @durable_operation('summarize')
     async def _summarize(
