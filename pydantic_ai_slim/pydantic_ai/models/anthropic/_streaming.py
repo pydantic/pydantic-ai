@@ -250,7 +250,9 @@ class AnthropicStreamedResponse(StreamedResponse):
                             part=CompactionPart(
                                 content=current_block.content,
                                 provider_name=self.provider_name,
-                                provider_details=compaction_provider_details(current_block.encrypted_content),
+                                provider_details=compaction_provider_details(
+                                    current_block.encrypted_content, current_block.signature
+                                ),
                             ),
                         )
 

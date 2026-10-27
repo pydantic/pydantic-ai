@@ -80,6 +80,7 @@ class SlackPlugin(Plugin[SlackSettings, DepsT]):
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         return (
             Slack[DepsT](
+                defer_loading=True,
                 auth=self._current_token,
                 read_only=self.settings.read_only,
                 include_instructions=self.settings.include_instructions,

@@ -170,6 +170,7 @@ def _capability(*, settings: LogfireMCPSettings) -> tuple[LogfireMCP[None], str 
         *, auth: SavedKey | None = None, client: Client[StreamableHttpTransport] | None = None
     ) -> LogfireMCP[None]:
         return LogfireMCP[None](
+            defer_loading=True,
             auth=auth,
             client=client,
             url=LOGFIRE_US_MCP_URL if client else settings.url,

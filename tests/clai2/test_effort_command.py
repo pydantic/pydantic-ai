@@ -212,6 +212,15 @@ async def test_effort_for_supplied_model_instance(
             False,
         ),
         ('openai:gpt-5', 'openai_reasoning_effort', {'reasoning_effort': 'low'}, {'reasoning_effort': 'low'}, False),
+        # Azure runs on Chat Completions, which reads the top-level `reasoning_effort`.
+        ('azure:gpt-6', 'openai_reasoning_effort', {'reasoning_effort': 'low'}, {'reasoning_effort': 'low'}, True),
+        (
+            'azure:gpt-6',
+            'openai_reasoning_effort',
+            {'reasoning.effort': 'low'},
+            {'reasoning': {'effort': 'low'}},
+            False,
+        ),
         # Expansion order matters: a later parent can remove a dotted effort override.
         (
             'openai:gpt-5',

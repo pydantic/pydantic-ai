@@ -147,11 +147,10 @@ def test_a_response_taken_for_ours_before_the_server_echoed_settles_nothing_twic
 
 
 @pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai', 'elevenlabs'])
-def test_raising_tool_ends_the_exchange(dialect: Dialect) -> None:
-    """A tool that raises ends the exchange, and nothing is left waiting (OR8, #8765).
+def test_raising_tool_completes_the_turn_once(dialect: Dialect) -> None:
+    """A raising tool leaves nothing waiting (OR8, #8765): its failure goes out, and the model's answer ends the turn.
 
-    The turn ends with it: its failure doesn't go out, so no reply is coming to end it, and the turn completes as
-    the tool raises, once. A reply asked for afterwards completes a turn of its own.
+    The turn completes once. A reply asked for afterwards completes a turn of its own.
     """
 
     def scenario(sim: OpenAISimulation) -> None:
@@ -362,7 +361,7 @@ def test_turn_heard_before_a_cancelled_reply_ended_is_filed_after_it() -> None:
 
 
 def test_gemini_raising_tool_completes_the_turn_once() -> None:
-    """A tool that raises ends the turn once on Gemini Live too, and a reply asked for afterwards completes its own."""
+    """A tool that raises completes the turn once on Gemini Live too, and a later reply completes its own."""
 
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
@@ -515,7 +514,8 @@ def _live_history(sim: LiveSimulation) -> list[list[str]]:
 
 def test_live_reply_goes_on_across_a_delegated_round() -> None:
     """SIM-18: Live goes on speaking while the backend waits for its tool's result ("Okay, checking ... now.", seen
-    live): what it says is the reply that called the tool, ahead of the result, and only the answer follows it."""
+    live): what it says is the reply that called the tool, ahead of the result, and only the answer follows it. The
+    call lands mid-sentence, so the speech is one part, ahead of the call."""
 
     def scenario(sim: LiveSimulation) -> None:
         sim.speak()
@@ -530,7 +530,7 @@ def test_live_reply_goes_on_across_a_delegated_round() -> None:
 
     history: list[list[str]] = []
     run_clean(LiveSimulation(), scenario)
-    assert history == snapshot([['r1w1', 'tool-call call_1', ' r1w2'], ['tool-return call_1'], ['r2w1']])
+    assert history == snapshot([['r1w1 r1w2', 'tool-call call_1'], ['tool-return call_1'], ['r2w1']])
 
 
 def test_live_continuation_call_is_a_response_of_its_own() -> None:
@@ -1352,7 +1352,7 @@ def test_live_call_that_raises_is_answered_with_its_failure() -> None:
 
 
 def test_live_wait_for_reply_waits_for_the_answer_to_a_failed_call() -> None:
-    """A tool that raised still gets its failure sent on GPT-Live, so the exchange goes on to the answer.
+    """A tool that raised still gets its failure sent, on GPT-Live as on every provider, so the exchange goes on.
 
     `wait_for_reply()` waits for the reply that answers the failure, as it does for a result that succeeded, rather
     than returning as the tool raises, with the answer then coming as a reply nobody asked for.
@@ -1510,6 +1510,34 @@ def test_gemini_typed_turn_lost_to_a_drop_is_settled() -> None:
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
         sim.drop()
+
+    run_clean(GeminiSimulation(), scenario)
+
+
+def test_gemini_typed_turn_lost_before_a_handle_is_answered_after_the_replay() -> None:
+    """With no handle to resume from, the re-dial replays the conversation and asks again for the lost turn's reply."""
+    sim = GeminiSimulation()
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.drop()
+
+    run_clean(sim, scenario)
+    turn = sim.truth.input('t1')
+    assert turn is not None and turn.answered_by is not None
+    assert sim.truth.responses[turn.answered_by].connection == 2
+    [waiter] = sim.waiters
+    assert waiter.returned is not None and waiter.error is None
+
+
+def test_gemini_reply_asked_again_is_settled_when_the_reconnect_fails() -> None:
+    """A reply the re-dial would have asked for again is lost when no re-dial succeeds."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.drop(refuse_dials=3)
 
     run_clean(GeminiSimulation(), scenario)
 
@@ -3088,10 +3116,9 @@ def test_elevenlabs_agents_barge_in_on_a_finished_reply(voiced: bool) -> None:
 
 @pytest.mark.parametrize('calls_ended', [False, True], ids=['reply-under-way', 'reply-ended'])
 def test_elevenlabs_agents_raising_tool_completes_the_turn_once(calls_ended: bool) -> None:
-    """A client tool that raises ends the turn once, whether or not the reply that called it had ended by then.
+    """A client tool that raises completes the turn once, whether or not the reply that called it had ended by then.
 
-    A reply still under way ends the turn as it ends; once the calls have ended it (after a quiet stretch), nothing
-    else will, so the turn completes as the tool raises.
+    Its failure goes out like any result, so the agent's answer to it ends the turn.
     """
 
     def scenario(sim: ElevenLabsAgentsSimulation) -> None:

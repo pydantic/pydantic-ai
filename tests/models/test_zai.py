@@ -4,7 +4,16 @@ import re
 
 import pytest
 
-from pydantic_ai import Agent, BinaryImage, ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    BinaryImage,
+    ModelRequest,
+    ModelResponse,
+    ModelSettingsDeltaPart,
+    TextPart,
+    ThinkingPart,
+    UserPromptPart,
+)
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import FinishReason, ModelResponsePart
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -103,7 +112,10 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='Now multiply that result by 2.', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='Now multiply that result by 2.', timestamp=IsDatetime()),
+                    ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True),
+                ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -127,7 +139,10 @@ async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='And what was my first question?', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='And what was my first question?', timestamp=IsDatetime()),
+                    ModelSettingsDeltaPart(settings={'thinking': None}, top_level=True),
+                ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),

@@ -658,15 +658,41 @@ class TestCodeMode:
             ),
         ]
         assert advertised is not None
-        modules = re.findall(r'`(\w+)`', advertised.group(1))
+        modules = re.findall(r'`([\w.]+)`', advertised.group(1))
         assert 'collections' in modules
         for path, pattern in doc_lists:
             documented = re.search(pattern, path.read_text(), re.DOTALL)
             assert documented is not None, path
-            assert re.findall(r'`(\w+)`', documented.group(1)) == modules, path
+            assert re.findall(r'`([\w.]+)`', documented.group(1)) == modules, path
         code = '\n'.join(f'import {module}' for module in modules) + '\n"ok"'
         result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
         assert result.return_value == 'ok'
+
+    async def test_advertised_modules_cover_every_importable_module(self) -> None:
+        """The closed module list omits none of the stdlib modules the sandbox can import."""
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        description = tools['run_code'].tool_def.description or ''
+        advertised = re.search(r'Importable standard library modules\*\*: (.*?)\. ', description)
+        assert advertised is not None
+        candidates = (
+            'abc array bisect calendar collections.abc contextlib csv decimal difflib enum fnmatch fractions glob '
+            'graphlib hashlib heapq hmac html io ipaddress keyword operator os.path pprint secrets shlex statistics '
+            'string struct textwrap tomllib types typing_extensions urllib.parse uuid weakref zlib zoneinfo'
+        ).split()
+        importable: list[str] = []
+        for module in candidates:
+            try:
+                await wrapper.call_tool(
+                    'run_code', {'code': f'import {module}\n"ok"', 'restart': True}, ctx, tools['run_code']
+                )
+            except ModelRetry:
+                continue
+            importable.append(module)
+        missing = [module for module in importable if f'`{module}`' not in advertised.group(1)]
+        assert missing == []
 
     async def test_run_code_returns_last_expression_value(self) -> None:
         """When the last statement is an expression, its value is returned in `result`."""
@@ -2942,6 +2968,46 @@ class TestCodeMode:
         # ToolReturn metadata is preserved on the nested return part.
         returns = result.metadata['tool_returns']
         assert returns['pyd_ai_code_mode__1'].metadata == {'src': 'test'}
+
+    async def test_tool_return_content_reaches_the_model(self) -> None:
+        """`ToolReturn.content` from nested calls reaches the model, as it does for a direct call.
+
+        Regression test for https://github.com/pydantic/pydantic-ai/issues/10088.
+        """
+        image = BinaryContent(data=b'\x89PNG screenshot', media_type='image/png')
+        described = anyio.Event()
+        seen_content: list[Any] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                code = 'import asyncio\nawait asyncio.gather(capture(), describe(), noop())'
+                return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code})])
+            seen_content.extend(part.content for part in messages[-1].parts if isinstance(part, UserPromptPart))
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[CodeMode()])
+
+        @agent.tool_plain
+        async def capture() -> ToolReturnMsg:
+            # Finishes last, so the content must follow call order, not completion order.
+            await described.wait()
+            return ToolReturnMsg(return_value={'success': True}, content=['The screenshot:', image])
+
+        @agent.tool_plain
+        async def describe() -> ToolReturnMsg:
+            described.set()
+            return ToolReturnMsg(return_value='ok', content='A description.')
+
+        @agent.tool_plain
+        def noop() -> ToolReturnMsg:
+            return ToolReturnMsg(return_value=None, content='')
+
+        result = await agent.run('Capture')
+
+        assert seen_content == [['The screenshot:', image, 'A description.']]
+        run_code_return = result.all_messages()[2].parts[0]
+        assert isinstance(run_code_return, ToolReturnPart)
+        assert run_code_return.content == [{'success': True}, 'ok', None]
 
     # ---------------------------------------------------------------------------
     # OTel / Logfire instrumentation

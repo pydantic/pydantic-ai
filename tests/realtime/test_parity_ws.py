@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     RealtimeSessionErrorEvent,
     SpeechPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -270,17 +271,17 @@ _TRAILING_SILENCE_FRAMES = 10
 _INFERRED_BOUNDARY_SILENCE_FRAMES = 120
 
 
-def _marks(case: RealtimeParityCase, *, spoken: bool = False) -> tuple[pytest.MarkDecorator, ...]:
+def _marks(case: RealtimeParityCase, *, unrecorded_on_azure: bool = False) -> tuple[pytest.MarkDecorator, ...]:
     """The marks a row needs: ElevenLabs' REST preflight records through HTTP VCR next to the WebSocket cassette.
 
-    Our Azure realtime resource answers 401, so the spoken scenarios could not be recorded for it. Its
-    row is skipped rather than dropped, so the hole stays visible: record it (and delete this mark) once
-    the Azure key works again. Azure's text scenario still runs from its existing recording.
+    Our Azure realtime resource answers 401, so scenarios recorded after that (the spoken ones, and the raising-tool
+    one) have no Azure recording. Their row is skipped rather than dropped, so the hole stays visible: record it (and
+    delete this mark) once the Azure key works again. Azure's text scenario still runs from its existing recording.
     """
     marks: list[pytest.MarkDecorator] = []
     if case.route == 'elevenlabs-agents':
         marks.append(pytest.mark.vcr)
-    if spoken and case.route == 'azure':
+    if unrecorded_on_azure and case.route == 'azure':
         marks.append(pytest.mark.skip(reason='Azure realtime credentials return 401; cassette cannot be recorded'))
     return tuple(marks)
 
@@ -297,7 +298,8 @@ _SEEDING_CASES = [
     if case.drives_turns_with_text and case.supports_session_seeding
 ]
 _AUDIO_CASES = [
-    pytest.param((case, case.route), id=case.id, marks=_marks(case, spoken=True)) for case in REALTIME_PARITY_CASES
+    pytest.param((case, case.route), id=case.id, marks=_marks(case, unrecorded_on_azure=True))
+    for case in REALTIME_PARITY_CASES
 ]
 
 
@@ -425,6 +427,83 @@ async def test_text_tool_round_parity(
     assert session.usage.output_tokens >= 0
 
 
+@pytest.mark.parametrize(
+    'parity_ws_cassette',
+    [
+        pytest.param((case, case.route), id=case.id, marks=_marks(case, unrecorded_on_azure=True))
+        for case in REALTIME_PARITY_CASES
+        if case.drives_turns_with_text
+    ],
+    indirect=True,
+)
+async def test_raising_tool_parity(
+    parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
+) -> None:
+    """A tool that raises is answered with the generic failure, so the model speaks to it and the session goes on.
+
+    The exception still reaches the consumer, the turn ends once with the model's answer to the failure, and a
+    later turn is answered as usual.
+    """
+    case, provider, _ = parity_ws_cassette
+    model = _model(case, provider, text_output=True)
+    agent = Agent(instructions='Always call get_weather for a weather question, then answer in one short sentence.')
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Look up the weather for a city."""
+        raise RuntimeError(f'weather service unavailable for {city}')
+
+    turns: list[list[Any]] = [[]]
+    failing_turn = 0
+    errors: list[BaseException] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('What is the weather in London?')
+        with anyio.fail_after(60):
+            while True:
+                try:
+                    async for event in session:  # pragma: no branch
+                        turns[-1].append(event)
+                        last = session.all_messages()[-1]
+                        if not (
+                            isinstance(event, RealtimeTurnCompleteEvent)
+                            and errors
+                            and isinstance(last, ModelResponse)
+                            and last.parts
+                        ):
+                            continue
+                        if len(turns) == 2:
+                            break
+                        failing_turn = len(session.all_messages())
+                        turns.append([])
+                        await session.send('What is two plus two? Answer with just the number.')
+                    break
+                except RuntimeError as e:
+                    # Raised from `async for`; iterating again goes on receiving.
+                    errors.append(e)
+
+    # The model may try the tool again; every attempt fails the same way.
+    assert errors and all(str(error) == 'weather service unavailable for London' for error in errors)
+    assert not any(isinstance(event, RealtimeSessionErrorEvent) for turn in turns for event in turn)
+    assert [sum(isinstance(event, RealtimeTurnCompleteEvent) for event in turn) for turn in turns] == [1, 1]
+    messages = session.all_messages()
+    # Each call is answered with the generic failure, and the turn ended on the model's answer to it.
+    returned = [
+        part for message in messages[:failing_turn] for part in message.parts if isinstance(part, ToolReturnPart)
+    ]
+    assert [(part.content, part.outcome) for part in returned] == [
+        ('The tool raised an unhandled error.', 'failed')
+    ] * len(errors)
+    failure_answer = messages[failing_turn - 1]
+    assert isinstance(failure_answer, ModelResponse) and failure_answer.parts
+    assert not any(isinstance(part, ToolCallPart) for part in failure_answer.parts)
+    final = messages[-1]
+    assert isinstance(final, ModelResponse)
+    final_part = final.parts[-1]
+    assert isinstance(final_part, (SpeechPart, TextPart))
+    answer = final_part.transcript if isinstance(final_part, SpeechPart) else final_part.content
+    assert answer is not None and ('4' in answer or 'four' in answer.lower())
+
+
 @pytest.mark.parametrize('parity_ws_cassette', _SEEDING_CASES, indirect=True)
 async def test_history_seeding_parity(
     parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
@@ -458,6 +537,39 @@ async def test_history_seeding_parity(
     answer = part.transcript if isinstance(part, SpeechPart) else part.content
     assert answer is not None
     assert 'alice' in answer.lower() and 'teal' in answer.lower()
+
+
+@pytest.mark.parametrize('parity_ws_cassette', _TEXT_CASES, indirect=True)
+async def test_system_prompt_note_parity(
+    parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
+) -> None:
+    """A system prompt sent mid-session with `respond=False` gets no reply of its own, but shapes the next one.
+
+    Each provider delivers it on its own channel for the operator's text (a `system` message, a contextual
+    update, or `<system>`-tagged user text), and history records it as the `SystemPromptPart` it is. GPT-Live,
+    which has to be asked out loud, delivers it as a note to the voice model; its cassette tests cover it.
+    """
+    case, provider, _ = parity_ws_cassette
+    model = _model(case, provider, text_output=True)
+    agent = Agent(instructions='You are Sam, a phone support agent for Acme Telecom. Answer in one short sentence.')
+    note = SystemPromptPart(content='The caller has been verified as the account holder, Jamie. Address them by name.')
+
+    async with agent.realtime(model).session() as session:
+        await session.send(note, respond=False)
+        await session.send('Hi, can you tell me whose account this is?')
+        events = await _collect_complete_turn(session)
+
+    assert not any(isinstance(event, RealtimeSessionErrorEvent) for event in events)
+    messages = session.all_messages()
+    assert [type(message) for message in messages] == [ModelRequest, ModelRequest, ModelResponse]
+    assert messages[0].parts == [note]
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[-1]
+    assert isinstance(part, (SpeechPart, TextPart))
+    answer = part.transcript if isinstance(part, SpeechPart) else part.content
+    assert answer is not None
+    assert 'jamie' in answer.lower()
 
 
 @pytest.mark.parametrize('parity_ws_cassette', _AUDIO_CASES, indirect=True)
@@ -525,7 +637,7 @@ async def test_audio_tool_round_parity(
 def _conversation_cases(*, include: Callable[[RealtimeParityCase], bool]) -> list[Any]:
     """The parity cases a spoken-conversation scenario runs on, as picked by `include`."""
     return [
-        pytest.param((case, case.route), id=case.id, marks=_marks(case, spoken=True))
+        pytest.param((case, case.route), id=case.id, marks=_marks(case, unrecorded_on_azure=True))
         for case in REALTIME_PARITY_CASES
         if include(case)
     ]

@@ -29,6 +29,7 @@ never discarded.
 | [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | A tool call was deferred (e.g. needs approval); emitted before any inline capability handler runs. |
 | [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | An inline capability handler resolved the deferred requests; the results go through normal tool processing. |
 | [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] | Enqueued content was delivered into session history. |
+| [`CustomEvent`][pydantic_ai.messages.CustomEvent] / [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] | A tool or capability hook [emitted](capabilities.md#the-event-stream) an application or capability event. |
 | [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] | The provider detected that the user started speaking, when the profile declares [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]. |
 | [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent] | The provider detected the end of user speech, when the profile declares [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]. |
 | [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] | The provider reported an interrupted model response. |
@@ -46,7 +47,7 @@ streams that part again under the same `index`, and the new
 
 ## Shared and realtime-only events
 
-The first eight rows are [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members from
+The first nine rows are [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members from
 [`pydantic_ai.messages`][pydantic_ai.messages] — the same events a
 [standard streamed run](../agent.md#streaming-all-events) yields, so event-handling code written for
 a text agent (rendering parts, logging tool calls) works on a session unchanged. The `Realtime*`
@@ -76,9 +77,11 @@ cut their reply off for it (see [Gemini](gemini.md#provider-specific-quirks)).
 A response the user cuts off by speaking ends the exchange, as does a response the provider started on its own
 (server-side voice activity detection). The user's transcript can still finish after it.
 
-An exchange that fails also ends with the event, once: when a [tool raises](tools.md#function-tools) and its failure
-doesn't go out to the model, or a tool's result would pass a usage limit, the model never gets what it needs to reply.
-The event follows the exception in the event stream, or comes as the response still under way ends.
+A [tool that raises](tools.md#function-tools) doesn't end the exchange: the model is told the call failed, and the
+event comes once it has answered that. An exchange that fails also ends with the event, once: when a tool's result
+would pass a [usage limit](../agent.md#usage-limits), or a failed tool's result can't be sent, the model never gets
+what it needs to reply. The event follows the exception in the event stream, or comes as the response still under
+way ends.
 
 ## Reading raw audio events
 

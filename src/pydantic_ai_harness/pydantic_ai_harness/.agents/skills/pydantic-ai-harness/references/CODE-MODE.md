@@ -105,7 +105,9 @@ approval-gated and integration tools stay regular tool calls.
 
 If the user expects a raw dict or list back, avoid unnecessary `print()` statements. Printed output is
 capped at 10 MiB. Tool results reach the sandbox as JSON: `Decimal`, `UUID` and `datetime` arrive as
-strings and mapping keys are stringified (`bytes` cross unchanged).
+strings and mapping keys are stringified (`bytes` cross unchanged). A nested tool's `ToolReturn`
+gives the sandbox its `return_value`; its `content` (e.g. a screenshot) skips the sandbox and reaches
+the model with the `run_code` result, as for a direct call.
 
 ## Limits and Retries
 
@@ -150,7 +152,7 @@ Key restrictions:
 
 - No third-party imports
 - No `import *`
-- Only a small stdlib subset is allowed, and each must be imported before use: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`
+- Only a small stdlib subset is allowed, and each must be imported before use: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `hashlib`, `os.path`, `tomllib`
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation and wait APIs are unavailable
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` require an `os_access` handler; `time.sleep` and `asyncio.sleep` really wait, within the sleep allowance
 - Filesystem I/O requires an `os_access` handler or a `mount`; `os.getenv` and `os.environ` require an `os_access` handler
@@ -197,7 +199,7 @@ CodeMode(
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None,
     eager: bool = False,                   # run complete streamed statements before the call finishes
     speculate: Sequence[str] | Literal['declared'] | None = None,  # start read-only calls while streaming
-    monty_sandbox_url: str | None = None,  # ws:// or wss:// remote Monty worker
+    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = None,  # a ws(s):// URL, or a function returning the pool
     repl_store: CodeModeReplStore | None = None,  # keep the REPL across agent runs
     dynamic_catalog: bool = False,         # move the tool catalog into dynamic instructions
 )
@@ -208,7 +210,7 @@ CodeMode(
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
-- `monty_sandbox_url`: only execution moves; tools, mounts, `os_access`, and prints stay host-side. Use `wss://` unless the network is trusted.
+- `monty_sandbox`: a `ws://`/`wss://` URL (no key) or a sync or async function returning an `AsyncMontyWebsocket`, to run code on a remote Monty worker; a function's pool limits code between tool calls with its `request_timeout` (10 s default) instead of `max_duration_secs`. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. `monty_sandbox_url` is the deprecated form.
 
 ## Durable Execution
 

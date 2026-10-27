@@ -54,6 +54,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    StructuredContent,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -397,6 +398,19 @@ def _thinking_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResp
     )
 
 
+def _interleaved_thinking_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Reasoning between a response's text and its tool call, as interleaved thinking produces."""
+    if _results_since_question(messages):
+        return ModelResponse(parts=[TextPart('It is sunny in Paris.')])
+    return ModelResponse(
+        parts=[
+            TextPart('Let me check.'),
+            ThinkingPart('The weather tool knows.', signature=f'sig-{len(messages)}', provider_name='function'),
+            ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id=f'call-{len(messages)}'),
+        ]
+    )
+
+
 def _reveal_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     results = _results_since_question(messages)
     if results == 0:
@@ -449,6 +463,13 @@ def _enqueue_tools(agent: Agent[None, str]) -> None:
     def start_job(ctx: RunContext[None]) -> str:
         ctx.enqueue('Background result: 42')
         ctx.enqueue(ModelResponse(parts=[TextPart('Synthetic reply')]), 'Synthetic follow-up')
+        return 'started'
+
+
+def _enqueue_structured_tools(agent: Agent[None, str]) -> None:
+    @agent.tool
+    def start_job(ctx: RunContext[None]) -> str:
+        ctx.enqueue(StructuredContent({'job': 42, 'status': 'done'}, tag='job'), 'The background job finished.')
         return 'started'
 
 
@@ -578,10 +599,6 @@ _RETRY = (
     "the AI SDK stream has no carrier for a tool's outcome, so a streamed retry reloads as "
     '`outcome="failed"` instead of `"retried"`; #8185'
 )
-_AGUI_SYSTEM_ORDER = (
-    "AG-UI `dump_messages()` writes a request's system prompts before its tool results, so an enqueued "
-    'system prompt reloads ahead of the tool result it followed; no issue yet'
-)
 _APPEND_INSTRUCTIONS = (
     'append-mode instruction records (`InstructionBaselinePart`, `InstructionDeltaPart`) are system voice, '
     "which the adapter strips from client history in `manage_system_prompt='server'`, so every turn re-renders "
@@ -594,15 +611,6 @@ _FEEDBACK_NOT_STREAMED = (
 _NO_OUTPUT_DEMOTED = (
     "`no_output` feedback is the framework's system voice, which a client can't claim, so it loads back as "
     'user-voice feedback and renders differently; no issue yet'
-)
-_AGUI_EMPTY_RESPONSE = (
-    'AG-UI `dump_messages()` drops an empty response, so the feedback after it loads into the question '
-    'before it; no issue yet'
-)
-_DUPLICATE_IDS = (
-    "Vercel AI `dump_messages()` gives a request's system and user messages the same id once the request "
-    'carries the `ui_message_id` it was loaded with, so a hydrated client holds two messages with one id; '
-    'no issue yet'
 )
 _SERVER_SYSTEM_PROMPT = (
     'a system prompt enqueued in an earlier run is stripped from client history with the rest in '
@@ -623,7 +631,6 @@ SCENARIOS = [
         id='system_prompt_and_text_deltas',
         script=_text_script,
         agent_kwargs={'system_prompt': 'You are terse.', 'instructions': 'Answer in English.'},
-        gaps=_gaps(_DUPLICATE_IDS, ('ids', 'dump', 'vercel')),
     ),
     Scenario(
         id='client_owned_system_prompt',
@@ -632,8 +639,6 @@ SCENARIOS = [
         adapter_kwargs={'manage_system_prompt': 'client'},
         gaps={
             **_gaps(_AGUI_ACTIVITY, ('load', 'stream', 'agui'), ('wire', 'stream', 'agui')),
-            **_gaps(_AGUI_SYSTEM_ORDER, ('load', 'dump', 'agui'), ('wire', 'dump', 'agui')),
-            **_gaps(_DUPLICATE_IDS, ('ids', 'dump', 'vercel')),
         },
         # The frontend owns the system prompt, so it's the one sending it.
         seed=[
@@ -650,6 +655,7 @@ SCENARIOS = [
     Scenario(id='tool_call', script=_tool_call_script, setup=_get_weather),
     Scenario(id='parallel_tool_calls', script=_parallel_tool_calls_script, setup=_get_weather_london_first),
     Scenario(id='thinking', script=_thinking_script),
+    Scenario(id='interleaved_thinking', script=_interleaved_thinking_script, setup=_get_weather),
     Scenario(
         id='tool_availability_delta',
         script=_reveal_script,
@@ -702,7 +708,6 @@ SCENARIOS = [
         id='no_output_feedback',
         script=_silent_first_script,
         gaps={
-            **_gaps(_AGUI_EMPTY_RESPONSE, ('load', 'dump', 'agui')),
             **_gaps(_NO_OUTPUT_DEMOTED, ('wire', 'dump', 'vercel'), ('wire', 'dump', 'agui')),
             **_gaps(
                 _FEEDBACK_NOT_STREAMED,
@@ -792,6 +797,23 @@ SCENARIOS = [
         agent_kwargs={'capabilities': [_RequestScopedReminder()]},
     ),
     Scenario(id='multimodal_tool_return', script=_image_script, setup=_image_tools),
+    Scenario(
+        id='structured_content',
+        script=_enqueue_script,
+        setup=_enqueue_structured_tools,
+        gaps=_gaps(_AGUI_ACTIVITY, ('load', 'stream', 'agui'), ('wire', 'stream', 'agui')),
+        # The client hydrates a structured prompt on both paths; the stream path also carries an enqueued one.
+        seed=[
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        [StructuredContent({'url': '/products/42', 'cart_total': 949.0}, tag='ui_state'), 'Question 0']
+                    )
+                ]
+            ),
+            ModelResponse(parts=[TextPart('The total includes shipping.')]),
+        ],
+    ),
     Scenario(
         id='compaction',
         script=_text_script,

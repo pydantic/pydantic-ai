@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -35,9 +35,12 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeToolset,
     as_os_handler,
     in_durable_execution,
+    monty_sandbox_from_url,
 )
 
 if TYPE_CHECKING:
+    from pydantic_monty import AsyncMontyWebsocket
+
     from pydantic_ai.capabilities.abstract import ValidatedToolArgs
     from pydantic_ai.messages import ToolCallPart
     from pydantic_ai.models import ModelRequestContext
@@ -162,15 +165,18 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     execution mode is sequential. See the Code Mode guide for the mechanics.
     """
 
-    monty_sandbox_url: str | None = field(default=None, repr=False)
-    """Run sandboxed code on remote Monty workers reached over this `ws://` or `wss://` URL.
+    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
+        default=None, repr=False
+    )
+    """Where sandboxed code runs: a `ws://` or `wss://` URL, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`, called for each run. Unset, code runs locally.
 
-    Only execution moves: tool dispatch, mounts, `os_access`, and print capture stay host-side
-    over the connection.
-
-    Use `wss://` unless the server is on a network you trust: the connection carries the tool calls
-    your agent executes, so anyone who can intercept it can choose what your tools run.
+    A function's pool limits how long code runs between tool calls with its own `request_timeout`
+    (10 seconds by default), in place of `max_duration_secs`. Tools, mounts, `os_access`, and print
+    output stay in your process.
     """
+
+    monty_sandbox_url: str | None = field(default=None, repr=False)
+    """Deprecated: pass `monty_sandbox=url` instead."""
 
     repl_store: CodeModeReplStore[AgentDepsT] | None = None
     """Keep the `run_code` REPL across agent runs in this store.
@@ -233,6 +239,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
         self.os_access = as_os_handler(self.os_access)
+        self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeMode')
+        self.monty_sandbox_url = None
         if isinstance(self.speculate, str) and self.speculate != 'declared':
             raise UserError(
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
@@ -282,7 +290,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 dynamic_catalog=self.dynamic_catalog,
                 os_access=self.os_access,
                 mount=self.mount,
-                monty_sandbox_url=self.monty_sandbox_url,
+                monty_sandbox=self.monty_sandbox,
                 repl_store=self.repl_store,
                 capability=self,
                 speculation=self._speculation,
@@ -296,7 +304,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             dynamic_catalog=self.dynamic_catalog,
             os_access=self.os_access,
             mount=self.mount,
-            monty_sandbox_url=self.monty_sandbox_url,
+            monty_sandbox=self.monty_sandbox,
             repl_store=self.repl_store,
             capability=self,
             speculation=self._speculation,
