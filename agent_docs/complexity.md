@@ -51,7 +51,7 @@ The function was already over the limit, and the change made it worse. Keep the 
 
 - Turn each ladder into `match part:` with one `case` per part type and `case _: assert_never(part)`.
 - Map each part type in its own method. When request-wide state crosses parts, keep it on a private, data-only context dataclass, one per request, as `OpenAIChatModel._MapModelResponseContext` in `models/openai.py` does.
-- Move a whole-request pass that runs after the loop into a module function, as `_place_system_messages_before_generation` in `models/anthropic.py` does.
+- Move a whole-request pass that runs after the loop into a module function, as `place_system_messages_before_generation` in `models/anthropic/_message_passes.py` does.
 - Move logic every provider repeats into a `Model.prepare_messages` pass, as `_drop_superseded_request_scoped_prompts` in `models/__init__.py` does.
 
 ### stream-state-machine
@@ -93,7 +93,7 @@ The function was already over the limit, and the change made it worse. Keep the 
 
 **Shape**: maps one cross-provider setting to one provider's request parameters: native tools, `tool_choice`, thinking, cache settings, model settings or realtime session config.
 
-**Fix**: `match` over the closed union and end in `case _: assert_never(...)`. Build each variant that needs a nested object in its own method, as `AnthropicModel._map_web_search_tool` in `models/anthropic.py` does. Normalize the input first and map it second, as `CohereModel._get_tool_choice` in `models/cohere.py` does.
+**Fix**: `match` over the closed union and end in `case _: assert_never(...)`. Build each variant that needs a nested object in its own method, as `AnthropicModel._map_web_search_tool` in `models/anthropic/__init__.py` does. Normalize the input first and map it second, as `CohereModel._get_tool_choice` in `models/cohere.py` does.
 
 ### precedence-resolution
 

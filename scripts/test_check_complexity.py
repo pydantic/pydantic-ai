@@ -581,6 +581,23 @@ def test_every_anchor_the_report_links_is_a_heading_in_the_guide():
     assert linked - _guide_anchors() == set()
 
 
+def test_every_function_the_guide_cites_is_where_it_says():
+    root = Path(__file__).parents[1]
+    config = tomllib.loads((root / 'pyproject.toml').read_text(encoding='utf-8'))['tool']['complexipy']
+    packages = [root / path for path in config['paths']]
+    cited = re.findall(r'`([A-Za-z_][\w.]*)` in `([\w/.]+\.py)`', _GUIDE_PATH.read_text(encoding='utf-8'))
+    missing: list[str] = []
+    for symbol, path in cited:
+        # A path starts inside a package, or one level up when it names the package, as `pydantic_graph/...` does.
+        files = [f for package in packages for f in (package / path, package.parent / path) if f.is_file()]
+        source = files[0].read_text(encoding='utf-8') if files else ''
+        if not all(re.search(rf'\b(?:class|def) {part}\b', source) for part in symbol.split('.')):
+            missing.append(f'{symbol} in {path}')
+
+    assert cited
+    assert missing == []
+
+
 def test_the_repository_config_names_existing_roots():
     root = Path(__file__).parents[1]
     config = tomllib.loads((root / 'pyproject.toml').read_text(encoding='utf-8'))['tool']['complexipy']
