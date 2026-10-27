@@ -137,6 +137,8 @@ With [`BatchModelRequests`](../batch.md), every attempt is batched with the mode
 
 Under a [durability capability](../durable_execution/overview.md), each attempt is a durable model operation of its own: on [Temporal](../durable_execution/temporal.md), an activity per model tried. The activity's retry policy retries a failed request before the error reaches `ModelFallback`'s `fallback_on`, and Temporal's default retry policy retries without limit: set `maximum_attempts` in the retry policy of `TemporalDurability`'s [`model_activity_config`](../durable_execution/temporal.md#activity-configuration) so that a failing model doesn't hold up the fallback. Each model's `request_timeout` deadline runs as a durable timer around its own activity.
 
+A streamed request is consumed inside its durable unit, where its events reach a durability capability's `event_stream_handler`, so a stream that fails after producing output there is raised rather than fallen back from, as outside durable execution, and what it produced counts towards the run's usage.
+
 A model `ModelFallback` moves to is rebuilt for its activity like any model a run uses: a model name string is built on the worker, and a model instance must be registered with the durability capability's `models`, then given to `ModelFallback` by that name:
 
 ```python {title="model_fallback_temporal.py" test="skip"}

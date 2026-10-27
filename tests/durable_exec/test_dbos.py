@@ -65,6 +65,7 @@ from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelAPIError,
     ModelHTTPError,
     ModelRetry,
     RunCancelled,
@@ -6035,3 +6036,68 @@ async def test_dbos_timeout_outside_workflow(dbos: DBOS) -> None:
     """Outside a workflow the capability is transparent: the run's own clock starts the deadline."""
     with pytest.raises(RunTimedOut):
         await timed_out_agent.run('Hello', timeout=0)
+
+
+def _late_stream_failure_agent(name: str, *, fail_after_output: bool, answered: list[str]) -> Agent[object, str]:
+    """An agent whose model fails partway through a stream, or before it, with a `ModelFallback` to another model."""
+
+    async def primary(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        if fail_after_output:
+            yield 'partial'
+        raise ModelAPIError('primary', 'stream broke')
+
+    async def backup(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        answered.append('backup')
+        yield 'from backup'
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _event in stream:
+            pass
+
+    return Agent(
+        FunctionModel(stream_function=primary, model_name='primary'),
+        deps_type=object,
+        name=name,
+        capabilities=[
+            ModelFallback('backup'),
+            DBOSDurability(
+                models={'backup': FunctionModel(stream_function=backup, model_name='backup')},
+                event_stream_handler=handler,
+            ),
+        ],
+    )
+
+
+async def test_dbos_stream_failing_after_output_does_not_fall_back(dbos: DBOS) -> None:
+    """A stream that fails after producing output in its step is raised, not fallen back from, and its usage counts.
+
+    The step delivers the output to the event handler before the workflow sees the stream, as outside durable
+    execution, where only a stream that fails before its first event falls back.
+    """
+    answered: list[str] = []
+    agent = _late_stream_failure_agent('dbos_late_stream_failure', fail_after_output=True, answered=answered)
+
+    @DBOS.workflow()
+    async def run_workflow() -> RunUsage:
+        usage = RunUsage()
+        with pytest.raises(ModelAPIError, match='stream broke'):
+            await agent.run('hello', usage=usage)
+        return usage
+
+    usage = await run_workflow()
+    assert answered == []
+    # As without durable execution: the interrupted response is committed with its usage.
+    assert usage == RunUsage(input_tokens=50, output_tokens=1, requests=1)
+
+
+async def test_dbos_stream_failing_before_output_falls_back(dbos: DBOS) -> None:
+    """A stream that fails before producing any output still falls back to the next model."""
+    answered: list[str] = []
+    agent = _late_stream_failure_agent('dbos_early_stream_failure', fail_after_output=False, answered=answered)
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('hello')).output
+
+    assert await run_workflow() == 'from backup'
+    assert answered == ['backup']
