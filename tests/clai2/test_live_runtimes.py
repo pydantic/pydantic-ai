@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import sys
 import weakref
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -24,7 +25,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins.web.app import HEADER
-from pydantic_clai2.cli import web as web_module
+from pydantic_clai2.cli import cli, web as web_module
 from pydantic_clai2.cli.web import run_web
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -152,7 +153,9 @@ def blocked(
     return Agent(FunctionModel(stream_function=stream))
 
 
-async def test_registry_tracks_open_sessions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_registry_tracks_open_sessions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """The real session lifecycle advertises only live sessions and removes the record on exit."""
     with TemporaryDirectory(prefix='clai2-', dir='/tmp') as runtime:
         monkeypatch.setenv('XDG_RUNTIME_DIR', runtime)
@@ -164,11 +167,26 @@ async def test_registry_tracks_open_sessions(tmp_path: Path, monkeypatch: pytest
             records = await live_listing()
             assert len(records) == 1
             assert [(session.id, session.handle) for session in records[0].sessions] == [(home.id, 'home')]
-            fleet.live.registry.question(home.id, 'question-1')
-            assert fleet.live.registry.snapshot().sessions[0].status == 'idle'  # No turn to wait in.
-            fleet.live.registry.question(home.id, 'question-1', answered=True)
+            monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
+            await anyio.to_thread.run_sync(cli.run)
+            assert capsys.readouterr().out == f'Handle\tStatus\tTitle\tWorkspace\nhome\tidle\t\t{home.workspace}\n'
+            with pytest.raises(ValueError, match='must not be empty'):
+                home.wait_for_user('')
+            finished = home.wait_for_user('approval')
+            assert home.waiting_for == 'approval'
+            assert fleet.live.registry.snapshot().sessions[0].status == 'waiting'
+            second = home.wait_for_user('a question')
+            assert home.waiting_for == 'a question'
+            second()
+            second()  # Releasing a wait twice leaves the earlier one intact.
+            assert home.waiting_for == 'approval'
+            finished()
+            assert home.waiting_for == ''
             await fleet.live.close(home.id)
             await until(fleet.live, lambda: not fleet.live.listing())
+            fleet.live.registry.flush()
+            await anyio.to_thread.run_sync(cli.run)
+            assert capsys.readouterr().out == 'No live sessions.\n'
         assert await live_listing() == []
 
 
@@ -176,8 +194,8 @@ async def test_unsafe_socket_folder_does_not_stop_chat(tmp_path: Path, monkeypat
     """An unsafe runtime path disables discovery rather than preventing the session from starting."""
     runtime = tmp_path / 'runtime'
     runtime.mkdir(mode=0o700)
-    (runtime / 'pydantic-clai2').mkdir(mode=0o755)
-    (runtime / 'pydantic-clai2').chmod(0o755)
+    (runtime / f'pydantic-clai2-{os.getuid()}').mkdir(mode=0o755)
+    (runtime / f'pydantic-clai2-{os.getuid()}').chmod(0o755)
     monkeypatch.setenv('XDG_RUNTIME_DIR', str(runtime))
     fleet = Fleet(tmp_path)
     async with fleet.live.serving():
@@ -186,8 +204,9 @@ async def test_unsafe_socket_folder_does_not_stop_chat(tmp_path: Path, monkeypat
         await fleet.live.close(home.id)
 
 
-async def test_question_status_follows_answer_and_turn_end(tmp_path: Path) -> None:
-    """The default live-status hook notices real ask_user events, not only explicit registry updates."""
+@pytest.mark.parametrize('cancel', [False, True])
+async def test_question_status_follows_answer_and_turn_end(tmp_path: Path, cancel: bool) -> None:
+    """The runtime tracks real ask_user events through the public waiting-status contract."""
     started = anyio.Event()
     release = anyio.Event()
 
@@ -205,10 +224,7 @@ async def test_question_status_follows_answer_and_turn_end(tmp_path: Path) -> No
         else:
             yield 'done'
 
-    fleet = Fleet(
-        tmp_path,
-        builtin=(RECORDER, PluginSettings(id='live_status', factory='pydantic_clai2.builtin_plugins.live_status')),
-    )
+    fleet = Fleet(tmp_path)
     fleet.agents['home'] = Agent(FunctionModel(stream_function=respond), capabilities=[AskUser(answerer=answer)])
     with anyio.fail_after(20):
         async with fleet.live.serving():
@@ -217,8 +233,12 @@ async def test_question_status_follows_answer_and_turn_end(tmp_path: Path) -> No
             await until(fleet.live, lambda: home.running)
             await started.wait()
             assert fleet.live.registry.snapshot().sessions[0].status == 'waiting'
-            release.set()
+            if cancel:
+                assert home.interrupt()
+            else:
+                release.set()
             await until(fleet.live, lambda: not home.running)
+            assert home.waiting_for == ''
             assert fleet.live.registry.snapshot().sessions[0].status == 'idle'
 
 
@@ -242,9 +262,9 @@ async def test_sessions_stream_at_once_and_an_interrupt_stops_only_its_own(tmp_p
             await started['a'].wait()
             await started['b'].wait()
             assert a.running and b.running, 'both turns run at once'
-            fleet.live.registry.question(b.id, 'question-1')
+            finished = b.wait_for_user('a question')
             assert fleet.live.registry.snapshot().sessions[1].status == 'waiting'
-            fleet.live.registry.question(b.id, 'question-1', answered=True)
+            finished()
             assert fleet.live.registry.snapshot().sessions[1].status == 'running'
             b.send_input('and then')
             assert (a.queued, b.queued) == (0, 1)

@@ -543,6 +543,14 @@ async def test_a_host_outside_the_loader_is_its_one_session() -> None:
     live.subscribe(lambda: None)()
     unwatch = session.watch()
     unwatch()
+    assert session.waiting_for == ''
+    with pytest.raises(ValueError, match='must not be empty'):
+        session.wait_for_user('')
+    finished = session.wait_for_user('approval')
+    assert session.waiting_for == 'approval'
+    finished()
+    finished()
+    assert session.waiting_for == ''
     assert (session.session_id, session.workspace, session.conversation) == (None, Path.cwd(), host.conversation)
     assert (session.status, session.sessions, session.tasks) == (host.status, None, None)
     assert (session.running, session.queued, session.watchers, session.interrupt()) == (False, 0, 0, False)

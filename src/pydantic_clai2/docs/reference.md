@@ -2134,7 +2134,7 @@ See [PLUGINS.md](../PLUGINS.md) for the plugin contract.
 
 ## Sessions
 
-`clai2 sessions` lists sessions currently open in CLAI processes under your user account, including idle sessions and turns waiting for an `ask_user` answer. It does not resume, control, or message them. A live process advertises its sessions in a private state file and answers liveness checks on a same-user Unix socket; stale or unreachable sessions are not shown. Saved conversations that are not open remain available through `/resume`.
+On Unix, `clai2 sessions` lists sessions currently open in CLAI processes under your user account, including idle sessions and turns waiting for an `ask_user` answer. It prints `No live sessions.` when none are reachable. Windows reports that Unix sockets are required and exits unsuccessfully. The command does not resume, control, or message sessions. A live process advertises its sessions in a private state file and answers liveness checks on a same-user Unix socket; stale or unreachable sessions are not shown. Saved conversations that are not open remain available through `/resume`.
 
 ### Saved sessions and `/resume`
 

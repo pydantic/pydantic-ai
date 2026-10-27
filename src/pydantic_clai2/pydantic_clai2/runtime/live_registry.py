@@ -40,13 +40,8 @@ class LiveEntry:
     workspace: str
     model: str
     status: Literal['idle', 'running', 'waiting']
-    branch: str = ''
     waiting_for: str = ''
     status_since: datetime | None = None
-    attached: int = 0
-    focused: bool = False
-    accepts_messages: bool = True
-    inbox: int = 0
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -71,6 +66,10 @@ _FRAME = TypeAdapter(dict[str, object])
 
 def _private_directory(path: Path) -> Path:
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return _check_private_directory(path)
+
+
+def _check_private_directory(path: Path) -> Path:
     mode = path.lstat()
     if not stat.S_ISDIR(mode.st_mode) or mode.st_uid != os.getuid() or mode.st_mode & 0o077:
         raise PermissionError(f'Unsafe CLAI directory {path}')
@@ -80,7 +79,7 @@ def _private_directory(path: Path) -> Path:
 def _socket_directory() -> Path:
     base = os.environ.get('XDG_RUNTIME_DIR') or os.environ.get('TMPDIR')
     if base:
-        return _private_directory(Path(base) / 'pydantic-clai2')
+        return _private_directory(Path(base) / f'pydantic-clai2-{os.getuid()}')
     return _private_directory(Path('/tmp') / f'pydantic-clai2-{os.getuid()}')
 
 
@@ -132,6 +131,18 @@ async def request(path: Path, frame: dict[str, object]) -> dict[str, object]:
         await writer.wait_closed()
 
 
+def _record_socket(record: LiveRecord) -> Path:
+    path = Path(record.socket)
+    if (
+        not path.is_absolute()
+        or path.name != f'{record.pid}.sock'
+        or path.parent.name != f'pydantic-clai2-{os.getuid()}'
+    ):
+        raise ValueError('Invalid CLAI control socket path')
+    _check_private_directory(path.parent)
+    return path
+
+
 async def listing(*, directory: Path | None = None) -> list[LiveRecord]:
     """Find reachable processes; remove only records whose exact socket and inode are safely stale."""
     directory = directory or state_dir() / 'live'
@@ -152,10 +163,9 @@ async def listing(*, directory: Path | None = None) -> list[LiveRecord]:
                 or record.pid <= 0
             ):
                 continue
-            socket_path = Path(record.socket)
-            if socket_path != _socket_directory() / f'{record.pid}.sock' or not _owned_socket(socket_path):
-                # An absent socket is stale, but never follow an arbitrary path supplied by a record.
-                if not socket_path.exists() and socket_path == _socket_directory() / f'{record.pid}.sock':
+            socket_path = _record_socket(record)
+            if not _owned_socket(socket_path):
+                if not socket_path.exists():
                     _unlink_if_unchanged(path, info.st_ino)
                 continue
             socket_inode = socket_path.lstat().st_ino
@@ -204,16 +214,6 @@ class LiveRegistry:
         self._unsubscribe: Callable[[], None] | None = None
         self._handles: dict[str, str] = {}
         self._statuses: dict[str, tuple[str, datetime]] = {}
-        self._waiting: dict[str, set[str]] = {}
-
-    def question(self, session_id: str, request_id: str, *, answered: bool = False) -> None:
-        """Keep a live question visible until it is answered or its turn ends."""
-        waiting = self._waiting.setdefault(session_id, set())
-        if answered:
-            waiting.discard(request_id)
-        else:
-            waiting.add(request_id)
-        self.changed()
 
     def snapshot(self) -> LiveRecord:
         now = datetime.now(UTC)
@@ -221,7 +221,6 @@ class LiveRegistry:
         live_ids = {session.id for session in sessions}
         self._handles = {key: value for key, value in self._handles.items() if key in live_ids}
         self._statuses = {key: value for key, value in self._statuses.items() if key in live_ids}
-        self._waiting = {key: value for key, value in self._waiting.items() if key in live_ids}
         entries: list[LiveEntry] = []
         for session in sessions:
             if session.id not in self._handles:
@@ -232,10 +231,8 @@ class LiveRegistry:
                     handle = f'{name}-{suffix}'
                     suffix += 1
                 self._handles[session.id] = handle
-            if not session.running:
-                self._waiting.pop(session.id, None)
             status: Literal['idle', 'running', 'waiting'] = (
-                'waiting' if self._waiting.get(session.id) else 'running' if session.running else 'idle'
+                'waiting' if session.waiting_for else 'running' if session.running else 'idle'
             )
             previous = self._statuses.get(session.id)
             if previous is None or previous[0] != status:
@@ -250,7 +247,7 @@ class LiveRegistry:
                     model=session.status.model,
                     status=status,
                     status_since=self._statuses[session.id][1],
-                    waiting_for='an ask_user question' if status == 'waiting' else '',
+                    waiting_for=session.waiting_for,
                 )
             )
         return LiveRecord(

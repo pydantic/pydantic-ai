@@ -146,6 +146,7 @@ class LiveRuntime:
         self._forks = forks
         self._changed = changed
         self._watchers = 0
+        self._waits: dict[object, str] = {}
 
     @property
     def id(self) -> str:
@@ -191,6 +192,26 @@ class LiveRuntime:
     def running(self) -> bool:
         """Whether a turn runs in the session now."""
         return self._running()
+
+    @property
+    def waiting_for(self) -> str:
+        """The most recent active user wait, or an empty string."""
+        return next(reversed(self._waits.values()), '')
+
+    def wait_for_user(self, reason: str, /) -> Callable[[], None]:
+        """Report a nonempty reason until the returned idempotent function ends the wait."""
+        if not reason:
+            raise ValueError('User-wait reason must not be empty.')
+        token = object()
+        self._waits[token] = reason
+        self.changed()
+
+        def finished() -> None:
+            if token in self._waits:
+                del self._waits[token]
+                self.changed()
+
+        return finished
 
     def setting(self, key: str, /) -> JsonValue:
         """The effective value of a CLAI setting in the session."""

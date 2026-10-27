@@ -75,6 +75,7 @@ from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
 from pydantic_clai2.runtime.process import ClaiProcess
+from pydantic_clai2.runtime.question_status import QuestionStatus
 from pydantic_clai2.runtime.session import (
     Session,
     StockAgent,
@@ -851,7 +852,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         mount stays within every `FileSystem` and `ToolGuardrail` the run has.
         """
         granted = (*self.plugins, *self.loader.capabilities())
-        bound = (*self.plugins, *self.loader.run_capabilities())
+        bound = (*self.plugins, *self.loader.run_capabilities(), QuestionStatus[DepsT](self.live_session))
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)

@@ -34,9 +34,18 @@ In the environment, which only you can read, rather than on the command line `ps
 def _list_live_sessions() -> None:
     from pydantic_clai2.runtime.live_registry import listing
 
-    for record in asyncio.run(listing()):
-        for session in record.sessions:
-            print(f'{session.handle}\t{session.status}\t{session.title}\t{session.workspace}')
+    if sys.platform == 'win32':
+        raise SystemExit('`clai2 sessions` requires Unix sockets.')
+    rows = [
+        f'{session.handle}\t{session.status}\t{session.title}\t{session.workspace}'
+        for record in asyncio.run(listing())
+        for session in record.sessions
+    ]
+    if rows:
+        print('Handle\tStatus\tTitle\tWorkspace')
+        print('\n'.join(rows))
+    else:
+        print('No live sessions.')
 
 
 def _resolve_paths(args: argparse.Namespace) -> None:

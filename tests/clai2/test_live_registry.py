@@ -3,6 +3,7 @@
 import asyncio
 import os
 import socket
+import sys
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -11,7 +12,8 @@ from tempfile import TemporaryDirectory
 import pytest
 from pydantic import TypeAdapter
 
-from pydantic_clai2.builtin_plugins.workspaces.registry import write_private
+from pydantic_clai2.cli import cli
+from pydantic_clai2.config.private_files import write_private
 from pydantic_clai2.runtime import live_registry
 from pydantic_clai2.runtime.live_registry import LiveRegistry, listing, request
 
@@ -76,12 +78,17 @@ async def test_malformed_frame_is_closed_without_server_errors(private_runtime: 
         loop.set_exception_handler(previous)
 
 
-async def test_listing_validates_instance_and_does_not_unlink_replacement_socket(private_runtime: Path) -> None:
+@pytest.mark.parametrize('different_environment', [False, True])
+async def test_listing_validates_instance_and_does_not_unlink_replacement_socket(
+    private_runtime: Path, monkeypatch: pytest.MonkeyPatch, different_environment: bool
+) -> None:
     registry = LiveRegistry(lambda: [], directory=private_runtime)
     async with registry.serving(subscribe):
         record = registry.snapshot()
         path = private_runtime / f'{registry.pid}.json'
         adapter = TypeAdapter(type(record))
+        if different_environment:
+            monkeypatch.setenv('XDG_RUNTIME_DIR', str(private_runtime / 'another-terminal'))
         write_private(path, adapter.dump_json(record).decode())
         assert [found.instance for found in await listing(directory=private_runtime)] == [record.instance]
         write_private(path, adapter.dump_json(replace(record, instance='reused-pid')).decode())
@@ -92,6 +99,58 @@ async def test_listing_validates_instance_and_does_not_unlink_replacement_socket
         path.chmod(0o644)
         assert await listing(directory=private_runtime) == []
         assert path.exists()
+
+
+@pytest.mark.parametrize('outcome', ['timeout', 'permission', 'schema', 'protocol', 'missing', 'invalid', 'malformed'])
+async def test_unverified_records_never_remove_a_live_socket(
+    private_runtime: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    registry = LiveRegistry(lambda: [], directory=private_runtime)
+    async with registry.serving(subscribe):
+        assert registry.socket_path is not None
+        record = registry.snapshot()
+        path = private_runtime / f'{registry.pid}.json'
+        if outcome == 'timeout':
+
+            async def timeout(path: Path, frame: dict[str, object]) -> dict[str, object]:
+                raise TimeoutError
+
+            monkeypatch.setattr(live_registry, 'request', timeout)
+        elif outcome == 'permission':
+
+            def denied(pid: int, signal: int) -> None:
+                raise PermissionError
+
+            monkeypatch.setattr(live_registry.os, 'kill', denied)
+        elif outcome == 'schema':
+            record = replace(record, schema=2)
+        elif outcome == 'protocol':
+            record = replace(record, protocol=2)
+        elif outcome == 'missing':
+            registry.socket_path.unlink()
+        elif outcome == 'invalid':
+            record = replace(record, socket=str(private_runtime / 'unrelated.sock'))
+        write_private(path, '{' if outcome == 'malformed' else TypeAdapter(type(record)).dump_json(record).decode())
+        assert await listing(directory=private_runtime) == []
+        assert path.exists() == (outcome != 'missing')
+        assert registry.socket_path.exists() == (outcome != 'missing')
+
+
+async def test_client_refuses_oversized_frames(private_runtime: Path) -> None:
+    with pytest.raises(ValueError, match='exceeds 64 KiB'):
+        await request(private_runtime / 'not-connected.sock', {'op': 'x' * 65_536})
+
+
+@pytest.mark.parametrize('reply', [b'', b'{}'])
+async def test_client_rejects_incomplete_reply(private_runtime: Path, reply: bytes) -> None:
+    def respond(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        writer.write(reply)
+        writer.close()
+
+    path = private_runtime / 'reply.sock'
+    async with await asyncio.start_unix_server(respond, path=str(path)):
+        with pytest.raises(ValueError, match='Invalid control frame'):
+            await request(path, {'op': 'hello'})
 
 
 async def test_stale_dead_pid_cannot_delete_live_socket(private_runtime: Path) -> None:
@@ -120,7 +179,7 @@ async def test_cleanup_preserves_socket_replaced_during_probe(
 ) -> None:
     registry = LiveRegistry(lambda: [], directory=private_runtime)
     dead_pid = registry.pid + 100_000_000
-    socket_directory = private_runtime.parent.parent / 'pydantic-clai2'
+    socket_directory = private_runtime.parent.parent / f'pydantic-clai2-{os.getuid()}'
     socket_directory.mkdir(mode=0o700)
     socket_path = socket_directory / f'{dead_pid}.sock'
     with socket.socket(socket.AF_UNIX) as abandoned, socket.socket(socket.AF_UNIX) as replacement:
@@ -154,7 +213,7 @@ async def test_second_owner_cannot_replace_live_socket(private_runtime: Path) ->
 
 async def test_reused_pid_with_refused_socket_is_cleaned(private_runtime: Path) -> None:
     registry = LiveRegistry(lambda: [], directory=private_runtime)
-    socket_directory = private_runtime.parent.parent / 'pydantic-clai2'
+    socket_directory = private_runtime.parent.parent / f'pydantic-clai2-{os.getuid()}'
     socket_directory.mkdir(mode=0o700)
     socket_path = socket_directory / f'{registry.pid}.sock'
     with socket.socket(socket.AF_UNIX) as dead:
@@ -168,6 +227,13 @@ async def test_reused_pid_with_refused_socket_is_cleaned(private_runtime: Path) 
     async with registry.serving(subscribe):
         assert await request(socket_path, {'op': 'hello'})
     assert not socket_path.exists()
+
+
+def test_sessions_command_rejects_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, 'platform', 'win32')
+    monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
+    with pytest.raises(SystemExit, match='requires Unix sockets'):
+        cli.run()
 
 
 async def test_rejects_unsafe_directory_and_wrong_uid(private_runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:

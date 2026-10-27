@@ -14,10 +14,15 @@ from typing import Literal
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_clai2.builtin_plugins.workspaces.kinds import Teardown
-from pydantic_clai2.config.private_files import write_private
+from pydantic_clai2.config.private_files import write_private as _write_private
 from pydantic_clai2.config.settings_store import state_dir
 
 _ID = re.compile(r'[a-z0-9][a-z0-9-]{0,47}')
+
+
+def write_private(path: Path, text: str) -> None:
+    """Write a private workspace state file atomically."""
+    _write_private(path, text)
 
 
 def workspaces_dir() -> Path:

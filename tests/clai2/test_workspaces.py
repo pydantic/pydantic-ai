@@ -301,13 +301,14 @@ async def test_the_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_write_private_leaves_nothing_behind_when_it_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from pydantic_clai2.builtin_plugins.workspaces import registry
+    from pydantic_clai2.config import private_files
 
     def fail(source: object, target: object) -> None:
         raise OSError('disk full')
 
-    monkeypatch.setattr(registry.os, 'replace', fail)
+    monkeypatch.setattr(private_files.os, 'replace', fail)
     with pytest.raises(OSError, match='disk full'):
-        registry.write_private(tmp_path / 'file', 'text')
+        registry.write_private(tmp_path / 'file', text='text')
     assert list(tmp_path.iterdir()) == []
 
 

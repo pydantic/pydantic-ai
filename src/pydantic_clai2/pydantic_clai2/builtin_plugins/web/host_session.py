@@ -28,6 +28,7 @@ class HostSession:
 
     def __init__(self, host: PluginHost[None]) -> None:
         self._host = host
+        self._waits: dict[object, str] = {}
 
     @property
     def id(self) -> str:
@@ -64,6 +65,21 @@ class HostSession:
     @property
     def running(self) -> bool:
         return False
+
+    @property
+    def waiting_for(self) -> str:
+        return next(reversed(self._waits.values()), '')
+
+    def wait_for_user(self, reason: str, /) -> Callable[[], None]:
+        if not reason:
+            raise ValueError('User-wait reason must not be empty.')
+        token = object()
+        self._waits[token] = reason
+
+        def finished() -> None:
+            self._waits.pop(token, None)
+
+        return finished
 
     @property
     def queued(self) -> int:
