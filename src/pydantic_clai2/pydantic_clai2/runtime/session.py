@@ -337,12 +337,12 @@ def busy_conflict(summary: ConversationSummary) -> ConversationConflict | None:
     return None
 
 
-def stale_copy_mark(summary: ConversationSummary) -> bool:
-    """Whether `summary` is a continuing copy with this process's running mark, which no live session here holds.
+def stale_fork_mark(summary: ConversationSummary) -> bool:
+    """Whether `summary` is a fork with this process's running mark, which no live session here holds.
 
-    A live session here holding it is found before it is claimed, so a copy claimed with this mark is not running.
+    A live session here holding it is found before it is claimed, so a fork claimed with this mark is not running.
     """
-    return summary.continues is not None and summary.owner_pid == os.getpid()
+    return summary.forked_from is not None and summary.owner_pid == os.getpid()
 
 
 def busy_elsewhere(summary: ConversationSummary) -> bool:
@@ -368,11 +368,11 @@ class Continuation:
 async def continuing_fork(conversations: SqliteConversationStore, source: ConversationSummary) -> Continuation | None:
     """When a live process runs `source`, the newest copy CLAI made to continue it that no other process runs.
 
-    Only those copies record `continues`; a fork the user asked for is theirs to open. `None` when nothing
+    Only those copies record `forked_from`; a fork the user asked for is theirs to open. `None` when nothing
     runs `source`, or it has no such copy, so continuing it here saves a new one. Checking a process can spawn
     a program (`tasklist` on Windows), so that runs off the event loop.
     """
-    if stale_copy_mark(source):
+    if stale_fork_mark(source):
         return None
     busy = await to_thread.run_sync(busy_conflict, source)
     if busy is None:
@@ -380,7 +380,7 @@ async def continuing_fork(conversations: SqliteConversationStore, source: Conver
     offset = 0
     fork: ConversationSummary | None = None
     # Each page is checked before the next is read, so the newest copy nothing runs is found without listing all.
-    while fork is None and (forks := await conversations.listing(continues=source.id, archived=False, offset=offset)):
+    while fork is None and (forks := await conversations.listing(forked_from=source.id, archived=False, offset=offset)):
         fork = await to_thread.run_sync(_first_idle, forks)
         offset += len(forks)
     return None if fork is None else Continuation(conversation_id=fork.id, busy=busy)
@@ -705,8 +705,8 @@ class Session(Generic[DepsT, OutputT]):
             saved = await self.conversations.get(conversation_id=conversation_id)
             if not allow_other_workspace:
                 self.check_workspace(saved.summary.workspace)
-            # Copying a continuing copy again for a stale mark would pile up copies.
-            forking = None if stale_copy_mark(saved.summary) else busy_conflict(saved.summary)
+            # Forking a fork again for a stale mark would pile up copies.
+            forking = None if stale_fork_mark(saved.summary) else busy_conflict(saved.summary)
             messages = saved.messages
             interrupted = saved.summary.outcome in ('running', 'failed', 'cancelled')
             warning = ''
@@ -732,7 +732,7 @@ class Session(Generic[DepsT, OutputT]):
                 summary = replace(summary, archived_at=None)
             if forking is not None:
                 # Recording the source makes this copy the one resuming the source continues next time.
-                copy = replace(fork_summary(saved.summary), continues=saved.summary.id)
+                copy = replace(fork_summary(saved.summary), forked_from=saved.summary.id)
                 summary = await self.conversations.save(summary=copy, messages=messages)
                 self._copy_repl(saved.summary.id, summary.id)
                 notice = (

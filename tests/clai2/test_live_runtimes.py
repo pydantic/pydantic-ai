@@ -515,7 +515,7 @@ async def test_a_conversation_another_process_runs_has_one_copy_across_processes
                 copies.append((await fleet.live.open(busy.id)).conversation.conversation_id)
     assert copies[0] == copies[1] != busy.id
     summaries = await store.listing()
-    assert sorted((entry.title, entry.continues) for entry in summaries) == [
+    assert sorted((entry.title, entry.forked_from) for entry in summaries) == [
         ('Busy', None),
         ('Busy (fork)', busy.id),
     ]
@@ -532,12 +532,12 @@ async def test_a_copy_this_process_left_running_opens_without_another_copy(tmp_p
     )
     copy = await store.save(
         summary=ConversationSummary(
-            workspace=workspace, title='Busy (fork)', outcome='running', owner_pid=os.getpid(), continues=busy.id
+            workspace=workspace, title='Busy (fork)', outcome='running', owner_pid=os.getpid(), forked_from=busy.id
         ),
         messages=[],
     )
     # A copy of the copy is not opened instead: nothing runs the copy.
-    await store.save(summary=ConversationSummary(workspace=workspace, continues=copy.id), messages=[])
+    await store.save(summary=ConversationSummary(workspace=workspace, forked_from=copy.id), messages=[])
     with anyio.fail_after(20):
         async with fleet.live.serving():
             opened = await fleet.live.open(busy.id)
