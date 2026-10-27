@@ -10,6 +10,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai._capability_loads import keep_capability_loads
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     CompactionPart,
@@ -38,7 +39,6 @@ from pydantic_ai_harness.compaction import (
     SummarizingCompaction,
     compact_now,
 )
-from pydantic_ai_harness.compaction._capability_loads import keep_capability_loads
 
 INSTRUCTIONS = 'Call get_forecast with a city name.'
 STATED_INSTRUCTIONS = f'<system><context id="capability:weather">\n{INSTRUCTIONS}\n</context></system>'

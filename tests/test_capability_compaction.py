@@ -52,11 +52,13 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
+from pydantic_ai.messages import LoadCapabilityCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models._batch_model import BatchedModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
@@ -1123,3 +1125,101 @@ async def test_batch_requests_are_never_compacted_while_pending_and_compaction_i
     assert finished.output == 'success (no tool calls)'
     # The step collecting the batch's result resumes a pending response, which is never compacted.
     assert len(summarize.calls) == 1
+
+
+# --- Capability loads ---
+
+
+class Weather(AbstractCapability[Any]):
+    """A deferred capability with a tool."""
+
+    def __init__(self) -> None:
+        self.id = 'weather'
+        self.description = 'Weather forecasts.'
+        self.defer_loading = True
+
+    def get_toolset(self) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any]()
+
+        @toolset.tool_plain
+        def get_forecast(city: str) -> str:
+            return f'Sunny in {city}'  # pragma: no cover
+
+        return toolset
+
+
+def load_then(*calls: str) -> tuple[FunctionModel, list[list[str]]]:
+    """A model that loads `weather`, then calls `calls` in turn, recording the tools each request offered."""
+    offered: list[list[str]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append(sorted(tool.name for tool in info.function_tools))
+        step = sum(isinstance(message, ModelResponse) for message in messages)
+        if step == 0:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'weather'})])
+        if step <= len(calls):
+            return ModelResponse(parts=[ToolCallPart(calls[step - 1], {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    return FunctionModel(respond), offered
+
+
+def compaction_tools(agent: Agent[None, str]) -> None:
+    @agent.tool
+    def compact_now(ctx: RunContext[Any]) -> str:
+        ctx.request_compaction()
+        return 'compacting'
+
+    @agent.tool_plain
+    def noop() -> str:
+        return 'ok'
+
+
+def recorded_load_ids(messages: list[ModelMessage]) -> list[str]:
+    return [
+        str(part.args_as_dict()['id'])
+        for message in messages
+        for part in message.parts
+        if isinstance(part, LoadCapabilityCallPart)
+    ]
+
+
+async def test_capability_loads_are_recorded_again_after_the_summary():
+    """A deferred capability loaded before a compaction stays loaded, whichever capability compacted."""
+    model, offered = load_then('compact_now')
+    agent = Agent(model, capabilities=[Weather(), Summarize()])
+    compaction_tools(agent)
+    result = await agent.run('hi')
+
+    messages = result.all_messages()
+    assert isinstance(messages[0].parts[0], CompactionPart)
+    # The load was summarized away, and recorded again right after the summary, ahead of the kept messages.
+    assert recorded_load_ids(messages[1:3]) == ['weather']
+    assert 'get_forecast' in offered[-1]
+    [record] = result.compactions
+    assert (record.messages_before, record.messages_after, record.kept_from) == (5, 5, 3)
+    assert record.summarized == record.replaced[:3]  # pyright: ignore[reportOptionalSubscript]
+
+
+async def test_capability_loads_after_a_provider_compaction_end_the_kept_messages():
+    """After a provider's compaction response, the records go after the requests following it, inside the kept messages."""
+
+    def native(request: CompactionRequest) -> CompactionResult:
+        part = CompactionPart(provider_name='openai', provider_details={'encrypted_content': 'gAAA'})
+        return CompactionResult(
+            messages=[ModelResponse(parts=[part], provider_name='openai'), *request.messages[-3:]],
+            part=part,
+            handler='native',
+            kept_from=1,
+        )
+
+    model, offered = load_then('noop', 'compact_now')
+    agent = Agent(model, capabilities=[Weather(), Returns(native)])
+    compaction_tools(agent)
+    result = await agent.run('hi')
+
+    [record] = result.compactions
+    # The kept request right after the compaction response now comes before the records, so the tail starts after them.
+    assert (record.messages_before, record.messages_after, record.kept_from) == (7, 6, 4)
+    assert recorded_load_ids(result.all_messages()[2:4]) == ['weather']
+    assert 'get_forecast' in offered[-1]

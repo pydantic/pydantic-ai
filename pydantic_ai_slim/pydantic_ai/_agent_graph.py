@@ -82,6 +82,7 @@ from . import (
     usage as _usage,
 )
 from ._cancel import RunCancellation
+from ._capability_loads import keep_capability_loads
 from ._context_size import (
     context_input_tokens,
     context_tokens,
@@ -833,6 +834,34 @@ def _check_compaction_result(result: CompactionResult, given: Sequence[_messages
             'messages from there on must be the last messages of the history it was given, unchanged.'
         )
     return kept_from
+
+
+def _keep_capability_loads(
+    run_context: RunContext[Any],
+    given: list[_messages.ModelMessage],
+    result: CompactionResult,
+    kept_from: int,
+) -> tuple[CompactionResult, int]:
+    """Record again, after the compaction, the deferred capability loads it dropped, whichever capability compacted.
+
+    Returns the result with the records, and where its kept messages start now: the records go ahead of them, or, after
+    a provider's compaction response and the requests following it, into them, which ends the kept tail after them.
+
+    TODO(#11264): tool search discoveries are dropped the same way, and aren't recorded again yet.
+    """
+    deferred_ids = {
+        capability_id for capability_id, capability in run_context.capabilities.items() if capability.defer_loading
+    }
+    messages = keep_capability_loads(given, result.messages, kept_from=kept_from, deferred_ids=deferred_ids)
+    if messages is result.messages:
+        return result, kept_from
+    inserted = len(messages) - len(result.messages)
+    index = next(
+        (index for index, (new, old) in enumerate(zip(messages, result.messages)) if new is not old),
+        len(result.messages),
+    )
+    kept_from = kept_from + inserted if index <= kept_from else index + inserted
+    return replace(result, messages=messages, kept_from=kept_from), kept_from
 
 
 def _latest_context_tokens(messages: Sequence[_messages.ModelMessage]) -> int | None:
@@ -3411,6 +3440,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if result is None:
             return
         kept_from = _check_compaction_result(result, request.messages)
+        result, kept_from = _keep_capability_loads(run_context, request.messages, result, kept_from)
         holder = next(message for message in result.messages if result.part in message.parts)
         if isinstance(holder, _messages.ModelResponse) and all(
             isinstance(part, _messages.CompactionPart) for part in holder.parts
@@ -3418,9 +3448,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # A response that is only a compaction leaves behind just its summary, not the history it was given, so
             # its context size is the summary's: a size trigger reading it doesn't fire again straight away.
             mark_context_input_tokens(holder, 0)
-        # TODO(#11394): re-record here, once for any capability, the `load_capability` exchanges and tool search
-        # discoveries the compaction dropped, through the shared helper once it's in core. Until then, a capability
-        # loaded or a tool discovered before the compaction has to be loaded or discovered again after it.
         compaction.result = result
         compaction.record = _messages.CompactionRecord(
             part=result.part,
