@@ -480,9 +480,12 @@ Wheel and drag reports arrive in bursts, so they paint once after the input
 callback (`PromptSurface._paint_soon`), never once per report.
 An idle session must cost next to no CPU, since users keep dozens open. The
 editor's timed repaint (`LivePrompt.tick`) runs ten times a second only while a
-turn runs or the panel animates, and once a second (`IDLE_REPAINT`) otherwise;
+turn runs or the panel animates, and once a second (`IDLE_REPAINT`) otherwise,
+sleeping in between; a read wakes it, since the work it starts animates.
 `PromptSurface.paint` skips a frame identical to the last one. Input, output,
-and resizes paint at once. Do not add a timer that repaints unconditionally.
+and resizes paint at once; output inside a frame interval paints when it ends
+(`PromptSurface.changed`), without waiting for a tick. Do not add a timer that
+repaints unconditionally, or one that wakes an idle editor more than once a second.
 Mouse reporting stops most terminals from selecting text, so a left-button drag
 selects painted cells in `PromptSurface` and its release copies them through
 `text_clipboard.copy_text`. Do not drop the drag modes (`?1002h`) or copy-out breaks.
