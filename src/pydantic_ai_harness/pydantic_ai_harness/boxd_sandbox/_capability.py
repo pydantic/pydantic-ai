@@ -43,7 +43,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
 
     A run with no reference creates a fresh machine on first use; pass a `WorkspaceRef` to attach
     to an existing one. Ending a run does not delete the machine: boxd suspends it when idle and
-    keeps it, disk included, until you delete it. Commands run under `sh -c` as the machine's
+    keeps it, disk included, until you delete it, unless your organization's defaults set a delete timer. Commands run under `sh -c` as the machine's
     non-root `boxd` user.
 
     The machine is isolated: it holds no boxd credentials and has no peers on your organization's
@@ -56,7 +56,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
 
     client: AsyncBoxd | None = None
     """A `boxd.AsyncBoxd` to share across runs on one event loop; you close it. When `None`,
-    each run opens one from `BOXD_API_KEY` and closes it when the run ends."""
+    each run opens one from the environment (`BOXD_TOKEN` or `BOXD_API_KEY`) and closes it when the run ends."""
 
     org: str | None = None
     """boxd organization a newly created machine belongs to; the API key's organization, or your
@@ -104,7 +104,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         return BoxdSandboxBackend(client=self.client, ref=ref, working_dir=self.working_dir, env=self.env)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
-        """Delete a machine by id, whatever state it is in, and wait until boxd no longer reports it.
+        """Delete a machine by id, whatever state it is in.
 
         A machine that no longer exists is already gone, so destroying it returns quietly. A machine
         that is not isolated raises `ValueError` and is left alone: `BoxdSandbox` never created it.
@@ -118,8 +118,7 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
 
         The copy has the machine's disk and memory as they are now, running processes included, and the
         two change independently after: pass its ref as `workspace=` to run an agent in the copy, and
-        `destroy` it when you are done. A suspended machine is woken first, and a stopped one started. A
-        machine that is not isolated, or that is on a named boxd network, raises
+        `destroy` it when you are done. A machine that is not isolated, or that is on a named boxd network, raises
         `WorkspaceUnavailableError`, as attaching to it does.
         """
         backend = self.backend(ref)

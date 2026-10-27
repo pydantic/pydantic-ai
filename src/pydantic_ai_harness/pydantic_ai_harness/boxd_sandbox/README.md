@@ -37,7 +37,7 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 Give the agent a project directory with `BoxdSandbox(working_dir='/home/boxd/project')`: a new machine gets it created for you, and commands and relative paths start there.
 
-boxd's default image is Ubuntu 24.04 with git, Python 3, uv, Node.js, and ripgrep (`rg`), which `Coder` uses for searches. For your project's dependencies, install them in a machine, save it as a snapshot with `boxd snapshots save`, and pass `BoxdSandbox(snapshot='my-snapshot')`: a machine from a snapshot starts with its disk and memory. A snapshot boxd doesn't know, or one it is still saving, fails on first use with `WorkspaceUnavailableError`: wait until `boxd snapshots list` shows it ready. `BoxdSandbox(vcpu=4)` picks a larger machine: 1, 2, 4, or 8 vCPUs, with 4 GiB of memory each. A machine from a snapshot keeps the size it was saved at, so for a larger one, save the snapshot from a larger machine.
+boxd's default image is Ubuntu 24.04 with git, Python 3, uv, Node.js, and ripgrep (`rg`), which `Coder` uses for searches. For your project's dependencies, install them in a machine, save it as a snapshot with `boxd snapshots save`, and pass `BoxdSandbox(snapshot='my-snapshot')`. A snapshot boxd doesn't know, or one it is still saving, fails on first use with `WorkspaceUnavailableError`. `BoxdSandbox(vcpu=4)` picks a larger machine: 1, 2, 4, or 8 vCPUs, with 4 GiB of memory each. It can't be combined with `snapshot`, since a machine from a snapshot keeps the size it was saved at.
 
 ## Continue in the same machine
 
@@ -55,7 +55,7 @@ followup = agent.run_sync(
 )
 ```
 
-The follow-up run finds the machine in the message history and works in it, so the clone is still there. Without the history, a run starts a new machine. If boxd suspended or hibernated the machine while it was idle, the follow-up's first command wakes it, with the processes it left running; if someone stopped it, the follow-up run starts it again. If the machine has been deleted, the run raises `WorkspaceUnavailableError` instead of starting over in an empty one.
+The follow-up run finds the machine in the message history and works in it, so the clone is still there. Without the history, a run starts a new machine. If the machine was suspended or stopped, the follow-up run wakes or starts it again. If the machine has been deleted, the run raises `WorkspaceUnavailableError` instead of starting over in an empty one.
 
 ## Choose the tools
 
@@ -77,11 +77,11 @@ async def run_python(ctx: RunContext, code: str) -> str:
     return result.stdout + result.stderr
 ```
 
-Commands run under `sh -c` as the non-root `boxd` user, which has passwordless `sudo`. File operations run as shell commands in the machine, so they see what commands see: file writes create missing parent directories, write through a symlink to its target, and keep an existing file's mode, and file reads refuse FIFOs rather than waiting for a writer.
+Commands run under `sh -c` as the non-root `boxd` user, which has passwordless `sudo`. File writes create missing parent directories, write through a symlink to its target, and keep an existing file's mode, and file reads refuse FIFOs rather than waiting for a writer.
 
 ### What a timeout stops
 
-A command timeout starts after the machine is ready. A timeout or a cancelled run stops the command and the processes in its process group, and the machine keeps running for other commands. `WorkspaceTimeoutError` carries the output the command printed so far. boxd ends a command that prints nothing for 30 minutes, which raises `WorkspaceTimeoutError` too: `timeout=None` removes the command deadline, not that limit, so have a long build print progress or run it in the background with its output redirected to a file.
+A command timeout starts after the machine is ready. A timeout or a cancelled run stops the command and the processes in its process group, and the machine keeps running for other commands. `WorkspaceTimeoutError` carries the output the command printed so far. `timeout=None` doesn't lift boxd's own limit: it ends a command that prints nothing for 30 minutes, which also raises `WorkspaceTimeoutError`, so have long builds print progress.
 
 `run()` returns when the command exits, even if a background child it started is still running; output that child writes afterwards is not returned. A command whose combined output passes 10 MiB is stopped and raises `WorkspaceOutputLimitError`, with the first 64 KiB of each stream in `stdout` and `stderr`. Redirect large or background output to a file instead; `Shell.start_command` manages its own output log.
 
@@ -141,7 +141,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-A copy takes about a second and starts with everything the machine had, including what the agent wrote to disk. `fork` wakes a suspended machine and starts a stopped one first, and, as attaching does, refuses one that is not isolated or is on a named boxd network. The copy isn't tied to the machine it came from: destroy each when you are done.
+The copy starts with everything the machine had, including what the agent wrote to disk, and isn't tied to it afterwards: destroy each when you are done.
 
 ## Prepare a machine before the run
 
@@ -173,7 +173,7 @@ The run uses the backend as it is, so `BoxdSandbox`'s settings don't apply to it
 
 ## Clean up
 
-Pydantic AI never stops or deletes the machine. boxd suspends, and later hibernates, a machine that has had no network activity for as long as your organization's defaults say (set `auto_suspend_timeout=` in seconds to change suspending for new machines, or `0` to turn it off). A suspended machine keeps its memory, a hibernated one keeps it on disk, and a command wakes either, with the processes it left running. `BoxdSandbox` sets no delete timer, so boxd deletes the machine only if your organization's defaults give new machines an idle-destroy or delete-after timer; `boxd machine get` shows a machine's timers. Delete it with the ref you stored:
+Pydantic AI never stops or deletes the machine. boxd suspends, and later hibernates, a machine that has had no network activity for as long as your organization's defaults say (set `auto_suspend_timeout=` in seconds to change suspending for new machines, or `0` to turn it off). `BoxdSandbox` sets no delete timer, so boxd deletes the machine only if your organization's defaults give new machines an idle-destroy or delete-after timer; `boxd machine get` shows a machine's timers. Delete it with the ref you stored:
 
 ```python {names="defined"}
 from pydantic_ai.workspaces import WorkspaceRef
@@ -184,7 +184,7 @@ async def delete_machine(ref: WorkspaceRef) -> None:
     await BoxdSandbox().destroy(ref)
 ```
 
-`destroy(ref)` deletes the machine by id whatever state it is in, and returns once boxd no longer reports it; a machine that no longer exists returns quietly. Use `backend(ref)` to construct a lazy backend for an existing machine.
+`destroy(ref)` deletes the machine whatever state it is in; a machine that no longer exists returns quietly. Use `backend(ref)` to construct a lazy backend for an existing machine.
 
 A failed run returns no result, so there is no ref to store. To delete its machine, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails:
 
@@ -210,21 +210,19 @@ async def delete_failed_run_machine(ctx: RunContext[None], *, error: BaseExcepti
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[BoxdSandbox(), Coder(), hooks])
 ```
 
-A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed worker right after creation, leaves the machine behind. Every machine the backend creates is named `pydantic-ai-` and 32 hex digits, and its id is logged at `INFO` as `Created boxd machine <id> (<name>)`, and a copy's as `Forked boxd machine <source> into <id> (<name>)`; find leftovers with `boxd list` and delete one with `await BoxdSandbox().destroy(WorkspaceRef(provider='boxd', id=...))`.
+A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed worker right after creation, leaves the machine behind. Machines the backend creates are named `pydantic-ai-<hex>` and logged at `INFO` (`Created boxd machine <id> (<name>)`, or `Forked boxd machine ...` for a copy); find leftovers with `boxd list` and delete one with `await BoxdSandbox().destroy(WorkspaceRef(provider='boxd', id=...))`.
 
 ## Security model
 
-Every machine `BoxdSandbox` creates is isolated: its metadata endpoint refuses token requests, and boxd installs no `boxd` CLI, env vars, or integrations in it, so code the agent runs holds no boxd credentials. It has no peers on boxd's private network, so it can't reach your other machines there. It can reach the internet, and like every boxd machine it has its own public HTTPS address, where boxd serves a port the agent's code listens on, so a server the agent starts can be reached by anyone with that address. Isolation can't be turned off, and a copy `fork` makes is isolated too.
+Machines `BoxdSandbox` creates, and copies `fork` makes, are isolated: code the agent runs holds no boxd credentials and can't reach your other boxd machines. It can reach the internet, and like every boxd machine it has a public HTTPS address that serves the port its code listens on.
 
-Attaching to a machine that is not isolated, or that is on a named boxd network, raises `WorkspaceUnavailableError`, and `destroy` refuses a machine that is not isolated with `ValueError`. So a ref from tampered message history can't point the agent at, or delete, one of your machines that can reach the others. It can still name another isolated machine the credentials can see, such as another conversation's: keep refs server-side, next to the conversation they belong to.
-
-A machine created from a snapshot keeps the named networks of the machine the snapshot was saved from, and `BoxdSandbox` refuses a machine on one, so save snapshots from a machine on no network.
+`BoxdSandbox` refuses to attach to or fork a machine that isn't isolated or is on a named boxd network, and `destroy` refuses one that isn't isolated. A machine from a snapshot keeps the networks of the machine the snapshot was saved from, so save snapshots from a machine on no network. A ref can still name any isolated machine your credentials can see, so keep refs server-side.
 
 ## Configuration
 
 | Option | What it does |
 | --- | --- |
-| `client` | A `boxd.AsyncBoxd` to share across runs on one event loop, or to point at another boxd cluster. Default: `None`, a client each run opens and closes when it ends, from `BOXD_TOKEN`, else `BOXD_API_KEY`, else the boxd machine it runs in. A client exchanges an API key for a session token on first use, and boxd allows 30 exchanges a minute from one IP address, so many runs at once should share one client. You close a client you pass; `BoxdSandbox` never does. |
+| `client` | A `boxd.AsyncBoxd` to share across runs on one event loop, or to point at another boxd cluster. Default: `None`, a client each run opens and closes when it ends, from `BOXD_TOKEN`, else `BOXD_API_KEY`, else the boxd machine it runs in. You close a client you pass; `BoxdSandbox` never does. |
 | `org` | boxd organization a new machine belongs to. Default: `None`, the API key's organization, or your default one for other credentials. |
 | `snapshot` | boxd snapshot a new machine starts from, by name or id. Default: `None`, boxd's default image. An unknown snapshot fails on first use. |
 | `vcpu` | Size of a new machine: `1`, `2`, `4`, or `8` vCPUs, with 4 GiB of memory each. Default: `None`, the organization's default size. It can't be combined with `snapshot`: a machine from a snapshot keeps the size it was saved at. |
@@ -232,7 +230,7 @@ A machine created from a snapshot keeps the named networks of the machine the sn
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the machine's own (`/home/boxd`, where commands run as non-root `boxd`); set a project directory, or use relative paths for portable code. Created on a new machine; on an attached machine it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the machine. |
 
-boxd runs on the asyncio event loop only: its SDK uses gRPC asyncio channels, so under Trio the backend raises `UserError`.
+boxd runs on the asyncio event loop only; under Trio the backend raises `UserError`.
 
 ## Durable execution
 
@@ -289,7 +287,7 @@ Removing a capability while workflows using it are still running changes their r
 
 ## Telemetry
 
-`BoxdSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records the machine on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Creating a machine logs its id and name at `INFO` (`Created boxd machine <id> (<name>)`) on the `pydantic_ai_harness.boxd_sandbox._backend` logger, so a machine that outlives its run can still be found.
+`BoxdSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records the machine on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Creating a machine logs its id and name at `INFO` (`Created boxd machine <id> (<name>)`) on the `pydantic_ai_harness.boxd_sandbox._backend` logger.
 
 ## API reference
 
