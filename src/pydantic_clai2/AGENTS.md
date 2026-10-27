@@ -415,6 +415,9 @@ Before adding, removing, or renaming a setting, changing its type, meaning, or
 default, or changing the SQL schema, consider upgrades, downgrades, and branch
 switches. Different versions can share the same settings database.
 
+- Adding a setting needs no API compatibility waiver: `SETTING_FIELDS` and
+  `STRING_SETTINGS` are `growing_collections` in `.github/api-compatibility-allowlist.json`.
+  Removing or renaming one still needs a deprecation and a waiver.
 - Add regression cases to `tests/test_settings_compatibility.py` and affected CLI
   tests using the previous stored format. Keep historical fixtures unchanged;
   do not regenerate them with current models or rewrite them to make a change pass.
