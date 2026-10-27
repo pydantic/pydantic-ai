@@ -243,17 +243,16 @@ def _previous_request(requests: list[RecordedRequest], later_index: int) -> int 
     return next((index for index in candidates if len(requests[index].messages) < len(later.messages)), None)
 
 
-def _content_blocks(canonical: tuple[str, list[PrefixBlock]] | None) -> tuple[str, list[PrefixBlock]] | None:
-    """Split each message into one block per content block, the granularity Anthropic caches at.
+def _content_blocks(body: dict[str, Any]) -> list[PrefixBlock]:
+    """An Anthropic request body's cache-ordered blocks, one per content block, the granularity Anthropic caches at.
 
     A request that adds content to the last message, like a prompt that joins the user message holding the
     previous step's tool results, or a continuation that adds parts to a paused response, extends the prefix.
     """
-    if canonical is None:
-        return None
-    shape, blocks = canonical
+    canonical = canonical_prefix_blocks(body, _ANTHROPIC_MESSAGES_URL)
+    assert canonical is not None  # the Messages API always has a known shape
     split: list[PrefixBlock] = []
-    for level, block in blocks:
+    for level, block in canonical[1]:
         message: Any = json.loads(block)
         content = message.get('content') if level == 'messages' and is_str_dict(message) else None
         if isinstance(content, list):
@@ -261,27 +260,19 @@ def _content_blocks(canonical: tuple[str, list[PrefixBlock]] | None) -> tuple[st
             split.extend((level, json.dumps({'role': role, 'content': [item]})) for item in cast(list[Any], content))
         else:
             split.append((level, block))
-    return shape, split
+    return split
 
 
 def function_model_prefix_violations(requests: list[RecordedRequest]) -> list[CassettePrefixViolation]:
-    """Yield prefix violations between each request and the latest earlier request of its conversation."""
+    """The prefix violations between each request and the request it follows in its conversation."""
     bodies = _render_anthropic_bodies(requests)
-    blocks = [
-        None if body is None else _content_blocks(canonical_prefix_blocks(body, _ANTHROPIC_MESSAGES_URL))
-        for body in bodies
-    ]
     violations: list[CassettePrefixViolation] = []
-    for later_index in range(len(requests)):
-        later_blocks = blocks[later_index]
-        if later_blocks is None:
-            continue
+    for later_index, later_body in enumerate(bodies):
         earlier_index = _previous_request(requests, later_index)
-        if earlier_index is None or (earlier_blocks := blocks[earlier_index]) is None:
+        if later_body is None or earlier_index is None or (earlier_body := bodies[earlier_index]) is None:
             continue
-        earlier_body, later_body = bodies[earlier_index], bodies[later_index]
-        assert earlier_body is not None and later_body is not None
-        classification, block_index = classify_prefix_pair(earlier_blocks[1], later_blocks[1])
+        earlier, later = _content_blocks(earlier_body), _content_blocks(later_body)
+        classification, block_index = classify_prefix_pair(earlier, later)
         earlier_deferred = anthropic_deferred_tool_blocks(earlier_body)
         later_deferred = anthropic_deferred_tool_blocks(later_body)
         if classification in ('identical', 'extension') and earlier_deferred != later_deferred[: len(earlier_deferred)]:
@@ -297,7 +288,6 @@ def function_model_prefix_violations(requests: list[RecordedRequest]) -> list[Ca
             )
         if classification != 'shrunk' and not classification.endswith('-divergent'):
             continue
-        earlier, later_ = earlier_blocks[1], later_blocks[1]
         violations.append(
             CassettePrefixViolation(
                 shape='anthropic',
@@ -305,7 +295,7 @@ def function_model_prefix_violations(requests: list[RecordedRequest]) -> list[Ca
                 level=classification.removesuffix('-divergent'),
                 block_index=block_index,
                 earlier_block=(earlier[block_index][1] if block_index < len(earlier) else '<missing>')[:200],
-                later_block=(later_[block_index][1] if block_index < len(later_) else '<missing>')[:200],
+                later_block=(later[block_index][1] if block_index < len(later) else '<missing>')[:200],
             )
         )
     return violations
@@ -316,16 +306,21 @@ def check_function_model_prefix_stability(node: pytest.Item, requests: list[Reco
     if len(requests) < 2 or node.get_closest_marker('moves_cache_prefix') is not None:
         # `check_cache_prefix_stability` already insists the marker gives a reason.
         return
-    violations = function_model_prefix_violations(requests)
-    if violations:
-        details = '\n'.join(
-            f'request {violation.pair_index}, {violation.level} block {violation.block_index}:\n'
-            f'  earlier: {violation.earlier_block}\n  later:   {violation.later_block}'
-            for violation in violations
-        )
-        pytest.fail(
-            f'{details}\nRendered as an Anthropic request, this test model conversation moves the prompt-cache prefix, '
-            "which busts the provider's cache on every such turn; if the test's behavior is deliberately "
-            'prefix-moving (compaction, dynamic tool disclosure, history rewriting), add '
-            '@pytest.mark.moves_cache_prefix(reason=...) to the test'
-        )
+    fail_on_prefix_violations(function_model_prefix_violations(requests))
+
+
+def fail_on_prefix_violations(violations: list[CassettePrefixViolation]) -> None:
+    """Fail the test with a description of each violation, if there are any."""
+    if not violations:
+        return
+    details = '\n'.join(
+        f'request {violation.pair_index}, {violation.level} block {violation.block_index}:\n'
+        f'  earlier: {violation.earlier_block}\n  later:   {violation.later_block}'
+        for violation in violations
+    )
+    pytest.fail(
+        f'{details}\nRendered as an Anthropic request, this test model conversation moves the prompt-cache prefix, '
+        "which busts the provider's cache on every such turn; if the test's behavior is deliberately "
+        'prefix-moving (compaction, dynamic tool disclosure, history rewriting), add '
+        '@pytest.mark.moves_cache_prefix(reason=...) to the test'
+    )
