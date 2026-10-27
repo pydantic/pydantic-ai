@@ -1387,7 +1387,8 @@ session's `conversation`. The sidebar lists `host.sessions`, the store `/resume`
 `/resume` groups them: by repository, then by checkout, with a session from a removed worktree
 under its repository by the checkout saved with it (`ConversationSummary.checkout`), archived ones
 left out unless its archive button is on (`GET /api/sessions?include_archived=true`;
-`POST /api/sessions/ID/archive` and `/unarchive`).
+`POST /api/sessions/ID/archive` and `/unarchive`, and `POST /api/sessions/archive` for a
+worktree's sessions at once).
 
 Under `clai2 --web`, clicking a session opens it live (`POST /api/sessions/ID/open`, which calls
 `host.live.open`), even while other sessions run turns: it is resumed in a session of its own, in

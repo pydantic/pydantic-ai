@@ -336,6 +336,68 @@ async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None
     await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_have_count(0)
 
 
+async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(page: Page, web_ui: WebUI) -> None:
+    """A project's removed worktrees wait, closed, in one group after its live ones; each archives at once."""
+
+    def sidebar_session(session_id: str, title: str) -> dict[str, object]:
+        return {
+            'id': session_id,
+            'title': title,
+            'workspace': f'/wt/{session_id}',
+            'updated_at': '2026-01-01T00:00:00Z',
+            'state': 'ready',
+            'messages': 2,
+            'model': None,
+            'current': False,
+            'archived': False,
+        }
+
+    worktrees = [
+        {
+            'root': '/wt/live',
+            'label': 'live',
+            'current': False,
+            'missing': False,
+            'sessions': [sidebar_session('l', 'Live work')],
+        },
+        {
+            'root': '/wt/gone',
+            'label': 'gone',
+            'current': False,
+            'missing': True,
+            'sessions': [sidebar_session('g1', 'Gone one'), sidebar_session('g2', 'Gone two')],
+        },
+    ]
+
+    async def sessions(route: Route) -> None:
+        await route.fulfill(json=[{'key': 'repo', 'name': 'repo', 'current': True, 'worktrees': worktrees}])
+
+    async def archive(route: Route) -> None:
+        await route.fulfill(status=204)
+
+    await page.route('**/api/sessions?*', sessions)
+    await page.route('**/api/sessions/archive', archive)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    await expect(sidebar.get_by_text('Live work', exact=True)).to_be_visible()
+    fold = sidebar.get_by_role('button', name='Removed worktrees (1)')
+    await expect(fold).to_be_visible()
+    await expect(sidebar.get_by_text('Gone one', exact=True)).to_have_count(0)
+    await fold.click()
+    await expect(sidebar.get_by_text('Gone one', exact=True)).to_be_visible()
+    gone = sidebar.locator('.worktree-head').filter(has_text='gone')
+    await gone.hover()
+    await gone.get_by_role('button', name='Worktree actions').click()
+    async with page.expect_request('**/api/sessions/archive') as request:
+        await sidebar.get_by_role('button', name='Archive all sessions in this worktree').click()
+    assert (await request.value).post_data_json == {'ids': ['g1', 'g2']}
+    # A search lists only a worktree's matching sessions, so it cannot archive all of them.
+    await sidebar.get_by_role('textbox', name='Search sessions', exact=True).fill('Gone one')
+    await gone.hover()
+    await gone.get_by_role('button', name='Worktree actions').click()
+    await expect(sidebar.get_by_role('button', name='Archive all sessions in this worktree')).to_be_disabled()
+
+
 async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     # Capture real browser sockets while leaving their transport and handlers intact.
     await page.add_init_script("""
