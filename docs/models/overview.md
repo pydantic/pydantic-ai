@@ -55,6 +55,8 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 
 The service descriptions help you find a deployment option; a company may offer more than one kind of service. Feature support depends on the model and API you select, even when two services use the same API format.
 
+For work that isn't waiting on a user, Anthropic, OpenAI and Gemini API models can also send requests through their providers' [batch APIs](../batch.md), at about half the price.
+
 For an OpenAI-compatible endpoint not listed here, see [Other endpoints](compatible-apis.md#other-endpoints); for any other API, implement a [custom model](#custom-models).
 
 For testing and development, use [`TestModel`](../api/models/test.md) or [`FunctionModel`](../api/models/function.md).

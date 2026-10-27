@@ -3,6 +3,7 @@
 import io
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Generic, TypeVar
 
 import pytest
@@ -20,16 +21,21 @@ from pydantic_ai import (
     ToolDefinition,
 )
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Capability, Hooks, ValidatedToolArgs, on_event
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2 import Session, StreamRenderer
+from pydantic_ai.usage import RunUsage
+from pydantic_clai2 import Session, StreamRenderer, plugins as plugins_module
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import (
+    InstallProgress,
     NoSettings,
     Plugin,
     PluginHost,
     SessionEnd,
     SessionStart,
+    TaskInfo,
+    TaskProgress,
     Transcript,
     TurnEnd,
     TurnStart,
@@ -187,6 +193,124 @@ async def test_host_hooks_dispatch_by_event_type() -> None:
     assert seen == ['start:openai-codex:gpt-6-astra', 'turn:hi', 'done:completed', 'end:eof']
     assert loaded.capabilities == ()
     assert loaded.summary() == '4 hooks'
+
+
+def progress_events() -> tuple[TaskProgress, InstallProgress]:
+    now = datetime.now(UTC)
+    task = TaskInfo(
+        id='t1',
+        parent_id=None,
+        agent='Explore',
+        model=None,
+        prompt='look',
+        status='running',
+        outcome=None,
+        started_at=now,
+        finished_at=None,
+        background=False,
+        resumable=False,
+        activity='starting',
+        usage=RunUsage(),
+    )
+    return TaskProgress(task=task), InstallProgress(stage='installing', target='1.2.3')
+
+
+async def test_task_and_install_progress_dispatch_to_their_on_hooks() -> None:
+    seen: list[str] = []
+
+    class Progress(Plugin):
+        async def on_task_progress(self, event: TaskProgress) -> None:
+            seen.append(f'task:{event.task.id}')
+
+        async def on_install_progress(self, event: InstallProgress) -> None:
+            seen.append(f'install:{event.stage}:{event.target}')
+
+    loaded = load_plugin(Progress, host())
+    assert loaded.handles(TaskProgress)
+    assert loaded.handles(InstallProgress)
+    for event in progress_events():
+        await loaded.dispatch(event)
+    assert seen == ['task:t1', 'install:installing:1.2.3']
+    assert loaded.summary() == '2 hooks'
+
+
+async def test_old_progress_hook_names_still_dispatch_with_a_deprecation_warning() -> None:
+    seen: list[str] = []
+
+    with pytest.warns(PydanticAIDeprecationWarning) as warned:
+
+        class Legacy(Plugin):
+            async def on_task_event(self, event: TaskProgress) -> None:
+                with pytest.warns(PydanticAIDeprecationWarning, match='renamed to `on_task_progress`'):
+                    await super().on_task_event(event)  # pyright: ignore[reportDeprecated]
+                seen.append(f'old task:{event.task.id}')
+
+            async def on_update_progress(self, event: InstallProgress) -> None:
+                seen.append(f'old install:{event.stage}')
+
+    assert [str(warning.message) for warning in warned] == [
+        '`Legacy.on_task_event` is deprecated; rename it to `on_task_progress`. '
+        'The old name will be removed in a future release.',
+        '`Legacy.on_update_progress` is deprecated; rename it to `on_install_progress`. '
+        'The old name will be removed in a future release.',
+    ]
+    assert {warning.filename for warning in warned} == {__file__}
+    loaded = load_plugin(Legacy, host())
+    assert loaded.handles(TaskProgress)
+    assert loaded.handles(InstallProgress)
+    for event in progress_events():
+        await loaded.dispatch(event)
+    assert seen == ['old task:t1', 'old install:installing']
+    assert loaded.summary() == '2 hooks'
+
+    seen.clear()
+    with pytest.warns(PydanticAIDeprecationWarning, match='`Both.on_task_event` is deprecated'):
+
+        class Both(Plugin):
+            async def on_task_event(self, event: TaskProgress) -> None:
+                seen.append('old')  # pragma: no cover
+
+            async def on_task_progress(self, event: TaskProgress) -> None:
+                seen.append('new')
+
+    await load_plugin(Both, host()).dispatch(progress_events()[0])
+    assert seen == ['new']
+
+
+async def test_an_old_progress_hook_from_a_mixin_still_dispatches() -> None:
+    seen: list[str] = []
+
+    class LegacyMixin:
+        async def on_update_progress(self, event: InstallProgress) -> None:
+            seen.append(f'mixin:{event.stage}')
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='`Mixed.on_update_progress` is deprecated'):
+
+        class Mixed(LegacyMixin, Plugin):
+            pass
+
+    class Child(Mixed):
+        pass
+
+    for plugin in (Mixed, Child):
+        loaded = load_plugin(plugin, host())
+        assert loaded.handles(InstallProgress)
+        await loaded.dispatch(progress_events()[1])
+    assert seen == ['mixin:installing', 'mixin:installing']
+
+
+def test_old_progress_event_names_import_with_a_deprecation_warning() -> None:
+    with pytest.warns(
+        PydanticAIDeprecationWarning, match='`pydantic_clai2.plugins.TaskEvent` has been renamed to `TaskProgress`'
+    ):
+        assert plugins_module.TaskEvent is TaskProgress
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match='`pydantic_clai2.plugins.UpdateProgress` has been renamed to `InstallProgress`',
+    ):
+        assert plugins_module.UpdateProgress is InstallProgress
+    with pytest.raises(AttributeError, match="has no attribute 'Missing'"):
+        plugins_module.Missing
 
 
 @dataclass

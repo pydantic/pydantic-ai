@@ -292,6 +292,8 @@ class StayTerse(AbstractCapability[Any]):
 agent = Agent('{{ anthropic:large }}', capabilities=[StayTerse()])
 ```
 
+The Harness [System Reminders](harness/system-reminders.md) capability is built this way.
+
 A request-scoped prompt is not a request-only change: the prompt stays in history and only what the model is shown changes, while a request-only change, such as assigning `request_context.messages`, never reaches history at all. So don't add it to `request_context.messages` alone: it then never enters the history, so the next request doesn't send it, and on a model that ties its reasoning to the exact conversation, dropping it from one request to the next counts as editing the conversation. See [Changing what the model sees](capabilities/custom.md#steering-messages-and-reminders) for the other ways a capability can change what's sent, and what each does to the prompt cache.
 
 A request-scoped prompt stays in the message history like any other part, so the history records what each request was sent. How it reaches the model depends on the provider:
@@ -378,9 +380,9 @@ After the invalid parts are handled, consecutive compatible messages are **merge
 
 The repair is deterministic and idempotent: repairing the same history always produces the same output, running a repaired history through another run leaves it untouched, and synthesized parts contain no wall-clock data, so reuse doesn't invalidate provider prompt caches.
 
-Tool calls that can still receive a real result are left alone: when the history ends on a `ModelResponse` with tool calls, running without a new `user_prompt` executes them, and [deferred tool calls](deferred-tools.md) are matched to their `deferred_tool_results` — including when a 'complete' `ModelRequest` with the already-executed results follows the response. Repair of that live frontier only happens when the interruption is evident: a final response with [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] or a trailing request with [`state='interrupted'`][pydantic_ai.messages.ModelRequest.state] (e.g. from a [cancelled stream](output.md#cancelling-streams) or a crash during tool execution) whose tool calls will never be executed.
+Tool calls that can still receive a real result are left alone: when the history ends on a `ModelResponse` with tool calls, running without a new `user_prompt` executes them, and [deferred tool calls](deferred-tools.md) are matched to their `deferred_tool_results` — including when a 'complete' `ModelRequest` with the already-executed results follows the response. Repair of that live frontier only happens when the interruption is evident: a trailing request with [`state='interrupted'`][pydantic_ai.messages.ModelRequest.state] (e.g. from a crash during tool execution), whose response's unanswered calls will never be executed, or a final response with [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] (e.g. from a [cancelled stream](output.md#cancelling-streams), or one that crossed a token or cost [usage limit](agent.md#usage-limits)) followed by a new user prompt. Without a new prompt, a run executes an interrupted final response's tool calls like any other.
 
-The one case the repair leaves to you is a new user prompt on top of a history whose final response still has unanswered tool calls: those calls can still be answered — by resuming the run, or with `deferred_tool_results` — so Pydantic AI raises rather than abandon them. When you do mean to abandon them, [`repair_messages`][pydantic_ai.messages.repair_messages] runs the same pipeline on demand and closes them out:
+The one case the repair leaves to you is a new user prompt on top of a history whose final response, not marked `state='interrupted'`, still has unanswered tool calls: those calls can still be answered — by resuming the run, or with `deferred_tool_results` — so Pydantic AI raises rather than abandon them. When you do mean to abandon them, [`repair_messages`][pydantic_ai.messages.repair_messages] runs the same pipeline on demand and closes them out:
 
 ```python {title="repairing_a_stored_history.py"}
 from pydantic_ai.messages import (

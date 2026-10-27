@@ -11,6 +11,7 @@ import hashlib
 import json
 import reprlib
 import time
+import uuid
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
@@ -74,9 +75,9 @@ from .._json_schema import (
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from .._unsupported_settings import GUARANTEE_SETTINGS, SUPPRESSED_WARNINGS
+from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
-from ..exceptions import ModelAPIError, UnsupportedSettingWarning, UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     STANDING_PROMPT_PLANTED_KEY,
@@ -163,6 +164,7 @@ if TYPE_CHECKING:
 
     from ..agent.abstract import AbstractAgent
     from ..usage import RunUsage, UsageLimits
+    from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, EncodedBatchRequest
 else:
     # Legacy HTTPX is optional, so this module has to import without it. The annotation then degrades
     # to `object`, dropping static checking of what `create_async_http_client` hands back — the client
@@ -527,6 +529,9 @@ class ModelRequestContext:
     _usage_response_ledger: _ModelRequestUsageLedger = field(
         default_factory=_ModelRequestUsageLedger, repr=False, compare=False
     )
+    _serving_wrapper: tuple[Model, Model] | None = field(default=None, repr=False, compare=False)
+    """The model a capability's `get_wrapper_model` returned to serve the request, which is entered around it, and
+    the model it wraps, whose lifecycle its owner manages."""
 
     @property
     def _usage_responses(self) -> tuple[ModelResponse, ...]:
@@ -768,6 +773,105 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def provider(self) -> Provider[InterfaceClient] | None:
         """The provider for this model, if any."""
         return getattr(self, '_provider', None)
+
+    @property
+    def batch_max_requests(self) -> int | None:
+        """The most requests the provider accepts in one batch, or `None` when the model has no batch API.
+
+        A model that returns a number implements the other `batch_*` methods, which
+        [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] and
+        [`model_request_batch`][pydantic_ai.direct.model_request_batch] are built on.
+        """
+        return None
+
+    @property
+    def batch_max_bytes(self) -> int | None:
+        """The most bytes the provider accepts in one batch, or `None` when it only limits the number of requests.
+
+        A batch's size is the sum of its requests' [`batch_request_size`][pydantic_ai.models.Model.batch_request_size].
+        [`batch_encode`][pydantic_ai.models.Model.batch_encode] refuses a request too large for any batch, and
+        [`batch_create`][pydantic_ai.models.Model.batch_create] refuses requests too large for one batch.
+        """
+        return None
+
+    def _batch_credential(self) -> str:
+        """Identifies the endpoint and credential this model reaches batches with.
+
+        `BatchModelRequests` only shares a batch's checks and results between models that give the same identity, so
+        a model with another credential asks the provider itself. By default, the identity is this model instance.
+        """
+        # Created on first use, on whichever thread gets there first: `setdefault` keeps one ID for all of them.
+        instance_id: str | None = vars(self).get('_batch_instance_id')
+        if instance_id is None:
+            instance_id = vars(self).setdefault('_batch_instance_id', uuid.uuid4().hex)
+        return f'instance:{instance_id}'
+
+    def _no_batch_api_message(self) -> str:
+        """The error for batching this model when [`batch_max_requests`][pydantic_ai.models.Model.batch_max_requests] is `None`."""
+        return f'`{type(self).__name__}` {self.model_name!r} has no batch API.'
+
+    def _batch_unlisted_status(self, batch: Batch) -> BatchResultStatus | None:
+        """How the provider ended the requests an ended `batch` has no result for, if it says.
+
+        A provider that lists every request of a batch in its results returns `None`, as does one whose batch should
+        have a result for each request it held. One whose results leave out the requests a batch didn't run says why,
+        as `'expired'` or `'canceled'`.
+        """
+        return None
+
+    def batch_request_size(self, request: EncodedBatchRequest) -> int:
+        """The bytes `request` adds to a batch, which [`batch_max_bytes`][pydantic_ai.models.Model.batch_max_bytes] limits.
+
+        By default, the UTF-8 size of its `custom_id` and `body`; a model whose batch format adds bytes around each
+        request counts those too.
+        """
+        return len(request.custom_id.encode()) + len(request.body.encode())
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        """Encode a request for the provider's batch API, with the parameters the model would send on its own.
+
+        Raises a [`UserError`][pydantic_ai.exceptions.UserError] for a setting the batch API can't honor.
+        """
+        raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
+
+    async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+        """Submit encoded requests that share a `group` as one batch job.
+
+        A failed submission is not retried, because the provider may have created the job before the connection
+        failed: check the provider's jobs before submitting the requests again.
+        """
+        raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
+
+    async def batch_status(self, batch: Batch) -> Batch:
+        """Retrieve the current state of a batch job, without its results."""
+        raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        """Retrieve the results of a batch job that has ended.
+
+        There is one [`BatchResult`][pydantic_ai.models.batch.BatchResult] per request, matched to its request by
+        `custom_id` rather than by position.
+
+        Raises a [`UserError`][pydantic_ai.exceptions.UserError] if `batch` hasn't ended; check with
+        [`batch_status`][pydantic_ai.models.Model.batch_status] first.
+        """
+        raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
+
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        """Ask the provider to cancel a batch job, and return its updated state.
+
+        Requests the provider already completed may still be billed.
+        """
+        raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
+
+    def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
+        """Turn a batch result into the response the request would have produced on its own.
+
+        Raises the [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] the request would have raised, or one
+        saying the request expired or was cancelled before the model ran it. `request` must be the request the result
+        belongs to, as its settings and parameters determine how the result is read; its messages aren't used.
+        """
+        raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
 
     async def __aenter__(self) -> Self:
         """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""
@@ -1027,7 +1131,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Compact messages to reduce conversation context size.
 
         This method is optional and only supported by specific providers
-        (e.g. OpenAI Responses API). Providers that support compaction
+        (e.g. OpenAI Responses API and Anthropic). Providers that support compaction
         override this method with their implementation.
         """
         raise NotImplementedError(f'Message compaction is not supported by {self.__class__.__name__}')
@@ -1063,6 +1167,38 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         overrides this to return a poll interval so the graph doesn't busy-poll.
         """
         return None
+
+    def _limits_polls(self, response: ModelResponse) -> bool:
+        """Whether polling `response` counts against the graph's limit on how often one job is polled.
+
+        `True` by default; a model whose job ends of its own accord, like a batch the provider expires once its
+        window has passed, returns `False`, so a long job isn't given up on early.
+        """
+        return True
+
+    def _release_suspended_response(self, response: ModelResponse) -> None:
+        """Called when a run ends with `response` still suspended, leaving it for a later run to continue.
+
+        No-op by default; a model that cancels a job once nobody waits on it stops counting this run as waiting.
+        """
+        return None
+
+    def _withdraws_rejected_suspended_response(self, response: ModelResponse) -> bool:
+        """Whether a suspended response a run would have ended with, but a hook rejected, is cancelled.
+
+        `False` by default, so the job keeps running as before; a model whose request only some run would ever
+        collect, like a batch request, returns `True`, so a rejected one stops holding its job.
+        """
+        return False
+
+    def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
+        """This model with `wrap` applied to the model that sends its requests.
+
+        That is this model itself, unless it hands its requests to another process, as a durable execution engine's
+        model does: then `wrap` applies to the model it wraps, which answers questions like `continuation_delay` on
+        this side, and the engine wraps the model it rebuilds on the other side the same way.
+        """
+        return wrap(self)
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         """Customize the request parameters for the model.
@@ -1351,21 +1487,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Warn about each set setting that changes what the request guarantees and that this model ignores."""
         if not model_settings:
             return
-        unsupported = self._unsupported_settings()
-        suppressed = SUPPRESSED_WARNINGS.get()
-        for name, hint in GUARANTEE_SETTINGS.items():
-            if name not in model_settings or name not in unsupported or name in suppressed:
-                continue
-            # Only `False` is a guarantee, and only a request with function tools can make parallel calls.
-            if name == 'parallel_tool_calls' and (
-                model_settings.get('parallel_tool_calls') is not False or not model_request_parameters.function_tools
-            ):
-                continue
-            warnings.warn(
-                f'The `{name}` setting is not supported by model {self.model_id!r} and will be ignored.{hint}',
-                UnsupportedSettingWarning,
-                stacklevel=2,
-            )
+        warn_unsupported_settings(
+            self.model_id,
+            model_settings,
+            self._unsupported_settings(),
+            has_function_tools=bool(model_request_parameters.function_tools),
+        )
 
     def prepare_messages(
         self,

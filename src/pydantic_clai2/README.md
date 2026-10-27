@@ -297,7 +297,8 @@ closes; it stays saved, so click it to pick it up again. See
 
 `/usage` shows the tokens and cost of each turn, and `/cost` the total. Costs come from
 public price data; a model without a price, like the scripted one in these screenshots,
-shows `unknown`.
+shows `unknown`. Both answer at once, even while a turn runs, and cover the turns that
+have finished.
 
 When a response omits usage, `/usage` and `/cost` label known totals as lower bounds,
 and the status row prefixes a known cost with `>=`.

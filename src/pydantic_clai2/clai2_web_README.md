@@ -41,6 +41,8 @@ session whose directory is gone, such as a removed worktree, opens read-only; so
 from a terminal, a session saved in another directory, since the terminal works where it started.
 Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and no
 other, Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
+As in the terminal, Up on the composer's first line recalls the session's sent prompts, newest first,
+and Down on its last line steps back toward your unsent draft.
 
 While a turn runs, the composer works as the terminal's prompt does. Enter queues your message for
 after the turn. Alt+Enter (Option+Enter on a Mac), or the bolt button beside Send, steers the running
@@ -307,8 +309,8 @@ so switching back to one shows it at once.
 
 Sessions are named by their conversation ID, the `id` the sidebar lists.
 
-- **Per-session messages** (`item`, `delta`, and the other item messages, `turn_start`, `turn_end`,
-  `status`, `question`, `question_closed`, `notice`, `title`, `task`, `task_event`, `queue`) carry `"session": "<conversation id>"` and go only to the
+- **Per-session messages** (`item`, `text_delta`, and the other item messages, `turn_started`, `turn_ended`,
+  `status`, `question`, `question_closed`, `notice`, `title`, `task`, `task_items`, `queue`) carry `"session": "<conversation id>"` and go only to the
   connections watching that session. A `snapshot` names its session in `session.id`.
 - **Global messages** (`sessions`, `plugins`, `settings`, `theme`, `update`, `orchestrator`, `live`,
   and the settings menus' `dialog`, `dialog_shown`, and `dialog_closed`) go to every connection and

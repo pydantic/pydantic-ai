@@ -126,6 +126,7 @@ from ._utils import (
     DEFAULT_MAX_RECONNECTS,
     inject_trace_context,
     reconnect_with_backoff,
+    reject_forced_tool_choice,
     require_pcm_audio,
     resolve_advertised_tools,
     seed_pcm_audio,
@@ -1004,6 +1005,7 @@ class GoogleRealtimeModel(RealtimeModel):
     model: GoogleRealtimeModelName
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
+    unsupported_settings = frozenset({'parallel_tool_calls'})
     _provider: Provider[Client] = field(init=False, repr=False)
 
     # Written out rather than generated because `profile` has to be an init argument while
@@ -1362,8 +1364,15 @@ class GoogleRealtimeModel(RealtimeModel):
         # MCP types); a precisely-typed `list[Tool]` isn't assignable to it (list invariance).
         genai_tools: list[Any] = []
         # Gemini's live config has no `tool_config`, so the only expressible restriction is which
-        # functions are advertised; the mode the resolution asks for is dropped.
-        advertised_tools, _ = resolve_advertised_tools(tools, settings.get('tool_choice'))
+        # functions are advertised. A choice that forces a tool call can't be expressed at all, so it
+        # fails as it does on the providers that could send it, rather than being dropped.
+        advertised_tools, tool_choice = resolve_advertised_tools(tools, settings.get('tool_choice'))
+        reject_forced_tool_choice(
+            tool_choice,
+            "Gemini Live can't force a tool call: its session config has no tool choice, so "
+            "`tool_choice='required'` or a list of tool names would be ignored. To restrict which tools the "
+            'model can use, pass `ToolOrOutput(function_tools=[...])` instead.',
+        )
         if advertised_tools:
             async_tool_calls = self._async_tool_calls(settings)
             genai_tools.append(

@@ -85,6 +85,7 @@ from pydantic_ai_harness.subagents import (
     serialize_message,
 )
 
+from .._deferred_tools import pending_agent
 from .._recording_durability import RecordingDurability
 
 WAIT = 10
@@ -1220,6 +1221,18 @@ class TestSubAgentWorker:
         assert '(failed):\nThe next request would exceed the request_limit of 2.' in limited_out
         assert 'needs tool approval or deferred tool results' in approving_out
         assert '(failed):\n`model` must either be set on the agent or included when calling it.' in modelless_out
+
+    async def test_a_task_left_waiting_on_its_provider_fails_and_cancels_the_request(self) -> None:
+        # The delegating run can't check on the request later, so the worker cancels it.
+        background, model = pending_agent('remote')
+        transport = InMemoryTransport()
+        worker = SubAgentWorker(agents={'remote': background}, transport=transport, deps=None)
+        parent, _ = remote_parent(transport, call('delegate_task', agent_name='remote', task='Work.'), echo_last_return)
+        with anyio.fail_after(WAIT):
+            async with serving(worker):
+                result = await parent.run('Go.')
+        assert "(failed):\nSub-agent 'remote' ended with `PendingModelResponse`" in result.output
+        assert model.cancelled == ['job-1']
 
     async def test_a_resume_the_worker_has_no_conversation_for_fails(self) -> None:
         transport = InMemoryTransport()
@@ -2732,6 +2745,80 @@ class TestTaskControlBoundaries:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         assert 'only the agent that started it can resume it' in result.output
+
+    async def test_a_question_awaiting_delivery_is_listed_and_observed(self) -> None:
+        owner: DelegationTasks
+        observed: list[DelegationTaskEvent] = []
+        pending = anyio.Event()
+
+        async def observe(event: DelegationTaskEvent) -> None:
+            observed.append(event)
+            if owner.pending_question(event.task.id) is not None:
+                pending.set()
+
+        owner = DelegationTasks(observer=observe)
+        async with owner.opened():
+
+            async def run(record: DelegationTask) -> str:
+                return await owner.ask(record.id, question_id='q1', question='Which?')
+
+            receipt = await owner.delegate(
+                agent_name='worker',
+                prompt='p',
+                conversation_id='root',
+                model=None,
+                background=True,
+                resume=None,
+                run=run,
+            )
+            task_id = task_id_in(receipt)
+            with anyio.fail_after(WAIT):
+                await pending.wait()
+            [record] = owner.questions(conversation_id='root')
+            assert record.id == task_id
+            assert owner.questions(conversation_id='other') == []
+            assert owner.questions(conversation_id='root', parent_id='someone') == []
+            # The observer heard that the task waits, after its question became pending.
+            assert observed[-1].event is None and observed[-1].task is record
+            # Once queued on the parent's run, it no longer awaits delivery.
+            with owner.receiving(conversation_id='root', parent_id=None, enqueue=lambda part: 'e1'):
+                assert owner.questions(conversation_id='root') == []
+                assert owner.answer(task_id, question_id='q1', answer='yes')
+
+    async def test_a_failing_observer_does_not_fail_the_question(self, caplog: pytest.LogCaptureFixture) -> None:
+        owner: DelegationTasks
+        pending, settled = anyio.Event(), anyio.Event()
+
+        async def observe(event: DelegationTaskEvent) -> None:
+            if event.task.status == 'finished':
+                settled.set()
+            elif owner.pending_question(event.task.id) is not None:
+                pending.set()
+                raise RuntimeError('observer broke')
+
+        owner = DelegationTasks(observer=observe)
+        async with owner.opened():
+
+            async def run(record: DelegationTask) -> str:
+                return await owner.ask(record.id, question_id='q1', question='Which?')
+
+            receipt = await owner.delegate(
+                agent_name='worker',
+                prompt='p',
+                conversation_id='root',
+                model=None,
+                background=True,
+                resume=None,
+                run=run,
+            )
+            task_id = task_id_in(receipt)
+            with anyio.fail_after(WAIT):
+                await pending.wait()
+                assert owner.answer(task_id, question_id='q1', answer='yes')
+                # The owner tells the observer once the task settled.
+                await settled.wait()
+            assert owner.records[task_id].output == 'yes'
+        assert 'Task question observer failed' in caplog.text
 
 
 class SavingTasks(DelegationTasks):

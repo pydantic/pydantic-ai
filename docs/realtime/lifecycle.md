@@ -159,8 +159,9 @@ Gemini sends `GoAway` shortly before its cap but Pydantic AI currently reconnect
 connection drops, so a long call can briefly drop mid-turn.
 
 ElevenLabs Agents is the exception to surviving the cap with a policy: a conversation ends at the agent's
-configured maximum duration and cannot be resumed, so `reconnect` raises there rather than
-silently opening a conversation that remembers nothing.
+configured maximum duration and cannot be resumed, so a `reconnect` policy is ignored there, with an
+[`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], rather than silently
+opening a conversation that remembers nothing.
 
 ## Ending a call
 

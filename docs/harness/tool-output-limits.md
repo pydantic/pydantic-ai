@@ -59,7 +59,9 @@ agent = Agent('{{ anthropic:large }}', capabilities=[LocalWorkspace('.'), ToolOu
 The capability registers a single `read_tool_result` tool so the model can page back into any
 spilled payload. Its own returns are exempt from reduction. With `FileSystem` on the agent,
 `read_file` takes its place for spills in the run's workspace, and its reads of spills are exempt
-too ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)).
+too ([Reading spills with `FileSystem`](#reading-spills-with-filesystem)). Core's `load_capability`
+and `search_tools` returns are never reduced either: core reads them back from history to know which
+[on-demand capabilities](../capabilities/on-demand.md) are loaded and which tools are revealed.
 
 ## Bands: combine the modes
 
@@ -95,6 +97,9 @@ cost and no silent drop.
 
 `Passthrough()` is an explicit no-op action for `bands` or `per_tool` lists, leaving matching
 returns untouched.
+
+When an agent gets two `ToolOutputLimits` with the same `id`, their `bands` merge into one list
+that is still matched largest threshold first. At a threshold both state, the later band wins.
 
 ### Fallbacks with `then`
 

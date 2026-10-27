@@ -12,6 +12,7 @@ from termflow.live import Region, ScreenBuffer
 from termflow.live.buffer import REVERSE
 from termflow.themes import PALETTES, reset_palette
 
+from pydantic_clai2.ui.prompt import prompt_surface
 from pydantic_clai2.ui.prompt.prompt_selection import MouseReport, Selection, mouse_report
 from pydantic_clai2.ui.prompt.prompt_surface import (
     ENTER,
@@ -156,6 +157,20 @@ def test_writes_inside_a_frame_interval_wait_for_refresh() -> None:
     start = len(screen.terminal.getvalue())
     screen.surface.refresh()
     assert screen.terminal.getvalue()[start:] == ''
+
+
+async def test_writes_inside_a_frame_interval_paint_once_it_ends(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A short interval stands in for a frame, so waiting it out costs a millisecond.
+    monkeypatch.setattr(prompt_surface, 'FRAME_INTERVAL', 0.001)
+    screen = Screen()
+    screen.surface.paint(ROWS)
+    frames = screen.terminal.getvalue().count('\x1b[?2026h')
+    screen.surface.write('first\n')
+    screen.surface.write('second\n')
+    assert 'first' not in screen.lines(), 'within a frame of the last one'
+    await asyncio.sleep(0.01)
+    assert 'second' in screen.lines(), 'without waiting for the editor to repaint'
+    assert screen.terminal.getvalue().count('\x1b[?2026h') == frames + 1, 'one frame shows both writes'
 
 
 def test_resize_rewraps_the_transcript_from_the_retained_output() -> None:

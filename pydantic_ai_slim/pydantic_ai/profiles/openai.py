@@ -566,6 +566,18 @@ class OpenAIModelProfile(ModelProfile, total=False):
     When `False`, `count_tokens()` raises a `UserError` instead of calling a missing endpoint.
     """
 
+    openai_supports_batch_api: bool
+    """Whether the provider serves the [OpenAI Batch API](https://platform.openai.com/docs/guides/batch) for Responses API
+    requests. Default: `False`.
+
+    [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] and
+    [`model_request_batch`][pydantic_ai.direct.model_request_batch] use it with `OpenAIResponsesModel`, which uploads a
+    batch's requests with `POST /v1/files` and submits them with `POST /v1/batches` for the `/v1/responses` endpoint.
+    Set by `OpenAIProvider`, also for an OpenAI-compatible `base_url`, except with an Azure OpenAI client, whose
+    batches need a batch deployment. Set it in a custom profile for another provider that serves these endpoints, or
+    to `False` for an endpoint that doesn't.
+    """
+
 
 def validate_openai_profile(profile: ModelProfile) -> None:
     """Validate an OpenAI-compatible profile after resolution. Called from `OpenAIChatModel.__init__`."""
@@ -675,6 +687,8 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_output_truncation': False,
         'supports_text_output': False,
         'supports_session_seeding': True,
+        # A system prompt asking for a reply goes to the backend as a developer message, and Live hears it as context.
+        'supports_system_messages': True,
         'supports_seeding_images': False,
         'supports_seeding_audio': False,
         # A server relays the browser's offer and attaches a sideband. Live has no client secrets.
@@ -710,6 +724,9 @@ def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_interruption': True,
         'supports_output_truncation': True,
         'supports_session_seeding': True,
+        # A mid-session `system` message is taken as instructions (checked live on `gpt-realtime` and
+        # `gpt-realtime-2.1`, and on Azure).
+        'supports_system_messages': True,
         'supports_webrtc': True,
         'supports_seeding_images': True,
         'supports_seeding_audio': True,

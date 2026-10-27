@@ -1052,6 +1052,19 @@ saves `unrestricted_filesystem` in the `coder` declaration. Supplied agents are 
 are still run-level capabilities, so self-delegation requires binding `Coder` and
 the capabilities it should carry when constructing that agent.
 
+`task_control` gives delegation task control: `delegate_task` gains `background`
+and `resume`, the model gets `list_tasks`, `message_task`, `answer_task`, and
+`cancel_task`, and a delegated task gets `ask_parent`. It has no effect unless
+`sub_agents` is on. It defaults to `true`, also for saved `coder` declarations
+that omit it, so an upgrade gives a saved `coder` with `sub_agents: true` the
+task tools. Unlike `sub_agents` and `agent_folders`, it turns on no new
+delegation and loads no files: it only controls the tasks that delegation you
+already turned on starts. Set `"task_control": false` in `/plugins configure
+coder` to keep a plain `delegate_task`. `open_stock_agent` turns it off; pass
+`plugin_settings={'coder': {'task_control': True}}` to opt in. The setting is
+tagged `coder-task-control`, so a CLAI build without it ignores a saved value
+instead of failing to load `coder`.
+
 `agent_folders` is stored as a JSON list of folder names or paths for disk-defined
 agents (Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
 `.claude/<name>`, and `.codex/<name>` in the project, then your home directory;
@@ -1161,10 +1174,14 @@ focus is free text, not shell arguments:
 `/compact don't lose the "auth" decisions` preserves the apostrophe and quotes in
 the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 `UsageLimitExceeded` cause summarisation to fall back to truncation; other exceptions
-propagate. `/plugins disable compaction` turns automatic compaction,
+propagate. With the experimental `background_compaction` on, the chain also gets harness's
+`background_start`: it writes the summary in the background ahead of the threshold and swaps it in
+when compaction is due; `/compact` without a focus uses a held summary, with a focus drops it, and
+unloading the plugin cancels one still running. `/plugins disable compaction` turns automatic compaction,
 `/compact`, and its context warning off. `/plugins configure compaction` edits its
 settings (`strategy`, `threshold`, `protected_tokens`, `context_window`,
-`summarization_model`; see the [reference](docs/reference.md#compacting-the-conversation)) and reloads it for the next turn. A
+`summarization_model`, and the experimental `background_compaction` and `background_start`; see the
+[reference](docs/reference.md#compacting-the-conversation)) and reloads it for the next turn. A
 declaration under the same name changes them too:
 
 ```text
@@ -1251,7 +1268,9 @@ would (its `send_input`, reached through `host.live`): prompts and `/commands` r
 session, in order with what the terminal enters, and both show them. A capability the plugin
 binds gives the browser each live session's runs as turns, with their stream events (text,
 thinking, tool calls and results, shell output, diffs), but not a background `/fork`'s, though
-it fires the turn moments too. Command results come from `on_command_end` and history from each
+it fires the turn moments too: the page shows a fork's answer, or why it failed, once it ends,
+from `on_fork_end`. Command results come from `on_command_end`, with `/usage` as a card of its
+figures and `/forks` as a card of its table (`LiveSession.forks`), and history from each
 session's `conversation`. The sidebar lists `host.sessions`, the store `/resume` uses, grouped as
 `/resume` groups them: by repository, then by checkout, with a session from a removed worktree
 under its repository by the checkout saved with it (`ConversationSummary.checkout`), archived ones
@@ -1301,7 +1320,7 @@ service, a command that opens a terminal menu or prompt, such as `/model add`, f
 notice instead of closing as cancelled.
 
 The sidebar's **Workers** tree, under the current session, is what `/tasks` shows, from
-`host.tasks` and `on_task_event`: each delegated task under the one that started it, with its
+`host.tasks` and `on_task_progress`: each delegated task under the one that started it, with its
 agent, model, elapsed time, and last action, and a link from the tool call that started it.
 Clicking one opens its transcript in the main pane, streamed as its run goes; a browser that
 connects meanwhile gets each running task's transcript so far. Its own box steers it while it
@@ -1421,7 +1440,7 @@ to install dependencies, rebuild the bundle, and run browser tests. Commit the r
 
 `/update now`, typed in the terminal or confirmed with **Update…** in the page's About section (bare
 `/update` in the composer opens that section), shows in the page: uv's latest line while it
-installs (`on_update_progress`), then all it printed and the command's result. A failed install,
+installs (`on_install_progress`), then all it printed and the command's result. A failed install,
 or nothing to install, says so and changes nothing. After a successful one, CLAI restarts as the
 new build serving the web UI again on the same port with the same token, and resumes the session;
 the page says it is restarting, reconnects by itself, and names the new version. That holds for
@@ -2375,7 +2394,7 @@ contributes nothing:
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `get_side_panels()` | pages the web UI shows beside the conversation |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_event` / `on_update_progress` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_progress` / `on_fork_end` / `on_install_progress` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, its
@@ -2385,9 +2404,9 @@ call `super().__init__(host, settings)` first. Each live session gets its own
 instance unless the class sets `scope = 'process'`; see
 [Several live sessions](#several-live-sessions).
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`, `on_update_progress`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`, `on_fork_end`, `on_install_progress`
 
-Nine `async` methods fire outside the agent run, in the shell:
+Ten `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
@@ -2398,8 +2417,9 @@ Nine `async` methods fire outside the agent run, in the shell:
 | `on_conversation_changed` | the shell switched conversations, or the current one got a new title | `conversation_id`, `title` | no |
 | `on_command_end` | a `/command` finished | `text`, `output`, `error` | no |
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
-| `on_task_event` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
-| `on_update_progress` | `/update` started installing a newer CLAI, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
+| `on_task_progress` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
+| `on_fork_end` | a background `/fork` finished, failed, or was cancelled | `fork`, `output`, `error` | no |
+| `on_install_progress` | `/update` started installing a newer CLAI, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
 name and original exception. Every successfully loaded plugin receives it, regardless
@@ -2429,16 +2449,25 @@ with Esc or Ctrl-C fires nothing; a finished one fires after Esc stops reaching 
 handler cannot cancel it. Use it to show command results somewhere other than
 the terminal; the shell has already printed them.
 
-`on_task_event` receives a `TaskEvent` for everything a task the agent delegated does, and its
-descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the
-event from the task's own run (text, thinking, tool calls and results), its
-`DelegationStartEvent` or `DelegationEndEvent`, or `None` when only the task changed, such as when
-it started or finished. These events never reach the main run's hooks: they are the feed `/tasks`
-shows. It fires for every stream event of every running task, down to each text and thinking
-delta, and the task waits for it, so keep the handler cheap, such as queueing the event for
-elsewhere. A failure is printed and the task goes on.
+`on_task_progress` receives a `TaskProgress` for everything a task the agent delegated does, and its
+descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the event
+from the task's own run (text, thinking, tool calls and results), its `DelegationStartEvent` or
+`DelegationEndEvent`, one of its `sub_agents` task events, such as `TaskQuestionEvent` when it asks
+its parent, or `None` when only the task changed, such as when it started, finished, or began
+waiting for an answer. Its own run's events never reach the main run's hooks: they are the feed
+`/tasks` shows. Its `sub_agents` task events also go into the stream of the run that delegated it,
+which is the main run for a task the agent delegated directly. It fires for every stream event of
+every running task, down to each text and thinking delta, and the task waits for it, so keep the
+handler cheap, such as queueing the event for elsewhere. A failure is printed and the task goes on.
 
-`on_update_progress` receives an `UpdateProgress` event while `/update` installs a newer CLAI with
+`on_fork_end` receives a `ForkEnd` event once a background `/fork` has ended, right after its
+`on_turn_end`: `fork` is a `ForkInfo` as `/forks` lists it (`id`, `model`, `prompt`, `status` of
+`done`, `failed`, or `cancelled`, `elapsed` seconds, and the `session_id` `/resume` continues it
+in, once saved), `output` its answer once `done` (`str` of a structured output), and `error` why
+it `failed`. It fires when the fork ends, while the terminal holds the answer until no turn or
+command runs. A failure is printed and CLAI goes on.
+
+`on_install_progress` receives an `InstallProgress` event while `/update` installs a newer CLAI with
 uv: `target` is the version, or on the `main` channel the short commit, being installed, and
 `stage` says how far it got: `installing` first, then `output` for each line uv prints, with the
 line in `text`, then `failed` when uv failed, `installed` when CLAI must be started again by hand,
@@ -2447,6 +2476,12 @@ or `restarting` when CLAI is about to exit and start the new build in its place,
 its progress bars into plain lines, which CLAI still prints, so it does that only for a page that
 has no terminal to watch. Nothing fires when there is nothing to install, or on Windows, where the
 install runs after CLAI exits.
+
+`on_task_progress` and `on_install_progress` were called `on_task_event` and `on_update_progress`,
+with events `TaskEvent` and `UpdateProgress`. A plugin that still defines an old handler name keeps
+receiving the event, with a `PydanticAIDeprecationWarning` when its class is defined, and the old
+event names still import with the same warning. CLAI hides warnings, so you see it in your tests,
+or when you run `clai2` with `PYTHONWARNINGS=default`. Rename them; the old names will be removed.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -2713,7 +2748,7 @@ prompt the keyboard does:
   `send_input` would. `await prompt(ID, TEXT)` runs a finished task again with `TEXT` as the
   user's message, on its own, as the web UI's Workers tree does: it continues the task's saved
   history with the agent, tools, and model it ran with, saves what it does there, and returns
-  once the task runs, its progress arriving as `on_task_event`. Nothing of it reaches the
+  once the task runs, its progress arriving as `on_task_progress`. Nothing of it reaches the
   conversation or the agent, and no turn waits for it, so `background` refuses it. It raises
   `ValueError` for blank `TEXT`, for a task that is running, starting from a prompt, or cannot
   resume, such as an `Explore` or `Plan` one, and for one its agent no longer delegates to or
@@ -3653,7 +3688,7 @@ What changes for a process-scoped plugin:
   segments, and renderers are in every live session. Turning it off, reloading it, or
   changing its settings applies to all of them at once.
 - **Other moments come once per session.** `on_turn_start`, `on_turn_end`,
-  `on_conversation_changed`, `on_command_end`, `on_task_event`, and the rest reach it
+  `on_conversation_changed`, `on_command_end`, `on_task_progress`, and the rest reach it
   each time any session fires them. `self.host.live.current()` names that session.
 - **The host follows the session being handled.** `self.host.session_id`, `workspace`,
   `tasks`, `plugins`, `setting`, `send_input`, `submit_prompt`, and `interrupt` act on
@@ -3691,6 +3726,7 @@ A `LiveSession` is one live session:
 | `status` | its status row |
 | `sessions` | the saved conversations its `/resume` lists |
 | `tasks` | its delegated tasks, or `None` |
+| `forks` | its background `/fork` runs, oldest first, each a `ForkInfo` as `/forks` lists it |
 | `running` | whether a turn runs in it now |
 | `setting(key)` | a CLAI setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
@@ -3746,6 +3782,8 @@ loaded = collect(plugin)
 ## vllm connection
 
 Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
+
+A `vllm` model retries each failed request up to 5 times, with exponential backoff and jitter. Besides the usual transient errors (408, 409, 429, 5xx, and connection errors), it retries 403, which a gateway in front of the server, such as Cloudflare, can return under load even for a valid key. A 401 fails at once, and a key that keeps getting 403 fails after the last retry.
 
 ## openrouter connection
 

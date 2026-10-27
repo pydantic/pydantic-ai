@@ -1,5 +1,6 @@
 import { createContext } from 'react'
 import type { Snapshot } from './state'
+import { PROTOCOL } from './protocol'
 import type {
   AnswerBody,
   CompletionInfo,
@@ -263,7 +264,7 @@ export function connect(
   const open = () => {
     onState('connecting')
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
-    socket = new WebSocket(`${scheme}://${location.host}/ws?token=${encodeURIComponent(token)}`)
+    socket = new WebSocket(`${scheme}://${location.host}/ws?token=${encodeURIComponent(token)}&protocol=${PROTOCOL}`)
     socket.onopen = () => {
       delay = 500
       failures = 0
