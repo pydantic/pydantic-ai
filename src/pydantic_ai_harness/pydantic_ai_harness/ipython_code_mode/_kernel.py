@@ -25,7 +25,8 @@ try:
     import zmq.asyncio
     from jupyter_client.asynchronous.client import AsyncKernelClient
     from jupyter_client.manager import AsyncKernelManager
-except ImportError as _import_error:  # pragma: no cover
+# Covered only in CI lanes that install the harness without the `ipython` extra.
+except ImportError as _import_error:  # pragma: lax no cover
     raise ImportError(
         '`jupyter-client` and `ipykernel` are required for IPythonCodeMode. '
         'Install them with: pip install "pydantic-ai-harness[ipython]"'
