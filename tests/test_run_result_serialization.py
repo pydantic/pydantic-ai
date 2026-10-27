@@ -437,6 +437,17 @@ def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
                     'anyOf': [{'type': 'string'}, {'type': 'null'}],
                     'title': 'Conversation Revision',
                 },
+                'conversation_unsaved': {
+                    'items': {
+                        'discriminator': {
+                            'mapping': {'request': '#/$defs/ModelRequest', 'response': '#/$defs/ModelResponse'},
+                            'propertyName': 'kind',
+                        },
+                        'oneOf': [{'$ref': '#/$defs/ModelRequest'}, {'$ref': '#/$defs/ModelResponse'}],
+                    },
+                    'title': 'Conversation Unsaved',
+                    'type': 'array',
+                },
                 'metadata': {
                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                     'title': 'Metadata',

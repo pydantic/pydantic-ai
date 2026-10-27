@@ -134,40 +134,66 @@ class ConversationStore(ABC):
     await store.save(result.conversation)
     ```
 
+    The stored conversation only ever grows: a save appends the messages a run added, even when a
+    capability trimmed or rewrote the history that run was sent. Rewinding it, to regenerate or edit
+    an earlier turn, branches off an earlier message and keeps the old branch stored.
+
     A backend implements the five storage primitives below; the store works out which messages are new,
-    where a rewritten history branches, and what a fork shares.
+    where a history branches, and what a fork shares.
     """
 
-    async def load(self, conversation_id: str) -> Conversation | None:
-        """Load a conversation, or `None` if the store doesn't have it."""
+    async def load(self, conversation_id: str, *, limit: int | None = None) -> Conversation | None:
+        """Load a conversation, or `None` if the store doesn't have it.
+
+        Args:
+            conversation_id: The conversation to load.
+            limit: Load only its last `limit` messages, for a run that only needs the recent turns.
+                Saving the result still appends to the whole stored conversation. The window can
+                start in the middle of a turn, say with a tool result whose call it left out; a
+                request repairs such a history before it's sent.
+
+        Raises:
+            UserError: If `limit` is negative.
+        """
+        if limit is not None and limit < 0:
+            raise UserError('`limit` must not be negative.')
         while True:
             record = await self.read_record(conversation_id)
             if record is None:
                 return None
-            history = await self._history_of(record)
+            history = await self._history_of(record, limit=limit)
             if history is not None:
                 break
+        messages = [entry.message for entry in history]
         return Conversation(
-            messages=[entry.message for entry in history],
+            messages=messages,
             usage=record.usage,
             conversation_id=record.conversation_id,
             deferred_tool_requests=record.deferred_tool_requests,
             revision=record.revision,
+            new_message_index=len(messages),
         )
 
     async def save(self, conversation: Conversation, *, scope: str | None = None) -> ConversationRecord:
         """Save a conversation, storing only the messages the store doesn't have yet.
 
-        Messages that extend the stored history are appended to it. If the history was rewritten
-        instead, the messages from the first difference on branch off the last message both share.
-        The entries they replace stay stored while another conversation's history still uses them.
-        Messages are matched with `==`, so a change only to a field message equality ignores, like
-        a file's `media_type` or `identifier`, isn't stored.
+        When the conversation knows its
+        [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index], as one that
+        was loaded, or a run's result from one, does, the messages from that index on are appended
+        to the stored conversation. The messages before it aren't compared, so a history a capability
+        trimmed or rewrote doesn't change what's stored.
+
+        Otherwise the messages are compared with the stored history: those that extend it are
+        appended, and if it was rewritten, the messages from the first difference on branch off the
+        last message both share, keeping the old branch stored. Messages are matched with `==`, so a
+        change only to a field message equality ignores, like a file's `media_type` or `identifier`,
+        isn't stored.
 
         The save is checked against the conversation's
         [`revision`][pydantic_ai.conversation.Conversation.revision]: it must be the stored one, or
         `None` for a conversation the store doesn't have yet. On success, `revision` is advanced on
-        the conversation passed in, so it can be saved again after another run.
+        the conversation passed in, so it can be saved again after another run, and so is its
+        `new_message_index`.
 
         Args:
             conversation: The conversation to save, usually a run's
@@ -185,17 +211,22 @@ class ConversationStore(ABC):
         record = await self.read_record(conversation_id)
         if (record.revision if record is not None else None) != expected_revision:
             raise ConversationConflict(conversation_id)
-        history = await self._history_of(record) if record is not None else []
-        if history is None:
-            raise ConversationConflict(conversation_id)
-        shared = 0
-        for entry, message in zip(history, conversation.messages):
-            if entry.message != message:
-                break
-            shared += 1
-        parent_id = history[shared - 1].id if shared else None
+        if record is not None and conversation.new_message_index is not None:
+            parent_id = record.head_id
+            unsaved = conversation.messages[conversation.new_message_index :]
+        else:
+            history = await self._history_of(record) if record is not None else []
+            if history is None:
+                raise ConversationConflict(conversation_id)
+            shared = 0
+            for entry, message in zip(history, conversation.messages):
+                if entry.message != message:
+                    break
+                shared += 1
+            parent_id = history[shared - 1].id if shared else None
+            unsaved = conversation.messages[shared:]
         new_entries: list[ConversationEntry] = []
-        for message in conversation.messages[shared:]:
+        for message in unsaved:
             entry = ConversationEntry(parent_id=parent_id, message=message)
             new_entries.append(entry)
             parent_id = entry.id
@@ -209,7 +240,54 @@ class ConversationStore(ABC):
         )
         await self.write_record(updated, new_entries=new_entries, expected_revision=expected_revision)
         conversation.revision = updated.revision
+        conversation.new_message_index = len(conversation.messages)
         return updated
+
+    async def rewind(self, conversation_id: str, *, at: int, expected_revision: str | None) -> Conversation:
+        """Move a conversation back to an earlier message, to regenerate or edit what came after it.
+
+        The messages after it stay stored as a branch of the log, but the conversation no longer
+        loads them. Continue the returned conversation and save it as usual: the new turn branches
+        off the kept history.
+
+        Args:
+            conversation_id: The conversation to rewind.
+            at: How many of its stored messages to keep.
+            expected_revision: The [`revision`][pydantic_ai.conversation.Conversation.revision] the
+                conversation was loaded with, so a rewind can't undo a turn someone else saved since.
+
+        Raises:
+            UserError: If the store doesn't have the conversation, or `at` is out of range.
+            ConversationConflict: If the conversation was saved or deleted since it was loaded.
+        """
+        record = await self.read_record(conversation_id)
+        if record is None:
+            raise UserError(f'Conversation {conversation_id!r} is not in the store.')
+        if record.revision != expected_revision:
+            raise ConversationConflict(conversation_id)
+        history = await self._history_of(record)
+        if history is None:
+            raise ConversationConflict(conversation_id)
+        if not 0 <= at <= len(history):
+            raise UserError(f'`at` must be between 0 and {len(history)}, the number of messages in the conversation.')
+        kept = history[:at]
+        rewound = dataclasses.replace(
+            record,
+            head_id=kept[-1].id if kept else None,
+            deferred_tool_requests=record.deferred_tool_requests if at == len(history) else None,
+            revision=str(uuid7()),
+            updated_at=now_utc(),
+        )
+        await self.write_record(rewound, expected_revision=expected_revision)
+        messages = [entry.message for entry in kept]
+        return Conversation(
+            messages=messages,
+            usage=rewound.usage,
+            conversation_id=conversation_id,
+            deferred_tool_requests=rewound.deferred_tool_requests,
+            revision=rewound.revision,
+            new_message_index=len(messages),
+        )
 
     async def fork(
         self,
@@ -256,6 +334,7 @@ class ConversationStore(ABC):
             conversation_id=fork.conversation_id,
             deferred_tool_requests=fork.deferred_tool_requests,
             revision=fork.revision,
+            new_message_index=keep,
         )
 
     async def list_conversations(
@@ -284,25 +363,27 @@ class ConversationStore(ABC):
         """
         await self.delete_record(conversation_id)
 
-    async def _history_of(self, record: ConversationRecord) -> list[ConversationEntry] | None:
+    async def _history_of(
+        self, record: ConversationRecord, *, limit: int | None = None
+    ) -> list[ConversationEntry] | None:
         """`record`'s history, or `None` if another writer replaced or deleted the record while it was read.
 
         A backend that reads the record and its history separately can find entries gone that a
         concurrent save or delete released. That is only an error when the record is unchanged.
         """
         try:
-            return await self.read_history(record.head_id)
+            return await self.read_history(record.head_id, limit=limit)
         except LookupError:
             current = await self.read_record(record.conversation_id)
             if current is not None and current.revision == record.revision:
                 raise
             return None
 
-    async def read_history(self, head_id: str | None) -> list[ConversationEntry]:
-        """The entries from the first one up to `head_id`, in order."""
+    async def read_history(self, head_id: str | None, *, limit: int | None = None) -> list[ConversationEntry]:
+        """The entries from the first one up to `head_id`, in order, or only the last `limit` of them."""
         entries: list[ConversationEntry] = []
         entry_id = head_id
-        while entry_id is not None:
+        while entry_id is not None and (limit is None or len(entries) < limit):
             entry = await self.read_entry(entry_id)
             entries.append(entry)
             entry_id = entry.parent_id

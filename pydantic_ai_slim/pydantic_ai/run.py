@@ -55,6 +55,7 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     run_id: NotRequired[str]
     conversation_id: NotRequired[str]
     conversation_revision: NotRequired[str | None]
+    conversation_unsaved: NotRequired[list[_messages.ModelMessage]]
     metadata: NotRequired[dict[str, Any] | None]
     traceparent: NotRequired[str | None]
 
@@ -75,6 +76,7 @@ class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
     run_id: str
     conversation_id: str
     conversation_revision: str | None
+    conversation_unsaved: list[_messages.ModelMessage]
     metadata: dict[str, Any] | None
     traceparent: str | None
 
@@ -108,7 +110,17 @@ def _output_field_schema(schema: CoreSchema) -> CoreSchema:
     return next(field['schema'] for field in schema['fields'] if field['name'] == 'output')
 
 
-_STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'conversation_revision', 'metadata')
+_STAMPED_FIELDS = ('timestamp', 'run_id', 'conversation_id')
+"""The fields a run fills in on a request it sends, when the request doesn't have them yet."""
+
+
+def _rewritten(message: _messages.ModelMessage, original: _messages.ModelMessage) -> bool:
+    """Whether `message` differs from `original` other than by what a run fills in on a request it sends."""
+    filled = {name: getattr(message, name) for name in _STAMPED_FIELDS if getattr(original, name) is None}
+    return message != dataclasses.replace(original, **filled)
+
+
+_STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'conversation_revision', 'conversation_unsaved', 'metadata')
 """Serialized keys that live on `GraphAgentState` rather than on `AgentRunResult` itself."""
 
 
@@ -923,6 +935,9 @@ class AgentRunResult(Generic[OutputDataT]):
             'metadata': self._state.metadata,
             'traceparent': self._traceparent_value,
         }
+        if self._state.conversation_unsaved is not None:
+            # Only for a run that continued a stored conversation, so other results keep their shape.
+            data['conversation_unsaved'] = self._state.conversation_unsaved
         if 'output' in serialized:
             # Absent when the caller filtered it out: an explicit `exclude={'output'}`, or
             # `exclude_none=True` on a `None` output. The handler applies those filters to the
@@ -1054,6 +1069,11 @@ class AgentRunResult(Generic[OutputDataT]):
         [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] advances the
         [`revision`][pydantic_ai.conversation.Conversation.revision] of the conversation it saves,
         so keep that one in a variable to carry into the next run or save again.
+
+        When this run continued a conversation that knows which of its messages are stored, its
+        [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index] points at
+        the messages the store doesn't have yet: the ones this run added, and any the conversation
+        hadn't saved before the run.
         """
         output = self.output
         return Conversation(
@@ -1068,7 +1088,21 @@ class AgentRunResult(Generic[OutputDataT]):
                 else None
             ),
             revision=self._state.conversation_revision,
+            new_message_index=self._conversation_new_message_index(),
         )
+
+    def _conversation_new_message_index(self) -> int | None:
+        unsaved = self._state.conversation_unsaved
+        if unsaved is None:
+            return None
+        # The unsaved messages the run was given come just before the ones it added, unless a capability rewrote
+        # them, in which case the store compares the whole history instead. Filling in what a request it sends
+        # lacks doesn't count as a rewrite.
+        start = self._new_message_index - len(unsaved)
+        carried = self._state.message_history[start : self._new_message_index] if start >= 0 else []
+        if len(carried) != len(unsaved) or any(map(_rewritten, carried, unsaved)):
+            return None
+        return start
 
     @property
     def timestamp(self) -> datetime:

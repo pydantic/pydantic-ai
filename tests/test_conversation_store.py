@@ -3,8 +3,10 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 
 import pytest
+from pydantic import TypeAdapter
 
-from pydantic_ai import Agent, Conversation, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai import Agent, AgentRunResult, Conversation, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.conversation_store import (
     ConversationConflict,
     ConversationEntry,
@@ -219,7 +221,7 @@ async def test_deleting_a_conversation_keeps_the_entries_a_fork_still_uses() -> 
     assert _entry_count(store) == 0
 
 
-async def test_a_saved_request_a_run_sends_is_stored_again_with_its_run_metadata() -> None:
+async def test_a_saved_request_a_run_sends_is_not_stored_again() -> None:
     store = InMemoryConversationStore()
     conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('queued')])])
     await store.save(conversation)
@@ -229,10 +231,12 @@ async def test_a_saved_request_a_run_sends_is_stored_again_with_its_run_metadata
     continued = (await Agent(TestModel()).run(conversation=loaded)).conversation
     await store.save(continued)
 
-    # The run fills in the request's `run_id`, so the save branches off before it.
+    # The run fills in the request's `run_id`, but the save appends only what the run added.
     assert continued.messages[0] != conversation.messages[0]
-    assert _entry_count(store) == 3
-    assert await store.load(conversation.conversation_id) == continued
+    assert _entry_count(store) == 2
+    reloaded = await store.load(conversation.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [conversation.messages[0], continued.messages[1]]
 
 
 async def test_a_saved_conversation_carries_its_revision_into_the_next_run() -> None:
@@ -293,11 +297,11 @@ class _RacingStore(InMemoryConversationStore):
         super().__init__()
         self.race: Callable[[], Awaitable[None]] | None = None
 
-    async def read_history(self, head_id: str | None) -> list[ConversationEntry]:
+    async def read_history(self, head_id: str | None, *, limit: int | None = None) -> list[ConversationEntry]:
         race, self.race = self.race, None
         if race is not None:
             await race()
-        return await super().read_history(head_id)
+        return await super().read_history(head_id, limit=limit)
 
 
 async def test_a_conversation_deleted_while_it_is_read_loads_as_missing_and_conflicts_on_save() -> None:
@@ -309,6 +313,8 @@ async def test_a_conversation_deleted_while_it_is_read_loads_as_missing_and_conf
     assert await store.load(conversation.conversation_id) is None
 
     await store.save(other := Conversation(messages=[ModelRequest(parts=[UserPromptPart('two')])]))
+    # Without a known `new_message_index`, the save reads the stored history to compare with it.
+    other.new_message_index = None
     store.race = lambda: store.delete(other.conversation_id)
     with pytest.raises(ConversationConflict):
         await store.save(other)
@@ -369,7 +375,16 @@ async def test_a_fork_of_a_history_released_before_it_is_written_conflicts() -> 
 
 
 async def test_saving_the_same_conversation_twice_at_once_conflicts() -> None:
-    store = _RacingStore()
+    class _SaveWhileReading(InMemoryConversationStore):
+        race: Callable[[], Awaitable[None]] | None = None
+
+        async def read_record(self, conversation_id: str) -> ConversationRecord | None:
+            race, self.race = self.race, None
+            if race is not None:
+                await race()
+            return await super().read_record(conversation_id)
+
+    store = _SaveWhileReading()
     conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
     await store.save(conversation)
     conversation.messages.append(ModelResponse(parts=[TextPart('two')]))
@@ -417,3 +432,153 @@ async def test_a_copy_loaded_before_a_delete_cant_be_saved_over_a_conversation_c
     with pytest.raises(ConversationConflict):
         await store.save(stale)
     assert await store.load('reused') == recreated
+
+
+async def _stored_conversation(store: InMemoryConversationStore, turns: int) -> Conversation:
+    agent = Agent(TestModel())
+    conversation = (await agent.run('turn 0')).conversation
+    for turn in range(1, turns):
+        conversation = (await agent.run(f'turn {turn}', conversation=conversation)).conversation
+    await store.save(conversation)
+    return conversation
+
+
+async def test_a_run_that_trims_its_history_still_appends_to_the_stored_conversation() -> None:
+    """A capability that bounds what the model sees doesn't shrink the stored conversation."""
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=4)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    trimming = Agent(TestModel(), capabilities=[ProcessHistory(lambda messages: messages[-2:])])
+
+    result = await trimming.run('turn 4', conversation=loaded)
+    assert len(result.all_messages()) < len(stored.messages)
+    await store.save(result.conversation)
+
+    reloaded = await store.load(stored.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [*stored.messages, *result.new_messages()]
+
+
+async def test_a_conversation_loaded_as_a_window_appends_to_the_whole_one() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=3)
+
+    window = await store.load(stored.conversation_id, limit=2)
+    assert window is not None
+    assert window.messages == stored.messages[-2:]
+    result = await Agent(TestModel()).run('turn 3', conversation=window)
+    await store.save(result.conversation)
+
+    reloaded = await store.load(stored.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [*stored.messages, *result.new_messages()]
+
+
+async def test_messages_added_to_a_loaded_conversation_are_saved_with_the_next_run() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    turn = ModelRequest(parts=[UserPromptPart('a new turn')])
+    loaded.messages.append(turn)
+
+    result = await Agent(TestModel()).run(conversation=loaded)
+    conversation = result.conversation
+    assert conversation.new_message_index == len(stored.messages)
+    await store.save(conversation)
+
+    reloaded = await store.load(stored.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages[: len(stored.messages)] == stored.messages
+    assert [part.content for part in reloaded.messages[len(stored.messages)].parts] == ['a new turn']
+    assert len(reloaded.messages) == len(stored.messages) + 2
+
+
+async def test_unsaved_messages_a_capability_rewrote_fall_back_to_comparing_with_the_stored_history() -> None:
+    """Without knowing which stored messages the rewritten history matches, the save branches instead of guessing."""
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    loaded.messages.append(ModelRequest(parts=[UserPromptPart('dropped by the capability')]))
+    dropping = Agent(TestModel(), capabilities=[ProcessHistory(lambda messages: messages[:-1])])
+
+    result = await dropping.run('and this', conversation=loaded)
+
+    assert result.conversation.new_message_index is None
+
+
+async def test_a_run_result_keeps_where_its_conversation_s_unsaved_messages_start_across_serialization() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    loaded.messages.append(ModelRequest(parts=[UserPromptPart('a new turn')]))
+    result = await Agent(TestModel()).run(conversation=loaded)
+
+    adapter: TypeAdapter[AgentRunResult[str]] = TypeAdapter(AgentRunResult[str])
+    restored = adapter.validate_json(adapter.dump_json(result))
+
+    assert restored.conversation.new_message_index == result.conversation.new_message_index == len(stored.messages)
+    plain = await Agent(TestModel()).run('hi')
+    assert 'conversation_unsaved' not in adapter.dump_python(plain)
+
+
+async def test_rewinding_a_conversation_branches_off_an_earlier_message_and_keeps_the_rest() -> None:
+    store = InMemoryConversationStore()
+    stored = await _stored_conversation(store, turns=2)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+
+    rewound = await store.rewind(stored.conversation_id, at=2, expected_revision=loaded.revision)
+    assert rewound.messages == stored.messages[:2]
+    assert _entry_count(store) == 4
+    result = await Agent(TestModel()).run('a different second turn', conversation=rewound)
+    await store.save(result.conversation)
+
+    reloaded = await store.load(stored.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == [*stored.messages[:2], *result.new_messages()]
+    assert _entry_count(store) == 6
+    with pytest.raises(ConversationConflict):
+        await store.rewind(stored.conversation_id, at=1, expected_revision=loaded.revision)
+
+
+async def test_rewinding_keeps_what_a_paused_conversation_waits_on_only_when_nothing_is_dropped() -> None:
+    store = InMemoryConversationStore()
+    requests = DeferredToolRequests(metadata={'call': {}})
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])], deferred_tool_requests=requests)
+    await store.save(conversation)
+
+    whole = await store.rewind(conversation.conversation_id, at=1, expected_revision=conversation.revision)
+    assert whole.deferred_tool_requests == requests
+    partial = await store.rewind(conversation.conversation_id, at=0, expected_revision=whole.revision)
+    assert partial.deferred_tool_requests is None
+    assert partial.messages == []
+
+
+async def test_rewinding_a_missing_conversation_or_past_its_end_raises() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+
+    with pytest.raises(UserError, match="Conversation 'unknown' is not in the store"):
+        await store.rewind('unknown', at=0, expected_revision=None)
+    with pytest.raises(UserError, match='`at` must be between 0 and 1'):
+        await store.rewind(conversation.conversation_id, at=2, expected_revision=conversation.revision)
+
+
+async def test_rewinding_a_conversation_deleted_while_it_is_read_conflicts() -> None:
+    store = _RacingStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+
+    store.race = lambda: store.delete(conversation.conversation_id)
+    with pytest.raises(ConversationConflict):
+        await store.rewind(conversation.conversation_id, at=0, expected_revision=conversation.revision)
+
+
+async def test_loading_with_a_negative_limit_raises() -> None:
+    with pytest.raises(UserError, match='`limit` must not be negative'):
+        await InMemoryConversationStore().load('any', limit=-1)
