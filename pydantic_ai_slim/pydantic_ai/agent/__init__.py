@@ -107,7 +107,6 @@ from ..capabilities.abstract import (
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
-from ..capabilities.process_history import process_seeded_history
 from ..capabilities.wrapper import WrapperCapability
 from ..conversation import Conversation
 from ..models import _SettingsLayer  # pyright: ignore[reportPrivateUsage]
@@ -4215,7 +4214,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # As in a standard run, history processors transform what the model sees, after `before_run`. They
                 # run once, before anything below reads the history (the dynamic system prompts and the instructions
                 # of capabilities it loaded), so those reflect the history the session is actually seeded with.
-                seeded_history = await process_seeded_history(run_capability, run_context, seeded_history)
+                seeded_history = await run_capability._process_seeded_history(  # pyright: ignore[reportPrivateUsage]
+                    run_context, seeded_history
+                )
             await session_stack.enter_async_context(toolset)
             tool_manager = await ToolManager[AgentDepsT](
                 toolset, root_capability=run_capability, default_max_retries=max_tool_retries
