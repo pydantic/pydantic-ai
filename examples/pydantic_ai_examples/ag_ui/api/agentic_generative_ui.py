@@ -37,6 +37,24 @@ class Plan(BaseModel):
     )
 
 
+class JSONPatchOp(BaseModel):
+    """A class representing a JSON Patch operation (RFC 6902)."""
+
+    op: Literal['add', 'remove', 'replace', 'move', 'copy', 'test'] = Field(
+        description='The operation to perform: add, remove, replace, move, copy, or test',
+    )
+    path: str = Field(description='JSON Pointer (RFC 6901) to the target location')
+    value: Any = Field(
+        default=None,
+        description='The value to apply (for add, replace operations)',
+    )
+    from_: str | None = Field(
+        default=None,
+        alias='from',
+        description='Source path (for move, copy operations)',
+    )
+
+
 agent = Agent(
     'openai:gpt-5-mini',
     instructions=dedent(
@@ -90,24 +108,26 @@ async def update_plan_step(
     Returns:
         StateDeltaEvent containing the changes made to the plan.
     """
-    # JSON Patch (RFC 6902) operations, validated by `StateDeltaEvent`. `Any` because `delta` is
-    # `list[Any]` below ag-ui-protocol 1.0 and a union of operation models `ag_ui.core` doesn't export on 1.0.
-    changes: list[Any] = []
+    changes: list[JSONPatchOp] = []
     if description is not None:
         changes.append(
-            {
-                'op': 'replace',
-                'path': f'/steps/{index}/description',
-                'value': description,
-            }
+            JSONPatchOp(
+                op='replace', path=f'/steps/{index}/description', value=description
+            )
         )
     if status is not None:
         changes.append(
-            {'op': 'replace', 'path': f'/steps/{index}/status', 'value': status}
+            JSONPatchOp(op='replace', path=f'/steps/{index}/status', value=status)
         )
-    return StateDeltaEvent(
-        type=EventType.STATE_DELTA,
-        delta=changes,
+    # Validated from plain dicts: ag-ui-protocol 1.0 types `delta` as its own operation models.
+    return StateDeltaEvent.model_validate(
+        {
+            'type': EventType.STATE_DELTA,
+            'delta': [
+                change.model_dump(by_alias=True, exclude_unset=True)
+                for change in changes
+            ],
+        }
     )
 
 
