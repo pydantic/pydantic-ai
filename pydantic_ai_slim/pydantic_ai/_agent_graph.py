@@ -3873,7 +3873,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         run_context = build_run_context(ctx)
         evidence_window = _messages._post_compaction_window_for_response(  # pyright: ignore[reportPrivateUsage]
-            ctx.state.message_history, self.model_response
+            ctx.state.message_history,
+            self.model_response,
+            ctx.deps.model._compaction_window_predicate(self.model_response),  # pyright: ignore[reportPrivateUsage]
         )
         # Held in a local because it lands in two places below.
         anchored_evidence = AnchoredEvidence(
