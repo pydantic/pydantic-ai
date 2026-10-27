@@ -159,7 +159,7 @@ def _tool_changes(calls: list[FileCall], workspace: Path, *, turn: int | None) -
         try:
             now = _read(workspace / path)
         except _Undiffable as exc:
-            created = first == 0 and ops[0].content is not None and base is None
+            created = first == 0 and ops[0].content is not None and (base is None or base in _states(base, ops))
             files.append(_undiffed(path, 'A' if created else 'M', str(exc)))
             continue
         before = _before(ops, first, now, base)
@@ -247,7 +247,8 @@ def _states(text: Content, ops: list[FileCall]) -> list[Content]:
 
 def _committed(workspace: Path, paths: list[str]) -> dict[str, str]:
     """The content in the last commit of each of `paths` that the workspace's Git repository tracks, in one Git call."""
-    relative = [path for path in paths if not posixpath.isabs(path)]
+    # Git reads one name a line, so a name with a line break in it is never asked for.
+    relative = [path for path in paths if not posixpath.isabs(path) and '\n' not in path and '\r' not in path]
     try:
         result = subprocess.run(
             ['git', '--no-optional-locks', 'cat-file', '--batch'],
@@ -269,7 +270,7 @@ def _committed(workspace: Path, paths: list[str]) -> dict[str, str]:
         if header.endswith((b' missing', b' ambiguous')):
             continue
         kind, size = header.rsplit(b' ', 2)[1:]
-        if kind == b'blob':
+        if kind == b'blob' and int(size) <= MAX_FILE_BYTES:
             found[path] = output[at : at + int(size)].decode('utf-8', errors='replace')
         at += int(size) + 1
     return found

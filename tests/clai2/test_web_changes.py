@@ -185,15 +185,20 @@ async def test_files_the_session_created_stay_created_once_committed(repo: Path)
         write('with space.py', 'space = 1\n'),
         write('docs', ''),
         write('b.py', 'b'),
-        write('image.bin', 'x'),
+        write('image.bin', '\0'),
     )
     (repo / 'image.bin').write_bytes(b'\0')
+    git(repo, 'add', 'image.bin')
+    git(repo, 'commit', '-q', '-m', 'the session committed image.bin')
+    history.turn('two', write('line\nbreak.py', 'x = 1\n'))
+    (repo / 'line\nbreak.py').write_text('x = 1\n')
 
     found = await session_changes(history.messages, repo, scope='session')
     assert listed(found) == [
         ('b.py', 'M', 0, 0),
         ('docs', 'A', 0, 0),
         ('image.bin', 'A', 0, 0),
+        ('line\nbreak.py', 'A', 1, 0),
         ('new.py', 'A', 1, 0),
         ('with space.py', 'A', 1, 0),
     ]
@@ -299,6 +304,19 @@ async def test_branch_without_a_base(repo: Path, monkeypatch: pytest.MonkeyPatch
     found = await session_changes([], repo, scope='branch')
     assert found.note == 'No base branch found: neither origin/HEAD nor main or master.'
     monkeypatch.setenv('PATH', '')
+    assert (await session_changes([], repo, scope='uncommitted')).note == 'This workspace is not in a Git repository.'
+    # Without Git, a file the session wrote whole counts as created.
+    history = History()
+    history.turn('one', write('a.py', 'def a():\n    return 1\n'))
+    assert listed(await session_changes(history.messages, repo, scope='session')) == [('a.py', 'A', 2, 0)]
+
+
+async def test_git_that_takes_too_long(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(changes_module, 'GIT_TIMEOUT', 0)
+    (repo / 'a.py').write_text('def a():\n    return 10\n')
+    history = History()
+    history.turn('one', write('a.py', 'def a():\n    return 10\n'))
+    assert listed(await session_changes(history.messages, repo, scope='session')) == [('a.py', 'A', 2, 0)]
     assert (await session_changes([], repo, scope='uncommitted')).note == 'This workspace is not in a Git repository.'
 
 
