@@ -11,12 +11,12 @@ payloads are mirrored by `web-ui/src/protocol.ts`.
 import difflib
 import posixpath
 import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast
 
-from anyio import run_process, to_thread
+from anyio import fail_after, run_process, to_thread
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolCallPart, ToolReturnPart
 from pydantic_clai2.builtin_plugins.web.protocol import Diff
@@ -30,6 +30,8 @@ MAX_DIFF_CHARS = 100_000
 """Characters of one file's diff the page receives; the rest is cut, on a line boundary."""
 MAX_FILE_BYTES = 2_000_000
 """Files larger than this are listed without a diff."""
+GIT_TIMEOUT = 30
+"""Seconds one Git command may take before the panel gives up on it."""
 MAX_FILES = 300
 """Files listed in one scope; the rest are counted in `Changes.omitted`, so a huge diff cannot stall the page."""
 BASES = ('main', 'master', 'origin/main', 'origin/master')
@@ -147,18 +149,20 @@ def _tool_changes(calls: list[FileCall], workspace: Path, *, turn: int | None) -
     by_path: dict[str, list[FileCall]] = {}
     for call in calls:
         by_path.setdefault(_shown_path(call.path, workspace), []).append(call)
+    committed = _committed(workspace, list(by_path))
     files: list[FileChange] = []
     for path, ops in by_path.items():
         first = next((index for index, op in enumerate(ops) if turn is None or op.turn == turn), None)
         if first is None:
             continue
-        created = first == 0 and ops[0].content is not None
+        base = committed.get(path)
         try:
             now = _read(workspace / path)
         except _Undiffable as exc:
+            created = first == 0 and ops[0].content is not None and base is None
             files.append(_undiffed(path, 'A' if created else 'M', str(exc)))
             continue
-        before = _before(ops, first, now, lambda: _committed(workspace, path))
+        before = _before(ops, first, now, base)
         if isinstance(before, _Unknown):
             note = 'Its content before these changes is not known, so it has no diff.'
             files.append(_undiffed(path, 'D' if now is None else 'M', note))
@@ -204,12 +208,13 @@ def _read(path: Path) -> str | None:
     return data.decode('utf-8', errors='replace')
 
 
-def _before(ops: list[FileCall], first: int, now: str | None, committed: Callable[[], str | None]) -> Content:
+def _before(ops: list[FileCall], first: int, now: str | None, base: str | None) -> Content:
     """The file's content before `ops[first]`, replayed from the calls around it.
 
     Forward from the last whole write before it, else back from the disk through the edits since.
-    When neither tells, forward from the file's last commit, `committed()`, if that leads to what is on
-    disk now; a file with no commit that the session first wrote whole counts as created.
+    When neither tells, forward from `base`, the file's content in the last commit, if that leads to
+    what is on disk now. A file the session first wrote whole counts as created when it has no
+    commit, or when its commit holds content the session made, as when the session committed it.
     """
     written = next((index for index in range(first - 1, -1, -1) if ops[index].content is not None), None)
     if written is not None:
@@ -220,30 +225,54 @@ def _before(ops: list[FileCall], first: int, now: str | None, committed: Callabl
             undone = _apply(undone, [(new, old) for old, new in reversed(op.replacements)])
         if not isinstance(undone, _Unknown):
             return undone
-    base = committed()
-    if base is None:
-        return None if ops[0].content is not None else UNKNOWN
-    return _replay(base, ops[:first]) if _replay(base, ops) == now else UNKNOWN
+    if ops[0].content is not None and (base is None or base in _states(base, ops)):
+        return None
+    if base is None or _replay(base, ops) != now:
+        return UNKNOWN
+    return _replay(base, ops[:first])
 
 
 def _replay(text: Content, ops: list[FileCall]) -> Content:
     """`text` after `ops`, in order."""
+    return _states(text, ops)[-1]
+
+
+def _states(text: Content, ops: list[FileCall]) -> list[Content]:
+    """`text`, then the content after each of `ops`, in order."""
+    states = [text]
     for op in ops:
-        text = op.content if op.content is not None else _apply(text, op.replacements)
-    return text
+        states.append(op.content if op.content is not None else _apply(states[-1], op.replacements))
+    return states[1:] if ops else states
 
 
-def _committed(workspace: Path, path: str) -> str | None:
-    """`path`'s content in the last commit of the workspace's Git repository; `None` without one, or untracked."""
-    if posixpath.isabs(path):
-        return None
+def _committed(workspace: Path, paths: list[str]) -> dict[str, str]:
+    """The content in the last commit of each of `paths` that the workspace's Git repository tracks, in one Git call."""
+    relative = [path for path in paths if not posixpath.isabs(path)]
     try:
         result = subprocess.run(
-            ['git', '--no-optional-locks', 'show', f'HEAD:./{path}'], cwd=workspace, capture_output=True, check=False
+            ['git', '--no-optional-locks', 'cat-file', '--batch'],
+            cwd=workspace,
+            input=''.join(f'HEAD:./{path}\n' for path in relative).encode(),
+            capture_output=True,
+            timeout=GIT_TIMEOUT,
+            check=False,
         )
-    except OSError:
-        return None
-    return result.stdout.decode('utf-8', errors='replace') if result.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if result.returncode != 0:
+        return {}
+    found: dict[str, str] = {}
+    output, at = result.stdout, 0
+    for path in relative:
+        end = output.index(b'\n', at)
+        header, at = output[at:end], end + 1
+        if header.endswith((b' missing', b' ambiguous')):
+            continue
+        kind, size = header.rsplit(b' ', 2)[1:]
+        if kind == b'blob':
+            found[path] = output[at : at + int(size)].decode('utf-8', errors='replace')
+        at += int(size) + 1
+    return found
 
 
 def _apply(text: Content, replacements: list[tuple[str, str]]) -> Content:
@@ -302,9 +331,12 @@ class GitError(Exception):
 
 
 async def _git(workspace: Path, *args: str) -> str:
-    result = await run_process(
-        ['git', '--no-optional-locks', '-c', 'core.quotepath=off', *args], cwd=workspace, check=False
-    )
+    command = ['git', '--no-optional-locks', '-c', 'core.quotepath=off', *args]
+    try:
+        with fail_after(GIT_TIMEOUT):
+            result = await run_process(command, cwd=workspace, check=False)
+    except TimeoutError:
+        raise GitError(f'git {args[0]} took longer than {GIT_TIMEOUT} seconds') from None
     if result.returncode != 0:
         raise GitError(result.stderr.decode(errors='replace').strip() or f'git {args[0]} failed')
     return result.stdout.decode(errors='replace')

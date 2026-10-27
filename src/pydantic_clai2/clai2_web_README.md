@@ -73,8 +73,8 @@ The **Changes** button in the header (Cmd/Ctrl+Shift+E) opens a review panel of 
 changed, with the number of files it changed so far on the button. Pick a scope: **Last turn** and
 **This session** come from the session's own `write_file` and `edit_file` calls, so they work
 outside Git too, and show each file once, as one diff from before the first change to what is on
-disk now. A file the session wrote whole counts as created, unless Git has it in the last commit,
-which it is then compared with. These scopes read the conversation, so after `/compact` they start
+disk now. A file the session wrote whole counts as created, unless the last commit has it with
+content the session did not write, which it is then compared with. These scopes read the conversation, so after `/compact` they start
 from the compacted summary. **Uncommitted** is `git diff HEAD` in the session's directory
 (untracked files are left out, as there), and **Branch vs base** compares the files, uncommitted
 changes included, with where the branch left its base: `origin/HEAD`, else `main` or `master`.

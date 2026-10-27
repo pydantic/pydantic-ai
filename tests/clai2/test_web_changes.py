@@ -170,6 +170,35 @@ async def test_the_last_commit_is_the_start_the_calls_cannot_give(repo: Path) ->
     assert found.files[2].note == 'Its content before these changes is not known, so it has no diff.'
 
 
+async def test_files_the_session_created_stay_created_once_committed(repo: Path) -> None:
+    (repo / 'docs').mkdir()
+    (repo / 'docs' / 'index.md').write_text('# Docs\n')
+    (repo / 'new.py').write_text('new = 1\n')
+    (repo / 'with space.py').write_text('space = 1\n')
+    (repo / 'b.py').write_bytes(b'\0binary now')
+    git(repo, 'add', 'docs', 'new.py')
+    git(repo, 'commit', '-q', '-m', 'the session committed new.py')
+    history = History()
+    history.turn(
+        'one',
+        write('new.py', 'new = 1\n'),
+        write('with space.py', 'space = 1\n'),
+        write('docs', ''),
+        write('b.py', 'b'),
+        write('image.bin', 'x'),
+    )
+    (repo / 'image.bin').write_bytes(b'\0')
+
+    found = await session_changes(history.messages, repo, scope='session')
+    assert listed(found) == [
+        ('b.py', 'M', 0, 0),
+        ('docs', 'A', 0, 0),
+        ('image.bin', 'A', 0, 0),
+        ('new.py', 'A', 1, 0),
+        ('with space.py', 'A', 1, 0),
+    ]
+
+
 async def test_deleted_large_binary_and_outside_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workspace = tmp_path / 'work'
     workspace.mkdir()
