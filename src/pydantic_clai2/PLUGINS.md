@@ -1268,7 +1268,9 @@ would (its `send_input`, reached through `host.live`): prompts and `/commands` r
 session, in order with what the terminal enters, and both show them. A capability the plugin
 binds gives the browser each live session's runs as turns, with their stream events (text,
 thinking, tool calls and results, shell output, diffs), but not a background `/fork`'s, though
-it fires the turn moments too. Command results come from `on_command_end` and history from each
+it fires the turn moments too: the page shows a fork's answer, or why it failed, once it ends,
+from `on_fork_end`. Command results come from `on_command_end`, with `/usage` as a card of its
+figures and `/forks` as a card of its table (`LiveSession.forks`), and history from each
 session's `conversation`. The sidebar lists `host.sessions`, the store `/resume` uses, grouped as
 `/resume` groups them: by repository, then by checkout, with a session from a removed worktree
 under its repository by the checkout saved with it (`ConversationSummary.checkout`), archived ones
@@ -2390,7 +2392,7 @@ contributes nothing:
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `get_side_panels()` | pages the web UI shows beside the conversation |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_progress` / `on_install_progress` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_progress` / `on_fork_end` / `on_install_progress` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, its
@@ -2400,9 +2402,9 @@ call `super().__init__(host, settings)` first. Each live session gets its own
 instance unless the class sets `scope = 'process'`; see
 [Several live sessions](#several-live-sessions).
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`, `on_install_progress`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`, `on_fork_end`, `on_install_progress`
 
-Nine `async` methods fire outside the agent run, in the shell:
+Ten `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
@@ -2414,6 +2416,7 @@ Nine `async` methods fire outside the agent run, in the shell:
 | `on_command_end` | a `/command` finished | `text`, `output`, `error` | no |
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
 | `on_task_progress` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
+| `on_fork_end` | a background `/fork` finished, failed, or was cancelled | `fork`, `output`, `error` | no |
 | `on_install_progress` | `/update` started installing a newer CLAI, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
@@ -2454,6 +2457,13 @@ waiting for an answer. Its own run's events never reach the main run's hooks: th
 which is the main run for a task the agent delegated directly. It fires for every stream event of
 every running task, down to each text and thinking delta, and the task waits for it, so keep the
 handler cheap, such as queueing the event for elsewhere. A failure is printed and the task goes on.
+
+`on_fork_end` receives a `ForkEnd` event once a background `/fork` has ended, right after its
+`on_turn_end`: `fork` is a `ForkInfo` as `/forks` lists it (`id`, `model`, `prompt`, `status` of
+`done`, `failed`, or `cancelled`, `elapsed` seconds, and the `session_id` `/resume` continues it
+in, once saved), `output` its answer once `done` (`str` of a structured output), and `error` why
+it `failed`. It fires when the fork ends, while the terminal holds the answer until no turn or
+command runs. A failure is printed and CLAI goes on.
 
 `on_install_progress` receives an `InstallProgress` event while `/update` installs a newer CLAI with
 uv: `target` is the version, or on the `main` channel the short commit, being installed, and
@@ -3711,6 +3721,7 @@ A `LiveSession` is one live session:
 | `status` | its status row |
 | `sessions` | the saved conversations its `/resume` lists |
 | `tasks` | its delegated tasks, or `None` |
+| `forks` | its background `/fork` runs, oldest first, each a `ForkInfo` as `/forks` lists it |
 | `running` | whether a turn runs in it now |
 | `setting(key)` | a CLAI setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |

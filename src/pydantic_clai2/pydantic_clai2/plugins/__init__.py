@@ -325,6 +325,11 @@ class LiveSession(Protocol):
         ...
 
     @property
+    def forks(self) -> 'tuple[ForkInfo, ...]':
+        """The session's background `/fork` runs, oldest first, as `/forks` lists them."""
+        ...
+
+    @property
     def running(self) -> bool:
         """Whether a turn runs in the session now."""
         ...
@@ -624,6 +629,37 @@ class TaskProgress:
     started, finished, or began waiting for an answer."""
 
 
+ForkStatus = Literal['running', 'done', 'failed', 'cancelled']
+
+
+@dataclass(frozen=True, kw_only=True)
+class ForkInfo:
+    """One background `/fork`, as a `/forks` row lists it, for a plugin that shows them, such as a remote UI."""
+
+    id: int
+    """The number `/fork cancel ID` takes, counting from 1 in each live session."""
+    model: str
+    """The model it runs, or `agent default`."""
+    prompt: str
+    status: ForkStatus
+    elapsed: float
+    """Seconds it has run so far, or ran in all once it ended."""
+    session_id: str | None
+    """The saved conversation `/resume` continues it in, once it has saved one."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class ForkEnd:
+    """A background `/fork` finished, failed, or was cancelled."""
+
+    fork: ForkInfo
+    """The fork as it ended."""
+    output: str | None = None
+    """Its answer, once it is `done`; a structured output as `str` makes it."""
+    error: BaseException | None = None
+    """Why it `failed`."""
+
+
 UpdateStage = Literal['installing', 'output', 'failed', 'installed', 'restarting']
 
 
@@ -829,6 +865,7 @@ HostEvent = (
     | CommandEnd
     | PluginLoadFailed
     | TaskProgress
+    | ForkEnd
     | InstallProgress
 )
 Renderer = Callable[[AgentStreamEvent], RenderableType | None]
@@ -1303,6 +1340,9 @@ class Plugin(Generic[SettingsT, DepsT]):
         keep it cheap: the task waits for it.
         """
 
+    async def on_fork_end(self, event: ForkEnd) -> None:
+        """A background `/fork` finished, failed, or was cancelled."""
+
     async def on_install_progress(self, event: InstallProgress) -> None:
         """`/update` started installing a newer CLAI, uv printed a line, or the install ended."""
 
@@ -1342,6 +1382,7 @@ _HANDLERS: dict[type[HostEvent], str] = {
     CommandEnd: 'on_command_end',
     PluginLoadFailed: 'on_plugin_load_failed',
     TaskProgress: 'on_task_progress',
+    ForkEnd: 'on_fork_end',
     InstallProgress: 'on_install_progress',
 }
 

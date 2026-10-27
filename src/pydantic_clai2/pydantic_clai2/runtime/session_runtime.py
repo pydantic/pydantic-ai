@@ -461,6 +461,7 @@ def create_shell(
         default_model=partial(_default_model, store=store, models=models, fallback=agent.model),
         default_model_name=partial(_default_model_name, store=store, fallback=agent.model),
         inputs=lambda: shell,
+        forks=lambda: shell.forks.listing(),
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     updates.report = lambda: loader.fire if loader.handles(InstallProgress) else None

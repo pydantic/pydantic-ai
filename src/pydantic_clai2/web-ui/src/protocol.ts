@@ -130,6 +130,18 @@ export interface TurnUsage {
   cost: string | null
 }
 
+/** A background `/fork`, as a `/forks` row lists it. */
+export interface ForkEntry {
+  id: number
+  model: string
+  prompt: string
+  status: 'running' | 'done' | 'failed' | 'cancelled'
+  /** Seconds it has run so far, or ran in all once it ended. */
+  elapsed: number
+  /** The saved conversation `/resume` continues it in, once it has saved one. */
+  session_id: string | null
+}
+
 /** What `/usage` and `/cost` report about the retained history. */
 export interface UsageReport {
   turns: TurnUsage[]
@@ -252,7 +264,15 @@ export type SessionMessage = (
   | ChatMessage
   | { type: 'queue'; queue: QueuedItem[] }
   | { type: 'status'; status: StatusInfo }
-  | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null; usage: UsageReport | null }
+  | {
+      type: 'notice'
+      text: string
+      level: 'info' | 'error'
+      command: string | null
+      usage: UsageReport | null
+      forks: ForkEntry[] | null
+      fork: ForkEntry | null
+    }
   | { type: 'title'; title: string | null }
   | { type: 'task'; task: TaskEntry }
   | { type: 'task_items'; id: string; messages: ItemMessage[] }
