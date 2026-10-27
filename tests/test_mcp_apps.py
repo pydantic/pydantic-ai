@@ -561,6 +561,8 @@ async def test_ag_ui_frontend_receives_app_activity_after_tool_result(agent: Age
     ]
 
     activities = [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT']
+    # 1.0 leaves `replace` out, which the spec defines as replacing, like 0.x's default `True`.
+    assert [activity.pop('replace', True) for activity in activities] == [True]
     assert activities == snapshot(
         [
             {
@@ -575,7 +577,6 @@ async def test_ag_ui_frontend_receives_app_activity_after_tool_result(agent: Age
                     'serverId': 'weather',
                     'serverHash': 'weather',
                 },
-                'replace': True,
             }
         ]
     )
