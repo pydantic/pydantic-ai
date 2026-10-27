@@ -81,6 +81,7 @@ from pydantic_ai_harness.memory import (
 from pydantic_ai_harness.planning import InMemoryPlanStore, PlanItem, Planning
 from pydantic_ai_harness.system_reminders import LLMReminder, SystemReminders
 from tests.conftest import try_import
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness._recording_durability import RecordingDurability
 
 with try_import() as provider_imports:
@@ -1684,7 +1685,7 @@ class TestInjection:
 
         reminders = SystemReminders[None](
             dynamic_reminders=[
-                LLMReminder(model=FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('refocus')])))
+                LLMReminder(interval=1, model=FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('refocus')])))
             ],
         )
         agent = Agent(FunctionModel(model), deps_type=type(None), capabilities=[reminders, Memory(store=store)])
@@ -1896,7 +1897,10 @@ class TestInjection:
         # Restored on the request after compaction, then found there instead of restored again.
         assert len(_memory_contexts(post_compaction_window(result.all_messages()))) == 1
 
-    @pytest.mark.parametrize('preserve_first_user_message', [True, False])
+    @pytest.mark.parametrize(
+        'preserve_first_user_message',
+        [pytest.param(True, marks=pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)), False],
+    )
     async def test_compaction_mid_run_keeps_the_run_snapshot_current(self, preserve_first_user_message: bool) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- version A')

@@ -1,4 +1,4 @@
-# description: Sets a pull request's size and category labels, and runs douwebot when the douwebot or douwebot:review-agent-config label is applied.
+# description: Sets a pull request's size, category and durable-exec review labels, and runs douwebot when the douwebot or douwebot:review-agent-config label is applied.
 name: PR Bots
 
 on:
@@ -101,6 +101,58 @@ jobs:
           echo "Set label: $SIZE (score: $SCORE)"
         env:
           GH_TOKEN: ${{ github.token }}
+
+  # Labels a pull request that changes a core definition the durable engines depend on
+  # (`scripts/durable_exec_contract.json`), and unlabels it once a later push no longer does.
+  # Nothing here checks out or runs the pull request's files: the classifier and the manifest are
+  # fetched at `github.sha`, the base branch commit this workflow runs from, and the classifier
+  # reads the pull request's files through the API and only parses them.
+  durable-exec-label:
+    name: Durable-Exec Review Label
+    if: github.event.action == 'opened' || github.event.action == 'synchronize'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Classify the change and set the label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          LABEL: needs-durable-exec-review
+        run: |
+          set -euo pipefail
+
+          GATE="$RUNNER_TEMP/durable-exec-gate"
+          mkdir -p "$GATE/scripts"
+          for path in scripts/durable_exec_contract.py scripts/durable_exec_contract.json; do
+            gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/${path}?ref=${BASE_SHA}" > "$GATE/$path"
+          done
+          # `-I` keeps the fetched directory off `sys.path`; the classifier validates its arguments.
+          TOUCHED=$(python3 -I "$GATE/scripts/durable_exec_contract.py" --touched "$REPO" "$PR_NUMBER" "$BASE_SHA" "$HEAD_SHA")
+          COUNT=$(jq '[.[] | length] | add // 0' <<<"$TOUCHED")
+          {
+            echo "## Durable-exec contract entries touched: $COUNT"
+            jq -r 'to_entries[] | .key as $file | .value | to_entries[]
+              | "- `\($file)::\(.key)` (\(.value.engines | join(", ")))"' <<<"$TOUCHED"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Read live labels so queued events cannot overwrite newer label state.
+          LABELS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '
+            .labels | if type == "array" and all(.[]; .name | type == "string")
+            then map(.name) else error("Invalid PR labels") end')
+          HAS_LABEL=$(jq --arg label "$LABEL" 'index($label) != null' <<<"$LABELS")
+
+          if [ "$COUNT" -gt 0 ] && [ "$HAS_LABEL" = false ]; then
+            gh api "repos/${REPO}/issues/${PR_NUMBER}/labels" --method POST -f "labels[]=$LABEL"
+          elif [ "$COUNT" -eq 0 ] && [ "$HAS_LABEL" = true ]; then
+            gh api "repos/${REPO}/issues/${PR_NUMBER}/labels/${LABEL}" --method DELETE
+          fi
 
   # Security: The classify job runs the LLM with READ-ONLY permissions and no label API access.
   # The LLM's output is validated against an allowlist before the apply job takes any write action.

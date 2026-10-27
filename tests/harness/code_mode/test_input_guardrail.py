@@ -103,7 +103,7 @@ class GuardedRun:
             self.call_started.set()
             return await input_guardrails_allow(ctx)
 
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.input_guardrails_allow', allow)
+        monkeypatch.setattr('pydantic_ai_harness._code_tools.input_guardrails_allow', allow)
 
     async def ping(self, n: int) -> int:
         self.calls.append(n)
