@@ -15,9 +15,66 @@ Some providers expose a built-in compaction API that runs on their side. Pydanti
 | OpenAI Responses API | [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] | [OpenAI compaction](../models/openai.md#message-compaction) |
 | Anthropic | [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] | [Anthropic compaction](../models/anthropic.md#message-compaction) |
 
-Each uses the corresponding provider API, so it's only available on that provider.
+Each uses the corresponding provider API, so it's only available on that provider, and compacts when the provider's server-side threshold is crossed.
 
-To compact at a moment you choose rather than at the provider's threshold, call [`Model.compact_messages`][pydantic_ai.models.Model.compact_messages] on a model that supports it: [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages], which calls OpenAI's `/responses/compact` endpoint, and [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel.compact_messages], which uses Anthropic's [on-demand compaction](../models/anthropic.md#compacting-on-demand). It returns a `ModelResponse` holding the compaction part to put in the message history. Its `instructions` argument means something different on each: on OpenAI it replaces the agent's instructions for the compaction request, and on Anthropic it's a focus for the summary.
+### Compacting on demand
+
+To compact at a moment you choose, add the [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction] capability. When compaction is requested, with [`ctx.request_compaction()`](#the-compaction-hook) during a run or with [`Agent.compact()`](#compacting-outside-a-run) outside one, it calls the [`compact_messages`][pydantic_ai.models.Model.compact_messages] API of the model that will serve the next request: OpenAI's `/responses/compact` endpoint for [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages], on OpenAI and Azure OpenAI, and Anthropic's [on-demand compaction](../models/anthropic.md#compacting-on-demand) for [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel.compact_messages]. For any other model it does nothing, so the next capability with a [`compact_history`](#the-compaction-hook) hook compacts instead:
+
+```python {title="native_compaction.py" test="skip"}
+from typing import Any
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import NativeCompaction
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[NativeCompaction()])
+
+
+@agent.tool
+def compact_conversation(ctx: RunContext[Any], focus: str | None = None) -> str:
+    """Compact the conversation before your next turn."""
+    ctx.request_compaction(reason='manual', focus=focus)
+    return 'The conversation will be compacted before your next turn.'
+```
+
+The compaction request is the conversation's own request, with its settings, tools and instructions, so it reads the prompt cache the conversation's last request wrote. It summarizes everything before the turn being answered, which it keeps as it was: the latest request, and the response whose tool calls it answers. The compacted history is the provider's [`CompactionPart`][pydantic_ai.messages.CompactionPart], in the `ModelResponse` it arrived in, followed by that turn. Under [`ModelFallback`](model-fallback.md), it compacts for the model that will serve the request, not the run's model; a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] isn't compacted for, as which of its models answers isn't known in advance.
+
+What the providers do with a [`focus`][pydantic_ai.capabilities.CompactionRequest.focus] differs. Anthropic replaces its summarization prompt with the instructions it's given, so the focus is sent inside a full summarization prompt. OpenAI uses them as the system prompt of the compaction request, in place of the agent's instructions, so the request no longer starts with the prefix the conversation cached: by default, `NativeCompaction` leaves a focused request on OpenAI to the next capability, which can keep the cache. Set [`focus_as_system_prompt=True`][pydantic_ai.capabilities.NativeCompaction.focus_as_system_prompt] to send it as the system prompt anyway.
+
+Which models compact on demand, and how, is in their [profile](../models/overview.md#models-and-providers):
+
+| Profile flag | Meaning | OpenAI Responses | Anthropic |
+|---|---|---|---|
+| [`supports_compaction_on_demand`][pydantic_ai.profiles.ModelProfile.supports_compaction_on_demand] | `compact_messages` works | OpenAI and Azure OpenAI, not through the Pydantic AI Gateway | Claude models that compact on demand |
+| [`compaction_instructions`][pydantic_ai.profiles.ModelProfile.compaction_instructions] | What instructions, such as a focus, are | `'system_prompt'` | `'replaces_prompt'` |
+| [`compaction_result_readable`][pydantic_ai.profiles.ModelProfile.compaction_result_readable] | Whether the compaction part holds a readable summary | `False`, it's encrypted | `True`, with a signature |
+
+To compact without either, call [`Model.compact_messages`][pydantic_ai.models.Model.compact_messages] directly. It returns a `ModelResponse` holding the compaction part to put in the message history.
+
+### Compacting outside a run
+
+[`Agent.compact()`][pydantic_ai.agent.Agent.compact] compacts a conversation's message history without a run, for example for a `/compact` command or to compact a stored conversation. The agent's capabilities compact it with their [`compact_history`](#the-compaction-hook) hooks, with the same [events](#compaction-events), for the request a run with this history would make next: with the agent's model, settings, tools and instructions, or the ones you pass. Nothing else is sent. It returns a [`CompactionResult`][pydantic_ai.capabilities.CompactionResult], or `None` when no capability compacted or a listener cancelled the compaction:
+
+```python {title="agent_compact.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeCompaction
+
+agent = Agent('{{ openai:medium }}', capabilities=[NativeCompaction()])
+
+
+async def main():
+    result = await agent.run('Our API uses PostgreSQL 17 behind pgbouncer. Note that down.')
+
+    compaction = await agent.compact(result.all_messages())
+    assert compaction is not None
+
+    result = await agent.run('Which database do we use?', message_history=compaction.messages)
+    print(result.output)
+```
+
+Continue the conversation with the result's [`messages`][pydantic_ai.capabilities.CompactionResult.messages]. If compacting fails, the error is raised: unlike a run, it doesn't move on to a [fallback model](model-fallback.md). Its [`record`][pydantic_ai.capabilities.CompactionResult.record] is the [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] a run would keep on its [`compactions`](#storing-the-full-conversation), so a store saves it the same way. A history that ends with a response whose tool calls haven't been answered can't be compacted: run the agent with it first.
+
+Under [durable execution](../durable_execution/overview.md), call it from workflow code with an agent that has the durability capability, and the compaction request runs as a durable model operation, as it does during a run. Without one, the request is made inline.
 
 Pydantic AI treats a compaction part as a visibility boundary for state that feeds future requests. Tool discoveries and on-demand capability loads before the boundary reset, so later requests advertise them again. Capability and toolset authors should apply the same rule to their own derived state: compute anything the model needs to have seen — announcements, disclosures, catalogs — from [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] rather than remembering it in instance attributes, so it self-heals when compaction replaces the history that carried it.
 
@@ -45,7 +102,7 @@ A request-side compaction part wasn't produced by any provider's compaction API,
 ## The compaction hook
 
 !!! note "The foundation for built-in compaction"
-    The hook, [`request_compaction`][pydantic_ai.tools.RunContext.request_compaction] and the compaction events below are the foundation that Pydantic AI's built-in compaction is being built on: native compaction for the serving model, a size threshold, and a portable summarizer follow in later releases. Until then, you write the capability that compacts.
+    The hook, [`request_compaction`][pydantic_ai.tools.RunContext.request_compaction] and the compaction events below are the foundation that Pydantic AI's built-in compaction is being built on. [`NativeCompaction`](#compacting-on-demand) compacts with the serving model's own API; a size threshold and a portable summarizer follow in later releases. Until then, you write the capability that decides when to compact, and the one that compacts on other models.
 
 Any capability hook or tool can ask for the history to be compacted with [`ctx.request_compaction()`][pydantic_ai.tools.RunContext.request_compaction], passing a [`reason`][pydantic_ai.messages.CompactionReason] and optionally a `focus`, what the compaction should keep. The next attempt at a model request then calls the capabilities' [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hooks with a [`CompactionRequest`][pydantic_ai.capabilities.CompactionRequest]: the history the request would be sent with, and the [`model`][pydantic_ai.capabilities.CompactionRequest.model] that will serve it. Hooks are asked in capability order, through [combined][pydantic_ai.capabilities.CombinedCapability] and [wrapper][pydantic_ai.capabilities.WrapperCapability] capabilities, and the first one to return a [`CompactionResult`][pydantic_ai.capabilities.CompactionResult] wins, so capability order is the fallback chain: a hook that can't compact for this model, or this request, returns `None`.
 

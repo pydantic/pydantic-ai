@@ -182,10 +182,15 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
                 supports_mid_conversation_effort=model_name.startswith(_MID_CONVERSATION_EFFORT_MODEL_PREFIXES)
             ),
             # On-demand compaction is likewise a Messages API feature, so the Bedrock Converse API and the
-            # OpenAI-compatible gateways that share `anthropic_model_profile()` don't get it.
+            # OpenAI-compatible gateways that share `anthropic_model_profile()` don't get it. Its `instructions`
+            # replace Anthropic's summarization prompt, and the block it returns holds the summary as plain text.
             AnthropicModelProfile(
-                anthropic_supports_on_demand_compaction=model_name.startswith(_ON_DEMAND_COMPACTION_MODEL_PREFIXES)
-            ),
+                supports_compaction_on_demand=True,
+                compaction_instructions='replaces_prompt',
+                compaction_result_readable=True,
+            )
+            if model_name.startswith(_ON_DEMAND_COMPACTION_MODEL_PREFIXES)
+            else AnthropicModelProfile(supports_compaction_on_demand=False),
             AnthropicModelProfile(
                 # Anthropic-managed caches have a 5-minute minimum TTL refreshed on use across the direct,
                 # Bedrock, and Vertex SDK paths. Paid 1-hour cache points are handled by `prompt_cache_outlook`.

@@ -45,6 +45,8 @@ from .._utils import (
     number_to_datetime,
 )
 from ..capabilities.abstract import AbstractCapability
+from ..capabilities.compaction import CompactionRequest, CompactionResult
+from ..capabilities.native_compaction import NativeCompaction
 from ..exceptions import (
     ModelConnectionError,
     ModelRequestRejectedError,
@@ -1537,6 +1539,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
         """Return all of `native_tool`'s restricting settings, as Chat Completions' `web_search_options` takes none."""
         return native_tool.restricting_settings
+
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Turn off `supports_compaction_on_demand`, which `OpenAIProvider` sets for the Responses API's compaction endpoint.
+
+        Chat Completions has none, and `OpenAIChatModel` doesn't implement `compact_messages`.
+        """
+        return merge_profile(profile, ModelProfile(supports_compaction_on_demand=False))
 
     @cached_property
     def profile(self) -> OpenAIModelProfile:
@@ -3151,13 +3160,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return None
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Turn off `openai_supports_batch_api` where the Batch API isn't served, before the user's `profile=` applies.
+        """Turn off what isn't served on this client, before the user's `profile=` applies.
 
         `OpenAIProvider` accepts an `AsyncAzureOpenAI` client, whose batches need a batch deployment, and the Pydantic
-        AI Gateway doesn't serve the Batch API yet.
+        AI Gateway doesn't serve the Batch API yet. The gateway doesn't serve the `/responses/compact` endpoint either,
+        so `supports_compaction_on_demand` is off there too.
         """
         # The provider's client, since a subclass may only set its own `client` once the profile has been read.
-        if _is_azure(self._provider.client, self._provider.name) or is_gateway_provider(self._provider):
+        if is_gateway_provider(self._provider):
+            return merge_profile(
+                profile, OpenAIModelProfile(openai_supports_batch_api=False, supports_compaction_on_demand=False)
+            )
+        if _is_azure(self._provider.client, self._provider.name):
             return merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
         return profile
 
@@ -6532,14 +6546,19 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
       If omitted, OpenAI picks a server-side default.
 
     - **Stateless mode** (`stateless=True`): calls the stateless
-      `/responses/compact` endpoint from a `before_model_request` hook when
-      your trigger condition is met. Use this in
+      `/responses/compact` endpoint when your trigger condition is met. Use this in
       [ZDR](https://openai.com/enterprise-privacy/) environments where
       OpenAI must not retain conversation data, when you set
       [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
       or when you need explicit out-of-band control over when compaction runs.
 
-      Requires either `message_count_threshold` or a custom `trigger` callable.
+      Requires either `message_count_threshold` or a custom `trigger` callable. When it's met, a
+      `before_model_request` hook [requests compaction][pydantic_ai.tools.RunContext.request_compaction],
+      which this capability serves like [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction],
+      through the [compaction hook](../capabilities/compaction.md#the-compaction-hook). It serves
+      compaction another capability requests too. To compact on demand on any model that supports it,
+      not only OpenAI's, use [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction] with a
+      trigger of your own instead.
 
     If `stateless` is not set, it is inferred from which parameters you
     provide: passing any stateless-only parameter (`message_count_threshold`
@@ -6673,25 +6692,18 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
                 f'OpenAICompaction requires OpenAIResponsesModel, got {type(model).__name__}. '
                 f'Use the provider-specific compaction capability for your model.'
             )
-
-        # Need at least 2 messages (history + current request) to compact
-        if len(request_context.messages) < 2:  # pragma: no cover
-            return request_context
-
-        # Compact all messages except the last (current) request
-        compact_ctx = ModelRequestContext(
-            model=request_context.model,
-            messages=request_context.messages[:-1],
-            model_settings=request_context.model_settings,
-            model_request_parameters=request_context.model_request_parameters,
-        )
-        compacted_response = await request_context.model.compact_messages(compact_ctx)
-
-        # Replace message history with compaction + last request
-        messages = [compacted_response, request_context.messages[-1]]
-        request_context.messages = messages.copy()
-        ctx.messages[:] = messages
+        ctx.request_compaction(reason='threshold')
         return request_context
+
+    @property
+    def _has_compact_history(self) -> bool:
+        # Only the stateless mode compacts on request: the stateful one leaves it to OpenAI.
+        return self.stateless
+
+    async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
+        if not self.stateless:
+            return None
+        return await NativeCompaction().compact_history(ctx, request)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

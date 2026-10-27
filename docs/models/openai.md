@@ -501,7 +501,7 @@ agent = Agent(
 )
 ```
 
-As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint via a `before_model_request` hook. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI must not retain conversation data, when using [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], or when you need explicit out-of-band control over when compaction runs. Stateless mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
+As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint when your trigger condition is met. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI must not retain conversation data, when using [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], or when you need explicit out-of-band control over when compaction runs. Stateless mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
 
 ```python {title="openai_compaction_stateless.py" test="skip"}
 from pydantic_ai import Agent
@@ -515,10 +515,12 @@ agent = Agent(
 
 The mode is inferred from which parameters you pass: supplying `message_count_threshold` or `trigger` implies stateless mode, otherwise stateful mode is used. You can also pass `stateless=True` or `stateless=False` explicitly. Mixing parameters from different modes raises [`UserError`][pydantic_ai.exceptions.UserError].
 
+Stateless mode [requests compaction](../capabilities/compaction.md#the-compaction-hook) when the trigger is met, and serves it like [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction], so it also serves compaction other capabilities request, emits the [compaction events](../capabilities/compaction.md#compaction-events), and under [`ModelFallback`](../capabilities/model-fallback.md) is redone for the model that serves the request. To compact on demand with any model that supports it, Anthropic's included, use [`NativeCompaction`](../capabilities/compaction.md#compacting-on-demand) with a trigger of your own, or [`Agent.compact()`](../capabilities/compaction.md#compacting-outside-a-run) outside a run. On OpenAI, `NativeCompaction` leaves a request with a focus to the next capability by default, as the compaction request's `instructions` replace the agent's and lose the cached prefix.
+
 !!! tip
     Stateful compaction pairs especially well with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) or [`openai_conversation_id`](#using-durable-conversations). Both rely on OpenAI's server-side conversation state, so OpenAI can use a previously compacted context as the starting point for the next turn without you having to resend it.
 
-For lower-level use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model.
+For lower-level use cases, you can call [`compact_messages`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages] directly on the model. Its `instructions` replace the agent's instructions for the compaction request.
 
 ### Text phases
 

@@ -6116,3 +6116,36 @@ async def test_dbos_durability_compaction_runs_model_calls_as_steps(dbos: DBOS) 
             'durability_compaction__model.request_stream',
         ]
     )
+
+
+async def test_dbos_agent_compact_runs_the_compaction_as_a_step(dbos: DBOS) -> None:
+    """`Agent.compact()` in a workflow compacts through the durable model, so the provider call is a DBOS step."""
+    from pydantic_ai import CompactionPart
+    from pydantic_ai.capabilities import NativeCompaction
+    from pydantic_ai.profiles import ModelProfile
+
+    class CompactingModel(FunctionModel):
+        async def compact_messages(
+            self, request_context: ModelRequestContext, *, instructions: str | None = None
+        ) -> ModelResponse:
+            return ModelResponse(parts=[CompactionPart(content=f'a summary of {len(request_context.messages)}')])
+
+    model = CompactingModel(
+        lambda messages, info: ModelResponse(parts=[TextPart('not called')]),
+        profile=ModelProfile(supports_compaction_on_demand=True),
+    )
+    agent = Agent(model, name='durability_agent_compact', capabilities=[NativeCompaction(), DBOSDurability()])
+
+    @DBOS.workflow()
+    async def compact_durably() -> str | None:
+        compaction = await agent.compact(
+            [ModelRequest(parts=[UserPromptPart('Hello DBOS')]), ModelResponse(parts=[TextPart('Hello!')])]
+        )
+        return compaction.part.content if compaction is not None else None
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        summary = await compact_durably()
+    assert summary == 'a summary of 2'
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == snapshot(['durability_agent_compact__model.compact_messages'])
