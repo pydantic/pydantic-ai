@@ -1,4 +1,4 @@
-"""Which Anthropic SDK clients send the tool search tool to `count_tokens`.
+"""Which Anthropic SDK clients send server tools to `count_tokens`.
 
 Mocked at the HTTP transport rather than recorded, because Bedrock, Vertex AI and Foundry can't be recorded here.
 Going through each real SDK client checks the `tools` list survives the client's own request rewriting.
@@ -16,6 +16,7 @@ import pytest
 
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
@@ -43,24 +44,24 @@ pytestmark = [
 @pytest.mark.parametrize(
     'client_name,profile,tool_names',
     [
-        pytest.param('api', None, ['get_exchange_rate', 'tool_search_tool_bm25'], id='api'),
-        # Unverified on the platform count endpoints, so the entry stays off them.
+        pytest.param('api', None, ['get_exchange_rate', 'tool_search_tool_bm25', 'code_execution'], id='api'),
+        # Unverified on the platform count endpoints, so server tools stay off them.
         pytest.param('bedrock', None, ['get_exchange_rate'], id='bedrock'),
         pytest.param('mantle', None, ['get_exchange_rate'], id='mantle'),
         pytest.param('vertex', None, ['get_exchange_rate'], id='vertex'),
         pytest.param('foundry', None, ['get_exchange_rate'], id='foundry'),
         pytest.param(
             'vertex',
-            {'anthropic_count_tokens_accepts_tool_search': True},
-            ['get_exchange_rate', 'tool_search_tool_bm25'],
+            {'anthropic_count_tokens_accepts_server_tools': True},
+            ['get_exchange_rate', 'tool_search_tool_bm25', 'code_execution'],
             id='vertex-profile-on',
         ),
     ],
 )
-async def test_count_tokens_tool_search_by_client(
+async def test_count_tokens_server_tools_by_client(
     allow_model_requests: None, client_name: str, profile: AnthropicModelProfile | None, tool_names: list[str]
 ):
-    """The profile's `anthropic_count_tokens_accepts_tool_search` decides whether `count_tokens` keeps the search entry."""
+    """The profile's `anthropic_count_tokens_accepts_server_tools` decides whether `count_tokens` keeps server tools."""
     bodies: list[dict[str, Any]] = []
 
     def handle(request: httpx2.Request) -> httpx2.Response:
@@ -98,7 +99,7 @@ async def test_count_tokens_tool_search_by_client(
                         with_native=ToolSearchTool.kind,
                     )
                 ],
-                native_tools=[ToolSearchTool()],
+                native_tools=[ToolSearchTool(), CodeExecutionTool()],
             ),
         )
 
@@ -106,17 +107,17 @@ async def test_count_tokens_tool_search_by_client(
     assert [tool['name'] for tool in body['tools']] == tool_names
 
 
-def test_count_tokens_tool_search_provider_profile_wins():
+def test_count_tokens_server_tools_provider_profile_wins():
     """A provider's own `model_profile()` value wins over the default `AnthropicModel` sets by client class.
 
     Checked on the resolved profile rather than a request, since this is profile resolution alone;
-    `test_count_tokens_tool_search_by_client` pins what each flag value sends.
+    `test_count_tokens_server_tools_by_client` pins what each flag value sends.
     """
 
-    class CountsWithoutToolSearchProvider(AnthropicProvider):
+    class CountsWithoutServerToolsProvider(AnthropicProvider):
         @staticmethod
         def model_profile(model_name: str) -> ModelProfile | None:
-            return AnthropicModelProfile(anthropic_count_tokens_accepts_tool_search=False)
+            return AnthropicModelProfile(anthropic_count_tokens_accepts_server_tools=False)
 
-    model = AnthropicModel('claude-sonnet-5-5', provider=CountsWithoutToolSearchProvider(api_key='x'))
-    assert model.profile.get('anthropic_count_tokens_accepts_tool_search') is False
+    model = AnthropicModel('claude-sonnet-5-5', provider=CountsWithoutServerToolsProvider(api_key='x'))
+    assert model.profile.get('anthropic_count_tokens_accepts_server_tools') is False

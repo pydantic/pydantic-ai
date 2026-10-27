@@ -82,6 +82,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
+    AbstractNativeTool,
     AdvisorTool,
     CodeExecutionTool,
     MCPServerTool,
@@ -13635,7 +13636,12 @@ async def test_anthropic_count_tokens_with_no_messages(allow_model_requests: Non
     assert result.input_tokens == 10
 
 
-async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: None):
+async def test_anthropic_count_tokens_keeps_server_tools_but_not_mcp_servers(allow_model_requests: None):
+    """The direct API's `count_tokens` takes the same `tools` as the real request, server tools included.
+
+    The `mcp_servers` param is the one thing left off: the endpoint rejects it with a 400 ("The mcp_servers
+    parameter is not supported on the count_tokens endpoint"), so the count leaves out the MCP server's tools.
+    """
     c = completion_message(
         [BetaTextBlock(text='hello world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
     )
@@ -13643,7 +13649,12 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(
         m,
-        capabilities=[NativeTool(CodeExecutionTool()), NativeTool(WebFetchTool()), NativeTool(MemoryTool())],
+        capabilities=[
+            NativeTool(CodeExecutionTool()),
+            NativeTool(WebFetchTool()),
+            NativeTool(MemoryTool()),
+            NativeTool(MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')),
+        ],
     )
 
     @agent.tool_plain
@@ -13658,25 +13669,16 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
 
     assert result.output == 'hello world'
     count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
-    # Server-side tools (`code_execution`, `web_fetch`) are dropped from the `count_tokens` payload, but the
-    # client-side `MemoryTool` is kept so the count includes its definition (and beta).
-    assert count_tokens_kwargs['tools'] == [
-        {
-            'name': 'lookup',
-            'description': '',
-            'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
-        },
-        {'name': 'memory', 'type': 'memory_20250818'},
-    ]
-    assert count_tokens_kwargs['mcp_servers'] is OMIT
-    assert count_tokens_kwargs['betas'] == ['context-management-2025-06-27']
-    assert {tool['name'] for tool in create_kwargs['tools']} == {'lookup', 'code_execution', 'web_fetch', 'memory'}
-    assert {tool['name']: tool['type'] for tool in create_kwargs['tools'] if 'type' in tool} == {
+    assert count_tokens_kwargs['tools'] == create_kwargs['tools']
+    assert {tool['name']: tool['type'] for tool in count_tokens_kwargs['tools'] if 'type' in tool} == {
         'code_execution': 'code_execution_20260120',
         'web_fetch': 'web_fetch_20260209',
         'memory': 'memory_20250818',
     }
-    assert create_kwargs['betas'] == ['context-management-2025-06-27']
+    assert count_tokens_kwargs['mcp_servers'] is OMIT
+    assert create_kwargs['mcp_servers'] == [{'type': 'url', 'name': 'deepwiki', 'url': 'https://mcp.deepwiki.com/mcp'}]
+    assert count_tokens_kwargs['betas'] == ['context-management-2025-06-27']
+    assert create_kwargs['betas'] == ['context-management-2025-06-27', 'mcp-client-2025-04-04']
 
 
 async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_requests: None):
@@ -14600,25 +14602,99 @@ A later <context> element with the same id replaces the earlier one and stays in
 
 
 @pytest.mark.vcr()
-async def test_anthropic_count_tokens_with_native_tools(allow_model_requests: None, anthropic_api_key: str):
-    """`count_tokens` succeeds against the live API when a native/server tool is configured.
+@pytest.mark.parametrize(
+    'native_tool,wire_tool,input_tokens',
+    [
+        pytest.param(
+            WebSearchTool(),
+            {
+                'name': 'web_search',
+                'type': 'web_search_20260209',
+                'max_uses': None,
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'user_location': None,
+            },
+            6070,
+            id='web_search',
+        ),
+        pytest.param(
+            WebFetchTool(),
+            {
+                'name': 'web_fetch',
+                'type': 'web_fetch_20260209',
+                'max_uses': None,
+                'allowed_domains': None,
+                'blocked_domains': None,
+                'citations': None,
+                'max_content_tokens': None,
+            },
+            4656,
+            id='web_fetch',
+        ),
+        pytest.param(
+            CodeExecutionTool(),
+            {'name': 'code_execution', 'type': 'code_execution_20260120'},
+            2970,
+            id='code_execution',
+        ),
+    ],
+)
+async def test_anthropic_count_tokens_with_native_tools(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    native_tool: AbstractNativeTool,
+    wire_tool: dict[str, str | None],
+    input_tokens: int,
+):
+    """`count_tokens` sends a server tool as the real request does, and matches its `input_tokens`.
 
-    Anthropic rejects server tools (e.g. `code_execution`) on the `count_tokens` endpoint with a 400, so
-    the model strips native tools from the `count_tokens` payload. A successful token count proves the
-    native tools were omitted. The recorded request is itself the regression guard: it must NOT contain
-    the `code_execution` entry, so a revert of the fix would send it and break playback.
+    The only function tool is deferred, so the server tool is what keeps the `tools` list legal: the
+    endpoint rejects a list in which every tool is deferred. `max_tokens=1` stops the real request
+    after its first sampling pass, before the model can call the server tool and be sampled again.
 
-    Regression test for https://github.com/pydantic/pydantic-ai/issues/5702
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/11363
     """
-    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = anthropic_model('claude-sonnet-5-5', capture=True)
 
-    usage = await m.count_tokens(
-        [ModelRequest.user_text_prompt('What is 2 + 2?')],
-        None,
-        ModelRequestParameters(native_tools=[CodeExecutionTool()]),
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='get_exchange_rate',
+                description='Look up the exchange rate between two currencies.',
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {'base': {'type': 'string'}, 'quote': {'type': 'string'}},
+                    'required': ['base', 'quote'],
+                },
+                defer_loading=True,
+            )
+        ],
+        native_tools=[native_tool],
     )
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is the USD to EUR rate?')]
+    settings: AnthropicModelSettings = {'max_tokens': 1}
 
-    assert usage.input_tokens > 0
+    usage = await m.count_tokens(messages, settings, params)
+    response = await m.request(messages, settings, params)
+
+    assert usage.input_tokens == response.usage.input_tokens == input_tokens
+    count_tools = request_capture.body('/v1/messages/count_tokens')['tools']
+    assert count_tools == request_capture.body('/v1/messages')['tools']
+    assert count_tools == [
+        {
+            'name': 'get_exchange_rate',
+            'description': 'Look up the exchange rate between two currencies.',
+            'input_schema': {
+                'type': 'object',
+                'properties': {'base': {'type': 'string'}, 'quote': {'type': 'string'}},
+                'required': ['base', 'quote'],
+            },
+            'defer_loading': True,
+        },
+        wire_tool,
+    ]
 
 
 @pytest.mark.vcr()
