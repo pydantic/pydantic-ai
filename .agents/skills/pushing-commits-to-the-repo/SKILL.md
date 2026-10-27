@@ -52,6 +52,8 @@ Douwebot posts as `github-actions[bot]` from the `review` job in [`.github/workf
 Distinguish douwebot from `CI Review`, which can use the same bot account.
 Douwebot posts `No blocking findings.` or `Blocking findings are recorded inline.` with its verdict.
 `CI Review` starts its body with `Reviewed at <sha>`.
+For protected agent-config changes, a clean approval from a maintainer-authorized `douwebot:review-agent-config` run satisfies the same bar.
+A human approval does not substitute for douwebot.
 
 ## When you open the PR
 
@@ -366,7 +368,8 @@ if the head changes, capture the new SHA and restart the loop.
      PR changes an `AGENTS.md` or `CLAUDE.md` at any depth, `CLAUDE.local.md`, `.mcp.json`,
      `.claude/`, `.agents/`, or `agent_docs/`, check whether the PR author has write or admin access.
      Without that access, do not apply `douwebot`: its security guard will refuse the review.
-     Escalate for explicit maintainer review; the gate remains unsatisfied until that lands. With
+     Ask a maintainer to apply `douwebot:review-agent-config` on the captured head, following the authorization contract below.
+     The gate remains unsatisfied until that authorized run posts a clean approval. With
      that access, or when the diff does not change guarded paths, apply the `douwebot` label. Do not
      push or touch review threads while the label is present. Require the triggered run to succeed,
      and verify that the PR head still equals the captured SHA after the label is removed.

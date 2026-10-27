@@ -29,10 +29,7 @@ developer's model subscription. It is independent of any hosted review.
 
 ## Select the reviewer tier
 
-Follow [Model tiers](../pushing-commits-to-the-repo/SKILL.md#model-tiers), using the session's family rather than its harness.
-Use the light tier until hosted review has commented on two earlier pushes, then the strong tier.
-Pass the model explicitly when the dispatch accepts one.
-The driver sets the light model's effort from the PR's complexity.
+Follow [Model tiers](../pushing-commits-to-the-repo/SKILL.md#model-tiers).
 
 ## Decide whether to decompose the diff
 
