@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 import warnings
+from base64 import b64decode
 from collections.abc import Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
@@ -98,9 +99,8 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from ._binary_0_14 import HAS_BINARY_INPUT_PART, BinaryInputContent, legacy_binary_to_content
     from ._event_stream import AGUIEventStream
-    from ._forward_compat import adapt_unsupported_items
+    from ._forward_compat import HAS_BINARY_INPUT_PART, adapt_unsupported_items
     from ._interrupt import (
         HAS_INTERRUPTS,
         ResumeEntry,
@@ -143,6 +143,7 @@ except ImportError as e:
 if TYPE_CHECKING:
     from ag_ui.core import (
         AudioInputContent,
+        BinaryInputContent,
         DocumentInputContent,
         ImageInputContent,
         ReasoningMessage,
@@ -152,6 +153,13 @@ if TYPE_CHECKING:
 
     from ...agent import AbstractAgent
 else:
+    try:
+        from ag_ui.core import BinaryInputContent
+    except ImportError:  # pragma: lax no cover
+
+        class BinaryInputContent:
+            """Stub for an ag-ui-protocol that no longer ships the `binary` part 1.0 retired."""
+
     try:
         from ag_ui.core import ReasoningMessage
     except ImportError:
@@ -232,7 +240,17 @@ def _input_content_to_user_content(
             case _ if isinstance(part, BinaryInputContent):
                 # A guard, not a class pattern: AG-UI 1.0 retired the part from the content union,
                 # but an install below 1.0 still sends it.
-                converted.append(legacy_binary_to_content(part))
+                if part.url:
+                    try:
+                        converted.append(BinaryContent.from_data_uri(part.url))
+                    except ValueError:
+                        media_type_constructors = {'image': ImageUrl, 'video': VideoUrl, 'audio': AudioUrl}
+                        constructor = media_type_constructors.get(part.mime_type.split('/', 1)[0], DocumentUrl)
+                        converted.append(constructor(url=part.url, media_type=part.mime_type))
+                elif part.data:
+                    converted.append(BinaryContent(data=b64decode(part.data), media_type=part.mime_type))
+                else:
+                    raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
             case ImageInputContent() | AudioInputContent() | VideoInputContent() | DocumentInputContent():
                 from ._multimodal import multimodal_input_to_content
 

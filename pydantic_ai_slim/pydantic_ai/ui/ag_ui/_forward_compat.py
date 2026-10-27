@@ -31,9 +31,8 @@ from pydantic import BaseModel, JsonValue
 
 from ..._utils import get_union_args
 from ...messages import BinaryContent
-from ._utils import media_part_type
 
-__all__ = ['adapt_unsupported_items']
+__all__ = ['HAS_BINARY_INPUT_PART', 'adapt_unsupported_items']
 
 
 def _known_tags(tagged_union: object, discriminator: str) -> frozenset[str]:
@@ -70,6 +69,9 @@ def _known_source_tags(tagged_union: object) -> dict[str, frozenset[str]]:
 _KNOWN_MESSAGE_ROLES = _known_tags(Message, 'role')
 _KNOWN_INPUT_CONTENT_TYPES = _known_tags(InputContent, 'type')
 _KNOWN_SOURCE_TYPES_BY_CONTENT_TYPE = _known_source_tags(InputContent)
+
+HAS_BINARY_INPUT_PART = 'binary' in _KNOWN_INPUT_CONTENT_TYPES
+"""Whether the installed SDK still accepts the `binary` input part, which 1.0 retired."""
 
 
 def _unknown_tag(item: dict[str, JsonValue], discriminator: str, known: frozenset[str]) -> str | None:
@@ -122,7 +124,8 @@ def _translate_binary_part(item: dict[str, JsonValue]) -> dict[str, JsonValue] |
         source = {'type': 'file', 'value': file_id, 'mimeType': mime_type}
     else:
         return None
-    return {'type': media_part_type(mime_type), 'source': source}
+    prefix = mime_type.split('/', 1)[0]
+    return {'type': prefix if prefix in ('image', 'audio', 'video') else 'document', 'source': source}
 
 
 def adapt_unsupported_items(body: bytes) -> tuple[JsonValue, frozenset[str]] | None:

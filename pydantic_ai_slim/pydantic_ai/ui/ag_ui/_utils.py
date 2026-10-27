@@ -120,12 +120,6 @@ class UploadedFileActivityContent(TypedDict, total=False):
     vendor_metadata: dict[str, Any]
 
 
-def media_part_type(mime_type: str) -> str:
-    """The AG-UI media part type for a MIME type; anything that isn't image, audio or video is a document."""
-    prefix = mime_type.split('/', 1)[0]
-    return prefix if prefix in ('image', 'audio', 'video') else 'document'
-
-
 _AG_UI_VERSION_RE = re.compile(r'(\d+(?:\.\d+)*)')
 
 

@@ -53,7 +53,6 @@ def token_usage_from_messages(messages: Sequence[ModelMessage]) -> list[TokenUsa
     Counts are summed per pair before they are bounded, so an overflow that only shows in the sum is caught.
     A pair with neither input nor output tokens is left out.
     """
-    assert HAS_LIFECYCLE_1_0, '`token_usage_from_messages` needs ag-ui-protocol >= 1.0'
     by_model: dict[tuple[str | None, str | None], RequestUsage] = {}
     for message in messages:
         if isinstance(message, ModelResponse):
