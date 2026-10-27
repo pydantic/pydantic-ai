@@ -92,7 +92,7 @@ class PromptSurface(io.StringIO):
         self._transcript_rows = 0
         """How many of the frame's top rows show the transcript."""
         self._select_pinned = False
-        """The question picker opts its painted rows into selection; the ordinary editor does not."""
+        """Whether a drag can also highlight and copy pinned rows, not only the transcript."""
         self._paint_scheduled = False
         self._paint_delayed = False
         """A paint waits for the frame interval to end; see `changed`."""
@@ -289,7 +289,8 @@ class PromptSurface(io.StringIO):
     def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
         """Pin `rows` under the transcript and enable the editor's input modes.
 
-        Only question widgets opt into `select_pinned`; editor and status rows stay unselectable.
+        `select_pinned` lets a drag highlight and copy the pinned rows too. The default excludes
+        editor and status rows from selection.
 
         The editor also repaints on a timer to pick up status changes, so a frame identical to the
         last one is skipped rather than rebuilt and diffed cell by cell.

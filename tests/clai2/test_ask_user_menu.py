@@ -6,7 +6,6 @@ import json
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from threading import Event
-from typing import IO
 
 import anyio
 import pytest
@@ -14,6 +13,7 @@ from prompt_toolkit.input import PipeInput, create_pipe_input
 from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
+from termflow.ansi import make_clipboard_copy
 from termflow.live.buffer import REVERSE
 
 from pydantic_ai import Agent, FunctionToolCallEvent
@@ -759,18 +759,10 @@ async def test_custom_decoder_cancellation_detaches_before_editor_resumes(
         (TARGETS, 'api.py'),
     ],
 )
-def test_dragging_question_text_highlights_and_copies_without_answering(
-    question: Question, target: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_dragging_question_text_highlights_and_copies_without_answering(question: Question, target: str) -> None:
     terminal = SurfaceTerminal(width=80, height=24)
     surface = PromptSurface(output=terminal, size=lambda: (80, 24))
     surface.write('Transcript control\n')
-    copied: list[str] = []
-
-    def copy(text: str, *, output: IO[str]) -> None:
-        copied.append(text)
-
-    monkeypatch.setattr('pydantic_clai2.ui.prompt.prompt_surface.copy_text', copy)
     menu = QuestionMenu(question=question, position=1, total=1)
 
     def keys() -> Generator[QuestionKey]:
@@ -784,7 +776,7 @@ def test_dragging_question_text_highlights_and_copies_without_answering(
             start = row * frame.width + column
             assert all(frame.attrs[index] & REVERSE for index in range(start, start + len(text)))
             yield TranscriptKey(key='mouse', data=f'\x1b[<0;{column + len(text)};{row + 1}m')
-            assert copied[-1] == text
+            assert make_clipboard_copy(text) in terminal.getvalue()
             assert menu.cursor == 0 and not menu.selected and not menu.editing_custom
         yield 'escape'
 
@@ -792,7 +784,8 @@ def test_dragging_question_text_highlights_and_copies_without_answering(
         menu.run(console=Console(file=surface, width=80, height=24, color_system=None), key_source=keys().__next__)
         is None
     )
-    assert copied == [target, 'Transcript control']
+    output = terminal.getvalue()
+    assert output.index(make_clipboard_copy(target)) < output.index(make_clipboard_copy('Transcript control'))
 
 
 def test_output_streamed_while_answering_stays_above_the_pinned_question() -> None:
