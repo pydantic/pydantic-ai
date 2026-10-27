@@ -1125,12 +1125,7 @@ async def test_google_replays_thought_signatures_to_their_own_transport(
 
 
 async def test_xai_replays_by_canonical_system():
-    class MyXaiProvider(XaiProvider):
-        @property
-        def name(self) -> str:
-            return 'my-xai'
-
-    model = XaiModel('grok-4', provider=MyXaiProvider(api_key='k'))
+    model = XaiModel('grok-4', provider=XaiProvider(api_key='k'))
     xai_messages = await model._map_messages(reasoning_history('grok'), ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
     openai_messages = await model._map_messages(reasoning_history('openai'), ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
     assert _json(xai_messages[1]) == snapshot(
@@ -1154,6 +1149,24 @@ thought
             ],
             'role': 'ROLE_ASSISTANT',
         }
+    )
+
+    # A server-side tool result whose call isn't in the history has nothing to attach to, so it's left out.
+    orphan_return: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('hi')]),
+        ModelResponse(
+            parts=[
+                NativeToolReturnPart(
+                    tool_name='web_search', content='results', tool_call_id='missing', provider_name='xai'
+                ),
+                TextPart('answer'),
+            ],
+            provider_name='xai',
+        ),
+    ]
+    orphan_messages = await model._map_messages(orphan_return, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    assert [_json(message) for message in orphan_messages[1:]] == snapshot(
+        [{'content': [{'text': 'answer'}], 'role': 'ROLE_ASSISTANT'}]
     )
 
 
