@@ -87,9 +87,8 @@ class RequestRecorder:
                 copy.deepcopy(merge_model_settings(model.settings, model_settings)),
                 copy.deepcopy(replace(model_request_parameters, output_mode=prepared.output_mode)),
             )
-        except (
-            Exception
-        ):  # pragma: no cover - a request the test model rejects, or one holding an uncopyable value, isn't checked
+        except Exception:
+            # A request the test model rejects, or one holding a value that can't be copied, isn't checked.
             return
         self.requests.append(recorded)
 
@@ -164,7 +163,7 @@ def _render_anthropic_bodies(requests: list[RecordedRequest]) -> list[dict[str, 
 
         from pydantic_ai.models.anthropic import AnthropicModel
         from pydantic_ai.providers.anthropic import AnthropicProvider
-    except ImportError:  # pragma: no cover - the slim test jobs don't install `anthropic`
+    except ImportError:  # the slim test jobs don't install `anthropic`
         return [None] * len(requests)
 
     model = AnthropicModel(
