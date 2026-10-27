@@ -19,10 +19,8 @@ from typing_extensions import TypeIs
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._callable import is_run_context, takes_context
+from pydantic_ai_harness._callable import takes_context
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
-
-_is_run_context = is_run_context
 
 
 class _Unset:
@@ -176,7 +174,7 @@ def takes_ctx(func: Callable[..., object]) -> bool:
     introspected is treated as taking the value only.
     """
     try:
-        parameters = inspect.signature(func).parameters.values()
+        parameters = tuple(inspect.signature(func).parameters.values())
     except ValueError:  # pragma: no cover - callable without an introspectable signature
         return False
     positional = [
@@ -187,7 +185,7 @@ def takes_ctx(func: Callable[..., object]) -> bool:
     if len(positional) < 2:
         has_args = any(parameter.kind is inspect.Parameter.VAR_POSITIONAL for parameter in parameters)
         return has_args and len(parameters) > 1
-    decision = takes_context(func)
+    decision = takes_context(func, parameters=parameters)
     if decision is None:
         warnings.warn(
             f'Guard {_guard_name(func)} has a second positional parameter with a default and a first parameter '

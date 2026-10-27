@@ -341,6 +341,19 @@ class TestContextAnswerer:
         returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
         assert returns[0].content == {'Approach': ['Refactor'], 'Targets': ['api.py']}
 
+    async def test_uninspectable_request_only_callable_still_works(self) -> None:
+        class WithoutSignature:
+            @property
+            def __signature__(self) -> inspect.Signature:
+                raise ValueError('signature unavailable')
+
+            async def __call__(self, request: AskUserRequest) -> AskUserResponse:
+                return await ScriptedAnswerer()(request)
+
+        agent = Agent(calling(raw_questions()), capabilities=[AskUser(answerer=WithoutSignature())])
+        result = await agent.run('go')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
     async def test_unannotated_request_only_answerer_still_works(self) -> None:
         scripted = ScriptedAnswerer()
         agent = Agent(calling(raw_questions()), capabilities=[AskUser(answerer=lambda request: scripted(request))])

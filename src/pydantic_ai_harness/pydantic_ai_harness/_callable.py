@@ -5,23 +5,25 @@ from __future__ import annotations
 import functools
 import inspect
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from types import UnionType
 from typing import Annotated, Any, ForwardRef, Union, get_args, get_origin
 
 from pydantic_ai.tools import RunContext
 
 
-def takes_context(func: Callable[..., object]) -> bool | None:
+def takes_context(func: Callable[..., object], *, parameters: Sequence[inspect.Parameter] | None = None) -> bool | None:
     """Return whether a callback takes `(ctx, value)`, or `None` when either shape is ambiguous.
 
     Callers choose their policy for an unannotated or unresolvable optional-argument signature.
     Only the first annotation is resolved; other annotations may be imported only for typing.
+    Callers that already inspected the signature can reuse its parameters.
     """
-    try:
-        parameters = tuple(inspect.signature(func).parameters.values())
-    except (TypeError, ValueError):
-        return False
+    if parameters is None:
+        try:
+            parameters = tuple(inspect.signature(func).parameters.values())
+        except ValueError:
+            return False
     positional = [
         parameter
         for parameter in parameters
