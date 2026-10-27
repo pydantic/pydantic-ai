@@ -1238,7 +1238,7 @@ retries = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.10,<1" },
+    { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.10" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=1.15.0" },
     { name = "anyio", specifier = ">=4.7.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },

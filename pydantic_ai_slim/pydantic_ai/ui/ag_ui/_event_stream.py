@@ -6,6 +6,7 @@ enabling streaming event-based communication for interactive AI applications.
 
 from __future__ import annotations
 
+import re
 import warnings
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import KW_ONLY, dataclass, field
@@ -48,6 +49,12 @@ from ._interrupt import (
     RunFinishedSuccessOutcome,
     approval_to_interrupt,
 )
+from ._lifecycle_1_0 import (
+    HAS_LIFECYCLE_1_0,
+    PROTOCOL_VERSION,
+    RunFinishedCancelledOutcome,
+    token_usage_from_messages,
+)
 from ._utils import (
     ACTIVITY_EVENTS_VERSION,
     BUILTIN_TOOL_CALL_ID_PREFIX,
@@ -55,6 +62,7 @@ from ._utils import (
     DEFAULT_AG_UI_VERSION,
     ENQUEUED_MESSAGES_ACTIVITY_TYPE,
     INTERRUPTS_VERSION,
+    LIFECYCLE_1_0_VERSION,
     MODEL_SETTINGS_DELTA_ACTIVITY_TYPE,
     REASONING_VERSION,
     TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
@@ -157,7 +165,12 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     preserve_file_data: bool = False
     """Whether enqueued messages sent to the frontend keep `FilePart` and `UploadedFile` items, as [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data]."""
 
+    include_usage: bool = False
+    """Whether `RUN_FINISHED` reports token usage per provider and model, as [`AGUIAdapter.include_usage`][pydantic_ai.ui.ag_ui.AGUIAdapter.include_usage]."""
+
     _use_reasoning: bool = field(default=False, init=False)
+    _emit_1_0_fields: bool = field(default=False, init=False)
+    _emit_1_0_outcomes: bool = field(default=False, init=False)
     _reasoning_message_id: str | None = None
     _reasoning_started: bool = False
     _reasoning_text: bool = False
@@ -173,6 +186,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     def __post_init__(self) -> None:
         self._use_reasoning = parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION
+        # `protocolVersion` and `usage` are fields a pre-1.0 client passes through, so they ride on the
+        # installed SDK. The `cancelled` outcome and `pendingToolCallIds` fail a pre-1.0 client's strict
+        # outcome schema, so they also need the client to have declared 1.0 (see `ui/AGENTS.md`).
+        self._emit_1_0_fields = HAS_LIFECYCLE_1_0 and parse_ag_ui_version(self.ag_ui_version) >= LIFECYCLE_1_0_VERSION
+        self._emit_1_0_outcomes = self._emit_1_0_fields and self._run_input_declares_1_0()
         if (run_input := self.run_input) is not None:
             # A request's own identity wins: the frontend picked these and correlates the run by them,
             # so they're not something the server gets to substitute.
@@ -190,6 +208,19 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                 )
             self.thread_id = run_input.thread_id
             self.run_id = run_input.run_id
+
+    def _run_input_declares_1_0(self) -> bool:
+        """Whether the client declared AG-UI 1.0 or newer on `RunAgentInput.protocolVersion`.
+
+        Only called on a 1.0 SDK. No declaration means a peer from before the protocol carried a version; one
+        outside the `MAJOR.MINOR` grammar is read as newer, as the spec requires.
+        """
+        declared = self.run_input.protocol_version if self.run_input is not None else None
+        if declared is None:
+            return False
+        # The spec's grammar is `MAJOR.MINOR`; `parse_ag_ui_version` is too lenient, as it tolerates suffixes.
+        match = re.fullmatch(r'(\d+)\.(\d+)', declared)
+        return match is None or (int(match[1]), int(match[2])) >= LIFECYCLE_1_0_VERSION
 
     @property
     def _event_encoder(self) -> EventEncoder:
@@ -214,11 +245,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             yield agui_event
 
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
-        yield RunStartedEvent(
-            thread_id=self.thread_id,
-            run_id=self.run_id,
-            timestamp=self._get_timestamp(),
-        )
+        timestamp = self._get_timestamp()
+        if self._emit_1_0_fields:
+            # The producer declares its own version, not the input version.
+            yield RunStartedEvent(
+                thread_id=self.thread_id, run_id=self.run_id, timestamp=timestamp, protocol_version=PROTOCOL_VERSION
+            )
+        else:
+            yield RunStartedEvent(thread_id=self.thread_id, run_id=self.run_id, timestamp=timestamp)
 
     async def before_response(self) -> AsyncIterator[BaseEvent]:
         # Prevent parts from a subsequent response being tied to parts from an earlier response.
@@ -231,33 +265,30 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if self._error:
             return
 
+        outcome: RunFinishedCancelledOutcome | RunFinishedInterruptOutcome | RunFinishedSuccessOutcome | None = None
         if self._cancelled_run:
-            # AG-UI has no cancelled outcome; revisit when the protocol fills this spec gap:
-            # https://github.com/ag-ui-protocol/ag-ui/issues/880
-            yield RunFinishedEvent(
-                thread_id=self.thread_id,
-                run_id=self.run_id,
-                timestamp=self._get_timestamp(),
-            )
-            return
+            # Sent only to clients that declared 1.0; older client schemas reject it (ag-ui#880).
+            if self._emit_1_0_outcomes:
+                outcome = RunFinishedCancelledOutcome()
+        elif HAS_INTERRUPTS:
+            outcome = self._build_outcome()
+        usage = None
+        # This run's own model calls, finished or cancelled; a stream with no agent run has none.
+        run = self._result if self._result is not None else self.cancelled
+        if self.include_usage and self._emit_1_0_fields and run is not None:
+            usage = token_usage_from_messages(run.new_messages()) or None
 
-        # `RunFinishedEvent.outcome` only exists in ag-ui-protocol >= 0.1.19. `ConfiguredBaseModel`
-        # allows extra fields, so passing `outcome=None` on the old path wouldn't raise — but it
-        # would serialize an `outcome` field that pre-interrupt clients don't expect, so we branch
-        # to omit it entirely.
-        if HAS_INTERRUPTS:
+        # Each SDK is given only the fields it defines, so an older one never serializes a key it doesn't know.
+        timestamp = self._get_timestamp()
+        if HAS_LIFECYCLE_1_0:
             yield RunFinishedEvent(
-                thread_id=self.thread_id,
-                run_id=self.run_id,
-                outcome=self._build_outcome(),
-                timestamp=self._get_timestamp(),
+                thread_id=self.thread_id, run_id=self.run_id, timestamp=timestamp, outcome=outcome, usage=usage
             )
+        elif HAS_INTERRUPTS:  # pragma: lax no cover
+            # Only 0.1.19 to 0.1.22, which no CI lane installs.
+            yield RunFinishedEvent(thread_id=self.thread_id, run_id=self.run_id, timestamp=timestamp, outcome=outcome)
         else:
-            yield RunFinishedEvent(
-                thread_id=self.thread_id,
-                run_id=self.run_id,
-                timestamp=self._get_timestamp(),
-            )
+            yield RunFinishedEvent(thread_id=self.thread_id, run_id=self.run_id, timestamp=timestamp)
 
     def _build_outcome(self) -> RunFinishedInterruptOutcome | RunFinishedSuccessOutcome | None:
         """Build the `RunFinishedEvent.outcome` from the final agent result.
@@ -271,10 +302,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             # `EventEncoder` serializes with `exclude_none=True`; the field is valid on this SDK.
             return None
         output = self._result.output if self._result else None
-        if isinstance(output, DeferredToolRequests) and output.approvals:
-            return RunFinishedInterruptOutcome(
-                interrupts=[approval_to_interrupt(call, output.metadata) for call in output.approvals],
-            )
+        if isinstance(output, DeferredToolRequests):
+            if output.approvals:
+                return RunFinishedInterruptOutcome(
+                    interrupts=[approval_to_interrupt(call, output.metadata) for call in output.approvals],
+                )
+            if output.calls and self._emit_1_0_outcomes:
+                # Every call the run left for the client to execute has no `TOOL_CALL_RESULT` yet.
+                return RunFinishedSuccessOutcome(pending_tool_call_ids=[call.tool_call_id for call in output.calls])
         return RunFinishedSuccessOutcome()
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:
@@ -292,7 +327,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         else:
             message_id = self.new_message_id()
             self._started_message_id = message_id
-            yield TextMessageStartEvent(message_id=message_id)
+            # `role` became optional in 1.0 and the SDK omits it from the wire when unset; 0.x client
+            # schemas require it.
+            yield TextMessageStartEvent(message_id=message_id, role='assistant')
 
         if part.content:  # pragma: no branch
             yield TextMessageContentEvent(message_id=message_id, delta=part.content)
@@ -375,7 +412,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             # The message carries no text, so it is closed straight away: the AG-UI client's event
             # verifier rejects `RUN_FINISHED` while a text message is still open.
             self._started_message_id = parent_message_id
-            yield TextMessageStartEvent(message_id=parent_message_id)
+            # `role` is explicit for the reason given in `handle_text_start`.
+            yield TextMessageStartEvent(message_id=parent_message_id, role='assistant')
             yield TextMessageEndEvent(message_id=parent_message_id)
 
         yield ToolCallStartEvent(
