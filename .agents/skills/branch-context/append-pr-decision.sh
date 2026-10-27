@@ -8,7 +8,7 @@
 #     --decision "Reviewer suggestion adopted: kwargs-only for new param" \
 #     --why "Reduces breakage risk at call sites" \
 #     --source "https://github.com/pydantic/pydantic-ai/pull/4567#discussion_r987654" \
-#     [--iter 3] [--supersedes "..."] [--session "$CLAUDE_CODE_SESSION_ID"]
+#     [--iter 3] [--supersedes "..."] [--session "${CLAUDE_CODE_SESSION_ID:-${CODEX_THREAD_ID:-}}"]
 #
 # Positional (compat):
 #   append-pr-decision.sh <title> <decision> <why> <source-url> [iteration] [supersedes]
@@ -53,7 +53,8 @@ if [[ "${1:-}" == -* ]]; then
             --source) SOURCE="${2:?}"; shift 2 ;;
             --iter|--iteration) ITER="${2:?}"; shift 2 ;;
             --supersedes) SUPERSEDES="${2:?}"; shift 2 ;;
-            --session) SESSION="${2:?}"; shift 2 ;;
+            # An empty id means no session: the field is best-effort.
+            --session) [[ $# -ge 2 ]] || usage; SESSION="$2"; shift 2 ;;
             *)
                 echo "error: unknown option $1" >&2
                 usage
