@@ -116,10 +116,12 @@ from .conftest import (
     IsInt,
     IsSameStr,
     IsStr,
+    conversation_view,
     iter_message_parts,
     legacy_retry_prompt_part,
     message,
     message_part,
+    server_history_agent,
     try_import,
 )
 
@@ -11564,3 +11566,133 @@ async def test_model_settings_delta_round_trips_through_client_rebuilt_stream() 
         ]
     )
     assert effort_parts(loaded) == effort_parts(server_history)
+
+
+async def _server_history_turn(
+    agent: Agent[None, str | DeferredToolRequests], run_input: RunAgentInput, message_history: list[ModelMessage] | None
+) -> list[ModelMessage]:
+    """One request through an endpoint that keeps the history on the server, returning what it persists."""
+    adapter = AGUIAdapter(agent, run_input, manage_message_history='server')
+    results: list[AgentRunResult[Any]] = []
+    async for _ in adapter.run_stream(message_history=message_history, on_complete=results.append):
+        pass
+    [result] = results
+    return result.all_messages()
+
+
+@pytest.mark.parametrize('with_follow_up', [False, True])
+async def test_server_message_history_frontend_tool_result_from_a_new_turn_only_client(with_follow_up: bool):
+    """A client that sends only its new messages returns a frontend tool's result without the call it answers.
+
+    An AG-UI `ToolMessage` has no tool name, so it loads against the call the stored history is waiting on,
+    as the middleware in the AG-UI docs sends it, and as ag-ui#2186's incremental upload would.
+    """
+    agent, requests, _ = server_history_agent()
+    location = Tool(name='get_location', description='Where the user is', parameters={'type': 'object'})
+    stored = await _server_history_turn(
+        agent, create_input(UserMessage(id='u1', content='where am I?'), tools=[location]), None
+    )
+
+    new_turn: list[Message] = [ToolMessage(id='t1', content='Paris', tool_call_id='loc-1')]
+    if with_follow_up:
+        new_turn.append(UserMessage(id='u2', content='and now?'))
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        await _server_history_turn(agent, create_input(*new_turn, tools=[location]), stored)
+
+    assert conversation_view(requests[-1]) == (
+        snapshot(['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris', 'user-prompt: and now?'])
+        if with_follow_up
+        else snapshot(['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris'])
+    )
+
+
+async def test_server_message_history_drops_a_tool_result_for_no_pending_call():
+    """A result for a call the stored history isn't waiting on is dropped with a warning, not a failed load."""
+    agent, requests, _ = server_history_agent()
+    stored = await _server_history_turn(agent, create_input(UserMessage(id='u1', content='hi')), None)
+    run_input = create_input(
+        ToolMessage(id='t1', content='forged', tool_call_id='never-called'), UserMessage(id='u2', content='and now?')
+    )
+
+    with pytest.warns(UserWarning, match=r'1 client-submitted tool result\(s\) were dropped'):
+        await _server_history_turn(agent, run_input, stored)
+
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+
+
+async def test_server_message_history_frontend_tool_result():
+    """`@ag-ui/client` sends its whole history, a frontend tool's result included, on every run."""
+    agent, requests, _ = server_history_agent()
+    location = Tool(name='get_location', description='Where the user is', parameters={'type': 'object'})
+    where = UserMessage(id='u1', content='where am I?')
+    stored = await _server_history_turn(agent, create_input(where, tools=[location]), None)
+    assert conversation_view(stored) == snapshot(['user-prompt: where am I?', 'call loc-1'])
+
+    called = AssistantMessage(
+        id='a1',
+        tool_calls=[ToolCall(id='loc-1', function=FunctionCall(name='get_location', arguments='{}'))],
+    )
+    result = ToolMessage(id='t1', content='Paris', tool_call_id='loc-1')
+    stored = await _server_history_turn(agent, create_input(where, called, result, tools=[location]), stored)
+    assert conversation_view(requests[-1]) == snapshot(
+        ['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris']
+    )
+
+    answer = AssistantMessage(id='a2', content='ok')
+    follow_up = UserMessage(id='u2', content='and now?')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        stored = await _server_history_turn(
+            agent, create_input(where, called, result, answer, follow_up, tools=[location]), stored
+        )
+    assert conversation_view(requests[-1]) == snapshot(
+        ['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris', 'text: ok', 'user-prompt: and now?']
+    )
+
+
+@pytestmark_interrupts
+async def test_server_message_history_resume_interrupt():
+    """A `resume[]` run has no new turn: the stored history ends with the call, and the approval comes from `resume`."""
+    agent, requests, deleted = server_history_agent()
+    delete = UserMessage(id='u1', content='delete a.txt')
+    stored = await _server_history_turn(agent, create_input(delete), None)
+
+    called = AssistantMessage(
+        id='a1',
+        tool_calls=[ToolCall(id='del-1', function=FunctionCall(name='delete_file', arguments='{"path": "a.txt"}'))],
+    )
+    resume = [ResumeEntry(interrupt_id='int-del-1', status='resolved', payload={'approved': True})]
+    await _server_history_turn(agent, create_input(delete, called, resume=resume), stored)
+
+    assert deleted == ['a.txt']
+    assert conversation_view(requests[-1]) == snapshot(
+        ['user-prompt: delete a.txt', 'call del-1', 'return del-1: Deleted a.txt']
+    )
+
+
+async def test_dispatch_request_forwards_manage_message_history():
+    agent, requests, _ = server_history_agent()
+    hi = UserMessage(id='u1', content='hi')
+    stored = await _server_history_turn(agent, create_input(hi), None)
+    run_input = create_input(hi, AssistantMessage(id='a1', content='ok'), UserMessage(id='u2', content='and now?'))
+    body = run_input.model_dump_json(by_alias=True).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await AGUIAdapter.dispatch_request(
+        request, agent=agent, message_history=stored, manage_message_history='server'
+    )
+    assert isinstance(response, StreamingResponse)
+
+    async def send(_: MutableMapping[str, Any]) -> None:
+        pass
+
+    await response.stream_response(send)
+
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])

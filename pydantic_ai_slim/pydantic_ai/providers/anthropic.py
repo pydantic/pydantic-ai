@@ -9,7 +9,11 @@ from typing import TypeAlias, overload
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
+from pydantic_ai.profiles.anthropic import (
+    _COUNTING_STRICT_SCHEMAS,  # pyright: ignore[reportPrivateUsage]
+    AnthropicModelProfile,
+    anthropic_model_profile,
+)
 from pydantic_ai.providers import Provider, missing_api_key_error
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
@@ -181,6 +185,8 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(
                 supports_mid_conversation_effort=model_name.startswith(_MID_CONVERSATION_EFFORT_MODEL_PREFIXES)
             ),
+            # Verified live on the Messages API and both Bedrock transports; `AnthropicModel` narrows it per client.
+            AnthropicModelProfile(anthropic_enforces_strict_schema_limits=True),
             # On-demand compaction is likewise a Messages API feature, so the Bedrock Converse API and the
             # OpenAI-compatible gateways that share `anthropic_model_profile()` don't get it.
             AnthropicModelProfile(
@@ -301,7 +307,7 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
         schema = super()._handle_object(schema)
-        if self.strict is True:
+        if self.strict is True and not _COUNTING_STRICT_SCHEMAS.get():
             additional_properties = schema.get('additionalProperties')
             if isinstance(additional_properties, dict) or additional_properties is True:
                 warnings.warn(

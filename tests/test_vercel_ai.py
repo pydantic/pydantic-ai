@@ -100,7 +100,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import UsageLimits
 
@@ -110,10 +110,12 @@ from .conftest import (
     IsList,
     IsSameStr,
     IsStr,
+    conversation_view,
     iter_message_parts,
     legacy_retry_prompt_part,
     message,
     message_part,
+    server_history_agent,
     try_import,
 )
 
@@ -13620,3 +13622,185 @@ async def test_model_settings_delta_after_enqueued_messages_keeps_its_position()
     assert [item.get('type') or item.get('role') for item in await rendered(loaded)] == snapshot(
         ['user', 'function_call', 'function_call_output', 'user', 'configuration_update', 'assistant']
     )
+
+
+async def _server_history_turn(
+    agent: Agent[None, str | DeferredToolRequests],
+    run_input: SubmitMessage | RegenerateMessage,
+    message_history: list[ModelMessage] | None,
+    sdk_version: Literal[5, 6, 7] = 5,
+) -> list[ModelMessage]:
+    """One request through an endpoint that keeps the history on the server, returning what it persists."""
+    adapter = VercelAIAdapter(agent, run_input, sdk_version=sdk_version, manage_message_history='server')
+    results: list[AgentRunResult[Any]] = []
+    async for _ in adapter.run_stream(message_history=message_history, on_complete=results.append):
+        pass
+    [result] = results
+    return result.all_messages()
+
+
+_HI = UIMessage(id='u1', role='user', parts=[TextUIPart(text='hi')])
+# `useChat` makes up its own id for an assistant message when the server doesn't send one.
+_OK = UIMessage(id='client-made-up', role='assistant', parts=[TextUIPart(text='ok')])
+_AND_NOW = UIMessage(id='u2', role='user', parts=[TextUIPart(text='and now?')])
+
+
+@pytest.mark.parametrize('client_sends', ['everything', 'last message only'])
+async def test_server_message_history_follow_up(client_sends: str):
+    """`useChat` sends its whole history by default; `prepareSendMessagesRequest` can trim it to the last message."""
+    agent, requests, _ = server_history_agent([ExternalToolset([ToolDefinition(name='get_location')])])
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
+
+    messages = [_HI, _OK, _AND_NOW] if client_sends == 'everything' else [_AND_NOW]
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=messages), stored)
+
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+    assert conversation_view(stored) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok'])
+
+
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+async def test_server_message_history_stale_regenerate_is_an_error_event():
+    """A regenerate of a message the server doesn't have, as a retry after a failed run, reaches `useChat` as an error.
+
+    It's on the stream, under a `200`, like any request the adapter rejects once it runs, and the model isn't asked.
+    """
+    agent, requests, _ = server_history_agent([ExternalToolset([ToolDefinition(name='get_location')])])
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
+    body = RegenerateMessage(trigger='regenerate-message', id='chat', messages=[_HI, _OK, _AND_NOW])
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body.model_dump_json(by_alias=True).encode()}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await VercelAIAdapter.dispatch_request(
+        request, agent=agent, message_history=stored, manage_message_history='server'
+    )
+    assert isinstance(response, StreamingResponse)
+    sent: list[MutableMapping[str, Any]] = []
+
+    async def send(message: MutableMapping[str, Any]) -> None:
+        sent.append(message)
+
+    await response.stream_response(send)
+
+    assert sent[0]['status'] == 200
+    assert b''.join(message.get('body', b'') for message in sent).decode() == snapshot("""\
+data: {"type":"start"}
+
+data: {"type":"error","errorText":"The message to regenerate ('u2') is not in `message_history`. Either the server never stored it, as when the run that answered it failed or was stopped, or the client holds a different conversation than the server, as a client in a stale tab does. Send the message again as a new one, or reload the conversation from the server."}
+
+data: {"type":"finish-step"}
+
+data: {"type":"finish","finishReason":"error"}
+
+data: [DONE]
+
+""")
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize('trigger', ['regenerate', 'edit'])
+async def test_server_message_history_regenerate_and_edit_replace_the_turn(trigger: str):
+    agent, requests, _ = server_history_agent([ExternalToolset([ToolDefinition(name='get_location')])])
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]), stored)
+
+    if trigger == 'regenerate':
+        # `regenerate()` drops the answer and sends the history up to the user message before it.
+        run_input = RegenerateMessage(
+            trigger='regenerate-message', id='chat', messages=[_HI, _OK, _AND_NOW], message_id='client-made-up-2'
+        )
+        prompt = 'and now?'
+    else:
+        # `sendMessage({ text, messageId })` replaces the user message with that id and what follows it.
+        prompt = 'and what about tomorrow?'
+        edited = UIMessage(id='u2', role='user', parts=[TextUIPart(text=prompt)])
+        run_input = SubmitMessage(id='chat', messages=[_HI, _OK, edited])
+    stored = await _server_history_turn(agent, run_input, stored)
+
+    assert conversation_view(requests[-1]) == ['user-prompt: hi', 'text: ok', f'user-prompt: {prompt}']
+    assert conversation_view(stored) == ['user-prompt: hi', 'text: ok', f'user-prompt: {prompt}', 'text: ok']
+
+
+async def test_server_message_history_frontend_tool_output():
+    """The output of a tool the frontend ran rides on the last assistant message, the one the stored history ends with."""
+    agent, requests, _ = server_history_agent([ExternalToolset([ToolDefinition(name='get_location')])])
+    where = UIMessage(id='u1', role='user', parts=[TextUIPart(text='where am I?')])
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[where]), None)
+    assert conversation_view(stored) == snapshot(['user-prompt: where am I?', 'call loc-1'])
+
+    answered = UIMessage(
+        id='client-made-up',
+        role='assistant',
+        parts=[
+            DynamicToolOutputAvailablePart(tool_name='get_location', tool_call_id='loc-1', input={}, output='Paris')
+        ],
+    )
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[where, answered]), stored)
+
+    assert conversation_view(requests[-1]) == snapshot(
+        ['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris']
+    )
+    assert conversation_view(stored) == snapshot(
+        ['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris', 'text: ok']
+    )
+
+
+@pytest.mark.parametrize('approved', [True, False])
+async def test_server_message_history_tool_approval(approved: bool):
+    """An approval resume has no new turn: the stored history ends with the call, and the approval comes from the request."""
+    agent, requests, deleted = server_history_agent([ExternalToolset([ToolDefinition(name='get_location')])])
+    delete = UIMessage(id='u1', role='user', parts=[TextUIPart(text='delete a.txt')])
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[delete]), None, sdk_version=6)
+
+    responded = UIMessage(
+        id='client-made-up',
+        role='assistant',
+        parts=[
+            DynamicToolApprovalRespondedPart(
+                tool_name='delete_file',
+                tool_call_id='del-1',
+                input={'path': 'a.txt'},
+                approval=ToolApprovalResponded(id='approval-1', approved=approved),
+            )
+        ],
+    )
+    await _server_history_turn(agent, SubmitMessage(id='chat', messages=[delete, responded]), stored, sdk_version=6)
+
+    assert deleted == (['a.txt'] if approved else [])
+    assert conversation_view(requests[-1]) == (
+        snapshot(['user-prompt: delete a.txt', 'call del-1', 'return del-1: Deleted a.txt'])
+        if approved
+        else snapshot(['user-prompt: delete a.txt', 'call del-1', 'return del-1: The tool call was denied.'])
+    )
+
+
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+async def test_dispatch_request_forwards_manage_message_history():
+    agent, requests, _ = server_history_agent([ExternalToolset([ToolDefinition(name='get_location')])])
+    stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
+    body = SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]).model_dump_json(by_alias=True).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await VercelAIAdapter.dispatch_request(
+        request, agent=agent, message_history=stored, manage_message_history='server'
+    )
+    assert isinstance(response, StreamingResponse)
+
+    async def send(_: MutableMapping[str, Any]) -> None:
+        pass
+
+    await response.stream_response(send)
+
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
