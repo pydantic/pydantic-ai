@@ -357,9 +357,7 @@ class FallbackModel(Model):
                     # stream. Callers must therefore call `get()` after the `async with` exits.
                     if streamed_response.state == 'suspended':
                         _stamp_continuation(streamed_response, pinned)
-                        carry_deadline(
-                            streamed_response, deadline, first_event_received=bool(streamed_response.get().parts)
-                        )
+                        carry_deadline(streamed_response, deadline)
                     return
 
         try:
@@ -407,9 +405,7 @@ class FallbackModel(Model):
                     # caller has consumed the stream, so callers must call `get()` after the context exits.
                     if streamed_response.state == 'suspended':
                         _stamp_continuation(streamed_response, model)
-                        carry_deadline(
-                            streamed_response, deadline, first_event_received=bool(streamed_response.get().parts)
-                        )
+                        carry_deadline(streamed_response, deadline)
                     return
 
             chain.exhausted()

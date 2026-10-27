@@ -143,14 +143,12 @@ def _on_anyio_clock(expires_at: str) -> float:
     return anyio.current_time() + (datetime.fromisoformat(expires_at) - now_utc()).total_seconds()
 
 
-def carry_deadline(
-    response: ModelResponse | StreamedResponse, deadline: RequestDeadline | None, *, first_event_received: bool = True
-) -> None:
+def carry_deadline(response: ModelResponse | StreamedResponse, deadline: RequestDeadline | None) -> None:
     """Carry `deadline` on a suspended response, for the segments that continue it, if there is one.
 
     It goes next to the continuation pin, if there is one. A nested `FallbackModel` has no deadline of its own, and has
-    already carried the one of the model it picked. `first_event_received` says whether a streamed response has
-    produced an event, after which its first-event deadline no longer applies; a non-streamed response has none.
+    already carried the one of the model it picked. Once a streamed response has produced an event, its first-event
+    deadline no longer applies; a non-streamed response has none.
     """
     if deadline is None:
         return
@@ -159,6 +157,7 @@ def carry_deadline(
         carried[_CARRIED_DEADLINE_KEY] = _expires_at(deadline.deadline)
     if deadline.first_event_timeout is not None:
         # `None` once the first event has arrived, so a later segment doesn't start a deadline of its own.
+        first_event_received = isinstance(response, ModelResponse) or bool(response.get().parts)
         pending = not first_event_received and deadline.first_event_deadline != math.inf
         carried[_CARRIED_FIRST_EVENT_DEADLINE_KEY] = _expires_at(deadline.first_event_deadline) if pending else None
     if response.metadata is None:
@@ -261,7 +260,7 @@ async def open_durable_unit_stream(
     async with stream_under_deadline(deadline, stream) as response:
         yield response
         if response.state == 'suspended':
-            carry_deadline(response, deadline, first_event_received=bool(response.get().parts))
+            carry_deadline(response, deadline)
 
 
 @asynccontextmanager
