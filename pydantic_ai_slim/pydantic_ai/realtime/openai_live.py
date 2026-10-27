@@ -272,17 +272,6 @@ _ActedOnEvent = Annotated[
 ]
 #: The Live server events the connection acts on. Every other type, including ones this version of the SDK
 #: doesn't know, is a notice or an acknowledgement that changes nothing the session has said or heard.
-#: The frames a reply held open for Live to pause (see `_release_settlement`) goes on through: its speech, its billing,
-#: and the session ending, which says itself how the reply ends.
-_HELD_THROUGH_EVENT_TYPES = frozenset(
-    {
-        'session.output_audio.delta',
-        'session.output_transcript.delta',
-        'session.usage.updated',
-        'session.closed',
-    }
-)
-
 _ACTED_ON_EVENT_TYPES = frozenset(
     {
         'session.output_audio.delta',
@@ -293,6 +282,16 @@ _ACTED_ON_EVENT_TYPES = frozenset(
         'session.usage.updated',
         'session.closed',
         'error',
+    }
+)
+#: The frames a reply held open for Live to pause (see `_release_settlement`) go on through: its speech, its billing,
+#: and the session ending, which says itself how the reply ends.
+_HELD_THROUGH_EVENT_TYPES = frozenset(
+    {
+        'session.output_audio.delta',
+        'session.output_transcript.delta',
+        'session.usage.updated',
+        'session.closed',
     }
 )
 _acted_on_event_adapter: TypeAdapter[_ActedOnEvent] = TypeAdapter(_ActedOnEvent)

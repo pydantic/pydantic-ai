@@ -2695,7 +2695,11 @@ def _step(connection: OpenAILiveConnection, payload: dict[str, Any]) -> list[Any
 
 
 def _settled_mid_sentence(connection: OpenAILiveConnection) -> None:
-    """Live speaks, the backend calls a tool, its result goes back, and the backend settles while Live still talks."""
+    """Live speaks, the backend calls a tool, its result goes back, and the backend settles while Live still talks.
+
+    Live decides when its backend settles relative to its own speech, so a recording can't be made to hit each way the
+    held report goes out: the tests built on this drive the connection's frames directly instead.
+    """
     _step(connection, _VOICE)
     _step(connection, _delegation_created('d1'))
     _step(connection, {'type': 'response.event', 'event_id': 'e', 'delegation_id': 'd1', 'event': _backend_call('c1')})
@@ -2707,6 +2711,7 @@ def _settled_mid_sentence(connection: OpenAILiveConnection) -> None:
 
 @pytest.mark.parametrize('forwards_output_audio', [True, False], ids=['websocket', 'sideband'])
 def test_a_reply_held_for_a_pause_ends_on_the_pause(forwards_output_audio: bool) -> None:
+    """Half a second of quiet on the audio track, which a sideband reads too (see `_settled_mid_sentence`)."""
     connection = _connection(forwards_output_audio=forwards_output_audio)
     _settled_mid_sentence(connection)
     for _ in range(4):
@@ -2765,6 +2770,7 @@ def test_a_reply_held_for_a_pause_ends_ahead_of_a_frame_that_fails_to_map(failur
 
 
 def test_a_reply_held_for_a_pause_is_cut_off_when_the_session_expires() -> None:
+    """The reply keeps the backend usage it reported, and is recorded as cut off (see `_settled_mid_sentence`)."""
     connection = _connection()
     _settled_mid_sentence(connection)
     frame = _step(connection, _session_closed('expired'))
@@ -2774,6 +2780,8 @@ def test_a_reply_held_for_a_pause_is_cut_off_when_the_session_expires() -> None:
 
 
 async def test_a_reply_held_for_a_pause_keeps_its_usage_when_the_connection_drops() -> None:
+    """The reply is lost with the connection, but not the backend usage it reported (see `_settled_mid_sentence`)."""
+
     class _DroppingWebSocket(_FakeWebSocket):
         async def recv(self) -> str:
             if self._frames:
@@ -2804,6 +2812,7 @@ async def test_a_reply_held_for_a_pause_keeps_its_usage_when_the_connection_drop
 
 
 async def test_a_reply_held_for_a_pause_hands_its_usage_over_when_the_session_ends() -> None:
+    """The session stopped reading: the held report is final usage like any other (see `_settled_mid_sentence`)."""
     connection = OpenAILiveConnection(_FakeWebSocket([]))  # pyright: ignore[reportArgumentType]
     _settled_mid_sentence(connection)
     reports = await _ended(connection)
