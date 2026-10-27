@@ -74,8 +74,8 @@ jobs:
               tests/benchmarks/README.md|tests/benchmarks/AGENTS.md) return 1 ;;
               # Workloads and root collection/autouse fixtures execute even without timing.
               tests/benchmarks/*|tests/__init__.py|tests/conftest.py|tests/cost_guards.py) return 0 ;;
-              # Root fixtures reset event-loop/instrumentation/cache state and track HTTP/test costs.
-              tests/_inline_snapshot.py|tests/cassette_hooks.py|tests/cassette_utils.py) return 0 ;;
+              # Root fixtures reset event-loop/instrumentation/cache state, track HTTP/test costs and check cache prefixes.
+              tests/_inline_snapshot.py|tests/cassette_hooks.py|tests/cassette_utils.py|tests/function_model_prefix.py) return 0 ;;
               # Other suites, cassettes and binary assets are not collected or requested by the workloads.
               tests/*) return 1 ;;
               pydantic_ai_slim/pydantic_ai/*)

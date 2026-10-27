@@ -14,6 +14,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from pydantic import JsonValue
 from rich.console import Console
+from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent, ModelMessage, UserContent, UserPromptPart
@@ -26,12 +27,14 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LiveSessions, Plugin, SessionStart
 from pydantic_clai2.runtime.live_runtimes import LiveRuntimes
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
+from pydantic_clai2.ui.menus import dialogs
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 from pydantic_clai2.ui.menus.update_menu import VERSION
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.terminal import NOWHERE, Terminal
 from tests.clai2.dialog_script import ScriptedDialogs
+from tests.clai2.menu_script import Script
 from tests.clai2.surface_terminal import SurfaceTerminal
 from tests.clai2.test_live_runtimes import Fleet, Recorder, blocked, until
 
@@ -160,10 +163,17 @@ async def test_restarts_are_refused_while_other_sessions_run_turns(
             c.send_input('go')
             await started['b'].wait()
             await started['c'].wait()
-            for command in ('/reload', '/update'):
+            for command in ('/reload', '/update now'):
                 with pytest.raises(ValueError, match='2 other sessions are running turns; try again when they finish'):
                     await home.commands.execute_async(command)
-            # The web UI's Settings > About says so too, instead of entering `/update`.
+            # Bare `/update` can still show its read-only status and channel while an install is refused.
+            shown = Script(lists=[MenuResult(cancelled=True)], choices=[], texts=[])
+            monkeypatch.setattr(dialogs, 'RUNNERS', shown.runners)
+            home.updates.fetch = lambda channel: home.updates.current.version
+            home.updates.spawn = lambda work: work()
+            assert await home.commands.execute_async('/update') == ''
+            assert shown.opened == ['list']
+            # The menu's Update action still refuses an install, even when the menu itself opens.
             about = next(command for command in home.commands if command.name == 'update').menu
             assert about is not None
             assert await about().actions[VERSION](ScriptedDialogs([])) == [
@@ -175,16 +185,19 @@ async def test_restarts_are_refused_while_other_sessions_run_turns(
                 await home.commands.execute_async('/reload')
             release['b'].set()
             await until(desk.live, lambda: not b.running)
-            assert await home.commands.execute_async('/update') == 'Updated.'
+            assert await home.commands.execute_async('/update now') == 'Updated.'
             assert await home.commands.execute_async('/reload') == 'Reloading CLAI2...'
     assert home.reload_requested
     await home.close('exit')
 
 
-async def test_a_session_shown_in_the_terminal_restarts_clai(tmp_path: Path) -> None:
-    """`/reload` works in the session shown, which then ends the terminal's run; elsewhere it is refused."""
+async def test_a_session_shown_in_the_terminal_restarts_clai(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hidden session cannot open a terminal menu or restart CLAI; the shown session can restart."""
     desk = Desk(tmp_path)
     home, terminal = desk.home, desk.terminal
+    monkeypatch.setattr(dialogs, 'RUNNERS', Script(lists=[MenuResult(cancelled=True)], choices=[], texts=[]).runners)
+    home.updates.fetch = lambda channel: home.updates.current.version
+    home.updates.spawn = lambda work: work()
 
     async def body() -> None:
         b = await desk.live.new()
@@ -192,8 +205,8 @@ async def test_a_session_shown_in_the_terminal_restarts_clai(tmp_path: Path) -> 
         with pytest.raises(ValueError, match='Enter them in the session the terminal shows'):
             await other.commands.execute_async('/reload')
         assert await home.show_live(b.conversation.conversation_id) == ''
-        # Hidden now, the session CLAI started with takes input from the browser, but not a restart.
-        for command in ('/reload', '/update'):
+        # Hidden now, the session CLAI started with cannot borrow the terminal's menu or restart.
+        for command in ('/reload', '/update', '/update now'):
             with pytest.raises(ValueError, match='Enter them in the session the terminal shows'):
                 await home.commands.execute_async(command)
         assert not home.reload_requested
@@ -216,7 +229,7 @@ async def test_a_session_shown_from_another_folder_does_not_restart_clai(tmp_pat
     async def body() -> None:
         b = await desk.live.new(workspace=desk.folder('b'))
         assert await home.show_live(b.conversation.conversation_id) == ''
-        for command in ('/reload', '/update'):
+        for command in ('/reload', '/update now'):
             with pytest.raises(ValueError, match=r'where it started, and this session works in .*b; restart it'):
                 await desk.runtimes[b.id].commands.execute_async(command)
         b.send_input('/exit')
