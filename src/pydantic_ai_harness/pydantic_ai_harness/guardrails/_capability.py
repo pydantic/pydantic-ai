@@ -129,10 +129,10 @@ def _find_prompt_part(
     the most recent part in `messages` used, with no original: nothing ties that part to the
     history.
     """
-    skip_task_reports = ctx.prompt is None
-    latest = _latest_prompt_parts(ctx.messages, skip_task_reports=skip_task_reports)
+    skip_harness_data = ctx.prompt is None
+    latest = _latest_prompt_parts(ctx.messages, skip_harness_data=skip_harness_data)
     if not latest:
-        return _latest_prompt_parts(messages, skip_task_reports=skip_task_reports), None
+        return _latest_prompt_parts(messages, skip_harness_data=skip_harness_data), None
     prompt = latest[0]
     if any(part is prompt for request in messages for part in request.parts):
         return [prompt], None
@@ -147,7 +147,7 @@ def _find_prompt_part(
     copies = [] if holder is None else _find_copies(prompt, holder.parts)
     if copies:
         return copies, prompt
-    return _latest_prompt_parts(messages, skip_task_reports=skip_task_reports), None
+    return _latest_prompt_parts(messages, skip_harness_data=skip_harness_data), None
 
 
 def _find_copies(prompt: UserPromptPart, parts: Sequence[object]) -> list[UserPromptPart]:
@@ -183,10 +183,10 @@ def _history_prompt_parts(ctx: RunContext[AgentDepsT]) -> int:
     )
 
 
-def _latest_prompt_parts(messages: Sequence[ModelMessage], *, skip_task_reports: bool) -> list[UserPromptPart]:
+def _latest_prompt_parts(messages: Sequence[ModelMessage], *, skip_harness_data: bool) -> list[UserPromptPart]:
     """The most recent `UserPromptPart` in `messages`, as a list of at most one.
 
-    `skip_task_reports` is set only for a run without a prompt of its own. `ctx.prompt` is always
+    `skip_harness_data` is set only for a run without a prompt of its own. `ctx.prompt` is always
     guarded, whatever metadata it carries, including a prompt taken from a request that ends
     `message_history`. Earlier history is trusted as the caller's own (untrusted client history
     goes through a UI adapter first), so a part there that carries a `SubAgents` task report's
@@ -196,7 +196,7 @@ def _latest_prompt_parts(messages: Sequence[ModelMessage], *, skip_task_reports:
     for message in reversed(messages):
         for part in reversed(message.parts):
             if isinstance(part, UserPromptPart) and not (
-                skip_task_reports and (is_task_report(part) or is_peer_message(part))
+                skip_harness_data and (is_task_report(part) or is_peer_message(part))
             ):
                 return [part]
     return []

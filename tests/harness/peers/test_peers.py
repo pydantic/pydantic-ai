@@ -568,12 +568,12 @@ class TestPeers:
         network.join(handle='c')
         capped = await Agent(model, capabilities=[Peers(network=sender, max_listed=1)]).run('list')
         assert tool_results(capped.all_messages()) == snapshot(
-            ['b [<id>] idle (0 pending; accepts messages)\n+1 more; narrow the query']
+            ['b [<id>] idle (0 pending; messages disabled)\n+1 more; narrow the query']
         )
         filtered = await Agent(tool_model('list_peers', {'query': 'C'}), capabilities=[Peers(network=sender)]).run(
             'list'
         )
-        assert tool_results(filtered.all_messages()) == snapshot(['c [<id>] idle (0 pending; accepts messages)'])
+        assert tool_results(filtered.all_messages()) == snapshot(['c [<id>] idle (0 pending; messages disabled)'])
 
     async def test_send_reports_delivery_and_passes_reply_id(self) -> None:
         network = ScriptedNetwork([PeerDelivery(message_id='m2', status='delivered')])
@@ -852,6 +852,17 @@ class TestPeers:
         inbox.detach()
         assert await inbox.pending() == []
         assert await PeerInbox(path=tmp_path / 'pending.json').pending() == []
+
+    async def test_join_without_an_inbox_is_send_only(self) -> None:
+        network = InMemoryPeerNetwork()
+        network.join(handle='without-inbox')
+        sender = network.join(handle='sender')
+        target = (await sender.peers())[0]
+        assert not target.accepts_messages
+        delivery = await sender.send(target.id, 'hello')
+        assert delivery.status == 'refused'
+        assert delivery.reason == 'does not accept messages'
+        assert delivery.pending == 0
 
     async def test_network_address_and_handle_errors(self) -> None:
         network = InMemoryPeerNetwork()

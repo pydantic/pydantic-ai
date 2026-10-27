@@ -13,7 +13,7 @@ Let an agent discover and message other agent sessions without starting or contr
 
 ## In-process example
 
-`InMemoryPeerNetwork` connects sessions in one application. Give each recipient a `PeerInbox`, and pass that same inbox both to `join()` and to its `Peers` capability:
+[`InMemoryPeerNetwork`][pydantic_ai_harness.peers.InMemoryPeerNetwork] connects sessions in one application. Give each recipient a [`PeerInbox`][pydantic_ai_harness.peers.PeerInbox], and pass that same inbox both to `join()` and to its [`Peers`][pydantic_ai_harness.Peers] capability. Joining without an inbox is send-only: incoming messages are rejected until the host joins with an explicit inbox.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -40,11 +40,11 @@ Sending to an idle peer queues a message but does not start that peer's run. The
 
 ## Transport and persistence
 
-`InMemoryPeerNetwork` is an in-process example, not a cross-process transport. For sessions across processes or machines, implement `PeerNetwork.peers()` and `PeerNetwork.send()` in the host. The host owns peer identity, routing, authentication, and any user-visible notifications; the model supplies the recipient, text, and optional `reply_to` ID. `PeerNetwork.peers()` returns other peers as `PeerInfo` objects. `send()` delivers to the recipient and returns a `PeerDelivery` with status `delivered`, `queued`, or `refused`; it raises `LookupError` for a peer that disappeared.
+`InMemoryPeerNetwork` is an in-process example, not a cross-process transport. For sessions across processes or machines, implement `PeerNetwork.peers()` and `PeerNetwork.send()` in the host. The host owns peer identity, routing, authentication, and any user-visible notifications; the model supplies the recipient, text, and optional `reply_to` ID. A [`PeerNetwork`][pydantic_ai_harness.peers.PeerNetwork] returns other peers as [`PeerInfo`][pydantic_ai_harness.peers.PeerInfo] objects from `peers()`. `send()` delivers to the recipient and returns a [`PeerDelivery`][pydantic_ai_harness.peers.PeerDelivery] with status `delivered`, `queued`, or `refused`; it raises `LookupError` for a peer that disappeared. Implement [`PeerSender`][pydantic_ai_harness.peers.PeerSender] to send a message to one recipient.
 
 `PeerInbox(path=...)` saves pending messages to an atomically replaced JSON file at a host-chosen per-recipient path. Use a private directory for that path. An inbox without `path` keeps messages only in memory. A file-backed inbox does not provide a network or coordinate simultaneous writers across processes. Pass the same inbox to the recipient's transport endpoint and `Peers(inbox=...)`; without an inbox bound to `Peers`, the capability provides sending tools but does not attach a recipient inbox to the run.
 
-Incoming text is framed as untrusted peer data on the user channel, with typed provenance metadata. It is not an instruction from the receiving user and cannot grant approval. `read_peer_message(part)` reads a peer message from a tagged message part by its metadata, not by matching the displayed text. Native message serialization preserves that metadata; adapters that discard `TextContent.metadata` lose the provenance marker on round-trip.
+Incoming text is framed as untrusted peer data on the user channel, with typed provenance metadata. It is not an instruction from the receiving user and cannot grant approval. A [`PeerMessage`][pydantic_ai_harness.peers.PeerMessage] carries that data. [`read_peer_message`][pydantic_ai_harness.peers.read_peer_message] reads a peer message from a tagged message part by its metadata, not by matching the displayed text. Native message serialization preserves that metadata; adapters that discard `TextContent.metadata` lose the provenance marker on round-trip.
 
 ## Limits and scope
 
@@ -52,4 +52,30 @@ Incoming text is framed as untrusted peer data on the user channel, with typed p
 
 Unlike [Subagents](subagents.md), `Peers` does not create a child run, forward dependencies or usage, or wait for another agent's result. Its tools run as ordinary function tools, so core's tool-call spans cover them; the capability adds no dedicated telemetry spans.
 
+## API reference
+
 ::: pydantic_ai_harness.Peers
+
+::: pydantic_ai_harness.peers.InMemoryPeerNetwork
+
+::: pydantic_ai_harness.peers.PeerNetwork
+
+::: pydantic_ai_harness.peers.PeerInfo
+
+::: pydantic_ai_harness.peers.PeerDelivery
+
+::: pydantic_ai_harness.peers.PeerInbox
+
+::: pydantic_ai_harness.peers.PeerSender
+
+::: pydantic_ai_harness.peers.PeerMessage
+
+::: pydantic_ai_harness.peers.read_peer_message
+
+::: pydantic_ai_harness.peers.DeliveryStatus
+
+::: pydantic_ai_harness.peers.PeerStatus
+
+::: pydantic_ai_harness.peers.MAX_MESSAGE_BYTES
+
+::: pydantic_ai_harness.peers.MAX_PENDING

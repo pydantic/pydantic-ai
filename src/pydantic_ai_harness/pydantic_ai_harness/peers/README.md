@@ -8,7 +8,7 @@ Let an agent discover and message other agent sessions without starting or contr
 
 ## In-process example
 
-`InMemoryPeerNetwork` connects sessions in one application. Give each recipient a `PeerInbox`, and pass that same inbox both to `join()` and to its `Peers` capability:
+`InMemoryPeerNetwork` connects sessions in one application. Give each recipient a `PeerInbox`, and pass that same inbox both to `join()` and to its `Peers` capability. Joining without an inbox is send-only: incoming messages are rejected until the host joins with an explicit inbox.
 
 ```python
 from pydantic_ai import Agent
@@ -43,6 +43,6 @@ Incoming text is framed as untrusted peer data on the user channel, with typed p
 
 ## Limits and scope
 
-`MAX_MESSAGE_BYTES` (16384 UTF-8 bytes) and `MAX_PENDING` (50) are public transport contract defaults. A host transport can use them to reject oversized wire messages and bound incoming queues before messages reach `PeerInbox.receive`. `Peers` also defaults to `max_messages_per_run=10` and `max_listed=30`. Only delivered or queued messages count toward `max_messages_per_run`. Sending the same text to the same peer twice in one run, or exceeding the limit, tells the model without sending the message. All limits must be positive.
+`MAX_MESSAGE_BYTES` (16384 UTF-8 bytes) and `MAX_PENDING` (50) are public transport contract defaults. See the [peer API reference](https://pydantic.dev/docs/ai/api/harness/peers/) for the host-facing transport types and helpers. A host transport can use them to reject oversized wire messages and bound incoming queues before messages reach `PeerInbox.receive`. `Peers` also defaults to `max_messages_per_run=10` and `max_listed=30`. Only delivered or queued messages count toward `max_messages_per_run`. Sending the same text to the same peer twice in one run, or exceeding the limit, tells the model without sending the message. All limits must be positive.
 
 Unlike [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/), `Peers` does not create a child run, forward dependencies or usage, or wait for another agent's result. Its tools run as ordinary function tools, so core's tool-call spans cover them; the capability adds no dedicated telemetry spans.
