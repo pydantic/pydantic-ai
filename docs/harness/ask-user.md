@@ -119,15 +119,9 @@ can identify the record without matching visible text.
 `AskUserAnsweredEvent.response` retains the original notes, including attachments.
 Without notes, the result remains the existing dictionary or decline text.
 
-!!! warning "Compatibility impact"
-
-    `ask_user_result` now returns [`AskUserResult`][pydantic_ai_harness.ask_user.AskUserResult],
-    which includes `ToolReturn[dict[str, list[str]]]` as well as the original dictionary and string.
-    Code that assigned its result to an explicitly annotated `dict[str, list[str]] | str` must
-    widen that annotation to `AskUserResult`. To inspect wrapped answers, narrow with
-    `isinstance(result, ToolReturn)` and read `result.return_value`. Deferred hosts can continue
-    to pass the result directly to `DeferredToolResults.calls`.
-    This API change follows the [Harness 0.x version policy](index.md#version-policy).
+Annotate results with [`AskUserResult`][pydantic_ai_harness.ask_user.AskUserResult]. To inspect
+wrapped answers, narrow with `isinstance(result, ToolReturn)` and read `result.return_value`.
+Deferred hosts can pass the result directly to `DeferredToolResults.calls`.
 
 ## Bounding the wait
 

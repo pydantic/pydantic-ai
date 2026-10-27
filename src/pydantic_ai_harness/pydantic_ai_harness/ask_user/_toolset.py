@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import anyio
 
-from pydantic_ai._framing import ANSWER_NOTE_TAG, close_tag, neutralize_tags, open_tag
 from pydantic_ai.exceptions import CallDeferred
+from pydantic_ai.framing import close_tag, neutralize_tags, open_tag, register_tag
 from pydantic_ai.messages import TextContent, ToolReturn, UserContent
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
@@ -28,6 +28,9 @@ TIMED_OUT = (
 )
 """The tool result when the answerer does not return within `AskUser.timeout`."""
 
+
+_ANSWER_NOTE_TAG = register_tag('answer_note')
+"""Frames a user's note accompanying an answer, keyed by the question header."""
 
 _ANSWER_NOTE_ORIGIN = 'pydantic-ai-harness.ask_user.answer_note.v1'
 
@@ -54,7 +57,7 @@ def ask_user_result(request: AskUserRequest, response: AskUserResponse) -> AskUs
         if not answer.note:
             continue
         metadata = {'origin': _ANSWER_NOTE_ORIGIN, 'request_id': request.id, 'header': answer.header}
-        content.append(TextContent(open_tag(ANSWER_NOTE_TAG, header=answer.header), metadata=metadata))
+        content.append(TextContent(open_tag(_ANSWER_NOTE_TAG, header=answer.header), metadata=metadata))
         for item in answer.note:
             if isinstance(item, str):
                 content.append(neutralize_tags(item))
@@ -63,7 +66,7 @@ def ask_user_result(request: AskUserRequest, response: AskUserResponse) -> AskUs
                 content.append(neutralize_tags(item.content))
             else:
                 content.append(item)
-        content.append(TextContent(close_tag(ANSWER_NOTE_TAG), metadata=metadata))
+        content.append(TextContent(close_tag(_ANSWER_NOTE_TAG), metadata=metadata))
     return ToolReturn(return_value=answers, content=content) if content else answers
 
 

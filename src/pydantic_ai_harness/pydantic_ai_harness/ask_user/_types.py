@@ -205,7 +205,7 @@ class Answerer(Protocol):
 
 def _check_note(note: tuple[UserContent, ...]) -> None:
     if not isinstance(note, tuple):
-        raise ValueError('an answer note must be a tuple of UserContent items')
+        raise ValueError('an answer note must be a tuple of `UserContent` items')
     if not note:
         return
     # Reuse core's content-type guard before notes reach a model adapter.
@@ -216,7 +216,7 @@ def _check_note(note: tuple[UserContent, ...]) -> None:
             if urlparse(item.url).scheme not in {'http', 'https'}:
                 raise ValueError('answer note file URLs must use http or https')
             if item.force_download is not False:
-                raise ValueError('answer note file URLs must use force_download=False')
+                raise ValueError('answer note file URLs must use `force_download=False`')
         elif isinstance(item, UploadedFile):
             raise ValueError('answer notes must not contain provider-uploaded file references')
         if isinstance(item, str | TextContent):
