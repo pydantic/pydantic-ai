@@ -125,15 +125,12 @@ class Summarize(AbstractCapability[Any]):
 
 @dataclass
 class RecordEvents(AbstractCapability[Any]):
-    cancel: bool = False
     events: list[CompactionStartEvent | CompactionEndEvent] = field(
         default_factory=list[CompactionStartEvent | CompactionEndEvent]
     )
 
     @on_event(CompactionStartEvent, CompactionEndEvent)
     async def _record(self, ctx: RunContext[Any], event: CompactionStartEvent | CompactionEndEvent) -> None:
-        if self.cancel and isinstance(event, CompactionStartEvent):
-            event.cancel()
         self.events.append(event)
 
 
