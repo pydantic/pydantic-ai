@@ -1,7 +1,8 @@
 """Changing the thinking effort mid-conversation on the APIs that have a channel for it (#10385).
 
-OpenAI Responses takes a `configuration_update` input item and Anthropic an effort-only `{'role': 'system'}` entry
-with a per-message `output_config`. Either way the request-level effort stays what the conversation opened with,
+OpenAI Responses takes a `configuration_update` input item, Anthropic an effort-only `{'role': 'system'}` entry
+with a per-message `output_config`, and OpenRouter a content-less `system` message carrying a `configuration_update`
+(#11189). Either way the request-level effort stays what the conversation opened with,
 so the prompt cache keeps its prefix: measured on 2026-10-23, a request-level change on `gpt-6.1-sol` read 0 of
 ~8,600 prompt tokens from cache where the item read 8,593. Every other case sends the change as the
 request-level effort, as before.
@@ -25,16 +26,16 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.direct import model_request
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 from .._inline_snapshot import snapshot
-from ..conftest import try_import
+from ..conftest import RequestCapture, try_import
 
 with try_import() as openai_imports_successful:
     from openai.types.chat import ChatCompletionMessage
@@ -42,7 +43,9 @@ with try_import() as openai_imports_successful:
     from openai.types.responses.response_output_message import Content
 
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     from .mock_openai import (
         MockOpenAI,
@@ -75,8 +78,8 @@ _PREFIX = 'You answer questions about the catalogue below in one short sentence.
 """Long enough to be cached on both providers."""
 
 
-def _history() -> list[ModelMessage]:
-    """A conversation that opened at `low` effort, before a change to `xhigh`."""
+def _history(change: ThinkingEffort = 'xhigh') -> list[ModelMessage]:
+    """A conversation that opened at `low` effort, before a change to `change`."""
     return [
         ModelRequest(
             parts=[
@@ -85,7 +88,7 @@ def _history() -> list[ModelMessage]:
             ]
         ),
         ModelResponse(parts=[TextPart('Shelf 12, bin 1.')]),
-        ModelRequest(parts=[UserPromptPart('And item 40?'), ModelSettingsDeltaPart(settings={'thinking': 'xhigh'})]),
+        ModelRequest(parts=[UserPromptPart('And item 40?'), ModelSettingsDeltaPart(settings={'thinking': change})]),
     ]
 
 
@@ -215,6 +218,208 @@ def test_openai_profile_gate():
     assert gpt_6 is not None and gpt_5 is not None
     assert gpt_6.get('supports_mid_conversation_effort') is True
     assert gpt_5.get('supports_mid_conversation_effort') is False
+
+
+# --- OpenRouter -----------------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'expected_request'),
+    [
+        pytest.param(
+            'anthropic/claude-opus-5.5',
+            snapshot(
+                {
+                    'reasoning': {'effort': 'low', 'enabled': True},
+                    'messages': [
+                        {'role': 'user', 'content': 'Where is item 12?'},
+                        {
+                            'role': 'assistant',
+                            'content': 'Item 0012 is on shelf 12, bin 1 (revision 12, status verified).',
+                        },
+                        {
+                            'role': 'user',
+                            'content': [
+                                {
+                                    'type': 'text',
+                                    'text': 'And item 40?',
+                                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                                }
+                            ],
+                        },
+                        {'role': 'system', 'content': '', 'configuration_update': {'reasoning': {'effort': 'high'}}},
+                    ],
+                }
+            ),
+            id='anthropic',
+        ),
+        pytest.param(
+            'openai/gpt-6.1-sol',
+            snapshot(
+                {
+                    'reasoning': {'effort': 'low', 'enabled': True},
+                    'messages': [
+                        {'role': 'user', 'content': 'Where is item 12?'},
+                        {'role': 'assistant', 'content': 'Item 0012 is on shelf 12, in bin 1.'},
+                        {'role': 'user', 'content': 'And item 40?'},
+                        {'role': 'system', 'content': '', 'configuration_update': {'reasoning': {'effort': 'high'}}},
+                    ],
+                }
+            ),
+            id='openai',
+        ),
+    ],
+)
+async def test_openrouter_effort_change_keeps_the_cache(
+    allow_model_requests: None,
+    openrouter_api_key: str,
+    request_capture: RequestCapture,
+    model_name: str,
+    expected_request: Any,
+):
+    """The second run sends the change as a content-less `system` message and reads the first run's prefix from cache.
+
+    Sent as the request-level `reasoning.effort` instead, the change read 0 of 8,058 prompt tokens from cache on
+    `openai/gpt-6.1-sol` (recorded 2026-10-26). OpenRouter translates the message to the routed model's own form.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.http_client(timeout=120))
+    agent = Agent(OpenRouterModel(model_name, provider=provider), instructions=_PREFIX)
+    settings = OpenRouterModelSettings(openrouter_cache_instructions=True, openrouter_cache_messages=True)
+    first = await agent.run('Where is item 12?', model_settings={**settings, 'thinking': 'low'})
+    second = await agent.run(
+        'And item 40?', message_history=first.all_messages(), model_settings={**settings, 'thinking': 'high'}
+    )
+
+    _, second_request = request_capture.bodies()
+    # The instructions are left out: they're the long cached prefix.
+    messages = cast(list[Any], second_request['messages'])[1:]
+    assert {'reasoning': second_request['reasoning'], 'messages': messages} == expected_request
+    assert second.response.usage.cache_read_tokens >= first.response.usage.input_tokens - 100
+
+
+def _openrouter_text(text: str) -> Any:
+    completion = chat_completion_message(ChatCompletionMessage(content=text, role='assistant'))
+    return completion.model_copy(update={'provider': 'Anthropic'})
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openrouter_earlier_effort_change_stays_in_place(allow_model_requests: None):
+    """A change from an earlier request is replayed where it was, and the breakpoints skip over it."""
+    mock_client = MockOpenAI.create_mock(_openrouter_text('Shelf 41.'))
+    model = OpenRouterModel('anthropic/claude-opus-5.5', provider=OpenRouterProvider(openai_client=mock_client))
+    history = [
+        *_history('high'),
+        ModelResponse(parts=[TextPart('Shelf 40, bin 7.')]),
+        ModelRequest(parts=[UserPromptPart('And item 41?')]),
+    ]
+
+    await Agent(model).run(
+        message_history=history,
+        model_settings=OpenRouterModelSettings(thinking='high', openrouter_cache_messages=True),
+    )
+
+    request = get_mock_chat_kwargs(mock_client)[0]
+    assert request['extra_body']['reasoning'] == {'effort': 'low', 'enabled': True}
+    assert request['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': 'Where is item 12?'},
+            {'role': 'assistant', 'content': 'Shelf 12, bin 1.'},
+            {'role': 'user', 'content': 'And item 40?'},
+            {'role': 'system', 'content': '', 'configuration_update': {'reasoning': {'effort': 'high'}}},
+            {'role': 'assistant', 'content': 'Shelf 40, bin 7.'},
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'text': 'And item 41?', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}
+                ],
+            },
+        ]
+    )
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openrouter_without_the_opening_effort_sends_the_current_one(allow_model_requests: None):
+    """A history processor that dropped the window's opening part leaves the current effort as the request-level one."""
+    mock_client = MockOpenAI.create_mock(_openrouter_text('Shelf 40, bin 7.'))
+    model = OpenRouterModel('openai/gpt-6.1-sol', provider=OpenRouterProvider(openai_client=mock_client))
+
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart('Where is item 12?'), ModelSettingsDeltaPart(settings={'thinking': 'medium'})]
+        ),
+        ModelResponse(parts=[TextPart('Shelf 12, bin 1.')]),
+        ModelRequest(parts=[UserPromptPart('And item 40?')]),
+    ]
+
+    await Agent(model).run(message_history=history, model_settings=ModelSettings(thinking='high'))
+
+    request = get_mock_chat_kwargs(mock_client)[0]
+    assert request['extra_body']['reasoning'] == {'effort': 'high', 'enabled': True}
+    assert request['messages'][-1] == {
+        'role': 'system',
+        'content': '',
+        'configuration_update': {'reasoning': {'effort': 'high'}},
+    }
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'settings'),
+    [
+        pytest.param('openai/gpt-6.1-sol', {'openrouter_reasoning': {'effort': 'medium'}}, id='explicit-reasoning'),
+        pytest.param('openai/gpt-6.1-sol', {'openai_reasoning_effort': 'medium'}, id='explicit-effort'),
+        pytest.param('anthropic/claude-sonnet-5', {}, id='unsupported-model'),
+    ],
+)
+async def test_openrouter_falls_back_to_the_request_level_effort(
+    allow_model_requests: None, model_name: str, settings: dict[str, Any]
+):
+    """A direct `request` skips `prepare_messages`, so the adapter itself removes the parts where it can't send them."""
+    mock_client = MockOpenAI.create_mock(_openrouter_text('Shelf 40, bin 7.'))
+    model = OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=mock_client))
+
+    await model.request(
+        _history('high'), cast(ModelSettings, {**settings, 'thinking': 'high'}), ModelRequestParameters()
+    )
+
+    request = get_mock_chat_kwargs(mock_client)[0]
+    assert request['extra_body']['reasoning'] == settings.get(
+        'openrouter_reasoning', {'effort': 'high', 'enabled': True}
+    )
+    assert not any('configuration_update' in message for message in request['messages'])
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'supported'),
+    [
+        pytest.param('anthropic/claude-fable-5.1', True, id='fable-5-1'),
+        pytest.param('anthropic/claude-opus-5', True, id='opus-5'),
+        pytest.param('anthropic/claude-haiku-5.5', True, id='haiku-5-5'),
+        pytest.param('anthropic/claude-fable-5', False, id='fable-5'),
+        pytest.param('anthropic/claude-sonnet-5', False, id='sonnet-5'),
+        pytest.param('openai/gpt-6-astra', True, id='gpt-6-astra'),
+        pytest.param('openai/gpt-6-astra-pro', False, id='gpt-6-astra-pro'),
+        pytest.param('openai/gpt-6.1-terra', False, id='gpt-6-1-terra'),
+        pytest.param('openai/gpt-5.6', False, id='gpt-5-6'),
+        pytest.param('google/gemini-3.5-flash', False, id='gemini'),
+    ],
+)
+def test_openrouter_profile_gate(model_name: str, supported: bool):
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_mid_conversation_effort') is supported
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_chat_direct_request_with_effort_parts_needs_prepare_messages(allow_model_requests: None):
+    """Chat Completions has no mid-conversation channel; a direct `request` that skipped `prepare_messages` says so."""
+    mock_client = MockOpenAI.create_mock(chat_completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    with pytest.raises(UserError, match='`ModelSettingsDeltaPart` cannot be rendered by this model'):
+        await model.request(_history(), ModelSettings(thinking='xhigh'), ModelRequestParameters())
 
 
 # --- Anthropic ------------------------------------------------------------------------------------

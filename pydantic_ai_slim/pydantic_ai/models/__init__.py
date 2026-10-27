@@ -1131,7 +1131,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Compact messages to reduce conversation context size.
 
         This method is optional and only supported by specific providers
-        (e.g. OpenAI Responses API). Providers that support compaction
+        (e.g. OpenAI Responses API and Anthropic). Providers that support compaction
         override this method with their implementation.
         """
         raise NotImplementedError(f'Message compaction is not supported by {self.__class__.__name__}')

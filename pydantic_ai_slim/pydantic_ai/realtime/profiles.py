@@ -88,6 +88,14 @@ class RealtimeModelProfile(TypedDict, total=False):
     requested combination of response modalities (AUDIO) is not supported by the model`)."""
     supports_session_seeding: bool
     """Whether the model can seed a session with prior conversation (`message_history`)."""
+    supports_system_messages: bool
+    """Whether a [system prompt sent mid-session](../realtime/turns.md#system-prompts) goes to the model on its
+    protocol's channel for the operator's own text, which it takes as instructions rather than the user's words.
+
+    OpenAI `gpt-realtime` and Azure send a `system` message, and OpenAI GPT-Live, with a reply asked for, gives the
+    delegated backend a developer message. When `False` (the default), the prompt goes out `<system>`-tagged, the
+    way any text would: xAI Grok Voice and Eleven Realtime accept a `system` message, but their models don't act
+    on it. Set it with `profile=` for a model whose support differs from its provider's."""
     supports_webrtc: bool
     """Whether the model supports browser WebRTC signaling, ephemeral client secrets, and a server-side
     control-plane sideband via [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer],
@@ -216,6 +224,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_output_truncation': False,
     'supports_text_output': True,
     'supports_session_seeding': False,
+    'supports_system_messages': False,
     'supports_webrtc': False,
     'supports_seeding_images': False,
     'supports_seeding_audio': False,
