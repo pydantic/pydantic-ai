@@ -56,7 +56,7 @@ class PostgresSpendStore:
     row per applied `SpendEntry.token` and window in `{table}_dedup`, both keyed by a SHA-256
     digest so a key or token of any length fits the index. Both tables are created on first use. Takes a caller-owned asyncpg-compatible pool; the store never closes it.
 
-    Horizons are measured on the server's clock, `now()`, the way Redis measures expiry on its
+    Horizons are measured on the server's clock, the way Redis measures expiry on its
     own, so every worker agrees on when a window rolls over and a worker whose clock runs ahead
     cannot restart a counter another worker is still adding to.
 
@@ -165,15 +165,18 @@ class PostgresSpendStore:
         """Record that this entry's response reached its window, or report that it already had.
 
         A marker past its horizon that the sweep has not reached yet is taken over rather than
-        honoured, so expiry does not depend on when the sweep runs.
+        honoured, so expiry does not depend on when the sweep runs. Horizons written here and in
+        `_increment` are measured from `clock_timestamp()`, the moment the row is written, rather
+        than `now()`, the transaction's start: a write that waited on another transaction's lock
+        for longer than a short `ttl` would otherwise commit a row that had already expired.
         """
         horizon = self._marker_horizon(entry)
         if entry.token is None or horizon is None:
             return True
         claimed = await connection.fetchval(
-            f'INSERT INTO {self._dedup} (marker_sha256, expires_at) VALUES ($1, now() + $2::interval) '
-            f'ON CONFLICT (marker_sha256) DO UPDATE SET expires_at = EXCLUDED.expires_at '
-            f'WHERE {self._dedup}.expires_at <= now() RETURNING 1',
+            f'INSERT INTO {self._dedup} (marker_sha256, expires_at) VALUES ($1, clock_timestamp() + $2::interval) '
+            f'ON CONFLICT (marker_sha256) DO UPDATE SET expires_at = clock_timestamp() + $2::interval '
+            f'WHERE {self._dedup}.expires_at <= clock_timestamp() RETURNING 1',
             # Length-prefixed, as `RedisSpendStore` names its markers, so `('a|b', 'c')` and
             # `('a', 'b|c')` stay two markers.
             _digest(delimited(entry.key, entry.token)),
@@ -189,13 +192,14 @@ class PostgresSpendStore:
         """
         table = self._counters
         increments = ', '.join(
-            f'{column} = CASE WHEN {table}.expires_at <= now() THEN 0 ELSE {table}.{column} END + EXCLUDED.{column}'
+            f'{column} = CASE WHEN {table}.expires_at <= clock_timestamp() THEN 0 ELSE {table}.{column} END '
+            f'+ EXCLUDED.{column}'
             for column in ('usd_nanos', 'tokens', 'requests', 'unpriced')
         )
         await connection.execute(
             f'INSERT INTO {table} (key_sha256, key, usd_nanos, tokens, requests, unpriced, expires_at) '
-            f'VALUES ($1, $2, $3, $4, $5, $6, now() + $7::interval) ON CONFLICT (key_sha256) DO UPDATE SET '
-            f'{increments}, expires_at = EXCLUDED.expires_at',
+            f'VALUES ($1, $2, $3, $4, $5, $6, clock_timestamp() + $7::interval) ON CONFLICT (key_sha256) '
+            f'DO UPDATE SET {increments}, expires_at = clock_timestamp() + $7::interval',
             _digest(entry.key),
             # Bytes, so a key carrying a NUL, which `TEXT` refuses, is stored rather than failing the write.
             entry.key.encode(),

@@ -731,6 +731,27 @@ async def test_spend_concurrent_calls_sharing_a_key_with_different_tokens_do_not
         assert await store.get_many(['k']) == {'k': Spent(requests=40)}
 
 
+async def test_spend_a_write_that_waited_on_a_lock_keeps_its_full_horizon() -> None:
+    """The horizon is measured from when the row is written, not from when the transaction began."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresSpendStore(pool, table=prefix)
+        await store.add_many([SpendEntry(key='k', requests=1, ttl=timedelta(minutes=5))])
+        held = anyio.Event()
+
+        async def hold_the_row() -> None:
+            async with pool.acquire() as connection, connection.transaction():
+                await connection.execute(f'UPDATE {prefix}_counters SET tokens = tokens')
+                held.set()
+                await anyio.sleep(1.0)
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(hold_the_row)
+            await held.wait()
+            await store.add_many([SpendEntry(key='k', requests=1, ttl=timedelta(milliseconds=500))])
+
+        assert await store.get_many(['k']) == {'k': Spent(requests=2)}
+
+
 async def test_spend_concurrent_writers_succeed_on_a_pool_defaulting_to_serializable() -> None:
     """The write sets `READ COMMITTED` itself, so a stricter pool default cannot fail a concurrent writer."""
     async with _live_tables() as (_, prefix):

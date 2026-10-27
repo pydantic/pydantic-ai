@@ -3,8 +3,8 @@
 There is no in-process Postgres, so the unit suites run `PostgresMediaStore`,
 `PostgresStepStore` and `PostgresSpendStore` against SQLite after rewriting the few
 Postgres-only spellings the stores use: `$n` parameters, identity columns,
-`= ANY($n::bigint[])` or `::text[]`, `now()` and `now() + $n::interval`, and the locking and
-isolation clauses a single-writer database has no use for. `now()` reads `SqlitePool.now`,
+`= ANY($n::bigint[])` or `::text[]`, `now()`, `clock_timestamp()` and `+ $n::interval`, and the
+locking and isolation clauses a single-writer database has no use for. Both clocks read `SqlitePool.now`,
 which a test moves by hand, as ISO 8601 text in UTC, which orders the way the instants do.
 SQLite shares the semantics the stores rely on (`ON CONFLICT ... DO NOTHING`,
 `RETURNING`, partial unique indexes, `EXCLUDED`), so reads, writes, idempotency
@@ -30,14 +30,15 @@ from pydantic_ai_harness.media import PostgresConnection
 
 _IDENTITY = 'BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY'
 _ANY_ARRAY = re.compile(r'(\w+) = ANY\(\$(\d+)::(?:bigint|text)\[\]\)')
-_NOW_PLUS = re.compile(r'now\(\) \+ \$(\d+)::interval')
+_NOW = re.compile(r'(?:now|clock_timestamp)\(\)')
+_NOW_PLUS = re.compile(r'(?:now|clock_timestamp)\(\) \+ \$(\d+)::interval')
 _PARAMETER = re.compile(r'\$(\d+)')
 
 
 def _to_sqlite(query: str) -> str:
     query = query.replace(_IDENTITY, 'INTEGER PRIMARY KEY AUTOINCREMENT')
     query = _ANY_ARRAY.sub(r'\1 IN (SELECT value FROM json_each(?\2))', query)
-    query = _NOW_PLUS.sub(r'pg_now_plus($\1)', query).replace('now()', 'pg_now()')
+    query = _NOW.sub('pg_now()', _NOW_PLUS.sub(r'pg_now_plus($\1)', query))
     query = query.replace(' FOR UPDATE SKIP LOCKED', '')
     query = query.replace('SET TRANSACTION ISOLATION LEVEL READ COMMITTED', 'SELECT 1')
     return _PARAMETER.sub(r'?\1', query)
