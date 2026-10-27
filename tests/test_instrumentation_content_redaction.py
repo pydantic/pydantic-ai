@@ -495,7 +495,9 @@ async def test_only_url_derived_mcp_ids_are_masked(include_content: bool, native
         return ModelResponse(parts=[TextPart('done')])
 
     settings, exporter = redacted_setup(include_content)
-    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=native, local=server)
+    # A pre-built `Client` keeps fastmcp's default of no handshake deadline. Wrapping the bare server
+    # would apply `MCPToolset`'s 5-second `init_timeout`, and a stalled CI worker can exceed it.
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=native, local=Client(server))
     assert capability.id is not None
     history: list[ModelMessage] = [
         ModelRequest.user_text_prompt('previous'),
