@@ -263,17 +263,6 @@ def test_base_mode_reads_the_working_tree_and_untracked_files(repo: Path, capsys
     assert 'pkg/untracked.py:1: added 4: new function over the limit' in out
 
 
-def test_named_files_limit_the_check(repo: Path, capsys: pytest.CaptureFixture[str]):
-    _write(repo, 'pkg/debt.py', _ifs('debt', 6) + '\n\n' + _ifs('small', 2))
-    _write(repo, 'pkg/untracked.py', _ifs('added', 4))
-
-    code, out = _check(capsys, '--base', 'HEAD', str(repo / 'pkg/untracked.py'))
-
-    assert code == 1
-    assert 'pkg/untracked.py' in out
-    assert 'debt 5 -> 6' not in out
-
-
 def test_an_ignore_without_a_reason_fails(repo: Path, capsys: pytest.CaptureFixture[str]):
     _write(repo, 'pkg/debt.py', _ifs('debt', 6, marker='  # complexipy: ignore') + '\n\n' + _ifs('small', 2))
     _stage(repo)

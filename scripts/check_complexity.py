@@ -11,7 +11,7 @@ The limit and the checked roots come from `[tool.complexipy]` in `pyproject.toml
 
 Usage:
     uv run scripts/check_complexity.py --staged                     # the index against HEAD, for pre-commit
-    uv run scripts/check_complexity.py --base REF [FILE...]         # the working tree against REF
+    uv run scripts/check_complexity.py --base REF                   # the working tree against REF
 """
 
 from __future__ import annotations
@@ -72,7 +72,6 @@ _ROLE_DECORATOR = re.compile(r'\s*@(?:\w+\.)*(overload|setter|deleter)\s*(?:#.*)
 class _Options:
     base: str
     staged: bool
-    files: list[str]
     github: bool
 
 
@@ -137,13 +136,6 @@ def _changed_files(revisions: Sequence[str], roots: Sequence[str]) -> list[_Chan
 def _untracked_files(roots: Sequence[str]) -> list[_Change]:
     paths = _git('ls-files', '--others', '--exclude-standard', '-z', '--', *roots).decode().split('\0')
     return [_Change(None, path) for path in paths if path.endswith('.py')]
-
-
-def _select(changes: list[_Change], only: Sequence[str]) -> list[_Change]:
-    if not only:
-        return changes
-    wanted = {os.path.relpath(path) for path in only}
-    return [c for c in changes if c.new_path in wanted or c.old_path in wanted]
 
 
 def _load(changes: list[_Change], base: str, staged: bool) -> None:
@@ -382,14 +374,12 @@ def _parse_args(argv: Sequence[str] | None) -> _Options:
     source.add_argument('--staged', action='store_true', help='compare the index with HEAD')
     source.add_argument('--base', help='compare the working tree with this revision')
     parser.add_argument('--format', choices=('text', 'github'), default='text')
-    parser.add_argument('files', nargs='*', help='only check these paths')
     args = parser.parse_args(argv)
     staged: bool = args.staged
     base: str | None = args.base
-    files: list[str] = args.files
     output_format: str = args.format
     # The group is required, so `base` is set whenever `--staged` is not.
-    return _Options(base or 'HEAD', staged, files, output_format == 'github')
+    return _Options(base or 'HEAD', staged, output_format == 'github')
 
 
 def _config() -> tuple[int, list[str]]:
@@ -411,7 +401,7 @@ def _changes(options: _Options, roots: Sequence[str]) -> list[_Change]:
 
 
 def _offenders(options: _Options, roots: Sequence[str], limit: int) -> tuple[list[_Change], list[_Offender]]:
-    changes = _select(_changes(options, roots), options.files)
+    changes = _changes(options, roots)
     _load(changes, options.base, options.staged)
     return changes, _collect(changes, limit)
 
