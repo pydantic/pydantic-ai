@@ -51,8 +51,9 @@ class AskUser(AbstractCapability[AgentDepsT]):
     answerer: Answerer | ContextAnswerer[AgentDepsT] | None
     """Presents each `AskUserRequest` to the user and returns their `AskUserResponse`.
 
-    An answerer may also take a first parameter annotated as `RunContext[DepsT]` to read the
-    asking run's dependencies and messages. Request-only answerers receive just the request.
+    An answerer with two required positional parameters receives the asking run's context before
+    the request. If it also accepts just one, annotate the first as `RunContext[DepsT]` to select
+    the context form. Request-only answerers receive just the request.
 
     `None` defers every call: the run ends with `DeferredToolRequests` output, and the host answers
     in a later run with `ask_user_result` in `DeferredToolResults.calls`.

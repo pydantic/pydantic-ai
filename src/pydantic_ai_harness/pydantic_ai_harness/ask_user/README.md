@@ -72,10 +72,13 @@ An `Answerer` is one async callable: it takes an `AskUserRequest` and returns an
 
 ### Reading the asking run
 
-Annotate an answerer's first parameter as `RunContext[DepsT]` to receive the tool's context
-before the request. This signature satisfies `ContextAnswerer`; request-only answerers keep
-receiving just the request. Both plain async functions and callable objects are supported.
-Import the annotation types at runtime, not only inside `if TYPE_CHECKING:`.
+An answerer with two required positional parameters receives `(ctx, request)`, satisfying
+`ContextAnswerer`. Request-only answerers keep receiving just the request. Both plain async
+functions and callable objects are supported, including two-argument lambdas.
+
+If a callable accepts both one and two positional arguments, annotate its first parameter as
+`RunContext[DepsT]` to select the context form; otherwise it receives only the request. Import
+these disambiguating annotation types at runtime, not only inside `if TYPE_CHECKING:`.
 
 ```python
 from pydantic_ai import Agent, RunContext

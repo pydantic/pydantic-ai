@@ -348,6 +348,38 @@ class TestContextAnswerer:
         assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
         assert len(scripted.requests) == 1
 
+    async def test_unannotated_context_lambda_receives_two_arguments(self) -> None:
+        async def answer(ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
+            assert ctx.deps == 'owner'
+            return await ScriptedAnswerer()(request)
+
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=str,
+            capabilities=[AskUser(answerer=lambda ctx, request: answer(ctx, request))],
+        )
+        result = await agent.run('go', deps='owner')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
+    @pytest.mark.parametrize('context', [False, True])
+    async def test_annotation_disambiguates_optional_second_argument(self, context: bool) -> None:
+        async def context_answer(ctx: RunContext[str], request: AskUserRequest | None = None) -> AskUserResponse:
+            assert ctx.deps == 'owner'
+            assert request is not None
+            return await ScriptedAnswerer()(request)
+
+        async def plain_answer(request: AskUserRequest, extra: str | None = None) -> AskUserResponse:
+            assert extra is None
+            return await ScriptedAnswerer()(request)
+
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=str,
+            capabilities=[AskUser(answerer=context_answer if context else plain_answer)],
+        )
+        result = await agent.run('go', deps='owner')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
     async def test_request_only_annotations_need_not_resolve_at_runtime(self) -> None:
         async def answer(request: AskUserRequest) -> AskUserResponse:
             return await ScriptedAnswerer()(request)

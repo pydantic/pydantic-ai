@@ -185,7 +185,8 @@ class Answerer(Protocol):
 class ContextAnswerer(Protocol[AgentDepsT]):
     """An answerer that also receives the context of the run that asked the question.
 
-    Annotate the first parameter as `RunContext[DepsT]` to opt in. The request and response
+    Two required positional parameters select this form. If a callable also accepts just one,
+    annotate the first parameter as `RunContext[DepsT]` to disambiguate. The request and response
     follow the same contract as `Answerer`; the context is passed separately, not serialized
     into `AskUserRequest` or its events. Durable execution can restrict context fields; see
     [Temporal's run-context rules](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#agent-run-context-and-dependencies).

@@ -49,10 +49,15 @@ def ask_user_result(request: AskUserRequest, response: AskUserResponse) -> dict[
 
 def _takes_context(answerer: Answerer | ContextAnswerer[AgentDepsT]) -> TypeIs[ContextAnswerer[AgentDepsT]]:
     try:
-        inspect.signature(answerer).bind(None, None)
+        signature = inspect.signature(answerer)
+        signature.bind(None, None)
     except (TypeError, ValueError):
         # Request-only answerers need no resolvable runtime annotations.
         return False
+    try:
+        signature.bind(None)
+    except TypeError:
+        return True
     return takes_run_context(answerer)
 
 
