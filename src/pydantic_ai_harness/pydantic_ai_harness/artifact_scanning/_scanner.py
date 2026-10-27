@@ -38,6 +38,18 @@ _CREDENTIAL_FILE = (
     r'|\.docker/config\.json\b|\bid_rsa\b|\bid_ed25519\b)'
 )
 
+_STANDARDIZED_VARIANT_BASES = (
+    '\u0030\u1000-\u109f\u2018-\u2019\u201c-\u201d\u2100-\u214f\u2200-\u22ff\u2a00-\u2aff\u3001-\u3002'
+    '\u3400-\u4dbf\u4e00-\u9fff\ua840-\ua877\uaa60-\uaa7f\uf900-\ufaff\uff01\uff0c\uff0e\uff10\uff1a-\uff1b'
+    '\uff1f\U00010ac0-\U00010aff\U00013000-\U0001345f\U0001d400-\U0001d7ff\U00020000-\U000323af'
+)
+"""The blocks holding every base character `StandardizedVariants.txt` pairs with U+FE00 to U+FE0D.
+
+From <https://www.unicode.org/Public/16.0.0/ucd/StandardizedVariants.txt>, verified 2026-10: digit zero, Myanmar,
+curly quotes, letterlike and mathematical symbols and alphanumerics, CJK punctuation, ideographs, and a few
+historic scripts. Re-check that each base listed there falls in one of these blocks after a Unicode update.
+"""
+
 DEFAULT_ARTIFACT_PATTERNS: Mapping[str, tuple[ArtifactThreat, str]] = {
     'ignore_instructions': (
         'injection',
@@ -73,16 +85,16 @@ DEFAULT_ARTIFACT_PATTERNS: Mapping[str, tuple[ArtifactThreat, str]] = {
     'html_comment': ('html_comment', r'<!--'),
     'invisible_character': (
         'invisible_unicode',
-        '[\u180e\u200b\u202a-\u202e\u2060-\u206f\u3164\ufeff\uffa0\ufff0-\ufff8\U000e0000-\U000e00ff'
-        '\U000e01f0-\U000e0fff]'
+        '[\u180e\u200b\u202a-\u202e\u2060-\u206f\u3164\ufeff\uffa0\ufff0-\ufff8\U0001bca0-\U0001bca3'
+        '\U0001d173-\U0001d17a\U000e0000-\U000e00ff\U000e01f0-\U000e0fff]'
         # Variation selectors where ordinary text has no use for them, and they can carry hidden bits: two with
         # nothing visible between them, a supplement selector after anything but an ideograph, or one of the
-        # standardized selectors other than the emoji ones after a Latin letter.
+        # standardized selectors other than the emoji ones after a character Unicode defines no variant of.
         '|[\ufe00-\ufe0f\U000e0100-\U000e01ef]'
         '(?:[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180d\u180f\u200c-\u200f]*'
         '[\ufe00-\ufe0f\U000e0100-\U000e01ef])+'
         '|(?<![\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000323af])[\U000e0100-\U000e01ef]'
-        '|(?<=[A-Za-z])[\ufe00-\ufe0d]',
+        f'|(?<![{_STANDARDIZED_VARIANT_BASES}])[\ufe00-\ufe0d]',
     ),
 }
 """The built-in patterns as `name -> (threat, regex)`, matched case-insensitively.
@@ -94,7 +106,8 @@ zero-width joiner and non-joiner (emoji sequences, Persian and Indic scripts), t
 and right-to-left marks, the soft hyphen, a single variation selector (as in an emoji), and the tag
 characters of the England, Scotland, and Wales flags. Variation selectors are flagged where ordinary text has no
 use for them and they can encode hidden bytes: two in a row, or a supplement selector after anything but an
-ideograph, or a standardized selector other than the emoji ones after a Latin letter. The Hangul fillers
+ideograph, or a standardized selector other than the emoji ones after a character Unicode defines no
+variant of. The Hangul fillers
 U+3164 and U+FFA0 are flagged, and every Hangul filler reads as a space to the phrase patterns.
 Repetition is bounded so a long artifact cannot make a pattern backtrack for seconds.
 
