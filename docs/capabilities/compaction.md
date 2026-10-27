@@ -21,7 +21,7 @@ Each uses the corresponding provider API, so it's only available on that provide
 
 To compact at a moment you choose, add the [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction] capability. When compaction is requested, with [`ctx.request_compaction()`](#the-compaction-hook) during a run or with [`Agent.compact()`](#compacting-outside-a-run) outside one, it calls the [`compact_messages`][pydantic_ai.models.Model.compact_messages] API of the model that will serve the next request: OpenAI's `/responses/compact` endpoint for [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel.compact_messages], on OpenAI and Azure OpenAI, and Anthropic's [on-demand compaction](../models/anthropic.md#compacting-on-demand) for [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel.compact_messages]. For any other model it does nothing, so the next capability with a [`compact_history`](#the-compaction-hook) hook compacts instead:
 
-```python {title="native_compaction.py" test="skip"}
+```python {title="native_compaction.py"}
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
@@ -55,7 +55,7 @@ To compact without either, call [`Model.compact_messages`][pydantic_ai.models.Mo
 
 [`Agent.compact()`][pydantic_ai.agent.AbstractAgent.compact] compacts a conversation's message history without a run, for example for a `/compact` command or to compact a stored conversation. The agent's capabilities compact it with their [`compact_history`](#the-compaction-hook) hooks, with the same [events](#compaction-events), for the request a run with this history would make next: with the agent's model, settings, tools and instructions, or the ones you pass. Nothing else is sent. It returns a [`CompactionResult`][pydantic_ai.capabilities.CompactionResult], or `None` when no capability compacted or a listener cancelled the compaction:
 
-```python {title="agent_compact.py" test="skip"}
+```python {title="agent_compact.py" test="skip" gateway_toggle="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeCompaction
 

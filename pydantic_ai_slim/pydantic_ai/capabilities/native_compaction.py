@@ -38,7 +38,7 @@ class NativeCompaction(AbstractCapability[Any]):
     [`CompactionPart`][pydantic_ai.messages.CompactionPart], in the `ModelResponse` it arrived in, followed by
     that turn.
 
-    ```python {test="skip"}
+    ```python
     from pydantic_ai import Agent
     from pydantic_ai.capabilities import NativeCompaction
 
