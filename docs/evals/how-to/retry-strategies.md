@@ -192,7 +192,7 @@ A call that overruns the timeout is cancelled and raises `TimeoutError: Task tim
 The timeout applies to each attempt separately, and a timeout counts as a failed attempt. With `retry_task`, timeouts are retried like any other exception unless the `retry` condition excludes `TimeoutError`, as above. The wait between attempts doesn't count toward the timeout. Lifecycle hooks and evaluators are not bounded by it.
 
 !!! warning "Timeouts can't stop sync tasks"
-    A sync (`def`) task runs in a worker thread, and Python can't interrupt a running thread. When a sync task times out, the case fails on time, but the thread keeps running in the background until the function returns, and its result is discarded. The same applies when the whole evaluation is cancelled, for example with Ctrl-C, while a sync task is in flight. Without `task_timeout`, cancellation waits for in-flight sync tasks to finish. Abandoned threads don't count toward `max_concurrency`, and with `retry_task` the next attempt starts while the abandoned one is still running. Make the task `async` if it needs to be stopped.
+    A sync (`def`) task runs in a worker thread, which Python can't interrupt. When it times out, the case fails on time, but the thread keeps running in the background and its result is discarded. To stop a slow call, make the task `async`, or set a timeout on the client it calls, such as your HTTP or model client.
 
 ## Evaluator Retries
 
