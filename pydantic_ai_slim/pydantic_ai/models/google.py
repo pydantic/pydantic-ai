@@ -670,13 +670,6 @@ class GoogleModel(Model[Client]):
         return bool(self.client.vertexai)
 
     @property
-    def _canonical_system_stamp(self) -> str | None:
-        # Always set, not only when it differs from `system`: `google` and `google-cloud` each name both transports,
-        # which reject each other's thought signatures, so a response says which one issued them. Older histories
-        # without it fall back to `provider_url`; see `_canonical_system.py`.
-        return self.canonical_system
-
-    @property
     def _matching_provider_names(self) -> frozenset[str]:
         # The `UploadedFile.provider_name`s `_validate_uploaded_file` accepts. Files are stateful, so this stays a
         # name set rather than going through `accepts_stateless_artifacts`, which decides which thought signatures

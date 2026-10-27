@@ -3602,6 +3602,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 10, 22, 46, 57, tzinfo=UTC),

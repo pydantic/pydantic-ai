@@ -1129,8 +1129,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     @property
     def _canonical_system_stamp(self) -> str | None:
-        """The `canonical_system` to set on a response this model creates: its own, when that isn't `system`."""
+        """The `canonical_system` to set on a response this model creates.
+
+        Its own, when that isn't `system`, or always when the provider derives it from its client rather than its
+        name (see `Provider._canonical_system_follows_client`), as the name alone then doesn't say which it was.
+        """
         canonical_system = self.canonical_system
+        provider = self.provider
+        if provider is not None and provider._canonical_system_follows_client:  # pyright: ignore[reportPrivateUsage]
+            return canonical_system
         return None if canonical_system == self.system else canonical_system
 
     _honors_compaction_boundaries: ClassVar[bool] = False

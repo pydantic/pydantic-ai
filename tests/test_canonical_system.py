@@ -237,8 +237,21 @@ ACCEPT_CASES = [
     AcceptCase('azure into openai', 'openai', thinking_response('azure'), False),
     AcceptCase('openai into azure', 'azure', thinking_response('openai'), False),
     AcceptCase('azure into azure-client openai', 'openai+azure-client', thinking_response('azure'), True),
-    # The same name with no stamp is accepted as before: it may be this provider's own older history.
+    # The same name with no stamp is accepted as before: it may be this provider's own older history. New
+    # `OpenAIProvider` history is always stamped, which tells the two apart.
     AcceptCase('unstamped openai into azure-client openai', 'openai+azure-client', thinking_response('openai'), True),
+    AcceptCase(
+        'stamped openai into azure-client openai',
+        'openai+azure-client',
+        thinking_response('openai', canonical_system='openai'),
+        False,
+    ),
+    AcceptCase(
+        'stamped azure-client openai into azure-client openai',
+        'openai+azure-client',
+        thinking_response('openai', canonical_system='azure'),
+        True,
+    ),
     AcceptCase('openai into renamed openai subclass', 'my-gateway', thinking_response('openai'), False),
     AcceptCase('renamed openai subclass into openai', 'openai', thinking_response('my-gateway'), False),
     AcceptCase('anthropic into claude-code', 'claude-code', thinking_response('anthropic'), True),
@@ -491,9 +504,13 @@ def test_model_without_provider_uses_its_system():
 def test_canonical_system_stamp_round_trips():
     """A model stamps its responses when its canonical system differs from its name, and the stamp is stored.
 
-    `GoogleModel` always does, as either Google provider name covers both transports.
+    Models on a provider whose canonical system depends on its client always do: either Google provider name
+    covers both transports, and `OpenAIProvider` covers OpenAI and Azure.
     """
-    assert RECEIVERS['openai']()._canonical_system_stamp is None  # pyright: ignore[reportPrivateUsage]
+    assert RECEIVERS['openai']()._canonical_system_stamp == 'openai'  # pyright: ignore[reportPrivateUsage]
+    assert RECEIVERS['openai+azure-client']()._canonical_system_stamp == 'azure'  # pyright: ignore[reportPrivateUsage]
+    assert RECEIVERS['azure']()._canonical_system_stamp is None  # pyright: ignore[reportPrivateUsage]
+    assert RECEIVERS['anthropic']()._canonical_system_stamp is None  # pyright: ignore[reportPrivateUsage]
     assert gemini_api_model()._canonical_system_stamp == 'google'  # pyright: ignore[reportPrivateUsage]
     assert google_cloud_model()._canonical_system_stamp == 'google-cloud'  # pyright: ignore[reportPrivateUsage]
     assert RECEIVERS['openai-codex']()._canonical_system_stamp == 'openai'  # pyright: ignore[reportPrivateUsage]
@@ -577,9 +594,15 @@ def test_post_compaction_window_follows_the_serving_model():
     [
         pytest.param(
             RECEIVERS['openai'],
-            ModelResponse(parts=[], provider_name='openai'),
+            ModelResponse(parts=[], provider_name='openai', canonical_system='openai'),
             True,
             id='openai-responses-own-response',
+        ),
+        pytest.param(
+            RECEIVERS['openai'],
+            ModelResponse(parts=[], provider_name='openai'),
+            False,
+            id='openai-responses-unstamped-response',
         ),
         pytest.param(
             RECEIVERS['openai-codex'],

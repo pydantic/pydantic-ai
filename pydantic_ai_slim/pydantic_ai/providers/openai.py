@@ -49,6 +49,8 @@ class OpenAIProvider(_OpenAISDKProvider):
     def name(self) -> str:
         return 'openai'
 
+    _canonical_system_follows_client = True
+
     @property
     def canonical_system(self) -> str:
         """`'azure'` with an `AsyncAzureOpenAI` client, as Azure only accepts its own encrypted data, otherwise `name`.

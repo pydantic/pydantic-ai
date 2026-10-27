@@ -52,6 +52,8 @@ class BaseGoogleProvider(Provider[Client], ABC):
     @abstractmethod
     def name(self) -> str: ...
 
+    _canonical_system_follows_client = True
+
     @property
     def canonical_system(self) -> str:
         """`'google-cloud'` with a Google Cloud (Vertex AI) client, `'google'` with a Gemini API client.

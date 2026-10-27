@@ -10,7 +10,7 @@ import functools
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Generic, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Self
 
 import anyio
 from typing_extensions import TypeVar
@@ -98,6 +98,13 @@ class Provider(ABC, Generic[InterfaceClient]):
         another provider's keys verify, like a transparent proxy.
         """
         return self.name
+
+    _canonical_system_follows_client: ClassVar[bool] = False
+    """Whether `canonical_system` depends on the client the provider was created with, not only on `name`.
+
+    Responses then always record their canonical system, so one name covering two systems (`google` on the Gemini
+    API or Google Cloud, `openai` on OpenAI or Azure) is never ambiguous in new history.
+    """
 
     @property
     def compatible_systems(self) -> frozenset[str]:
