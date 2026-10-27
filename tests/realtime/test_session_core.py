@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
+    PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     RealtimeInputSpeechEndEvent,
@@ -30,6 +31,8 @@ from pydantic_ai.messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionReconnectEvent,
     SpeechPart,
+    SpeechPartDelta,
+    SpeechTimestamp,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -79,6 +82,7 @@ from pydantic_ai.realtime.codec import (
     ConversationItemCreated,
     InputRejected,
     InputTranscript,
+    OutputSpeechTimestamps,
     OutputTranscript,
     RealtimeCodecEvent,
     ResponseDone,
@@ -282,6 +286,102 @@ def test_a_provider_reported_cut_records_what_was_heard() -> None:
     # Reporting the same again changes nothing.
     feed(session_core, OutputItemCut(item_id='item_b', heard_transcript=''), OutputItemCut(item_id='item_a'))
     assert session_core.all_messages()[0] is after[0]
+
+
+def timed(response_id: str, item_id: str, *words: tuple[str, int, int]) -> OutputSpeechTimestamps:
+    return OutputSpeechTimestamps(
+        [SpeechTimestamp(text, start_ms, duration_ms) for text, start_ms, duration_ms in words],
+        response_id=response_id,
+        item_id=item_id,
+    )
+
+
+def timings(message: ModelMessage) -> list[list[tuple[str, int]] | None]:
+    """When each speech part's words start, as recorded."""
+    return [
+        None if part.timestamps is None else [(timestamp.text, timestamp.start_ms) for timestamp in part.timestamps]
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ]
+
+
+def test_speech_timestamps_stream_and_are_recorded_on_their_part() -> None:
+    """Timestamps can come ahead of the item's transcript and audio: they open its part, and go on it as they come."""
+    session_core = feed(
+        core(),
+        started('r1'),
+        timed('r1', 'item_a', ('Hello', 50, 400)),
+        said('r1', 'Hello there.', 'item_a'),
+        timed('r1', 'item_a', ('there', 462, 275), ('.', 737, 100)),
+        said('r1', 'Bye.', 'item_b'),
+        ended('r1'),
+    )
+    streamed = [
+        (effect.index, [timestamp.text for timestamp in effect.delta.timestamps or ()])
+        for effect in session_core.take_effects()
+        if isinstance(effect, PartDeltaEvent) and isinstance(effect.delta, SpeechPartDelta) and effect.delta.timestamps
+    ]
+    assert streamed == snapshot([(0, ['Hello']), (0, ['there', '.'])])
+    [response] = session_core.all_messages()
+    assert timings(response) == snapshot([[('Hello', 50), ('there', 462), ('.', 737)], None])
+
+
+def test_speech_timestamps_of_a_closed_item_go_on_its_part() -> None:
+    """Timing for an item that already closed restreams its part under the index it ended with, as a late transcript
+    does, rather than opening a part of its own."""
+    session_core = feed(
+        core(),
+        started('r1'),
+        said('r1', 'Hello.', 'item_a'),
+        said('r1', 'Bye.', 'item_b'),
+    )
+    session_core.take_effects()
+    feed(session_core, timed('r1', 'item_a', ('Hello', 50, 400)), ended('r1'))
+    assert [
+        (type(effect).__name__, effect.index)
+        for effect in session_core.take_effects()
+        if isinstance(effect, (PartStartEvent, PartDeltaEvent, PartEndEvent))
+    ] == snapshot([('PartStartEvent', 0), ('PartDeltaEvent', 0), ('PartEndEvent', 0), ('PartEndEvent', 1)])
+    [response] = session_core.all_messages()
+    assert timings(response) == snapshot([[('Hello', 50)], None])
+
+
+def test_speech_timestamps_of_a_replayed_item_or_no_open_response_are_dropped() -> None:
+    session_core = feed(
+        core(),
+        ConversationItemCreated(item_id='item_old', replayed=True),
+        timed('r0', 'item_a', ('Lost', 0, 100)),
+        started('r1'),
+        timed('r1', 'item_old', ('Again', 0, 100)),
+        OutputSpeechTimestamps([], response_id='r1', item_id='item_a'),
+        said('r1', 'Hello.', 'item_a'),
+        ended('r1'),
+    )
+    [response] = session_core.all_messages()
+    assert timings(response) == snapshot([None])
+
+
+def test_speech_never_heard_loses_its_timestamps() -> None:
+    """A cut drops the words timed at or after it, however the cut is reported: they were never heard."""
+    words = (('One', 0, 200), ('two', 200, 200), ('three', 400, 200))
+    under_way = feed(
+        core(),
+        started('r1'),
+        said('r1', 'One two three.', 'item_a'),
+        timed('r1', 'item_a', *words),
+        Interrupted(played_ms=None, cuts=(('item_a', 200),)),
+        ended('r1'),
+    )
+    recorded = feed(
+        core(),
+        started('r1'),
+        said('r1', 'One two three.', 'item_a'),
+        timed('r1', 'item_a', *words),
+        ended('r1'),
+        OutputItemCut(item_id='item_a', heard_ms=300),
+    )
+    assert timings(under_way.all_messages()[0]) == snapshot([[('One', 0)]])
+    assert timings(recorded.all_messages()[0]) == snapshot([[('One', 0), ('two', 200)]])
 
 
 def test_only_the_latest_output_items_can_be_cut_off() -> None:

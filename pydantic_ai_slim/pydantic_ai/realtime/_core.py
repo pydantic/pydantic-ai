@@ -91,6 +91,7 @@ from .codec import (
     ConversationItemCreated,
     InputRejected,
     InputTranscript,
+    OutputSpeechTimestamps,
     OutputTranscript,
     RealtimeCodecEvent,
     ResponseDone,
@@ -103,6 +104,14 @@ _WAV_MEDIA_TYPE = 'audio/wav'
 
 MAX_CUTTABLE_OUTPUT_ITEMS = 32
 """How many recent assistant audio items a barge-in can still cut off: far more than can be queued for playback."""
+
+
+def _interrupted_at(part: SpeechPart, interrupted_at_ms: int | None) -> SpeechPart:
+    """`part`, interrupted `interrupted_at_ms` into its audio: speech timed from there on was never heard."""
+    timestamps = part.timestamps
+    if interrupted_at_ms is not None and timestamps is not None:
+        timestamps = [timestamp for timestamp in timestamps if timestamp.start_ms < interrupted_at_ms]
+    return replace(part, interrupted_at_ms=interrupted_at_ms, timestamps=timestamps)
 
 
 # --- commands: what the caller did -------------------------------------------------------------------
@@ -587,6 +596,8 @@ class SessionCore:
             self._end_response(item)
         elif isinstance(item, (AudioDelta, OutputTranscript)):
             self._response_content(item)
+        elif isinstance(item, OutputSpeechTimestamps):
+            self._speech_timestamps(item)
         elif isinstance(item, ToolCall):
             self._tool_call(item)
         elif isinstance(item, RealtimeSessionReconnectEvent):
@@ -806,6 +817,37 @@ class SessionCore:
             delta = SpeechPartDelta(speaker='assistant', transcript_delta=appended, transcript=response.open_transcript)
         if appended:
             self._effects.append(PartDeltaEvent(index=index, delta=delta))
+
+    def _speech_timestamps(self, event: OutputSpeechTimestamps) -> None:
+        response = self._open_response(event.response_id)
+        if (
+            response is None
+            or not event.timestamps
+            or (event.item_id is not None and event.item_id in self._replayed_items)
+        ):
+            return
+        delta = SpeechPartDelta(speaker='assistant', timestamps=event.timestamps)
+        if event.item_id is not None and event.item_id != response.open_part_item:
+            closed = response.closed_parts.get(event.item_id)
+            if closed is not None and isinstance(closed_part := closed[1], SpeechPart):
+                # Timing of an item that already closed: it goes on the part the item made, streamed again under the
+                # index it ended with, as a late transcript is (see `_update_closed_part`).
+                stream_index = closed[0]
+                updated = delta.apply(closed_part)
+                position = next(position for position, existing in enumerate(response.parts) if existing is closed_part)
+                response.parts[position] = updated
+                response.closed_parts[event.item_id] = (stream_index, updated)
+                self._effects.extend(
+                    [
+                        PartStartEvent(index=stream_index, part=replace(closed_part, audio=None)),
+                        PartDeltaEvent(index=stream_index, delta=delta),
+                        PartEndEvent(index=stream_index, part=updated),
+                    ]
+                )
+                return
+        part = self._open_part(response, output_text=False, item_id=event.item_id)
+        response.open_part = delta.apply(part)
+        self._effects.append(PartDeltaEvent(index=response.open_part_index, delta=delta))
 
     def _open_part(self, response: _Response, *, output_text: bool, item_id: str | None) -> SpeechPart | TextPart:
         part = response.open_part
@@ -1171,7 +1213,7 @@ class SessionCore:
         if interrupted or cut:
             for index in range(len(parts) - 1, -1, -1):
                 if isinstance(part := parts[index], SpeechPart):
-                    parts[index] = replace(part, interrupted_at_ms=response.interrupted_at_ms)
+                    parts[index] = _interrupted_at(part, response.interrupted_at_ms)
                     break
         finish_reason = event.finish_reason or response.usage_finish_reason
         if finish_reason is None and not interrupted and event.provider_details is None:
@@ -1231,7 +1273,7 @@ class SessionCore:
         assert isinstance(part, SpeechPart)
         updated = part
         if cut.heard_ms is not None and (part.interrupted_at_ms is None or cut.heard_ms < part.interrupted_at_ms):
-            updated = replace(updated, interrupted_at_ms=cut.heard_ms)
+            updated = _interrupted_at(updated, cut.heard_ms)
         if cut.heard_transcript is not None and (cut.heard_transcript or None) != part.transcript:
             details = dict(part.provider_details or {})
             details.setdefault('original_transcript', part.transcript)

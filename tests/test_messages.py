@@ -50,6 +50,7 @@ from pydantic_ai import (
     RunUsage,
     SpeechPart,
     SpeechPartDelta,
+    SpeechTimestamp,
     StructuredContent,
     TextContent,
     TextPart,
@@ -3399,6 +3400,7 @@ def test_speech_part_serialization_roundtrip():
                             'identifier': '0ca623',
                         },
                         'interrupted_at_ms': None,
+                        'timestamps': None,
                         'id': 'item-1',
                         'provider_name': 'openai',
                         'provider_details': None,
@@ -3420,6 +3422,7 @@ def test_speech_part_serialization_roundtrip():
                         'transcript': 'Hi!',
                         'audio': None,
                         'interrupted_at_ms': 420,
+                        'timestamps': None,
                         'id': None,
                         'provider_name': None,
                         'provider_details': None,
@@ -3497,6 +3500,24 @@ def test_speech_part_delta_apply_not_retaining_audio():
     """A part with `audio=None` is not retaining audio, so an `audio_chunk` delta doesn't create it."""
     applied = SpeechPartDelta(audio_chunk=b'\x01').apply(SpeechPart(speaker='assistant', transcript='Hi'))
     assert applied == SpeechPart(speaker='assistant', transcript='Hi')
+
+
+def test_speech_part_timestamps_accumulate_round_trip_and_stay_out_of_model_requests():
+    """Timestamps add up on the part, survive serialization, and never reach a standard model."""
+    part = SpeechPartDelta(timestamps=[SpeechTimestamp('Hi', 50, 200)]).apply(
+        SpeechPart(speaker='assistant', transcript='Hi there.')
+    )
+    part = SpeechPartDelta(timestamps=[SpeechTimestamp('there.', 300, 400, granularity='segment')]).apply(part)
+    part = SpeechPartDelta(transcript_delta='').apply(part)
+    assert part.timestamps == snapshot(
+        [
+            SpeechTimestamp(text='Hi', start_ms=50, duration_ms=200),
+            SpeechTimestamp(text='there.', start_ms=300, duration_ms=400, granularity='segment'),
+        ]
+    )
+    history: list[ModelMessage] = [ModelResponse(parts=[part])]
+    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history)) == history
+    assert TestModel().prepare_messages(history)[0].parts == [TextPart(content='Hi there.')]
 
 
 def test_speech_part_delta_apply_wrong_part_type():

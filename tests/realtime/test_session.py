@@ -8013,6 +8013,36 @@ async def test_agent_realtime_session_warns_when_async_tool_calls_false_is_ignor
             pass
 
 
+async def test_agent_realtime_session_warns_when_output_speech_timestamps_are_unsupported() -> None:
+    """A model that reports no speech timestamps says so when they're asked for, and only then."""
+    agent: Agent[None, str] = Agent()
+    untimed = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with pytest.warns(UnsupportedSettingWarning) as record:
+        async with agent.realtime(
+            untimed, model_settings=RealtimeModelSettings(output_speech_timestamps=True)
+        ).session():
+            pass
+    assert [str(warning.message) for warning in record] == snapshot(
+        [
+            "The `output_speech_timestamps` setting is not supported by model 'fake:fake-realtime' and will be "
+            'ignored. Its speech carries no timestamps.'
+        ]
+    )
+
+    profile = _profile()
+    profile['output_speech_timestamp_granularity'] = 'word'
+    timed = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]), profile=profile)
+    untimed = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        async with agent.realtime(timed, model_settings=RealtimeModelSettings(output_speech_timestamps=True)).session():
+            pass
+        async with agent.realtime(
+            untimed, model_settings=RealtimeModelSettings(output_speech_timestamps=False)
+        ).session():
+            pass
+
+
 @pytest.mark.parametrize(
     'settings,has_tools,declared',
     [

@@ -3,13 +3,14 @@
 from __future__ import annotations as _annotations
 
 import json
+import warnings
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
 
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UnsupportedSettingWarning, UserError
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
@@ -20,6 +21,7 @@ from .ws_helpers import collect_codec_events
 with try_import() as imports_successful:
     from openai.types.realtime.realtime_audio_config_output import VoiceID
 
+    from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.realtime import RealtimeSessionErrorEvent, RealtimeSessionReconnectEvent, TurnDetection
@@ -240,6 +242,56 @@ def _voice_live_config(
     return model._session_config(  # pyright: ignore[reportPrivateUsage]
         '', None, model_settings=AzureRealtimeModelSettings(azure_voice_live=True, **settings)
     )
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'settings'),
+    [
+        ('gpt-realtime', {'azure_voice_live_voice': 'en-US-AvaNeural'}),
+        ('gpt-realtime', {'azure_voice_live_voice': {'type': 'azure-custom', 'name': 'mine', 'endpoint_id': 'e'}}),
+        ('gpt-4.1-mini', {}),
+    ],
+    ids=['azure-voice', 'custom-voice', 'cascade-default-voice'],
+)
+def test_voice_live_times_speech_in_an_azure_voice(model_name: str, settings: dict[str, Any]) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        config = _voice_live_config(model_name, output_speech_timestamps=True, **settings)
+    assert config['output_audio_timestamp_types'] == ['word']
+    assert 'output_audio_timestamp_types' not in _voice_live_config(model_name, **settings)
+
+
+@pytest.mark.parametrize(
+    ('settings', 'voice'),
+    [
+        ({}, 'its default voice'),
+        ({'openai_voice': 'alloy'}, "a 'openai' voice"),
+        (
+            {'azure_voice_live_voice': {'type': 'azure-realtime-native', 'name': 'ava'}},
+            "a 'azure-realtime-native' voice",
+        ),
+    ],
+    ids=['default-voice', 'openai-voice', 'native-voice'],
+)
+def test_voice_live_warns_when_its_voice_is_not_timed(settings: dict[str, Any], voice: str) -> None:
+    """Voice Live accepts the setting with any voice, but times only Azure voices."""
+    with pytest.warns(UnsupportedSettingWarning, match=f'with {voice} and will be ignored.*`azure_voice_live_voice`'):
+        _voice_live_config('gpt-realtime', output_speech_timestamps=True, **settings)
+
+
+def test_only_voice_live_reports_speech_timestamps() -> None:
+    """Which API a session uses decides whether it can time speech, even when the session picks it."""
+    model = AzureRealtimeModel('gpt-realtime', provider=_azure_provider())
+    assert model.profile.get('output_speech_timestamp_granularity') is None
+    with pytest.warns(UnsupportedSettingWarning, match='`output_speech_timestamps`'):
+        model._warn_unsupported_settings(  # pyright: ignore[reportPrivateUsage]
+            AzureRealtimeModelSettings(output_speech_timestamps=True), ModelRequestParameters()
+        )
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        model._warn_unsupported_settings(  # pyright: ignore[reportPrivateUsage]
+            AzureRealtimeModelSettings(azure_voice_live=True, output_speech_timestamps=True), ModelRequestParameters()
+        )
 
 
 def test_voice_live_azure_turn_detection() -> None:
