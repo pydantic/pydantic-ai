@@ -10,9 +10,18 @@ from anyio.from_thread import start_blocking_portal
 from playwright.async_api import Browser, Dialog, Page, Route, async_playwright, expect
 
 from pydantic_ai import Agent, ModelRetry, models
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins.web.app import create_app
 from pydantic_clai2.builtin_plugins.web.server import WebServer
 from tests.clai2.test_web import TOKEN
@@ -130,6 +139,8 @@ class WebUI:
     gamma: str
     delta: str
     epsilon: str
+    saved: str
+    """Saved in Gamma's folder, so it opens while Gamma is the default session, and not live until a test opens it."""
 
 
 @pytest.fixture(scope='module')
@@ -171,6 +182,12 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                 portal.call(fleet.runtimes[name].session.commit_messages, messages)
                 response = fleet.post(f'/api/sessions/{conversation}/rename', {'title': title})
                 assert response.status_code == 204, response.text
+            summary = ConversationSummary(workspace=str(fleet.folder('gamma')), title='Browser Saved')
+            history: list[ModelMessage] = [
+                ModelRequest(parts=[UserPromptPart(content='Saved prompt')]),
+                ModelResponse(parts=[TextPart(content='Saved answer')]),
+            ]
+            saved = portal.call(lambda: fleet.launch.process.conversations.save(summary=summary, messages=history))
             server = portal.call(
                 lambda: WebServer.serve(
                     lambda port: create_app(service=fleet.service, token=TOKEN, hosts=frozenset({f'127.0.0.1:{port}'})),
@@ -187,6 +204,7 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                     gamma=gamma,
                     delta=delta,
                     epsilon=epsilon,
+                    saved=saved.id,
                 )
             finally:
                 portal.call(server.stop)
@@ -681,3 +699,60 @@ async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI
     await sidebar.get_by_text('Browser Gamma', exact=True).click()
     await expect(current).to_have_text('Browser Gamma')
     await expect(composer).to_be_focused()
+
+
+async def test_a_saved_session_opens_from_its_row_named_at_once(page: Page, web_ui: WebUI) -> None:
+    """A saved session's row says it opens live: a click opens it without fetching its transcript first.
+
+    The header names it from the row at once, and never as a new session while its snapshot is on its way.
+    """
+    await page.add_init_script("""
+      window.claiTestTitles = [];
+      new MutationObserver(() => {
+        const title = document.querySelector('.topbar .title')?.textContent;
+        if (title !== undefined && window.claiTestTitles.at(-1) !== title) window.claiTestTitles.push(title);
+      }).observe(document, { subtree: true, childList: true, characterData: true });
+    """)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    # Opening Gamma makes it the default session, so the sidebar lists the session saved in its folder as openable.
+    await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    await page.reload()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+    requested: list[str] = []
+    page.on('request', lambda request: requested.append(request.url))
+    held: list[Route] = []
+
+    async def hold(route: Route) -> None:
+        held.append(route)
+
+    await page.route(f'**/api/sessions/{web_ui.saved}/open', hold)
+    async with page.expect_request(f'**/api/sessions/{web_ui.saved}/open'):
+        await page.locator('.sidebar').get_by_text('Browser Saved', exact=True).click()
+    await expect(page.locator('.topbar .title')).to_have_text('Browser Saved')
+    await expect(page).to_have_title('Browser Saved · CLAI')
+    [route] = held
+    await route.continue_()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Saved')
+    await expect(page.locator('.user-bubble').filter(has_text='Saved prompt', visible=True)).to_be_visible()
+    assert f'{web_ui.url}/api/sessions/{web_ui.saved}' not in requested, 'the row said it opens'
+    titles = await page.evaluate('window.claiTestTitles')
+    assert 'New session' not in titles[titles.index('Browser Saved') :], titles
+
+
+async def test_the_websocket_opens_before_the_page_renders(page: Page, web_ui: WebUI) -> None:
+    """The first snapshot is on its way while React renders the page, not only once it has mounted."""
+    await page.add_init_script("""
+      window.claiTestRendered = [];
+      const OriginalWebSocket = window.WebSocket;
+      window.WebSocket = class extends OriginalWebSocket {
+        constructor(...args) {
+          super(...args);
+          window.claiTestRendered.push(document.getElementById('root')?.childElementCount ?? 0);
+        }
+      };
+    """)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await expect(page.get_by_title('Connected', exact=True)).to_be_visible()
+    assert await page.evaluate('window.claiTestRendered') == [0]

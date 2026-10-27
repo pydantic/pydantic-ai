@@ -41,8 +41,8 @@ interface Props {
   onTheme: () => void
   themeInfo: ThemeInfo | null
   onPickTheme: (name: string) => void
-  /** Show a session, such as a fork just made: live, or read-only when CLAI cannot open it. */
-  onView: (session: Pick<SessionEntry, 'id' | 'title'>) => void
+  /** Show a session, such as a fork just made: live, or read-only when CLAI cannot open it. A row passes all it knows. */
+  onView: (session: Pick<SessionEntry, 'id' | 'title'> & Partial<Pick<SessionEntry, 'workspace' | 'openable'>>) => void
   /** Start a new session, asking where it runs when sessions run in their own directories. */
   onNew: () => void
   /** Whether the main pane shows the orchestrator chat, and whether its turn runs. */

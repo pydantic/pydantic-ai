@@ -28,9 +28,13 @@ type Theme = 'dark' | 'light'
 /** What the main pane shows: the session, or the orchestrator chat. */
 type Pane = 'session' | 'orchestrator'
 
+/** The session picked in the sidebar, until it shows; its header paints from the row at once. */
 interface Opening {
   id: string
   title: string
+  workspace?: string
+  /** What the sidebar's row said; unknown for a session picked from elsewhere, so its transcript is asked first. */
+  openable?: boolean
 }
 
 const NO_ATTACHMENTS: readonly Attachment[] = []
@@ -286,10 +290,11 @@ export function App() {
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', bar)
   }, [theme, palette])
 
+  const shownTitle = opening?.title ?? chat.session?.title
   useEffect(() => {
     if (pane === 'orchestrator') document.title = 'Orchestrator · CLAI'
-    else document.title = chat.session?.title ? `${chat.session.title} · CLAI` : 'CLAI'
-  }, [chat.session?.title, pane])
+    else document.title = shownTitle ? `${shownTitle} · CLAI` : 'CLAI'
+  }, [shownTitle, pane])
 
   // The picked session showing ends the wait for it; `show` already closed any preview and worker.
   const sessionId = chat.session?.id
@@ -441,8 +446,8 @@ export function App() {
       setOpening(session)
       try {
         // A saved session opens live, whatever the others run, unless CLAI can only show it, as when its
-        // directory is gone; a live one opens at once.
-        if (!(session.id in live)) {
+        // directory is gone; a live one, or one its sidebar row says opens, opens at once.
+        if (!(session.id in live) && session.openable !== true) {
           const saved = await api.transcript(session.id)
           if (request !== picked.current) return
           if (!saved.openable) {
@@ -523,12 +528,15 @@ export function App() {
   }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, openSettings, newSession, focusSessions])
 
   const status = chat.status
+  // A session still opening is named from its sidebar row, never as a new session while its snapshot comes.
   const title = workerTask
     ? `${workerTask.agent}: ${workerTask.prompt.split('\n')[0]}`
     : preview
       ? preview.title
-      : (chat.session?.title ?? 'New session')
-  const workspace = preview ? preview.workspace : (chat.session?.workspace ?? '')
+      : opening
+        ? opening.title
+        : (chat.session?.title ?? 'New session')
+  const workspace = preview ? preview.workspace : opening ? (opening.workspace ?? '') : (chat.session?.workspace ?? '')
   const entries = preview ? preview.items : chat.entries
   const prompts = useMemo(() => entries.flatMap((entry) => (entry.kind === 'user' ? [entry.text] : [])), [entries])
   const project = (chat.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''

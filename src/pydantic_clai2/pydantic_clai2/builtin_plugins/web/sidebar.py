@@ -14,7 +14,9 @@ from pydantic_clai2.plugins import LiveSession
 from pydantic_clai2.runtime.project_identity import ProjectIdentity
 
 
-def session_entry(summary: ConversationSummary, *, live: LiveSession | None, busy: bool, current: bool) -> SessionEntry:
+def session_entry(
+    summary: ConversationSummary, *, live: LiveSession | None, busy: bool, current: bool, openable: bool
+) -> SessionEntry:
     """A saved session's row: `running` from the live session holding it; `busy` only for another process's turn."""
     state: SessionState = summary.outcome
     if live is not None:
@@ -31,6 +33,7 @@ def session_entry(summary: ConversationSummary, *, live: LiveSession | None, bus
         model=summary.model,
         current=current,
         archived=summary.archived_at is not None,
+        openable=openable,
     )
 
 
