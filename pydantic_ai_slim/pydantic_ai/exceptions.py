@@ -880,17 +880,30 @@ class ModelRequestTimeout(ModelAPIError):
         self,
         model_name: str,
         timeout: float,
+        *,
         setting: RequestTimeoutSetting = 'request_timeout',
     ):
         self.timeout = timeout
         self.setting = setting
-        message = f'Request to model {model_name!r} timed out after {timeout:g} seconds'
-        if setting == 'first_event_timeout':
-            message += ' without producing any output'
-        super().__init__(model_name, message)
+        super().__init__(model_name, _request_timeout_message(model_name, timeout, setting))
 
-    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
-        return self.__class__, (self.model_name, self.timeout, self.setting)
+    def __reduce__(self) -> tuple[Any, ...]:
+        return self.__class__, (self.model_name, self.timeout), self.__getstate__()
+
+    def __getstate__(self) -> dict[str, Any]:
+        return {**super().__getstate__(), 'setting': self.setting}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        super().__setstate__(state)
+        self.setting = state.get('setting', 'request_timeout')
+        self.message = _request_timeout_message(self.model_name, self.timeout, self.setting)
+
+
+def _request_timeout_message(model_name: str, timeout: float, setting: RequestTimeoutSetting) -> str:
+    message = f'Request to model {model_name!r} timed out after {timeout:g} seconds'
+    if setting == 'first_event_timeout':
+        message += ' without producing any output'
+    return message
 
 
 class ModelHTTPError(ModelAPIError):
