@@ -72,11 +72,11 @@ slug as `harness/<page>`. When renaming a page, keep its existing `aliases:`.
   Use `uv run` for README follow-up executables in the uv project environment.
   Workflow YAML and repository-development commands retain
   their required execution environment rather than becoming `uv add` examples.
-- **Purpose-first lead**: the opening paragraph says what the capability is for and when to use
+- **Purpose-first lead**: the opening paragraph of each docs page and README says what the capability is for and when to use
   it. Lifecycle hook names (`before_model_request`, …) never appear in the lead — mechanism goes
   below the purpose.
-- **H1 = the capability's spaced name** (`Code Mode`, not `CodeMode`), matching filename and nav
-  label. Allowlisted ClassName exceptions live in the parity test.
+- **Capability name**: the docs filename, page H1, README H1, and nav label match the capability's descriptive name.
+  H1s use spaced words (`Code Mode`, not `CodeMode`). Allowlisted ClassName exceptions live in the parity test.
 - **Every page links its own source module** on GitHub. A page exposing a public class may end
   with `## API reference` and `::: pydantic_ai_harness.<Class>` autodoc blocks.
 - **Experimental framing only on ACP.** ACP keeps its experimental warning and possible-removal notice.
