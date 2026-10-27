@@ -79,6 +79,7 @@ from pydantic_ai_harness.subagents import (
     SubAgents,
     is_task_report,
 )
+from pydantic_ai_harness.system_reminders import LLMReminder
 
 from ..append_only import (
     CLOCK,
@@ -228,6 +229,13 @@ FIXTURES: dict[str, Fixture] = {
 """Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
 
 VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
+    # Each firing records a framework note and the generated text for good, so they must only ever be appended.
+    'SystemReminders(LLMReminder)': (
+        lambda _: SystemReminders(
+            dynamic_reminders=[LLMReminder(TestModel(custom_output_text='Refocus.'), interval=2)]
+        ),
+        Scenario(),
+    ),
     # Starts a background summary on almost every request but never reaches its trigger: a held summary
     # must not move the history before compaction is due.
     'FallbackCompaction(background_start=...)': (

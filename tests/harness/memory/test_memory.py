@@ -1684,7 +1684,7 @@ class TestInjection:
 
         reminders = SystemReminders[None](
             dynamic_reminders=[
-                LLMReminder(model=FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('refocus')])))
+                LLMReminder(interval=1, model=FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('refocus')])))
             ],
         )
         agent = Agent(FunctionModel(model), deps_type=type(None), capabilities=[reminders, Memory(store=store)])
