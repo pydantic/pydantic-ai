@@ -664,8 +664,8 @@ async def test_bedrock_native_output_profile_default(
 def _without_output_config(provider: BedrockProvider, monkeypatch: pytest.MonkeyPatch) -> None:
     """Make the provider's `botocore` look like one that predates Converse's `outputConfig`.
 
-    `shape_for` builds a fresh `Shape` on each call, so `outputConfig` is dropped from `ConverseRequest` on every lookup.
-    It's patched before a model is built, as the model's profile is resolved once.
+    `shape_for` builds a fresh `Shape` on each call, so `outputConfig` is dropped on every lookup (only
+    `ConverseRequest` has it). It's patched before a model is built, as the model's profile is resolved once.
     """
     service_model = provider.client.meta.service_model
     real_shape_for = service_model.shape_for
@@ -673,8 +673,7 @@ def _without_output_config(provider: BedrockProvider, monkeypatch: pytest.Monkey
     def shape_for(name: str) -> StructureShape:
         shape = real_shape_for(name)
         assert isinstance(shape, StructureShape)
-        if name == 'ConverseRequest':
-            object.__setattr__(shape, 'members', {k: v for k, v in shape.members.items() if k != 'outputConfig'})
+        object.__setattr__(shape, 'members', {k: v for k, v in shape.members.items() if k != 'outputConfig'})
         return shape
 
     monkeypatch.setattr(service_model, 'shape_for', shape_for)
