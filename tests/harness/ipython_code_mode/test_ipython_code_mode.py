@@ -138,8 +138,9 @@ class TestIPythonCodeMode:
         assert await _run(
             IPythonCodeMode(kernel=kernel),
             "import sys\nprint('out')\nprint('err', file=sys.stderr)\nfrom IPython.display import display\ndisplay([1, 2])\n"
-            "display({'text/html': '<b>only html</b>'}, raw=True)",
-        ) == snapshot([{'output': 'out\nerr\n[1, 2]\n'}])
+            "display({'text/html': '<b>only html</b>'}, raw=True)\n"
+            "display({'image/png': 'not base64!', 'text/plain': 'fallback'}, raw=True)",
+        ) == snapshot([{'output': 'out\nerr\n[1, 2]\nfallback\n'}])
 
     async def test_state_persists_between_calls_in_a_run(self, kernel: IPythonKernel) -> None:
         assert await _run(
@@ -580,6 +581,29 @@ class TestIPythonCodeModeKernelLifecycle:
             await started.wait()
             await kernel.shutdown()
         _assert_process_gone(pids[0])
+
+    async def test_shutdown_returns_while_another_run_waits_on_a_tool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._SHUTDOWN_WAIT_SECS', 0.2)
+        pids: list[int] = []
+        started = anyio.Event()
+
+        async def hang(pid: int) -> None:
+            pids.append(pid)
+            started.set()
+            await anyio.sleep_forever()
+
+        kernel = IPythonKernel()
+        agent = Agent(
+            _scripted('import os\nhang(pid=os.getpid())'),
+            capabilities=[IPythonCodeMode(kernel=kernel, timeout=None)],
+            tools=[Tool(hang)],
+        )
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(agent.run, 'Run the code')
+            await started.wait()
+            await kernel.shutdown()
+            _assert_process_gone(pids[0])
+            tg.cancel_scope.cancel()
 
     async def test_restart_clears_the_state(self) -> None:
         async with IPythonKernel() as kernel:

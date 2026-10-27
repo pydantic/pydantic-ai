@@ -182,7 +182,11 @@ def _decode_image(data: Mapping[str, Any]) -> BinaryImage | None:
     for mime in _IMAGE_MIMES:
         encoded = data.get(mime)
         if isinstance(encoded, str):
-            return BinaryImage(data=base64.b64decode(encoded), media_type=mime)
+            try:
+                return BinaryImage(data=base64.b64decode(encoded), media_type=mime)
+            except ValueError:
+                # Code can display any string under an image mimetype; the text form is used instead.
+                return None
     return None
 
 
@@ -277,18 +281,22 @@ class IPythonKernel:
         """Stop the kernel process. A later `start()` or cell starts a fresh one.
 
         Shielded, so a run ending in cancellation still stops the process. A cell another run is still
-        running gets 5 seconds to finish, is then interrupted, and 5 seconds later its kernel is killed.
+        running gets 5 seconds to finish, is then interrupted, and 5 seconds later its kernel is killed,
+        so this returns within about 10 seconds.
         """
         with anyio.CancelScope(shield=True):
-            for escalate in (self._interrupt, self._kill):
-                with anyio.move_on_after(_SHUTDOWN_WAIT_SECS):
-                    async with self._lock:
-                        await self._stop()
-                        return
-                await escalate()
-            # The running cell finds the process gone within a liveness poll, and releases the lock.
-            async with self._lock:
-                await self._stop()
+            with anyio.move_on_after(_SHUTDOWN_WAIT_SECS):
+                async with self._lock:
+                    await self._stop()
+                    return
+            await self._interrupt()
+            with anyio.move_on_after(_SHUTDOWN_WAIT_SECS):
+                async with self._lock:
+                    await self._stop()
+                    return
+            # The run still holding the lock, in a cell or a tool call it made, finds the process gone the
+            # next time it polls the kernel, and finishes stopping it.
+            await self._kill()
 
     async def _interrupt(self) -> None:
         # Unset only while the run holding the lock is still starting the kernel.
