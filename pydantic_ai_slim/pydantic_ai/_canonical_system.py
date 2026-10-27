@@ -14,6 +14,7 @@ exactly, and doesn't go through this module.
 
 from __future__ import annotations as _annotations
 
+import re
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
@@ -33,6 +34,11 @@ _LEGACY_CANONICAL_SYSTEMS: dict[str, str] = {
 }
 
 _GOOGLE_PROVIDER_NAMES = frozenset({'google', 'google-cloud'})
+# The global endpoint, a regional one (`us-central1-aiplatform.googleapis.com`), or a data residency one
+# (`aiplatform.eu.rep.googleapis.com`).
+_GOOGLE_CLOUD_HOST = re.compile(
+    r'(?:[a-z0-9-]+-)?aiplatform\.googleapis\.com|aiplatform\.[a-z0-9-]+\.rep\.googleapis\.com'
+)
 
 
 def _google_system_from_url(url: str | None) -> str | None:
@@ -46,11 +52,7 @@ def _google_system_from_url(url: str | None) -> str | None:
     host = urlsplit(url).hostname or ''
     if host == 'generativelanguage.googleapis.com':
         return 'google'
-    if (
-        host == 'aiplatform.googleapis.com'
-        or host.endswith('-aiplatform.googleapis.com')
-        or (host.startswith('aiplatform.') and host.endswith('.rep.googleapis.com'))
-    ):
+    if _GOOGLE_CLOUD_HOST.fullmatch(host):
         return 'google-cloud'
     return None
 

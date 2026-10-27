@@ -65,6 +65,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
     AbstractCapability,
+    BatchModelRequests,
     Capability,
     DynamicCapability,
     Hooks,
@@ -112,6 +113,7 @@ from pydantic_ai.models import (
     ModelResolutionContext,
     ModelSelectionContext,
 )
+from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -186,6 +188,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
 from .._inline_snapshot import snapshot
+from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
@@ -473,6 +476,15 @@ def test_prefect_agent_construction_warns_deprecated() -> None:
     """The `PrefectAgent` deprecation fires at runtime; the module-level filters only suppress it."""
     with pytest.warns(PydanticAIDeprecationWarning, match='`PrefectAgent` is deprecated'):
         PrefectAgent(Agent(TestModel(), name='prefect_agent_deprecation_probe'))  # pyright: ignore[reportDeprecated]
+
+
+async def test_prefect_agent_rejects_model_wrappers() -> None:
+    """The deprecated wrapper agent sends requests without the capabilities' model wrappers, so it refuses them."""
+    agent = PrefectAgent(  # pyright: ignore[reportDeprecated]
+        Agent(TestModel(), name='prefect_batched_agent', capabilities=[BatchModelRequests()])
+    )
+    with pytest.raises(UserError, match='`PrefectAgent` does not support capabilities that wrap the model'):
+        await agent.run('hello')
 
 
 async def test_simple_agent_run_in_flow(allow_model_requests: None) -> None:
@@ -5255,6 +5267,129 @@ async def test_prefect_durability_continuation_resume_from_history() -> None:
     assert (response.usage.input_tokens, response.usage.output_tokens) == (8, 6)
     # The continuation request ran inside the boundary — the seed wasn't re-generated.
     assert model.request_calls == 1
+
+
+def _record_task_run(task_runs: list[tuple[str, str | None]]) -> Callable[[str], None]:
+    """Record each batch call with the ID of the Prefect task run it ran in, if any."""
+
+    def record(method: str) -> None:
+        context = TaskRunContext.get()
+        task_runs.append((method, str(context.task_run.id) if context is not None else None))
+
+    return record
+
+
+async def test_prefect_durability_batch_model_in_flow() -> None:
+    """`BatchModelRequests` works under `PrefectDurability` through the continuation loop alone.
+
+    The submitting request and every later batch check each run in their own model-request
+    task, with the batching model's `continuation_delay` waits between them in flow code. The suspended
+    response is replaced by each check and then by the decoded result, so the run ends with one
+    complete response counted as one request.
+    """
+    task_runs: list[tuple[str, str | None]] = []
+    wrapped = SlowBatchTestModel(pending_checks=2, on_batch_call=_record_task_run(task_runs))
+    agent = Agent(
+        wrapped,
+        name='durability_batch',
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), PrefectDurability()],
+    )
+
+    results: list[AgentRunResult[str]] = []
+
+    @flow
+    async def run_durable_agent() -> str:
+        result = await agent.run('go')
+        results.append(result)
+        return result.output
+
+    output = await run_durable_agent()
+
+    assert output == 'success (no tool calls)'
+    result = results[0]
+    assert [type(message).__name__ for message in result.all_messages()] == ['ModelRequest', 'ModelResponse']
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    assert result.usage.requests == 1
+    assert len(wrapped.created) == 1
+    # One task submits the batch, then one task per check: two find it in progress, the third ended.
+    assert [method for method, _ in task_runs] == ['batch_create', 'batch_status', 'batch_status', 'batch_status']
+    task_run_ids = [task_run_id for _, task_run_id in task_runs]
+    assert None not in task_run_ids
+    assert len(set(task_run_ids)) == 4
+
+
+async def test_prefect_durability_batch_model_flow_retry_does_not_submit_again() -> None:
+    """A retried flow loads the recorded results of its model-request tasks, so the request isn't submitted again."""
+    task_runs: list[tuple[str, str | None]] = []
+    wrapped = SlowBatchTestModel(pending_checks=1, on_batch_call=_record_task_run(task_runs))
+    agent = Agent(
+        wrapped,
+        name='durability_batch_flow_retry',
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), PrefectDurability()],
+    )
+    attempts = 0
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        nonlocal attempts
+        attempts += 1
+        result = await agent.run('go')
+        # Fail after the agent run, so the retry has every task's result to load.
+        if attempts == 1:
+            raise RuntimeError('boom')
+        return result.output
+
+    assert await flaky() == 'success (no tool calls)'
+    assert attempts == 2
+    # Only the first attempt's tasks ran.
+    assert [method for method, _ in task_runs] == ['batch_create', 'batch_status', 'batch_status']
+    assert (len(wrapped.created), wrapped.status_checks) == (1, 2)
+
+
+async def test_prefect_durability_batch_model_resume_from_history() -> None:
+    """A run resumed from history ending in a pending batch response waits for that same batch.
+
+    The pending response crosses the task boundary as the last request message, so each task
+    checks the batch it records instead of submitting the request again.
+    """
+    task_runs: list[tuple[str, str | None]] = []
+    wrapped = SlowBatchTestModel(pending_checks=1, on_batch_call=_record_task_run(task_runs))
+    # A request batched before the run, for example by another process.
+    batch_model = BatchPool(**FAST_BATCH_SETTINGS).wrap(wrapped)
+    agent = Agent(
+        wrapped,
+        name='durability_batch_resume',
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), PrefectDurability()],
+    )
+
+    request = ModelRequest(parts=[UserPromptPart(content='go')])
+    pending = await batch_model.request([request], None, ModelRequestParameters())
+    assert pending.state == 'suspended'
+    assert len(wrapped.created) == 1
+
+    results: list[AgentRunResult[str]] = []
+
+    @flow
+    async def run_durable_agent() -> str:
+        result = await agent.run(message_history=[request, pending])
+        results.append(result)
+        return result.output
+
+    output = await run_durable_agent()
+
+    assert output == 'success (no tool calls)'
+    response = results[0].all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    # No second batch: the submission happened outside any task, then each check ran in its own task.
+    assert len(wrapped.created) == 1
+    assert task_runs[0] == ('batch_create', None)
+    assert [method for method, _ in task_runs[1:]] == ['batch_status', 'batch_status']
+    task_run_ids = [task_run_id for _, task_run_id in task_runs[1:]]
+    assert None not in task_run_ids
+    assert len(set(task_run_ids)) == 2
 
 
 async def test_prefect_agent_run_sync_from_sync_tool_is_rejected():

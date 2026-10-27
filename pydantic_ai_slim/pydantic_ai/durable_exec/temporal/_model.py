@@ -32,7 +32,7 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from .._utils import managed_model_scope
+from .._utils import managed_model_scope, reject_serving_wrapper
 from ._activity_execution import execute_activity
 from ._durability import (
     IMAGE_OUTPUT_UNSUPPORTED_MESSAGE,
@@ -208,6 +208,9 @@ class TemporalModel(WrapperModel):
 
         Activities send the requests from the worker's event loop, not the workflow's.
         """
+
+    def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
+        return reject_serving_wrapper(self, wrap, 'TemporalAgent', 'TemporalDurability')
 
     async def request(
         self,

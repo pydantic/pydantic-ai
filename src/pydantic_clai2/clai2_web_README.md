@@ -308,8 +308,8 @@ so switching back to one shows it at once.
 
 Sessions are named by their conversation ID, the `id` the sidebar lists.
 
-- **Per-session messages** (`item`, `delta`, and the other item messages, `turn_start`, `turn_end`,
-  `status`, `question`, `question_closed`, `notice`, `title`, `task`, `task_event`, `queue`) carry `"session": "<conversation id>"` and go only to the
+- **Per-session messages** (`item`, `text_delta`, and the other item messages, `turn_started`, `turn_ended`,
+  `status`, `question`, `question_closed`, `notice`, `title`, `task`, `task_items`, `queue`) carry `"session": "<conversation id>"` and go only to the
   connections watching that session. A `snapshot` names its session in `session.id`.
 - **Global messages** (`sessions`, `plugins`, `settings`, `theme`, `update`, `orchestrator`, `live`,
   and the settings menus' `dialog`, `dialog_shown`, and `dialog_closed`) go to every connection and

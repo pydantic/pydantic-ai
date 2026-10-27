@@ -22,6 +22,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import (
+    BatchModelRequests,
     CombinedCapability,
     Hooks,
     Instrumentation,
@@ -1306,6 +1307,15 @@ async def test_capability_with_uncalled_hook_warns() -> None:
         await _drain(Agent[None, str](capabilities=[_ModelRequestCap()], deps_type=type(None)), _RecordingModel())
     assert [str(warning.message) for warning in record] == [
         _uncalled_hooks_warning('`_ModelRequestCap`', '`before_model_request`')
+    ]
+
+
+async def test_batching_warns_that_a_session_sends_no_model_requests() -> None:
+    """A session sends no model requests, so `BatchModelRequests`' `get_wrapper_model` has nothing to wrap."""
+    with pytest.warns(UserWarning) as record:
+        await _drain(Agent[None, str](capabilities=[BatchModelRequests()], deps_type=type(None)), _RecordingModel())
+    assert [str(warning.message) for warning in record] == [
+        _uncalled_hooks_warning('`BatchModelRequests`', '`get_wrapper_model`')
     ]
 
 

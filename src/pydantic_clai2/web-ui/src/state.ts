@@ -1,5 +1,6 @@
 import type {
   Dialog,
+  ForkEntry,
   Item,
   ItemMessage,
   LiveEntry,
@@ -25,6 +26,10 @@ export interface NoticeEntry {
   command: string | null
   /** For `/usage` and `/cost`: the figures their text reports, shown as a card. */
   usage: UsageReport | null
+  /** For `/forks`: the rows of its table, shown as a card. */
+  forks: ForkEntry[] | null
+  /** A background `/fork` that ended; `text` is its answer, why it failed, or empty when it was cancelled. */
+  fork: ForkEntry | null
 }
 
 export interface TurnSummary {
@@ -180,7 +185,7 @@ export function applyItem(entries: Entry[], message: ItemMessage): Entry[] {
   if (message.type === 'item') return [...entries, message.item]
   const change = (edit: (item: Item) => Item) => update(entries, message.id, edit)
   switch (message.type) {
-    case 'delta':
+    case 'text_delta':
       return change((item) => ({ ...item, text: item.text + message.text }))
     case 'tool_output':
       return change((item) => ({ ...item, output: item.output + message.text }))
@@ -190,14 +195,14 @@ export function applyItem(entries: Entry[], message: ItemMessage): Entry[] {
       return change((item) => ({ ...item, args: item.args + message.text }))
     case 'tool_args':
       return change((item) => ({ ...item, args: message.args }))
-    case 'call':
+    case 'sub_call':
       return change((item) => ({ ...item, calls: [...item.calls, message.call] }))
-    case 'call_output':
+    case 'sub_call_output':
       return change((item) => ({
         ...item,
         calls: item.calls.map((call) => (call.id === message.call_id ? { ...call, output: call.output + message.text } : call)),
       }))
-    case 'call_done':
+    case 'sub_call_done':
       return change((item) => ({
         ...item,
         calls: item.calls.map((call) =>
@@ -228,24 +233,24 @@ function taskChanged(chat: Chat, task: TaskEntry): Chat {
 export function reduceChat(chat: Chat, message: SessionMessage): Chat {
   switch (message.type) {
     case 'item':
-    case 'delta':
+    case 'text_delta':
     case 'tool_output':
     case 'tool_done':
     case 'args_delta':
     case 'tool_args':
-    case 'call':
-    case 'call_output':
-    case 'call_done':
+    case 'sub_call':
+    case 'sub_call_output':
+    case 'sub_call_done':
     case 'shell_done':
     case 'diff':
       return { ...chat, entries: applyItem(chat.entries, message) }
     case 'task':
       return taskChanged(chat, message.task)
-    case 'task_event': {
+    case 'task_items': {
       const items = message.messages.reduce(applyItem, chat.taskItems[message.id] ?? [])
       return { ...chat, taskItems: { ...chat.taskItems, [message.id]: items } }
     }
-    case 'turn_start':
+    case 'turn_started':
       // A turn a finished task woke has no prompt of its own.
       return {
         ...chat,
@@ -253,7 +258,7 @@ export function reduceChat(chat: Chat, message: SessionMessage): Chat {
         turnStartedAt: Date.now(),
         entries: message.item ? [...chat.entries, message.item] : chat.entries,
       }
-    case 'turn_end': {
+    case 'turn_ended': {
       const entries = chat.entries.map((entry) =>
         entry.kind === 'tool' && (entry.state === 'running' || entry.calls.some((call) => call.state === 'running'))
           ? {
@@ -287,6 +292,8 @@ export function reduceChat(chat: Chat, message: SessionMessage): Chat {
         level: message.level,
         command: message.command,
         usage: message.usage,
+        forks: message.forks,
+        fork: message.fork,
       }
       return { ...chat, entries: [...chat.entries, notice] }
     }
@@ -324,6 +331,8 @@ function applySnapshot(state: State, message: Snapshot): State {
     level: 'info',
     command: null,
     usage: null,
+    forks: null,
+    fork: null,
   }
   // A conversation the shown session switched from is watched no more: this one took its place.
   const watched = watchFirst(state.watched.filter((other) => other !== message.replaces), id)

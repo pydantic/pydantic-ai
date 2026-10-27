@@ -35,6 +35,7 @@ from pydantic_clai2.models.profiles import provider_of
 from pydantic_clai2.plugins import (
     Conversation,
     DepsT,
+    ForkInfo,
     FullScreen,
     HostEvent,
     LoadedPlugin,
@@ -198,6 +199,7 @@ class SessionPlugins(Generic[DepsT]):
         running: Callable[[], bool] = lambda: False,
         queued: Callable[[], int] = lambda: 0,
         inputs: Callable[[], PromptInputs | None] = lambda: None,
+        forks: Callable[[], tuple[ForkInfo, ...]] = tuple,
         live_id: str | None = None,
         default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
         default_model_name: Callable[[], Awaitable[str | None]] | None = None,
@@ -214,7 +216,7 @@ class SessionPlugins(Generic[DepsT]):
         `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, `setting`, `tasks`,
         `workspace`, `default_model`, `default_model_name`, and `commands` are handed to every host; see `PluginHost` for the defaults. `running`
         says whether a turn runs, `inputs` the prompt holding the input that waits for it, `queued` how much waits
-        when there is no prompt, and `live_id` names the session in `host.live`, by default a new ID.
+        when there is no prompt, `forks` lists its background `/fork` runs, and `live_id` names the session in `host.live`, by default a new ID.
         """
         if process is None:
             if store is None:
@@ -275,6 +277,7 @@ class SessionPlugins(Generic[DepsT]):
             queued=queued,
             changed=lambda: self._process.live.changed(self.live_session),
             inputs=inputs,
+            forks=forks,
         )
         """This session as `host.live` lists it to process-scoped plugins; it joins the process as it loads."""
 

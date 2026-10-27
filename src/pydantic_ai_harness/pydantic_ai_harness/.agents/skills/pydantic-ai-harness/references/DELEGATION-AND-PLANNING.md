@@ -156,8 +156,10 @@ Gotchas:
 - In tests, override a child's model by nesting overrides:
   `with parent.override(model=m1), child.override(model=m2):` (`SubAgent` runs the same `Agent`).
 - Timeout, own-budget exhaustion, `max_calls` exhaustion, and a child run that ends with
-  `DeferredToolRequests` (the parent cannot resume it) are soft: a steering message comes back as the
-  tool result. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
+  `DeferredToolRequests` or `PendingModelResponse` (the parent cannot resume it) are soft: a steering
+  message (or `on_failure`) comes back as the tool result, with outcome `failed`. A model request the
+  child left pending (e.g. in a `BatchModelRequests` batch) is cancelled first, best effort, on a
+  remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
   crashes abort the parent unless `contain_errors=True`.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartEvent`,
@@ -274,7 +276,8 @@ Gotchas:
 - Workflows do not nest: do not give catalog agents `DynamicWorkflow`.
 - Sandbox: no third-party imports, no clock/randomness/filesystem/env. A child failure raises
   `RuntimeError` in the script; uncaught, the whole script retries. A child run that ends with
-  `DeferredToolRequests` is a failure too, and the catalog leaves that type out of its signature.
+  `DeferredToolRequests` or `PendingModelResponse` is a failure too (a model request it left pending is
+  cancelled first, best effort), and the catalog leaves both types out of its signature.
 - Past `max_agent_calls` a call raises in the script, and whatever the script does next (even a
   `try`/`except` that finishes), `run_workflow` returns `{'error': '...exhausted its sub-agent call
   budget...', 'last_error': ..., 'completed': [...]}`; later calls in that run are refused.

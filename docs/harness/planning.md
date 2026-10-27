@@ -24,7 +24,7 @@ The model owns the plan through the `planning` toolset. The current plan is surf
 
 As with all capability cache breakpoints, provider mapping applies: OpenAI models only receive the `CachePoint` when the model profile enables explicit prompt cache breakpoints, OpenRouter attaches it to the previous user message rather than to a tool result, and models without explicit breakpoints (such as Google's) ignore it. With Anthropic automatic caching (`anthropic_cache`), the automatic breakpoint lands on the reminder, which the next request doesn't contain; the `Planning` breakpoint right before it is the one the next request reads back. A request with no content before the reminder (an `instructions`-only first request) gets the reminder without a breakpoint, since there is no prefix to protect.
 
-A capability listed before `Planning` that also appends a tail part each request (for example `SystemReminders`) puts its content between the durable history and the plan reminder. The `Planning` breakpoint then covers that content too, so its cache entry is only read back while that content stays the same. The earlier capability's own breakpoint still marks the durable history.
+A capability listed before `Planning` that also appends a tail part each request puts its content between the durable history and the plan reminder. The `Planning` breakpoint then covers that content too, so its cache entry is only read back while that content stays the same. The earlier capability's own breakpoint still marks the durable history.
 
 ## Usage
 

@@ -11,6 +11,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    PROTOCOL,
     ItemAdded,
     Notice,
     QueueChanged,
@@ -65,7 +66,7 @@ def test_steer_queue_edit_and_remove_during_a_turn(make_web: MakeWeb) -> None:
     """While a turn runs, the browser steers it, and lists, edits, steers, and removes what queues behind it."""
     agent, started, release = waiting_agent()
     web_ = make_web(agent)
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as socket:
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers=ORIGIN) as socket:
         snapshot = WIRE.validate_json(socket.receive_text())
         assert isinstance(snapshot, Snapshot) and snapshot.queue == []
         running = web_.run()
@@ -159,7 +160,7 @@ def test_usage_reports_answer_during_a_turn(make_web: MakeWeb, command: str) -> 
     """`/cost` and `/usage` sent from the page answer while the turn runs, instead of queueing behind it."""
     agent, started, release = waiting_agent()
     web_ = make_web(agent)
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as socket:
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers=ORIGIN) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'go'})
@@ -181,7 +182,7 @@ def test_steering_a_queued_prompt_with_an_image_shows_it(make_web: MakeWeb) -> N
     agent, started, release = waiting_agent()
     web_ = make_web(agent)
     [red] = decode_images([encoded(png('red'))])
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as socket:
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers=ORIGIN) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'go'})

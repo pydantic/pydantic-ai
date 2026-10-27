@@ -28,12 +28,13 @@ from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    ForkEnd,
+    InstallProgress,
     Plugin,
     PluginHost,
     SessionEnd,
-    TaskEvent,
+    TaskProgress,
     TurnEnd,
-    UpdateProgress,
 )
 from pydantic_clai2.ui.browser import open_browser
 
@@ -202,8 +203,11 @@ class WebPlugin(Plugin[WebSettings]):
     async def on_command_end(self, event: CommandEnd) -> None:
         self.service.command_ended(event)
 
-    async def on_task_event(self, event: TaskEvent) -> None:
-        self.service.task_event(event)
+    async def on_task_progress(self, event: TaskProgress) -> None:
+        self.service.task_progress(event)
 
-    async def on_update_progress(self, event: UpdateProgress) -> None:
-        self.service.update_progress(event)
+    async def on_fork_end(self, event: ForkEnd) -> None:
+        self.service.fork_ended(event)
+
+    async def on_install_progress(self, event: InstallProgress) -> None:
+        self.service.install_progress(event)
