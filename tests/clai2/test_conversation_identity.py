@@ -1,6 +1,7 @@
 """Plugins read the conversation's ID and title, and hear `ConversationChanged` when either changes."""
 
 from collections.abc import Sequence
+from dataclasses import replace
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
@@ -18,7 +19,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import chat
-from pydantic_clai2._app import create_shell, create_stock_agent
+from pydantic_clai2._app import create_stock_agent
 from pydantic_clai2.cli import headless
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command
@@ -27,7 +28,8 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import ConversationChanged, Plugin, PluginHost, SessionStart, Transcript, load_plugin
 from pydantic_clai2.runtime._session import Session
-from pydantic_clai2.runtime.session_naming import NamingResult, SessionName
+from pydantic_clai2.runtime.session_naming import NamingResult, SessionName, SessionNamer
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 from tests.conftest import IsStr
@@ -115,8 +117,8 @@ async def test_naming_and_browser_renames_retitle_the_current_conversation(
     async def generate(prompt: str) -> NamingResult:
         return NamingResult(name=SessionName(title='Renderer fix'))
 
-    service.namer.generate = generate
-    assert await service.namer.name(conversation_id=session.conversation_id)
+    client = replace(service.naming, generate=generate)
+    assert await service.namer.name(conversation_id=session.conversation_id, client=client)
     assert events == [ConversationChanged(conversation_id=session.conversation_id, title='Renderer fix')]
     await service.named('another conversation', 'Ignored')
     assert len(events) == 1
@@ -132,6 +134,29 @@ async def test_naming_and_browser_renames_retitle_the_current_conversation(
     monkeypatch.setattr(SessionBrowser, 'run', rename)
     assert await service.command([]) == ''
     assert events[-1] == ConversationChanged(conversation_id=session.conversation_id, title='Manual name')
+
+
+async def test_a_title_another_session_queued_reaches_the_session_holding_the_conversation(tmp_path: Path) -> None:
+    """A's browser queues the conversation B holds: A's model names it, and B tells its plugins."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    context = CommandContext(
+        settings=Settings(model=None),
+        store=SettingsStore(tmp_path / 'config.db'),
+        apply_setting=lambda key, settings: None,
+    )
+    namer = SessionNamer(store=store)
+    held = [Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path) for _ in range(2)]
+    a, b = (Sessions(session=session, store=store, context=context, namer=namer) for session in held)
+    assert namer.listeners == [a.named, b.named]
+    await b.session.prompt('fix the renderer')
+    a_events, b_events = recording(a.session), recording(b.session)
+
+    async def generate(prompt: str) -> NamingResult:
+        return NamingResult(name=SessionName(title='Renderer fix'))
+
+    assert await namer.name(conversation_id=b.session.conversation_id, client=replace(a.naming, generate=generate))
+    assert b_events == [ConversationChanged(conversation_id=b.session.conversation_id, title='Renderer fix')]
+    assert not a_events
 
 
 async def test_startup_resume_precedes_plugins_and_commands_notify_them(tmp_path: Path) -> None:
@@ -219,6 +244,16 @@ async def test_background_names_wait_for_the_terminal(tmp_path: Path) -> None:
         await anyio.wait_all_tasks_blocked()
     assert session.title == 'Mine'
     assert events[-1] == ConversationChanged(conversation_id=session.conversation_id, title='Mine')
+    # Of two generated names waiting for the terminal, the newer one wins.
+    events.clear()
+    async with anyio.create_task_group() as tasks:
+        async with shell.forks.busy():
+            tasks.start_soon(shell.sessions.named, session.conversation_id, 'Older')
+            await anyio.wait_all_tasks_blocked()
+            tasks.start_soon(shell.sessions.named, session.conversation_id, 'Newer')
+            await anyio.wait_all_tasks_blocked()
+        await anyio.wait_all_tasks_blocked()
+    assert events == [ConversationChanged(conversation_id=session.conversation_id, title='Newer')]
 
 
 async def test_a_name_a_save_already_adopted_still_reaches_plugins(tmp_path: Path) -> None:

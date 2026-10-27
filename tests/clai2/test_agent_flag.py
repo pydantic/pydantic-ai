@@ -10,12 +10,13 @@ from rich.console import Console
 from pydantic_ai import Agent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2._app import DEFAULT_PLUGINS, create_shell
+from pydantic_clai2._app import DEFAULT_PLUGINS
 from pydantic_clai2.cli import _cli, headless
 from pydantic_clai2.cli.agent_import import import_agent
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime.session_runtime import create_shell
 
 _MODULE = 'clai_agent_flag_fixture'
 

@@ -91,7 +91,7 @@ class TaskMenu:
             .preview(self.preview)
             .list_width(42)
             .initial_index(next((index for index, item in enumerate(self.items()) if item.value == self.selected), 0))
-            .footer_hint('Enter transcript · ↑↓ task · b background · x stop tree · Esc close')
+            .footer_hint('Enter transcript - ↑↓ task - b background - x stop tree - Esc close')
             .on_key('b', lambda menu, item: self.act(menu, item, 'background'))
             .on_key('x', lambda menu, item: self.act(menu, item, 'stop'))
             .on_key(']', lambda menu, item: self.scroll(10))
@@ -139,7 +139,7 @@ class TaskDetail:
             .items(self.items())
             .searchable(False)
             .size(self.size)
-            .footer_hint('↑↓ scroll · Home/End · b background · x stop tree · Esc tasks')
+            .footer_hint('↑↓ scroll - Home/End - b background - x stop tree - Esc tasks')
             .on_key('enter', lambda menu, item: None)
             .on_key('b', lambda menu, item: self.picker.act(menu, item, 'background'))
             .on_key('x', lambda menu, item: self.picker.act(menu, item, 'stop'))
@@ -171,7 +171,7 @@ async def open_tasks(tasks: Tasks, *, runners: Runners = TERMINAL) -> str:
             await tasks.owner.cancel(task_id)
             await tasks.owner.save(tasks.owner.records[task_id])
         else:
-            tasks.owner.background(task_id)
+            tasks.background(task_id)
 
     def run() -> None:
         picker = TaskMenu(

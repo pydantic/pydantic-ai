@@ -2,20 +2,23 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 
 from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu
 
 from pydantic_ai.messages import (
     BinaryContent,
+    CompactionPart,
     ModelMessage,
     ModelRequest,
-    RetryPromptPart,
+    RetryFeedbackPart,
     SystemPromptPart,
     ToolReturnPart,
-    UserPromptPart,
 )
+from pydantic_ai_harness.compaction._summary import summary_time
 from pydantic_clai2.plugins import Conversation
+from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.prompt.image_input import ImageInput
@@ -40,11 +43,21 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
     # Harness pins this shape in `tests/harness/compaction/test_summary_provenance.py`.
     context_time = max(
         (
-            part.timestamp
-            for message in messages
-            if isinstance(message, ModelRequest) and message.run_id is None
-            for part in message.parts
-            if isinstance(part, SystemPromptPart)
+            *(
+                part.timestamp
+                for message in messages
+                if isinstance(message, ModelRequest) and message.run_id is None
+                for part in message.parts
+                if isinstance(part, SystemPromptPart)
+            ),
+            # Any compaction part (provider-native, app-written or the harness's) rewrote what came before it.
+            *(
+                compacted_at
+                for message in messages
+                if message.run_id is None
+                for part in message.parts
+                if isinstance(part, CompactionPart) and (compacted_at := _compaction_time(part, message)) is not None
+            ),
         ),
         default=None,
     )
@@ -56,10 +69,10 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
                 continue
             seen_runs.add(message.run_id)
         if not isinstance(message, ModelRequest) or any(
-            isinstance(part, (ToolReturnPart, RetryPromptPart)) for part in message.parts
+            isinstance(part, (ToolReturnPart, RetryFeedbackPart)) for part in message.parts
         ):
             continue
-        prompts = [part for part in message.parts if isinstance(part, UserPromptPart)]
+        prompts = [part for part in message.parts if is_typed_prompt(part)]
         if not prompts:
             continue
         content = [
@@ -86,10 +99,19 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
         .style(markdown_style())
         .items(list(reversed(items)) or [MenuItem('No earlier prompts to rewind to.', disabled=True)])
         .preview(_preview)
-        .footer_hint('Up/Down select - Enter rewind - Esc cancel | does NOT undo files')
+        .footer_hint('Up/Down select - Enter rewind - Esc cancel - does NOT undo files')
         .key_source(menu_key)
         .build()
     )
+
+
+def _compaction_time(part: CompactionPart, message: ModelMessage) -> datetime | None:
+    """When *part* rewrote the history before it.
+
+    The harness's summary records that on the part: merging its request into the preserved one after it
+    leaves the message with that older request's timestamp.
+    """
+    return summary_time(part) or message.timestamp
 
 
 def _preview(item: MenuItem) -> str:

@@ -21,13 +21,13 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import HostEvent, TurnEnd, TurnStart
+from pydantic_clai2.plugins import ForkEnd, ForkInfo, HostEvent, TurnEnd, TurnStart
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.forks import USAGE, Forks, parse_fork_args
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
@@ -348,6 +348,21 @@ async def test_forks_fire_turn_hooks() -> None:
     # A refused fork still closes its turn, as a refused foreground turn does.
     assert ends['forbidden'].outcome == 'cancelled'
     assert ends['broken hook'].outcome == 'failed'
+    # Each fork that ran ends with `fork_end` too, after its `turn_end`, so a plugin such as `web` can show it.
+    fork_ends = {event.fork.id: event for event in events if isinstance(event, ForkEnd)}
+    assert [(fork_ends[n].fork.prompt, fork_ends[n].fork.status) for n in (1, 2, 3)] == [
+        ('rewritten', 'done'),
+        ('explode', 'failed'),
+        ('block', 'cancelled'),
+    ]
+    assert fork_ends[1].output == '**answer** to rewritten' and fork_ends[1].error is None
+    assert fork_ends[2].output is None and str(fork_ends[2].error) == 'provider down\nsecond line'
+    assert fork_ends[3].output is None and fork_ends[3].error is None
+    assert events.index(fork_ends[1]) == events.index(ends['rewritten']) + 1
+    assert forks.listing() == tuple(fork_ends[n].fork for n in (1, 2, 3))
+    assert forks.listing()[0] == ForkInfo(
+        id=1, model='agent default', prompt='rewritten', status='done', elapsed=done.elapsed or 0, session_id=None
+    )
     assert isinstance(ends['broken hook'].error, RuntimeError)
 
 
@@ -479,7 +494,7 @@ class Script:
                 step = steps.pop(0)
                 return step if isinstance(step, str) else await step()
 
-        monkeypatch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
 
 
 async def test_cancelled_turn_takes_forks_down(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -509,7 +524,7 @@ async def test_shell_passthrough_holds_fork_output(tmp_path: Path, monkeypatch: 
         await model.started.wait()
         return '!make test'
 
-    async def run_shell_command(command: str, *, console: Console, interrupts: object) -> str:
+    async def run_shell_command(command: str, *, console: Console, interrupts: object, cwd: Path) -> str:
         # The fork finishes while the command owns the terminal; its output must wait.
         model.release.set()
         for _ in range(20):
@@ -518,7 +533,7 @@ async def test_shell_passthrough_holds_fork_output(tmp_path: Path, monkeypatch: 
         console.print(f'ran {command}')
         return f'ran {command}'
 
-    monkeypatch.setattr('pydantic_clai2._app.run_shell_command', run_shell_command)
+    monkeypatch.setattr('pydantic_clai2.runtime.session_runtime.run_shell_command', run_shell_command)
 
     async def after_command() -> str:
         # Idle again: the held banner prints before the next prompt returns.

@@ -22,8 +22,10 @@ from .._instrumentation import (
     InstrumentationNames,
     annotate_tool_call_otel_metadata,
     build_tool_definitions,
+    mcp_telemetry_history_ids,
     model_metric_attributes,
     model_request_parameters_attributes,
+    model_request_telemetry_url_ids,
     provider_attributes,
     record_exception,
     redact_binary_content,
@@ -85,8 +87,8 @@ class SessionInstrumentation:
         self.context: Context | None = None
         self.session_span: Span | None = None
         self._session_span_attributes: dict[str, Any] | None = None
-        # The `chat {model}` span for the response currently being assembled (see `ensure_chat_span`).
-        self.chat_span: Span | None = None
+        # The `chat {model}` span of each response under way, by response id (see `ensure_chat_span`).
+        self.chat_spans: dict[str, Span] = {}
         # The `speak {model}` span covering how long the model is actually audible (see
         # `start_playback_span`). Only a sideband reports playback, so it stays `None` elsewhere.
         self.playback_span: Span | None = None
@@ -208,7 +210,16 @@ class SessionInstrumentation:
         # `logfire.json_schema` entry marks the attribute as a JSON array so the Logfire UI
         # deserializes and renders it as a conversation rather than as a string.
         if messages:
-            attributes['pydantic_ai.all_messages'] = safe_to_json(settings.messages_to_otel_messages(messages)).decode()
+            mcp_url_ids = (
+                frozenset(model_request_telemetry_url_ids(self.model_request_parameters))
+                if self.model_request_parameters is not None
+                else frozenset[str]()
+            )
+            attributes['pydantic_ai.all_messages'] = safe_to_json(
+                settings.messages_to_otel_messages(
+                    messages, mcp_url_ids=mcp_telemetry_history_ids(messages, mcp_url_ids)
+                )
+            ).decode()
             if new_message_index is not None:
                 attributes['pydantic_ai.new_message_index'] = new_message_index
             schema_properties['pydantic_ai.all_messages'] = {'type': 'array'}
@@ -239,13 +250,12 @@ class SessionInstrumentation:
         self._session_span_attributes = None
         return traceparent
 
-    def ensure_chat_span(self) -> None:
-        """Open a `chat {model}` span for the assistant response now being assembled, if not already open.
+    def ensure_chat_span(self, response_id: str) -> None:
+        """Open a `chat {model}` span for a response that started, if not already open.
 
         A realtime turn isn't a single request/response, so the honest lifetime of a `chat` span is one
-        assistant `ModelResponse`: it opens when that response's first content arrives (the first
-        assistant part or tool call) and closes in `_finalize_response`. Tool calls split a turn into
-        multiple responses (mirroring a classic run), so each response gets its own span. The span is
+        assistant `ModelResponse`: it opens when the response starts and closes when it ends. Tool calls split a
+        turn into multiple responses (mirroring a classic run), so each response gets its own span. The span is
         deliberately *not* entered as the current span: `execute_tool` spans run after the response is
         finalized and stay siblings under the session span, matching the classic agent-run tree.
 
@@ -262,7 +272,7 @@ class SessionInstrumentation:
         turn (a turn that calls tools produces several). The turn boundary is the `model turn complete` span.
         """
         settings = self.settings
-        if settings is None or self.chat_span is not None:
+        if settings is None or response_id in self.chat_spans:
             return
         attributes: dict[str, Any] = {
             'gen_ai.operation.name': 'chat',
@@ -286,27 +296,28 @@ class SessionInstrumentation:
         name = f'chat {self.model_name}' if self.model_name else 'chat'
         context = self.context
         assert context is not None
-        self.chat_span = settings.tracer.start_span(
+        self.chat_spans[response_id] = settings.tracer.start_span(
             name,
             context=context,
             attributes=attributes,
             kind=SpanKind.CLIENT,
         )
 
-    def end_chat_span(self, input_messages: list[ModelMessage], response: ModelResponse | None) -> None:
-        """Close the current `chat` span, attaching the response's messages, usage, and state."""
+    def end_chat_span(
+        self, response_id: str, input_messages: list[ModelMessage], response: ModelResponse | None
+    ) -> None:
+        """Close a response's `chat` span, attaching its messages, usage, and state."""
         settings = self.settings
-        span = self.chat_span
+        span = self.chat_spans.pop(response_id, None)
         if settings is None or span is None:
             return
-        self.chat_span = None
         price_calculation = response_price_calculation(response) if response is not None else None
         if response is not None and span.is_recording():
             # Reuse the exact message → gen_ai serialization and response-attribute helpers the
             # instrumented model uses, so realtime `chat` spans can't drift from the classic path.
             if self.model_request_parameters is not None:
                 annotate_tool_call_otel_metadata(response, self.model_request_parameters)
-            settings.handle_messages(input_messages, response, span)
+            settings.handle_messages(input_messages, response, span, self.model_request_parameters)
             span.set_attributes(
                 response_attributes(response, response.model_name or self.model_name, price_calculation)
             )
@@ -363,8 +374,8 @@ class SessionInstrumentation:
             self.session_span.set_attribute('gen_ai.output.type', output_type)
         if self._session_span_attributes is not None:
             self._session_span_attributes['gen_ai.output.type'] = output_type
-        if self.chat_span is not None:
-            self.chat_span.set_attribute('gen_ai.output.type', output_type)
+        for span in self.chat_spans.values():
+            span.set_attribute('gen_ai.output.type', output_type)
 
     def set_conversation_id(self, conversation_id: str) -> None:
         """Adopt an id the session minted after this helper was constructed.

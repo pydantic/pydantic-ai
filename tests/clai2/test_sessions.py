@@ -1,10 +1,13 @@
 """Saved sessions restore context, never tool execution or executable configuration."""
 
+import logging
 import os
+import sqlite3
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
+from typing import Any
 
 import anyio
 import pytest
@@ -26,7 +29,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -37,17 +39,19 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness import Coder
-from pydantic_ai_harness.step_persistence import ContinuableSnapshot, StepPersistence
+from pydantic_ai_harness.step_persistence import ContinuableSnapshot, SqliteStepStore, StepEvent, StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
+    GitCheckout,
     SqliteConversationStore,
 )
 from pydantic_clai2 import DEFAULT_PLUGINS, create_agent
 from pydantic_clai2._app import STOCK_PLUGINS, create_stock_agent
 from pydantic_clai2.plugins import PluginHost, load_plugin
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime._session import Session, SessionStepStore
 from pydantic_clai2.runtime.sessions import PersistencePlugin
+from tests.clai2.test_session_browser import repository
 
 
 def saved_session(tmp_path: Path) -> Session[None, str]:
@@ -261,6 +265,78 @@ async def test_persistence_plugin_uses_session_store(tmp_path: Path) -> None:
     assert not load_plugin(PersistencePlugin, bare).capabilities
 
 
+async def test_step_records_another_writer_locks_out_do_not_fail_the_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    database = tmp_path / 'sessions.db'
+    other = sqlite3.connect(database, isolation_level=None, check_same_thread=False)
+    connect = sqlite3.connect
+
+    def connect_without_waiting(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        # Give up on the lock at once instead of waiting out the stores' busy timeout.
+        return connect(*args, **{**kwargs, 'timeout': 0.01})
+
+    monkeypatch.setattr(sqlite3, 'connect', connect_without_waiting)
+    caplog.set_level(logging.INFO, logger='pydantic_clai2.runtime._session')
+
+    def run_command() -> str:
+        # Another CLAI sharing `sessions.db` starts a long write while the tool runs.
+        other.execute('BEGIN IMMEDIATE')
+        return 'done'
+
+    async def model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='run_command', json_args='{}', tool_call_id='call')}
+        else:
+            other.execute('COMMIT')
+            yield 'finished'
+
+    session = Session(
+        Agent(FunctionModel(stream_function=model), tools=[run_command]),
+        deps=None,
+        conversations=SqliteConversationStore(database=database),
+        workspace=tmp_path,
+    )
+    steps = session.step_store
+    assert isinstance(steps, SessionStepStore)
+    session.plugins = [StepPersistence(store=steps, capture_frontier=True)]
+    try:
+        result = await session.prompt('run it')
+    finally:
+        other.close()
+
+    assert result.output == 'finished'
+    assert session.conversations is not None and session.summary.run_id is not None
+    saved = await session.conversations.get(conversation_id=session.summary.id)
+    assert saved.summary.outcome == 'completed' and saved.messages == session.messages
+    skipped = {record.getMessage(): record.levelno for record in caplog.records if record.name.endswith('_session')}
+    # Below `WARNING`, which `logging` would print over the live display.
+    assert skipped.get('Skipped saving a tool effect: database is locked') == logging.INFO
+    assert skipped.get('Skipped saving a step checkpoint: database is locked') == logging.INFO
+    # The tool's completion was not recorded, so its effect still reads as started.
+    assert [
+        effect.tool_call_id for effect in await steps.list_unresolved_tool_effects(run_id=session.summary.run_id)
+    ] == ['call']
+
+
+async def test_step_store_still_raises_errors_other_than_a_lock(tmp_path: Path) -> None:
+    store = SessionStepStore(database=tmp_path)
+    with pytest.raises(sqlite3.OperationalError, match='unable to open database file'):
+        await store.append_event(StepEvent(run_id='r1', kind='run_started', step_index=0))
+
+
+async def test_step_store_still_raises_an_operational_error_sqlite_did_not_raise(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fail(self: SqliteStepStore, event: StepEvent) -> None:
+        raise sqlite3.OperationalError('raised by hand')
+
+    monkeypatch.setattr(SqliteStepStore, 'append_event', fail)
+    store = SessionStepStore(database=tmp_path / 'sessions.db')
+    with pytest.raises(sqlite3.OperationalError, match='raised by hand'):
+        await store.append_event(StepEvent(run_id='r1', kind='run_started', step_index=0))
+
+
 async def test_cancellation_still_propagates_when_saving_fails(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -399,6 +475,35 @@ async def test_resume_from_another_directory_runs_in_this_session_directory(tmp_
     await second.prompt('second')
     await second.prompt('third')
     assert working_dirs == [str(original.resolve()), str(elsewhere.resolve()), str(elsewhere.resolve())]
+
+
+async def test_a_session_saved_in_a_git_checkout_records_it(tmp_path: Path) -> None:
+    """The checkout is saved with the session, so the browsers still place it once its worktree is removed."""
+    repo, linked, plain = tmp_path / 'repo', tmp_path / 'linked', tmp_path / 'plain'
+    repository(repo, linked=linked, branch='feature')
+    (linked / 'src').mkdir()
+    plain.mkdir()
+    agent = Agent(TestModel(custom_output_text='answer'))
+    conversations = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    session = Session(agent, deps=None, conversations=conversations, workspace=linked / 'src')
+    await session.prompt('first')
+    checkout = GitCheckout(
+        repository=str((repo / '.git').resolve()), name='repo', root=str(linked.resolve()), branch='feature'
+    )
+    assert session.summary.checkout == checkout
+    await session.commit_messages([])
+    assert (await conversations.get(conversation_id=session.conversation_id)).summary.checkout == checkout
+    await session._fork()  # pyright: ignore[reportPrivateUsage]
+    assert session.summary.checkout == checkout
+
+    # Elsewhere it keeps the checkout it saved; outside Git, a session records none.
+    elsewhere = Session(agent, deps=None, conversations=conversations, workspace=plain)
+    await elsewhere.resume(session.conversation_id, allow_other_workspace=True)
+    await elsewhere.prompt('second')
+    assert elsewhere.summary.checkout == checkout
+    await elsewhere.clear()
+    await elsewhere.prompt('third')
+    assert elsewhere.summary.checkout is None
 
 
 @pytest.mark.parametrize(
@@ -562,7 +667,7 @@ async def test_stock_agent_delegates_with_plugin_tools_instructions_and_guardrai
                 for message in messages
                 if isinstance(message, ModelRequest)
                 for part in message.parts
-                if isinstance(part, (ToolReturnPart, RetryPromptPart))
+                if isinstance(part, ToolReturnPart)
             ]
             assert any('workspace content' in str(part.content) for part in returns)
             assert any(('Denied by plugin' if deny else 'plugin result') in str(part.content) for part in returns)
@@ -638,9 +743,7 @@ async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: 
     assert 'delegate_task' not in {tool.name for tool in model.last_model_request_parameters.function_tools}
     session.plugins = []
     await session.prompt('disabled')
-    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {
-        'read_clai_customization_guide'
-    }
+    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {'load_capability'}
     assert session.summary.id
     assert (
         sum(
@@ -652,9 +755,7 @@ async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: 
         == 5
     )
     await agent.run('original remains unchanged')
-    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {
-        'read_clai_customization_guide'
-    }
+    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {'load_capability'}
 
 
 @pytest.mark.parametrize('base_clai_agent', [False, True])

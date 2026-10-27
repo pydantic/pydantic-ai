@@ -5,11 +5,12 @@ import io
 import pytest
 from rich.color import Color
 from rich.console import Console
+from rich.style import Style
 from rich.text import Text
 from termflow.themes import PALETTES
 
 from pydantic_ai import FunctionToolCallEvent
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import PartStartEvent, TextPart, ToolCallPart
 from pydantic_ai_harness.filesystem import FileEditedEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import StreamRenderer
@@ -228,6 +229,8 @@ async def _print_shell_call(console: Console, command: str) -> None:
     )
 
 
+# Rich 15.0.0's `from_ansi` keeps the trailing newline that earlier versions drop
+# (https://github.com/Textualize/rich/pull/4076), so tests strip it before counting rows.
 async def _highlighted_header(command: str, *, width: int = 100) -> tuple[Console, Text]:
     output = io.StringIO()
     console = Console(file=output, force_terminal=True, color_system='truecolor', width=width)
@@ -235,8 +238,12 @@ async def _highlighted_header(command: str, *, width: int = 100) -> tuple[Consol
     return console, Text.from_ansi(output.getvalue())
 
 
+def _style(console: Console, text: Text, fragment: str) -> Style:
+    return text.get_style_at_offset(console, text.plain.index(fragment))
+
+
 def _color(console: Console, text: Text, fragment: str) -> Color | None:
-    return text.get_style_at_offset(console, text.plain.index(fragment)).color
+    return _style(console, text, fragment).color
 
 
 KEYWORD = Color.parse('color(4)')
@@ -279,6 +286,32 @@ async def test_shell_header_mutes_a_heredoc_in_an_unknown_language() -> None:
     assert _color(console, text, 'git') is None
 
 
+async def test_shell_header_dims_highlighted_code_without_underlines() -> None:
+    console, text = await _highlighted_header(
+        "cd /tmp && uv run python - <<'EOF'\nfrom pydantic_ai.messages import ModelRequest\nclass Probe: pass\nEOF\n"
+        "git commit -F - <<'EOF'\nnotes\nEOF"
+    )
+    for fragment in ('cd', "'EOF'", 'from', 'pydantic_ai.messages', 'ModelRequest', 'Probe'):
+        style = _style(console, text, fragment)
+        assert style.dim, fragment
+        assert not style.underline, fragment
+    assert _color(console, text, 'from') == KEYWORD, 'still highlighted'
+    for fragment in ('●', 'shell', 'notes'):
+        assert not _style(console, text, fragment).dim, 'the tool name and muted text are as before'
+
+
+async def test_streamed_code_fence_keeps_syntax_underlines() -> None:
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor', width=100)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
+    source = '```python\nfrom pydantic_ai.messages import ModelRequest\n```\n'
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(source)))
+    await renderer.finish()
+    text = Text.from_ansi(output.getvalue())
+    assert _style(console, text, 'pydantic_ai').underline, 'only shell call headers drop underlines'
+    assert not _style(console, text, 'from').dim
+
+
 async def test_shell_header_escapes_controls_before_highlighting() -> None:
     command = (
         "python3 - <<'EOF'\nprint('\x1b[2J\x1b]52;c;cGF5bG9hZA==\x07')\nimport os\nEOF\n"
@@ -303,7 +336,7 @@ async def test_highlighted_shell_header_keeps_the_hanging_indent_and_row_cap() -
     await _print_shell_call(Console(file=plain, width=40), command)
     console, text = await _highlighted_header(command, width=40)
     assert text.plain == Text.from_ansi(plain.getvalue()).plain, 'highlighting moves no character'
-    assert text.plain.splitlines() == [
+    assert text.plain.rstrip('\n').splitlines() == [
         '● shell python3 - <<EOF',
         '        x =',
         '        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -324,10 +357,10 @@ async def test_highlighted_shell_header_keeps_the_hanging_indent_and_row_cap() -
 async def test_shell_header_stops_highlighting_inline_code_at_the_row_cap() -> None:
     command = "python3 -c '\n" + '\n'.join(f'import m{index}' for index in range(12)) + "\n'"
     console, text = await _highlighted_header(command)
-    assert text.plain.splitlines()[-1] == '        … +4 lines'
+    assert text.plain.rstrip('\n').splitlines()[-1] == '        … +4 lines'
     assert _color(console, text, 'import m8') == KEYWORD
     _, empty = await _highlighted_header("python3 -c ''")
-    assert empty.plain == "● shell python3 -c ''\n"
+    assert empty.plain.rstrip('\n') == "● shell python3 -c ''"
 
 
 async def test_shell_header_lexes_a_long_one_liner_only_as_far_as_its_shown_rows() -> None:
@@ -335,7 +368,7 @@ async def test_shell_header_lexes_a_long_one_liner_only_as_far_as_its_shown_rows
     plain = io.StringIO()
     await _print_shell_call(Console(file=plain, width=60), command)
     console, text = await _highlighted_header(command, width=60)
-    lines = text.plain.splitlines()
+    lines = text.plain.rstrip('\n').splitlines()
     assert len(lines) == 11
     assert lines[-1] == f'        … +{len(Text(command).wrap(console, 52, overflow="fold")) - 10} lines'
     assert text.plain == Text.from_ansi(plain.getvalue()).plain
@@ -349,6 +382,9 @@ async def test_shell_header_uses_the_palette_syntax_colours(name: str) -> None:
     keyword = PALETTES[name].ansi[4] if name != 'default' else 'color(4)'
     assert _color(console, text, 'import') == Color.parse(keyword)
     assert _color(console, text, 'value') is None, 'names use the terminal foreground'
+    assert _style(console, text, 'import').dim
+    assert _style(console, text, 'value').dim
+    assert not _style(console, text, 'os').underline
 
 
 async def test_live_prompt_repaints_the_shell_header_for_a_new_theme_and_width() -> None:
@@ -371,6 +407,7 @@ async def test_live_prompt_repaints_the_shell_header_for_a_new_theme_and_width()
         selected[0] = 'default'
         # Rendered again, not recoloured: the palette's blue is also the slot of a brand colour.
         assert colour('import') == KEYWORD
+        assert _style(console, Text.from_ansi(rows()[1]), 'import').dim, 'still dimmed'
         retained = rows()[:5]
         await _print_shell_call(console, command)
         assert rows()[-6:-1] == retained, 'the retained header matches one printed in the new theme'

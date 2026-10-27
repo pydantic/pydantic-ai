@@ -1,7 +1,7 @@
 """The built-in `posthog` plugin: its settings menu, its `/keys` reference, and the connection it builds."""
 
 import io
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -28,7 +28,16 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.posthog import PostHog
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins import posthog
-from pydantic_clai2.builtin_plugins.posthog import EU_URL, EVERY_GROUP, US_URL, PostHogSource, SavedKeyAuth
+from pydantic_clai2.builtin_plugins.posthog import (
+    DONE,
+    EU_URL,
+    EVERY_GROUP,
+    KEY_LABEL,
+    US_URL,
+    PostHogSource,
+    SavedKeyAuth,
+    feature_options,
+)
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import api_keys
 from pydantic_clai2.config.api_keys import KeyReference
@@ -37,8 +46,12 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader, PluginSettingsError
-from pydantic_clai2.ui.menus.field_menu import CUSTOM, is_save_and_close, save_and_close_item
+from pydantic_clai2.plugins.menus import Option, SettingsMenu
+from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.ui.menus import dialogs
+from pydantic_clai2.ui.menus.field_menu import CUSTOM
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
+from tests.clai2.dialog_script import Answer, Asked, Back, Confirm, Finish, Pick, ScriptedDialogs, Type
 from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick, typed
 
 pytestmark = pytest.mark.anyio
@@ -105,7 +118,7 @@ class Shell:
 
     def capability(self) -> PostHog[None]:
         [capability] = self.loader.capabilities()
-        assert isinstance(capability, PostHog)
+        assert isinstance(capability, PostHog) and capability.defer_loading
         return capability  # pyright: ignore[reportUnknownVariableType]
 
     async def run_capability(self) -> PostHog[None] | None:
@@ -114,8 +127,10 @@ class Shell:
         assert entry.loaded is not None
         plugin = entry.loaded.plugin
         assert isinstance(plugin, posthog.PostHogPlugin)
-        assert self.loader.capabilities() == [plugin.for_run]
-        return await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        assert self.loader.capabilities() == [WorkspacelessCapability(plugin.for_run)]
+        capability = await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        assert capability is None or capability.defer_loading
+        return capability
 
 
 def script(
@@ -124,21 +139,24 @@ def script(
     choices: list[MenuResult] | None = None,
     texts: list[TextInputResult] | None = None,
 ) -> Script:
+    """Drive the declared menu in the terminal: its list, and the widgets its actions' dialogs show."""
     scripted = Script(lists=[*lists, CLOSE], choices=choices or [], texts=texts or [])
-    monkeypatch.setattr(posthog, 'RUNNERS', scripted.runners)
+    monkeypatch.setattr(dialogs, 'RUNNERS', scripted.runners)
     return scripted
 
 
-def key_choice(monkeypatch: pytest.MonkeyPatch, choice: str | KeyReference | None) -> list[str]:
-    """Answer `prompt_api_key`, whose saved-key list needs a real terminal, and record its labels."""
-    labels: list[str] = []
+async def act(
+    shell: Shell, row: str, answers: Sequence[Answer], scripted: ScriptedDialogs | None = None
+) -> tuple[list[str], list[Asked]]:
+    """Run one row's action as the web UI does, through the loader, so the plugin loads again after."""
+    scripted = scripted or ScriptedDialogs(answers)
 
-    async def prompt_api_key(*, prompt: object, label: str, optional: bool = False) -> str | KeyReference | None:
-        labels.append(label)
-        return choice
+    async def edit(menu: SettingsMenu) -> list[str]:
+        return list(await menu.actions[row](scripted))
 
-    monkeypatch.setattr(posthog, 'prompt_api_key', prompt_api_key)
-    return labels
+    messages = await shell.loader.edit_settings('posthog', edit)
+    assert scripted.unused == []
+    return messages, scripted.asked
 
 
 def transport(capability: PostHog[None]) -> StreamableHttpTransport:
@@ -170,7 +188,6 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(KEY, 'phx_the_environment_is_not_a_source')
-    labels = key_choice(monkeypatch, ' phx_new ')
     shown = script(
         monkeypatch,
         lists=[
@@ -192,7 +209,7 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(
             pick('tools'),
             pick('false'),
         ],
-        texts=[typed('12345'), typed('0190-abcd')],
+        texts=[typed(' phx_new '), typed('12345'), typed('0190-abcd')],
     )
     shell = Shell(tmp_path)
     assert await shell.loader.command(['enable', 'posthog']) == '\n'.join(
@@ -209,8 +226,8 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(
         ]
     )
     assert 'PostHog has no key yet' in shell.output.getvalue()
-    assert labels == [f'PostHog personal API key (new keys are saved in /keys as {KEY})']
     assert shown.opened.count('list') == 9
+    assert shown.opened[:3] == ['list', 'text', 'list'], 'with no saved keys, the key row asks for one straight away'
     assert api_keys.load_keys()[KEY].get_secret_value() == 'phx_new'
     assert shell.saved() == {
         'auth': 'key',
@@ -245,8 +262,7 @@ async def test_reopening_repicks_a_saved_key_and_region_without_reinstalling(
     shell = Shell(tmp_path, {'url': EU_URL, 'read_only': False})
     script(monkeypatch, lists=[])
     await shell.loader.command(['enable', 'posthog'])
-    key_choice(monkeypatch, KeyReference(name='SHARED_POSTHOG'))
-    script(monkeypatch, lists=[pick('key'), pick('url')], choices=[pick(US_URL)])
+    script(monkeypatch, lists=[pick('key'), pick('url')], choices=[pick('SHARED_POSTHOG'), pick(US_URL)])
     assert await shell.loader.command(['configure', 'posthog']) == (
         'PostHog connects with SHARED_POSTHOG from /keys.\nSaved Region.'
     )
@@ -291,23 +307,40 @@ async def test_feature_groups_toggle_and_every_group_clears_them(
     script(monkeypatch, lists=[pick('features')], choices=[pick('custom_group'), CLOSE])
     assert await shell.loader.configure('posthog') == 'Saved Feature groups.'
     assert shell.saved()['features'] == ['custom_group']
-    script(
-        monkeypatch, lists=[pick('features')], choices=[pick('custom_group'), MenuResult(item=save_and_close_item())]
-    )
+    script(monkeypatch, lists=[pick('features')], choices=[pick('custom_group'), pick(DONE)])
     await shell.loader.configure('posthog')
     assert shell.saved()['features'] is None, 'unchecking the last group offers every group, never an empty list'
     script(monkeypatch, lists=[pick('features')], choices=[CLOSE])
-    assert await shell.loader.configure('posthog') == 'PostHog settings unchanged.'
+    assert await shell.loader.configure('posthog') == 'PostHog: nothing changed.'
 
 
-def test_feature_menu_marks_the_selection_and_keeps_unknown_groups() -> None:
-    labels = [item.label for item in posthog.feature_menu(['flags', 'zz_new'], 3)._items]  # pyright: ignore[reportPrivateUsage]
-    assert labels[0] == '[ ] every group (no filter)'
-    assert '[x] flags' in labels and '[x] zz_new' in labels and '[ ] sql' in labels
-    every = posthog.feature_menu(None, 0)._items[0]  # pyright: ignore[reportPrivateUsage]
-    assert every.label == '[x] every group (no filter)'
-    *_, last = posthog.feature_menu(None, 0)._items  # pyright: ignore[reportPrivateUsage]
-    assert is_save_and_close(last)
+async def test_feature_groups_dialog_toggles_and_saves_each_pick(tmp_path: Path) -> None:
+    shell = Shell(tmp_path, {'features': ['flags', 'zz_new']}, terminal=False)
+    await shell.loader.enable('posthog')
+    messages, asked = await act(shell, 'features', [Pick(value='sql'), Pick(value='zz_new'), Pick(value=DONE)])
+    assert messages == ['Saved Feature groups.']
+    assert shell.saved()['features'] == ['flags', 'sql']
+    assert transport(shell.capability()).url == f'{US_URL}?features=flags%2Csql', 'the plugin loads again'
+    first, second, third = asked
+    assert first.kind == 'choose' and first.title == 'PostHog feature groups'
+    assert first.description == 'Each pick toggles a group and saves it. Leaving none selected offers every group.'
+    labels = [option.label for option in first.options]
+    assert labels[0] == '[ ] every group (no filter)' and labels[-1] == 'Done'
+    assert '[x] flags' in labels and '[x] zz_new' in labels and '[ ] sql' in labels, 'unknown saved groups stay listed'
+    assert len(first.options) == len(posthog.FEATURE_GROUPS) + 3
+    assert '[x] sql' in [option.label for option in second.options]
+    assert 'zz_new' not in [option.value for option in third.options], 'an unchecked unknown group leaves the list'
+    messages, _ = await act(shell, 'features', [Back()])
+    assert messages == [] and shell.saved()['features'] == ['flags', 'sql']
+
+
+def test_feature_options_mark_every_group_when_nothing_is_filtered() -> None:
+    every, *groups, done = feature_options(None)
+    assert every == Option(
+        value=EVERY_GROUP, label='[x] every group (no filter)', description='Offer every group, and close the list.'
+    )
+    assert all(option.label.startswith('[ ] ') for option in groups)
+    assert done.value == DONE and done.description == 'Close the list. Each toggle was saved as you made it.'
 
 
 async def test_new_key_is_typed_masked_when_no_keys_are_saved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -332,47 +365,44 @@ async def test_cancelled_or_blank_key_changes_nothing(
     assert api_keys.load_keys() == {} and posthog.saved_key() is None
 
 
-async def test_a_key_saved_elsewhere_while_typing_is_not_overwritten(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    shell = Shell(tmp_path)
-    script(monkeypatch, lists=[])
-    await shell.loader.enable('posthog')
-
-    async def racing_prompt(*, prompt: object, label: str, optional: bool = False) -> str:
-        api_keys.save_key(name=KEY, value='saved-by-another-process')
-        return 'phx_mine'
-
-    monkeypatch.setattr(posthog, 'prompt_api_key', racing_prompt)
-    script(monkeypatch, lists=[pick('key')], choices=[pick(False)])
-    assert await shell.loader.configure('posthog') == 'PostHog key unchanged.'
-    assert api_keys.load_keys()[KEY].get_secret_value() == 'saved-by-another-process'
-
-
-async def test_replacing_a_shared_key_needs_confirmation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_key_dialog_types_a_masked_key_and_asks_before_replacing_a_shared_one(tmp_path: Path) -> None:
     api_keys.save_key(name=KEY, value='shared')
-    shell = Shell(tmp_path)
-    script(monkeypatch, lists=[])
+    shell = Shell(tmp_path, terminal=False)
     await shell.loader.enable('posthog')
-    key_choice(monkeypatch, 'other')
-    script(monkeypatch, lists=[pick('key'), pick('key')], choices=[pick(False), pick(True)])
-    assert await shell.loader.configure('posthog') == (
-        f'PostHog key unchanged.\nPostHog connects with {KEY} from /keys.'
-    )
-    assert api_keys.load_keys()[KEY].get_secret_value() == 'other'
+    kept = [Pick(value='enter'), Type(text='phx_other'), Confirm(yes=False)]
+    assert (await act(shell, 'key', kept))[0] == ['PostHog key unchanged.']
+    assert api_keys.load_keys()[KEY].get_secret_value() == 'shared' and posthog.saved_key() is None
+    replaced = [Pick(value='enter'), Type(text='phx_other'), Confirm(yes=True)]
+    messages, asked = await act(shell, 'key', replaced)
+    assert messages == [f'PostHog connects with {KEY} from /keys.']
+    assert api_keys.load_keys()[KEY].get_secret_value() == 'phx_other'
+    assert posthog.saved_key() == KeyReference(name=KEY)
+    picker, typing, confirm = asked
+    assert picker.title == KEY_LABEL == f'PostHog personal API key (new keys are saved in /keys as {KEY})'
+    assert [option.value for option in picker.options] == [KEY, 'enter']
+    assert typing.kind == 'text' and typing.secret and typing.title == KEY_LABEL
+    assert confirm.title == f'{KEY} is already in /keys'
+    assert bearer() == 'Bearer phx_other'
 
 
-async def test_a_key_that_vanishes_while_choosing_is_reported_in_the_menu(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    shell = Shell(tmp_path)
-    script(monkeypatch, lists=[])
+async def test_a_key_that_vanishes_while_choosing_is_reported_in_the_menu(tmp_path: Path) -> None:
+    api_keys.save_key(name='GONE', value='going')
+    shell = Shell(tmp_path, terminal=False)
     await shell.loader.enable('posthog')
-    key_choice(monkeypatch, KeyReference(name='GONE'))
-    script(monkeypatch, lists=[pick('key')])
-    assert await shell.loader.configure('posthog') == (
+
+    class Vanishing(ScriptedDialogs):
+        async def choose(
+            self, *, title: str, options: Sequence[Option], current: str | None = None, description: str = ''
+        ) -> str | None:
+            picked = await super().choose(title=title, options=options, current=current, description=description)
+            api_keys.delete_key(name='GONE')
+            return picked
+
+    messages, _ = await act(shell, 'key', [], Vanishing([Pick(value='GONE')]))
+    assert messages == [
         'The selected API key no longer exists. Select a saved key again through /plugins configure posthog.'
-    )
+    ]
+    assert posthog.saved_key() is None
 
 
 async def test_saved_key_auth_fails_closed() -> None:
@@ -456,7 +486,7 @@ async def test_edits_saved_before_the_menu_fails_still_apply(tmp_path: Path, mon
             raise RuntimeError('terminal went away')
         return scripted.run_list(menu)  # pyright: ignore[reportArgumentType]
 
-    monkeypatch.setattr(posthog, 'RUNNERS', replace(scripted.runners, run_list=fail_after_the_edit))
+    monkeypatch.setattr(dialogs, 'RUNNERS', replace(scripted.runners, run_list=fail_after_the_edit))
     with pytest.raises(RuntimeError, match='terminal went away'):
         await shell.loader.configure('posthog')
     assert shell.saved()['read_only'] is False
@@ -474,9 +504,8 @@ async def test_a_corrupt_key_reference_still_loads_so_the_menu_can_fix_it(
     source = PostHogSource(PluginHost[None](name='posthog', console=Console(), settings={}))
     [key, *_] = source.rows()
     assert key.note == 'needs a key' and source.current(key) == '(invalid)'
-    key_choice(monkeypatch, KeyReference(name=KEY))
     api_keys.save_key(name=KEY, value='phx_fixed')
-    script(monkeypatch, lists=[pick('key')])
+    script(monkeypatch, lists=[pick('key')], choices=[pick(KEY)])
     assert await shell.loader.configure('posthog') == f'PostHog connects with {KEY} from /keys.'
     assert bearer() == 'Bearer phx_fixed'
 
@@ -484,7 +513,7 @@ async def test_a_corrupt_key_reference_still_loads_so_the_menu_can_fix_it(
 async def test_headless_configure_explains_instead_of_drawing(tmp_path: Path) -> None:
     shell = Shell(tmp_path, terminal=False)
     assert await shell.loader.command(['enable', 'posthog']) == (
-        'Enabled posthog.\nConfigure PostHog from a terminal: Run /plugins configure posthog to choose or enter a key.'
+        'Enabled posthog.\nConfigure PostHog from a terminal: /plugins configure posthog'
     )
 
 
@@ -622,6 +651,40 @@ async def test_failed_sign_in_is_reported_and_adds_no_tools(tmp_path: Path, monk
     )
     assert await shell.run_capability() is None
     await shell.loader.close('exit')
+
+
+async def test_sign_in_dialog_saves_the_choice_then_signs_in_in_the_browser(tmp_path: Path) -> None:
+    shell = Shell(tmp_path, terminal=False)
+    await shell.loader.enable('posthog')
+    messages, asked = await act(shell, 'auth', [Pick(value='browser'), Finish()])
+    assert messages == ['Saved Sign-in.', 'Signed in to PostHog.']
+    choose, wait = asked
+    assert choose == Asked(
+        kind='choose',
+        title='Choose Sign-in',
+        description='A personal API key from /keys, or a browser sign-in whose tokens are kept in the keyring.',
+        options=(
+            Option(value='key', label='API key from /keys'),
+            Option(value='browser', label='browser sign-in'),
+        ),
+        current='key',
+    )
+    assert wait.kind == 'wait' and wait.title == 'Signing in to PostHog'
+    assert await shell.run_capability() is not None, 'the plugin loads again with the browser sign-in'
+    assert (await act(shell, 'auth', [Pick(value='browser')]))[0] == ['Saved Sign-in.'], 'already signed in'
+    assert (await act(shell, 'auth', [Back()]))[0] == []
+    assert SignIn.attempts == 1
+    await shell.loader.close('exit')
+
+
+def test_the_menu_declares_an_action_for_each_row_beyond_a_value() -> None:
+    host = PluginHost[None](name='posthog', console=Console(), settings={})
+    menu = posthog.PostHogPlugin.from_host(host).settings_menu()
+    assert [row.key for row in menu.source.rows()] == [
+        *('key', 'auth', 'url', 'read_only', 'features', 'mode', 'project_id', 'organization_id'),
+        'include_instructions',
+    ]
+    assert list(menu.actions) == ['key', 'auth', 'features'] and menu.searchable
 
 
 @pytest.mark.parametrize(

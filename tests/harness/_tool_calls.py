@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Sequence
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.workspaces import WorkspaceBackend
 
@@ -40,7 +40,7 @@ async def call_tools(
         str(part.content)
         for message in result.all_messages()
         for part in message.parts
-        if isinstance(part, (ToolReturnPart, RetryPromptPart))
+        if isinstance(part, ToolReturnPart)
     ]
 
 

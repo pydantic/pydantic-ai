@@ -2,9 +2,10 @@
 
 import logging
 import os
+import sqlite3
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Sequence
-from contextlib import contextmanager, nullcontext
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
@@ -13,7 +14,7 @@ from pathlib import Path
 from typing import Generic, Literal, TypeVar, cast
 from uuid import uuid4
 
-from anyio import get_cancelled_exc_class, move_on_after
+from anyio import get_cancelled_exc_class, move_on_after, to_thread
 
 from pydantic_ai import Agent, AgentModelSettings, AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
 from pydantic_ai._context_size import context_tokens
@@ -36,7 +37,14 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
-from pydantic_ai_harness.step_persistence import SqliteStepStore, StepStore
+from pydantic_ai_harness.step_persistence import (
+    ContinuableSnapshot,
+    RunRecord,
+    SqliteStepStore,
+    StepEvent,
+    StepStore,
+    ToolEffectRecord,
+)
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
@@ -46,11 +54,17 @@ from pydantic_ai_harness.step_persistence.conversations import (
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
 from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
+from pydantic_clai2.runtime.monty_cells import MONTY_CELL, MontyCell
+from pydantic_clai2.runtime.project_identity import ProjectIdentity, git_checkout, project_identity
 from pydantic_clai2.runtime.repl_state import ReplStates
+from pydantic_clai2.runtime.task_prompts import TASK_PROMPT, TaskPrompt
 from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
+
+STEERING = 'clai2_steering'
+"""Request metadata marking the user's steering message, so a UI can tell it from input a capability enqueues."""
 _CURRENT_SESSION_ID: ContextVar[str | None] = ContextVar('clai2_session_id', default=None)
 
 
@@ -67,6 +81,47 @@ def session_context(session_id: str) -> Generator[None]:
         yield
     finally:
         _CURRENT_SESSION_ID.reset(token)
+
+
+class SessionStepStore(SqliteStepStore):
+    """Step records in `sessions.db`, where a write another process keeps locked out is skipped, not raised.
+
+    Every CLAI on the machine writes to the one `sessions.db`, and SQLite lets one of them write at a time.
+    Step records are a recovery aid beside the saved conversation, which stays the record of the turn,
+    so a run, event, checkpoint or tool effect still locked out after the store's busy timeout is logged
+    and dropped rather than failing the tool call or the turn. Resume then uses an earlier checkpoint.
+    """
+
+    async def register_run(self, record: RunRecord) -> None:
+        await _unless_locked('run', super().register_run(record))
+
+    async def append_event(self, event: StepEvent) -> None:
+        await _unless_locked('step event', super().append_event(event))
+
+    async def save_snapshot(self, snapshot: ContinuableSnapshot) -> None:
+        await _unless_locked('step checkpoint', super().save_snapshot(snapshot))
+
+    async def record_tool_effect(self, record: ToolEffectRecord) -> None:
+        await _unless_locked('tool effect', super().record_tool_effect(record))
+
+
+async def _unless_locked(
+    kind: Literal['run', 'step event', 'step checkpoint', 'tool effect'], write: Awaitable[None]
+) -> None:
+    try:
+        await write
+    except sqlite3.OperationalError as error:
+        # One raised by hand rather than by SQLite carries no code; it is no lock either.
+        code = getattr(error, 'sqlite_errorcode', None)
+        if code is None or code & 0xFF not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+            raise
+        # Below `WARNING`, so mid-turn `logging` does not fall back to printing it over the live display.
+        logging.getLogger(__name__).info('Skipped saving a %s: %s', kind, error)
+
+
+def step_store(conversations: SqliteConversationStore) -> SessionStepStore:
+    """Where runs over `conversations`, delegated tasks' included, capture their steps."""
+    return SessionStepStore(database=conversations.database, max_snapshots_per_run=8)
 
 
 FamilyDefaults = Callable[[str], ModelSettings | None]
@@ -115,8 +170,18 @@ def _overrides_get_workspace(leaf: AbstractCapability[DepsT], *, include_dynamic
         leaf = leaf.wrapped
     if isinstance(leaf, DynamicCapability):
         # A capability function's capability, and so its workspace, is known only once the run starts.
-        return include_dynamic
+        return include_dynamic and not isinstance(leaf, WorkspacelessCapability)
     return type(leaf).get_workspace is not AbstractCapability.get_workspace
+
+
+class WorkspacelessCapability(DynamicCapability[DepsT]):
+    """A capability function that never supplies the run's workspace, such as a built-in plugin's MCP server.
+
+    A plain capability function might return a sandbox, so CLAI attaches the session's directory (`Session.workspace`) only once the
+    run's capability functions have resolved, after every `for_run`; harness `Skills` reads its libraries
+    there and finds no workspace. For this one, CLAI attaches it before `for_run`, and a
+    run whose function does return a workspace fails.
+    """
 
 
 @dataclass
@@ -240,7 +305,7 @@ def local_workspace(
     return LocalWorkspace[DepsT](directory, env=_command_env())
 
 
-def _interrupted(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+def interrupted_history(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
     """`messages` with the last one marked interrupted, so core closes unanswered calls without replaying them."""
     marked = list(messages)
     if marked:
@@ -250,15 +315,16 @@ def _interrupted(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
     return marked
 
 
-def _fork_summary(busy: ConversationSummary) -> ConversationSummary:
-    """A new saved session continuing `busy`, which another process is still running."""
+def fork_summary(source: ConversationSummary) -> ConversationSummary:
+    """A new saved session continuing `source`, such as one another process is still running."""
     return ConversationSummary(
-        workspace=busy.workspace,
-        title=f'{busy.title} (fork)',
-        subtitle=busy.subtitle,
-        tags=busy.tags,
-        title_source=busy.title_source,
-        model=busy.model,
+        workspace=source.workspace,
+        title=f'{source.title} (fork)',
+        subtitle=source.subtitle,
+        tags=source.tags,
+        title_source=source.title_source,
+        model=source.model,
+        checkout=source.checkout,
     )
 
 
@@ -337,12 +403,14 @@ class Session(Generic[DepsT, OutputT]):
         self.conversations = conversations
         self.workspace = str((workspace or Path.cwd()).resolve())
         self.summary = summary or ConversationSummary(workspace=self.workspace)
+        self._identity: ProjectIdentity | None = None
+        """The Git checkout `workspace` is in, read once, when a session is first saved here."""
         self.on_change: Callable[[ConversationChanged], Awaitable[None]] | None = None
         """Told when `conversation_id` or `title` changes; the shell fires it to plugins."""
+        self.claim: Callable[[str], AbstractContextManager[None]] = lambda conversation_id: nullcontext()
+        """Reserves a conversation for `resume`, raising `ValueError` when another live session holds it."""
         self._published = (self.conversation_id, self.title)
-        self.step_store: StepStore | None = (
-            SqliteStepStore(database=conversations.database, max_snapshots_per_run=8) if conversations else None
-        )
+        self.step_store: StepStore | None = step_store(conversations) if conversations else None
         self.repl_states: ReplStates | None = (
             ReplStates(directory=conversations.database.with_suffix('.repl'), session_id=current_session_id)
             if conversations
@@ -379,8 +447,12 @@ class Session(Generic[DepsT, OutputT]):
         self._record_resumed: Callable[[], None] | None = None
         self._accepting_steering = False
         self._run_context: RunContext[DepsT] | None = None
-        self._pending_steering: list[Sequence[UserContent]] = []
+        self._pending_steering: list[ModelRequest] = []
+        self._monty_notes: list[tuple[str, str]] = []
+        """Cells the user ran in Monty since the last prompt, with the conversation they ran in."""
         self.on_context_usage: Callable[[int], None] | None = None
+        self.on_usage: Callable[[Sequence[ModelMessage]], None] | None = None
+        """Told the conversation so far, history included, after each model response of a streamed run."""
         self.on_context_window: Callable[[int], None] | None = None
         """Told the context window of each streamed request's model, when its profile knows one."""
         self.on_setup_error: Callable[[CapabilitySetupError], None] | None = None
@@ -455,7 +527,7 @@ class Session(Generic[DepsT, OutputT]):
             title_source=source.title_source,
             model=self.model,
         )
-        self.summary = await self.conversations.save(summary=copy, messages=self._messages)
+        self.summary = await self.conversations.save(summary=await self._with_checkout(copy), messages=self._messages)
         self._copy_repl(source.id, self.summary.id)
         telemetry.record('conversation forked', messages=len(self._messages))
         await self._publish()
@@ -494,23 +566,31 @@ class Session(Generic[DepsT, OutputT]):
         self._running = True
         try:
             if self.conversations is not None:
+                summary = replace(self.summary, outcome='ready', run_id=None, model=self.model)
                 self.summary = await self.conversations.save(
-                    summary=replace(self.summary, outcome='ready', run_id=None, model=self.model), messages=messages
+                    summary=await self._with_checkout(summary), messages=messages
                 )
             self._messages = list(messages)
         finally:
             self._running = False
 
-    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False, record: bool = True) -> str:
+    async def resume(
+        self, conversation_id: str, *, allow_other_workspace: bool = False, record: bool = True, unarchive: bool = True
+    ) -> str:
         """Restore a saved head without invoking the model or replaying tools.
 
         A session another live process is running is not taken over: its newest saved state is
         copied into a new saved session, which this one continues while the original keeps running.
 
         `record=False` leaves the `conversation resumed` UI event to a later `record_resumed()`, for a
-        startup restore that runs before the observability plugin subscribes.
+        startup restore that runs before the observability plugin subscribes. `unarchive=False` leaves an
+        archived session archived, for a restore that continues in a fork of it. One another live session
+        of this CLAI holds raises `ValueError`.
         """
-        notice = await self._restore(conversation_id, allow_other_workspace=allow_other_workspace, record=record)
+        with self.claim(conversation_id):
+            notice = await self._restore(
+                conversation_id, allow_other_workspace=allow_other_workspace, record=record, unarchive=unarchive
+            )
         await self._publish()
         return notice
 
@@ -519,7 +599,9 @@ class Session(Generic[DepsT, OutputT]):
         if self._record_resumed is not None:
             self._record_resumed()
 
-    async def _restore(self, conversation_id: str, *, allow_other_workspace: bool, record: bool) -> str:
+    async def _restore(
+        self, conversation_id: str, *, allow_other_workspace: bool, record: bool, unarchive: bool
+    ) -> str:
         if self._running:
             raise RuntimeError('Cannot resume during a running conversation')
         self._running = True
@@ -544,11 +626,16 @@ class Session(Generic[DepsT, OutputT]):
                 if snapshot is not None:
                     messages = snapshot.messages
             if interrupted:
-                messages = _interrupted(messages)
+                messages = interrupted_history(messages)
             summary = saved.summary
             notice = f'Resumed {summary.title} ({summary.id}).{warning}'
+            if unarchive and busy is None and summary.archived_at is not None:
+                # The session being worked in is listed again. Saving new content lists one archived while open
+                # in another CLAI again.
+                await self.conversations.set_archived(conversation_id=summary.id, archived=False)
+                summary = replace(summary, archived_at=None)
             if busy is not None:
-                summary = await self.conversations.save(summary=_fork_summary(saved.summary), messages=messages)
+                summary = await self.conversations.save(summary=fork_summary(saved.summary), messages=messages)
                 self._copy_repl(saved.summary.id, summary.id)
                 notice = (
                     f'{busy} Resumed a fork of it instead: {summary.title} ({summary.id}). '
@@ -576,8 +663,20 @@ class Session(Generic[DepsT, OutputT]):
         if workspace != self.workspace:
             raise ValueError(f'Session belongs to {workspace}. Select it in /resume to confirm.')
 
+    async def _with_checkout(self, summary: ConversationSummary) -> ConversationSummary:
+        """`summary` with the Git checkout of this session's directory, so browsers can group it once that is gone.
+
+        Git is read once, off the event loop. A session resumed from another directory keeps the checkout it saved.
+        """
+        if summary.workspace != self.workspace:
+            return summary
+        if self._identity is None:
+            self._identity = await to_thread.run_sync(project_identity, self.workspace)
+        checkout = git_checkout(self._identity)
+        return summary if checkout is None else replace(summary, checkout=checkout)
+
     def _mark_interrupted(self) -> None:
-        self._messages = _interrupted(self._messages)
+        self._messages = interrupted_history(self._messages)
 
     async def _save_turn(self, *, outcome: Literal['running', 'completed', 'failed', 'cancelled']) -> None:
         if self.conversations is None:
@@ -647,20 +746,96 @@ class Session(Generic[DepsT, OutputT]):
         """Deliver input to the active run, or decline when no run is accepting input."""
         if not self._accepting_steering:
             return False
-        content: Sequence[UserContent] = [text, *images]
+        # A blank text beside images is left out: some providers reject an empty text block.
+        content: Sequence[UserContent] = [*([text] if text or not images else []), *images]
+        request = ModelRequest(parts=[UserPromptPart(content if images else text)], metadata={STEERING: True})
         if self._run_context is None:
-            self._pending_steering.append(content)
+            self._pending_steering.append(request)
         else:
-            self._run_context.enqueue(*content, priority='asap')
+            self._run_context.enqueue(request, priority='asap')
         return True
+
+    async def run_in_monty(self, code: str) -> MontyCell:
+        """Run `code` as a `run_code` cell in Monty, outside the conversation; see `monty_cells`.
+
+        The cell runs with the session's tools and capabilities, so code mode must be on for it to
+        find `run_code`. The next prompt tells the model what ran.
+        """
+        if self._running:
+            raise RuntimeError('A turn is running. Run Monty cells between turns.')
+        cell = MontyCell(code=code)
+        self._running = True
+        try:
+            with session_context(self.summary.id):
+                _, capabilities = self._bind()
+                self._add_local_workspace(capabilities)
+                await self.agent.run(
+                    "Run the user's Monty cell.",
+                    output_type=str,
+                    deps=self.deps,
+                    model=cell.model(),
+                    message_history=[],
+                    conversation_id=self.summary.id,
+                    capabilities=capabilities,
+                    metadata={MONTY_CELL: True},
+                    event_stream_handler=self._stream,
+                )
+        finally:
+            self._running = False
+        self._monty_notes.append((self.summary.id, cell.note()))
+        return cell
+
+    async def prompt_task(self, *, agent_name: str, task_id: str, text: str) -> None:
+        """Resume a finished task with `text` as the user's message, outside the conversation; see `task_prompts`.
+
+        Returns once the task settles, and raises `ValueError` with the delegate tool's reason when it
+        refuses to resume the task. The conversation's history and turns are left as they are, so
+        this may run beside a turn.
+        """
+        if self.delegations is None:
+            raise RuntimeError('This session delegates no tasks.')
+        script = TaskPrompt(agent_name=agent_name, task_id=task_id, text=text)
+        with session_context(self.summary.id), self.delegations.bind():
+            run_model, capabilities = self._bind()
+            capabilities.append(script)
+            self._add_local_workspace(capabilities)
+            await self.agent.run(
+                "Resume the user's task.",
+                output_type=str,
+                deps=self.deps,
+                # The session's model, which a task that inherits its parent's runs on.
+                model=run_model,
+                message_history=[],
+                conversation_id=self.summary.id,
+                capabilities=capabilities,
+                usage_limits=self.usage_limits,
+                metadata={TASK_PROMPT: True},
+            )
+        if script.refused is not None:
+            raise ValueError(script.refused)
+
+    def _add_local_workspace(self, capabilities: list[AgentCapability[DepsT]]) -> bool:
+        """Add CLAI's `LocalWorkspace` to a run's `capabilities` unless a configured one supplies it; whether it did."""
+        configured = [*(agent_capabilities(self.agent) or ()), *self.plugins]
+        if (local := local_workspace(configured, self.workspace)) is None:
+            return False
+        capabilities.append(local)
+        return True
+
+    def _take_monty_notes(self) -> list[str]:
+        """The notes for cells run in this conversation since the last prompt; others are dropped."""
+        notes = [note for conversation_id, note in self._monty_notes if conversation_id == self.summary.id]
+        self._monty_notes.clear()
+        return notes
 
     async def prompt(self, text: str | None, *, images: Sequence[BinaryContent] = ()) -> AgentRunResult[OutputT]:
         """Execute the complete native agent loop, including tool calls."""
         if self._running:
             raise RuntimeError('A conversation can only run one prompt at a time')
-        content: str | Sequence[UserContent] | None = (
-            [*([text] if text is not None else []), *images] if images else text
-        )
+        content: str | Sequence[UserContent] | None = [*([text] if text else []), *images] if images else text
+        if content is not None and (notes := self._take_monty_notes()):
+            # Monty holds what the user's cells did; tell the model before this prompt.
+            content = [*notes, *([content] if isinstance(content, str) else content)]
         submitted = [ModelRequest(parts=[UserPromptPart(content)])] if content is not None else []
         self._running = True
         self._accepting_steering = True
@@ -676,7 +851,7 @@ class Session(Generic[DepsT, OutputT]):
                         candidate = replace(candidate, title=title or 'New session')
                     accepted: list[ModelMessage] = [*previous, *submitted]
                     self.summary = await self.conversations.save(
-                        summary=replace(candidate, outcome='running'), messages=accepted
+                        summary=await self._with_checkout(replace(candidate, outcome='running')), messages=accepted
                     )
                     self._messages = accepted
                 with (
@@ -697,12 +872,9 @@ class Session(Generic[DepsT, OutputT]):
                                 )
                             )
                         workspace: Literal['new'] | None = None
-                        configured = [*(agent_capabilities(self.agent) or ()), *self.plugins]
-                        if (local := local_workspace(configured, self.workspace)) is not None:
-                            capabilities.append(local)
-                            if _stale_local_workspace(previous, self.workspace):
-                                # A conversation resumed from another directory: work in this session's.
-                                workspace = 'new'
+                        if self._add_local_workspace(capabilities) and _stale_local_workspace(previous, self.workspace):
+                            # A conversation resumed from another directory: work in this session's.
+                            workspace = 'new'
                         result = await self.agent.run(
                             content,
                             deps=self.deps,
@@ -762,14 +934,20 @@ class Session(Generic[DepsT, OutputT]):
     async def _stream(self, ctx: RunContext[DepsT], events: AsyncIterable[AgentStreamEvent]) -> None:
         self._accepting_steering = True
         self._run_context = ctx
-        for content in self._pending_steering:
-            ctx.enqueue(*content, priority='asap')
+        for request in self._pending_steering:
+            ctx.enqueue(request, priority='asap')
         self._pending_steering.clear()
         if self.on_context_window is not None and (window := ctx.model.context_window):
             self.on_context_window(window)
 
         async def observed() -> AsyncIterable[AgentStreamEvent]:
+            reported: ModelResponse | None = None
             async for event in events:
+                if self.on_usage is not None:
+                    latest = next((m for m in reversed(ctx.messages) if isinstance(m, ModelResponse)), None)
+                    if latest is not None and latest is not reported:
+                        reported = latest
+                        self.on_usage(ctx.messages)
                 if self.on_context_usage is not None:
                     for message in reversed(ctx.messages):
                         if isinstance(message, ModelResponse) and message.usage.input_tokens:

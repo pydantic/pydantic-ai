@@ -1043,7 +1043,12 @@ async def test_temporal_mcptoolset_instructions_propagate(client: Client):
             id=MCPToolsetInstructionsWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
-        assert output == snapshot('Be a helpful assistant.')
+        assert output == snapshot("""\
+<context id="toolset:mcp">
+Be a helpful assistant.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
 
 
 def test_temporalize_mcptoolset_dispatches_to_temporalmcptoolset():
@@ -2170,8 +2175,9 @@ class PrefixedDynamicSnapshotsWorkflow:
 async def test_prefixed_dynamic_toolset_activities_keep_context_snapshots(client: Client):
     """Under `.prefixed()`, a dynamic toolset's activities still answer from the snapshots serialized at dispatch.
 
-    `available_tool_names` and `active_capability_ids` live outside `TemporalRunContext`'s dataclass fields,
-    so the context copies that carry or strip the tool name path have to keep them.
+    `available_tool_names` and `active_capability_ids` are not `RunContext` fields, so every context copy made
+    inside an activity has to keep them: the ones that carry or strip the tool name path, the one a tool's
+    `prepare` gets, and the ones the inner prefix and rename make before the tool runs.
     """
     _snapshot_reads.clear()
     async with Worker(
@@ -2191,12 +2197,16 @@ async def test_prefixed_dynamic_toolset_activities_keep_context_snapshots(client
             'Done.',
             [
                 ('get_tools', 'factory', [], 3),
+                ('get_tools', 'prepare', [], 3),
                 ('get_tools', 'instructions', [], 3),
                 ('validate_args', 'factory', ['demo_probe'], 3),
+                ('validate_args', 'prepare', ['demo_probe'], 3),
                 ('validate_args', 'validator', ['demo_probe'], 3),
                 ('call_tool', 'factory', ['demo_probe'], 3),
+                ('call_tool', 'prepare', ['demo_probe'], 3),
                 ('call_tool', 'body', ['demo_probe'], 3),
                 ('get_tools', 'factory', ['demo_probe'], 3),
+                ('get_tools', 'prepare', ['demo_probe'], 3),
                 ('get_tools', 'instructions', ['demo_probe'], 3),
             ],
         )

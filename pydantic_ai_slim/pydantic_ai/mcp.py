@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import base64
+import copy
 import functools
 import os
 import re
 import ssl
 import warnings
 from abc import ABC
-from collections.abc import Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
@@ -24,6 +25,7 @@ from typing import (
     cast,
     overload,
 )
+from urllib.parse import urlparse
 
 import anyio
 import pydantic_core
@@ -90,12 +92,15 @@ else:
 
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
+from ._mcp_apps import MCP_APP_METADATA_KEY, MCPAppToolResult
 from ._mcp_compat import is_mcp_sdk_v2, mcp_field, mcp_optional_field, mcp_validated_field
+from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from .settings import ModelSettings
 
 _MCP_SDK_V2 = is_mcp_sdk_v2()
 _JSON_SCHEMA_ADAPTER = TypeAdapter(dict[str, Any])
 _STOP_SEQUENCES_ADAPTER = TypeAdapter(list[str])
+_EXTENSIONS_ADAPTER = TypeAdapter(dict[str, dict[str, Any]])
 
 
 class _ToolTask(Protocol):
@@ -117,6 +122,8 @@ def _load_call_tool_task() -> _CallToolTask | None:
 __all__ = (
     'MCPToolset',
     'MCPToolsetClient',
+    'MCPAuthFunc',
+    'MCPHeadersFunc',
     'load_mcp_toolsets',
     'MCPError',
     'Resource',
@@ -135,6 +142,7 @@ __all__ = (
     'EmbeddedResource',
     'ContentBlock',
     'PromptRole',
+    'MCPAppToolResult',
 )
 
 
@@ -591,6 +599,13 @@ class ServerCapabilities:
     experimental: list[str] | None = None
     """Experimental, non-standard capabilities that the server supports."""
 
+    extensions: dict[str, dict[str, Any]] | None = None
+    """MCP extensions the server supports, keyed by extension identifier, with each extension's settings.
+
+    For example, a server with [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) support
+    declares `'io.modelcontextprotocol/ui'`.
+    """
+
     logging: bool = False
     """Whether the server supports sending log messages to the client."""
 
@@ -629,6 +644,7 @@ class ServerCapabilities:
         tools_cap = mcp_capabilities.tools
         return cls(
             experimental=list(mcp_capabilities.experimental.keys()) if mcp_capabilities.experimental else None,
+            extensions=mcp_validated_field(mcp_capabilities, 'extensions', _EXTENSIONS_ADAPTER),
             logging=mcp_capabilities.logging is not None,
             prompts=prompts_cap is not None,
             prompts_list_changed=bool(mcp_optional_field(prompts_cap, 'list_changed', bool)) if prompts_cap else False,
@@ -716,6 +732,36 @@ URL/path/script string.
 
 For multi-server JSON config files, use [`load_mcp_toolsets`][pydantic_ai.mcp.load_mcp_toolsets]
 instead — it expands env vars and constructs one `MCPToolset` per server entry."""
+
+
+MCPAuthFunc: TypeAlias = Callable[[RunContext[AgentDepsT]], HTTPAuth | str | None | Awaitable[HTTPAuth | str | None]]
+"""A sync/async function that takes the run context and returns the `auth` to connect with for that run.
+
+Pass one as `MCPToolset(auth=...)` to authenticate each agent run as its own user, for example with
+a token from the run's [`deps`][pydantic_ai.tools.RunContext.deps]. See
+[`MCPToolset`'s `auth` argument][pydantic_ai.mcp.MCPToolset.__init__]."""
+
+
+MCPHeadersFunc: TypeAlias = Callable[[RunContext[AgentDepsT]], dict[str, str] | None | Awaitable[dict[str, str] | None]]
+"""A sync/async function that takes the run context and returns the HTTP `headers` to connect with for that run.
+
+See [`MCPToolset`'s `headers` argument][pydantic_ai.mcp.MCPToolset.__init__]."""
+
+
+class _ClientOptions(TypedDict):
+    """The `MCPToolset.__init__` arguments that configure a default FastMCP `Client`, kept to build more of them."""
+
+    sampling_handler: SamplingHandler[Any, Any] | None
+    elicitation_handler: ElicitationHandler[Any, Any] | None
+    log_handler: LogHandler | None
+    progress_handler: ProgressHandler | None
+    message_handler: MessageHandlerT | None
+    client_info: mcp_types.Implementation | None
+    init_timeout: float | None
+    read_timeout: float | None
+    roots: RootsList | RootsHandler[Any] | None
+    verify: ssl.SSLContext | bool | str | None
+    http_client: AsyncHTTPClient | None
 
 
 _UNSET: Any = object()
@@ -824,10 +870,17 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     """
 
     include_instructions: bool
-    """Whether to include the server's `initialize` instructions string in the agent's instruction set.
+    """Whether to add the server's instructions to the agent's instructions.
 
-    Defaults to `False` for backward compatibility. When `True`, the instructions returned by the
-    server during initialization are added to the agent's instructions.
+    Off by default. The server writes this text, and the model receives it with the same authority
+    as instructions you write yourself, so only enable this for servers you trust.
+
+    The instructions are read each time the toolset connects, and on a toolset with an
+    [`id`][pydantic_ai.mcp.MCPToolset.id] they use
+    [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change], keyed `toolset:<id>`:
+    if a later connection brings different instructions, the new text is appended to the
+    conversation rather than rewriting the cached instruction prefix. A stdio or in-process server
+    without an `id` has nothing to key them by, so changed instructions rewrite the prefix.
     """
 
     include_return_schema: bool | None
@@ -860,6 +913,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     """
 
     _id: str | None
+    _id_explicit: bool = True
     _server_info: mcp_types.Implementation | None
     _server_capabilities: ServerCapabilities | None
     _instructions: str | None
@@ -871,6 +925,15 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _user_message_handler: MessageHandlerT | None
     _call_tool_task: _CallToolTask | None
     _server_initiated_handlers: list[str]
+    _telemetry_url_derived_id: str | None
+    # Defaulted at class level so a subclass that doesn't call `MCPToolset.__init__` (like a test double
+    # with canned results) is an ordinary toolset rather than missing them.
+    _client_source: MCPToolsetClient | None = None
+    _client_options: _ClientOptions | None = None
+    _auth_func: MCPAuthFunc[AgentDepsT] | None = None
+    _headers_func: MCPHeadersFunc[AgentDepsT] | None = None
+    _static_auth: HTTPAuth | Literal['oauth'] | str | None = None
+    _static_headers: dict[str, str] | None = None
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -907,18 +970,19 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         read_timeout: float | None = _UNSET,
         roots: RootsList | RootsHandler[Any] | None = None,
         # HTTP-specific (only used when constructing a default transport from a URL)
-        auth: HTTPAuth | Literal['oauth'] | str | None = None,
+        auth: HTTPAuth | Literal['oauth'] | str | MCPAuthFunc[AgentDepsT] | None = None,
         verify: ssl.SSLContext | bool | str | None = None,
-        headers: dict[str, str] | None = None,
+        headers: dict[str, str] | MCPHeadersFunc[AgentDepsT] | None = None,
         http_client: AsyncHTTPClient | None = None,
     ):
         """Build a new `MCPToolset`.
 
         Args:
             client: How to connect to the MCP server. See the class docstring for accepted shapes.
-            id: An optional unique identifier for this toolset. Required for use in durable execution
-                environments like Temporal or DBOS, where it identifies the toolset's activities/steps
-                within a workflow.
+            id: An optional unique identifier for this toolset. Without one, a toolset for a server URL
+                uses the URL's hostname. See [`MCPToolset.id`][pydantic_ai.mcp.MCPToolset.id]. Durable
+                execution environments like Temporal or DBOS require an explicit one, as it identifies the
+                toolset's activities/steps within a workflow.
             max_retries: Maximum number of times a tool call may be retried after a `ModelRetry`.
                 `None` inherits the agent's retry count at runtime.
             tool_error_behavior: `'retry'` (default) raises
@@ -966,9 +1030,19 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 when the installed fastmcp is 3), the literal string `'oauth'` to enable FastMCP's
                 OAuth flow, or a bearer-token string. When `http_client` is provided, authentication
                 is applied to requests made through that client.
+
+                Pass a function of the [run context][pydantic_ai.tools.RunContext] instead (see
+                [`MCPAuthFunc`][pydantic_ai.mcp.MCPAuthFunc]) to authenticate each agent run as its
+                own user: every run then gets its own copy of the toolset (via
+                [`for_run`][pydantic_ai.toolsets.AbstractToolset.for_run]) that opens its own MCP
+                session with the `auth` the function returned. Such a toolset can only connect to
+                the server as part of an agent run, or through the copy `for_run` returns.
             verify: SSL verification mode for HTTP transports — an `ssl.SSLContext`, a CA bundle
                 path string, or a bool.
-            headers: Extra HTTP headers for HTTP transports. Mutually exclusive with `http_client`.
+            headers: Extra HTTP headers for HTTP transports, or a function of the run context
+                returning them (see [`MCPHeadersFunc`][pydantic_ai.mcp.MCPHeadersFunc]), which gives
+                each agent run its own MCP session like a function passed as `auth`. Mutually
+                exclusive with `http_client`.
             http_client: A pre-configured `httpx2.AsyncClient` (a legacy `httpx.AsyncClient` when
                 the installed fastmcp is 3) to use for HTTP transports — useful for self-signed
                 certificates or custom connection pooling. Mutually exclusive with `headers`.
@@ -978,18 +1052,22 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         Raises:
             ValueError: If a pre-built `fastmcp.Client` is passed alongside any of the kwargs that
                 would otherwise build a default Client (sampling, elicitation, headers, etc.), or
-                if `sampling_model` and `sampling_handler` are both passed, or if `headers` and
-                `http_client` are both passed.
+                if `sampling_model` and `sampling_handler` are both passed, if `headers` and
+                `http_client` are both passed, or if `auth` or `headers` is a function and `client`
+                isn't a URL.
         """
         # FastMCP 4 folds registered client extensions into a session when it connects. Import the
         # optional task package here, rather than at module import time, so only an MCPToolset opts
         # the process into that extension and a pre-built but not-yet-entered Client still sees it.
         self._call_tool_task = _load_call_tool_task() if _MCP_SDK_V2 else None
+        self._telemetry_url_derived_id = None
 
         # Names the options whose handlers a modern session can never call, so `__aenter__` can warn.
         # Only options passed here are recorded: handlers configured on a pre-built `fastmcp.Client`
         # are stored in a private attribute with no public accessor, so that path stays silent.
         self._server_initiated_handlers = []
+        # Assigned before the client is built: `_build_client` reads it to install the sampling handler.
+        self.sampling_model = sampling_model
         if isinstance(client, FastMCPClient):
             forwarded_values: dict[str, Any] = {
                 'sampling_handler': sampling_handler,
@@ -1020,6 +1098,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 )
             self.client = client
             self._user_message_handler = None
+            self._client_source = None
+            self._client_options = None
+            self._auth_func = None
+            self._headers_func = None
+            self._static_auth = None
+            self._static_headers = None
         else:
             if sampling_handler is not None and sampling_model is not None:
                 raise ValueError('Pass either `sampling_model` or `sampling_handler`, not both.')
@@ -1028,45 +1112,52 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     '`headers` and `http_client` are mutually exclusive — set headers on the `http_client` instead.'
                 )
 
+            # A function of the run context can't be resolved until a run starts: the toolset then
+            # only acts as a template that `for_run` copies with the resolved value.
+            if callable(auth):
+                self._auth_func, static_auth = auth, None
+            else:
+                self._auth_func, static_auth = None, auth
+            if callable(headers):
+                self._headers_func, static_headers = headers, None
+            else:
+                self._headers_func, static_headers = None, headers
+            if (self._auth_func is not None or self._headers_func is not None) and not _is_url(client):
+                raise ValueError(
+                    'A function for `auth` or `headers` only applies to HTTP transports built from a URL string.'
+                )
+
             # Resolve sentinels to actual defaults now that the conflict check has run.
             if init_timeout is _UNSET:
                 init_timeout = 5
             if read_timeout is _UNSET:
                 read_timeout = 5 * 60
 
-            transport = _build_transport(
-                client,
-                headers=headers,
-                http_client=http_client,
-                auth=auth,
-                verify=verify,
-                read_timeout=read_timeout,
-            )
-            resolved_sampling_handler = sampling_handler
-            if resolved_sampling_handler is None and sampling_model is not None:
-                resolved_sampling_handler = _build_sampling_handler(sampling_model)
-
-            wrapped_message_handler = _build_message_handler(self, message_handler)
-
-            self.client = FastMCPClient[Any](
-                transport=transport,
-                sampling_handler=resolved_sampling_handler,
+            self._client_source = client
+            self._client_options = _ClientOptions(
+                sampling_handler=sampling_handler,
                 elicitation_handler=elicitation_handler,
                 log_handler=log_handler,
                 progress_handler=progress_handler,
-                message_handler=wrapped_message_handler,
+                message_handler=message_handler,
                 client_info=client_info,
                 init_timeout=init_timeout,
-                timeout=read_timeout,
+                read_timeout=read_timeout,
                 roots=roots,
+                verify=verify,
+                http_client=http_client,
             )
+            # Kept so a per-run copy also connects with whichever of the two isn't a function.
+            self._static_auth = static_auth
+            self._static_headers = static_headers
+            self.client = self._build_client(auth=static_auth, headers=static_headers)
             self._user_message_handler = message_handler
-            if resolved_sampling_handler is not None:
+            if sampling_handler is not None or sampling_model is not None:
                 self._server_initiated_handlers.append('sampling_model' if sampling_model else 'sampling_handler')
             if elicitation_handler is not None:
                 self._server_initiated_handlers.append('elicitation_handler')
 
-        self._id = id
+        self._set_id(id)
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
         self.process_tool_call = process_tool_call
@@ -1076,7 +1167,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self.cache_prompts = cache_prompts
         self.include_instructions = include_instructions
         self.include_return_schema = include_return_schema
-        self.sampling_model = sampling_model
         self.log_level = log_level
 
         self._server_info = None
@@ -1090,11 +1180,38 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
+        """The toolset's `id`: the one it was given, or else its server URL's hostname.
+
+        A hostname-derived `id`, with `-` in place of the `:`s of an IPv6 address, keys the server's
+        [instructions](../mcp/client.md#server-instructions) and labels the toolset in error messages.
+        It isn't stamped on tool definitions' `toolset_id`, telemetry masks it, and durable execution
+        doesn't accept it: an activity or step name has to be one you chose, so pass `id=` explicitly
+        there. A stdio or in-process server without one has no `id`.
+        """
         return self._id
 
     @id.setter
     def id(self, value: str | None) -> None:
-        self._id = value
+        self._set_id(value)
+
+    def _set_id(self, value: str | None) -> None:
+        self._id_explicit = value is not None
+        self._id = value if value is not None else _host_derived_id(self.client)
+        # A hostname-derived `id` comes from the server URL, so telemetry masks it like the `MCP` capability's
+        # URL-derived ids: in tool definitions' `toolset_id` and in instruction ids. A chosen one is the caller's label.
+        self._telemetry_url_derived_id = None if self._id_explicit else self._id
+
+    @property
+    def _explicit_id(self) -> str | None:
+        return self._id if self._id_explicit else None
+
+    @property
+    def _appends_instructions_by_default(self) -> bool:
+        # The server instructions `get_instructions` returns append by the framework's choice. This is
+        # declared for the toolset, not for each block, so a subclass's own append blocks under the same
+        # `id` are silent too where appending isn't supported. So is a block a `DynamicToolset` with an
+        # `id` of its own keys anew, since only the toolset's own `id` is recognised.
+        return self.include_instructions
 
     @property
     def label(self) -> str:
@@ -1164,6 +1281,84 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             handlers.append('sampling_model')
         self.client.set_sampling_callback(_build_sampling_handler(model))  # pyright: ignore[reportUnknownMemberType]
 
+    def _build_client(
+        self, *, auth: HTTPAuth | Literal['oauth'] | str | None, headers: dict[str, str] | None
+    ) -> FastMCPClient[Any]:
+        """Build a default FastMCP `Client` from the arguments this toolset was constructed with."""
+        assert self._client_source is not None and self._client_options is not None
+        options = self._client_options
+        transport = _build_transport(
+            self._client_source,
+            headers=headers,
+            http_client=options['http_client'],
+            auth=auth,
+            verify=options['verify'],
+            read_timeout=options['read_timeout'],
+        )
+        sampling_handler = options['sampling_handler']
+        if self.sampling_model is not None:
+            # `set_sampling_model` replaces the handler passed to `__init__`, if there was one.
+            sampling_handler = _build_sampling_handler(self.sampling_model)
+        return FastMCPClient[Any](
+            transport=transport,
+            sampling_handler=sampling_handler,
+            elicitation_handler=options['elicitation_handler'],
+            log_handler=options['log_handler'],
+            progress_handler=options['progress_handler'],
+            message_handler=_build_message_handler(self, options['message_handler']),
+            client_info=options['client_info'],
+            init_timeout=options['init_timeout'],
+            timeout=options['read_timeout'],
+            roots=options['roots'],
+        )
+
+    @property
+    def _resolves_per_run(self) -> bool:
+        """Whether `auth` or `headers` is a function of the run context, so each run connects with its own copy."""
+        return self._auth_func is not None or self._headers_func is not None
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> Self:
+        """Return the toolset to use for this agent run.
+
+        When `auth` or `headers` is a function of the run context, this calls it and returns a copy
+        of the toolset that connects with what it returned, so each run opens its own MCP session as
+        its own user. Otherwise the toolset is shared across runs and this returns `self`.
+        """
+        if not self._resolves_per_run:
+            return self
+        auth = self._static_auth
+        if self._auth_func is not None:
+            auth = await _utils.await_maybe(self._auth_func(ctx))
+            if auth == 'oauth':
+                # FastMCP's OAuth flow signs in through a browser, which a per-user run can't do.
+                raise exceptions.UserError(
+                    f'The `auth` function of {self.label} returned `"oauth"`, which is only supported as a fixed `auth`.'
+                )
+        headers = self._static_headers
+        if self._headers_func is not None:
+            headers = await _utils.await_maybe(self._headers_func(ctx))
+        # A shallow copy keeps a subclass's type and every setting, including ones changed since
+        # `__init__`; only the client and the per-session state are the run's own.
+        run_toolset = copy.copy(self)
+        # The copy binds a lock of its own on first use instead of sharing the template's.
+        vars(run_toolset).pop('_enter_lock', None)
+        run_toolset._auth_func = None
+        run_toolset._headers_func = None
+        run_toolset._server_initiated_handlers = list(self._server_initiated_handlers)
+        run_toolset.client = run_toolset._build_client(auth=auth, headers=headers)
+        return run_toolset
+
+    @asynccontextmanager
+    async def _connected(self) -> AsyncGenerator[None]:
+        """Enter the toolset around a direct request to the server, refusing one that only resolves per run."""
+        if self._resolves_per_run:
+            raise exceptions.UserError(
+                f'{self.label} gets its `auth` or `headers` from the run context, so it can only connect to '
+                'the server as part of an agent run, or through the copy `await toolset.for_run(ctx)` returns.'
+            )
+        async with self:
+            yield
+
     @property
     def _initialized(self) -> bool:
         # Keyed on capabilities, not `_server_info`: a modern session may omit the optional
@@ -1180,6 +1375,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self._cached_prompts = None
 
     async def __aenter__(self) -> Self:
+        if self._resolves_per_run:
+            # There's nothing to connect with until a run resolves `auth`/`headers`: each run enters
+            # its own copy instead, so entering this one (e.g. via `async with agent:`) is a no-op.
+            return self
         async with self._enter_lock:
             if self._running_count == 0:
                 # Build the exit stack inside an `async with` so any failure after
@@ -1269,6 +1468,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
+        if self._resolves_per_run:
+            return None
         async with self._enter_lock:
             if self._running_count == 0:
                 raise ValueError(f'`{self.__class__.__name__}.__aexit__` called more times than `__aenter__`')
@@ -1288,11 +1489,17 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """Return the server's instructions if `include_instructions` is enabled."""
         if not self.include_instructions:
             return None
-        if not self._initialized or self._instructions is None:
+        if not self._initialized:
             return None
-        # Instructions are captured once during `__aenter__` and don't change across runs while
-        # the toolset stays entered — so they're static from the agent's perspective, not dynamic.
-        return messages.InstructionPart(content=self._instructions, dynamic=False)
+        # Instructions are captured during `__aenter__` and don't change while the toolset stays
+        # entered, so they're static for prompt caching. A later connection can bring different text,
+        # which appends as a change rather than rewriting the prefix. Appending addresses the block by
+        # its key, so a server with neither an `id` nor a URL to key it by keeps rewriting.
+        if self.id is None:
+            return None if self._instructions is None else messages.InstructionPart(content=self._instructions)
+        # A keyed server contributes its block even while it sends no instructions, so instructions a later
+        # connection adds are appended as a change, and ones it drops are withdrawn, without moving the prefix.
+        return messages.InstructionPart(content=self._instructions or '', dynamic=False, on_change='append')
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve the tools currently exposed by the server.
@@ -1303,7 +1510,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """
         if self.cache_tools and self._cached_tools is not None:
             return self._cached_tools
-        async with self:
+        async with self._connected():
             tools = await self.client.list_tools()
             if self.cache_tools:
                 self._cached_tools = tools
@@ -1313,12 +1520,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         mcp_tools = await self.list_tools()
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for mcp_tool in mcp_tools:
-            # MCP Apps (SEP-1865) servers keep a tool from the model by leaving `"model"` out of `_meta.ui.visibility`.
-            match mcp_tool.meta:
-                case {'ui': {'visibility': visibility}} if isinstance(visibility, list) and 'model' not in visibility:
-                    continue
-                case _:
-                    pass
+            if not _is_visible_to(mcp_tool, 'model'):
+                continue
             # `execution` is the SEP-1686 task-support field; FastMCP 4 (SDK v2) leaves it unset.
             task_support = mcp_optional_field(mcp_tool.execution, 'task_support', str) if mcp_tool.execution else None
             input_schema = mcp_validated_field(mcp_tool, 'input_schema', _JSON_SCHEMA_ADAPTER)
@@ -1402,6 +1605,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         """Call a tool on the server directly.
 
+        The agent's calls to tools with an [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview)
+        UI don't go through this method, because they need the raw result, so an override doesn't see them.
+
         Args:
             name: The name of the tool to call.
             args: The arguments to pass to the tool.
@@ -1422,7 +1628,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 session, which has no task path.
             ImportError: If `use_task=True` on FastMCP 4 and `fastmcp-tasks` is not installed.
         """
-        async with self:
+        result = await self._call_tool_checked(name, args, metadata=metadata, use_task=use_task)
+        return _map_mcp_call_tool_result(result)
+
+    async def _call_tool_checked(
+        self, name: str, args: dict[str, Any], *, metadata: dict[str, Any] | None, use_task: bool
+    ) -> CallToolResult:
+        """Call a tool and return its successful result, raising per `tool_error_behavior` otherwise."""
+        async with self._connected():
             try:
                 if use_task:
                     result = await self._call_tool_as_task(name, args, metadata)
@@ -1475,19 +1688,19 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     error = error.exceptions[0]
                 _raise_mcp_tool_error(str(error), behavior, cause=eg)
 
-        mapped_result = _map_mcp_call_tool_result(result, prefer_structured=result.is_error)
         if result.is_error:
             if result.structured_content is None and not result.content:
                 message = f'Tool {name!r} returned an error'
             else:
-                message = messages.ToolReturnPart(tool_name=name, content=mapped_result).model_response_str(
+                mapped_error = _map_mcp_call_tool_result(result, prefer_structured=True)
+                message = messages.ToolReturnPart(tool_name=name, content=mapped_error).model_response_str(
                     wrap_if_error=False
                 )
                 if not message:
                     message = f'Tool {name!r} returned an error'
             _raise_mcp_tool_error(message, self.tool_error_behavior)
 
-        return mapped_result
+        return result
 
     async def call_tool(
         self,
@@ -1499,11 +1712,50 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # `get_tools()` resolves the server's `execution.taskSupport` and the client's
         # `prefer_tasks` preference into the effective task path for this tool.
         use_task = bool((tool.tool_def.metadata or {}).get('task'))
+        resource_uri = _app_resource_uri(tool.tool_def)
+        if resource_uri is None:
+            if self.process_tool_call is not None:
+                return await self.process_tool_call(
+                    ctx, functools.partial(self.direct_call_tool, use_task=use_task), name, tool_args
+                )
+            return await self.direct_call_tool(name, tool_args, use_task=use_task)
+
+        # Tools without a UI keep calling `direct_call_tool`, which subclasses and tests may replace. App tools
+        # take the same steps, but also keep the raw result of this tool's call: a hook only sees the value mapped
+        # for the model, and the mapping drops `_meta` and sometimes the content blocks, which the app needs.
+        tool_name = name
+        sent: CallToolResult | None = None
+
+        async def call_tool_func(
+            name: str, args: dict[str, Any], *, metadata: dict[str, Any] | None = None
+        ) -> ToolResult:
+            nonlocal sent
+            result = await self._call_tool_checked(name, args, metadata=metadata, use_task=use_task)
+            if name == tool_name:
+                # A copy, as the mapped value shares objects with the result and a hook may edit it in place.
+                sent = copy.deepcopy(result)
+            return _map_mcp_call_tool_result(result)
+
+        # The app gets the model's arguments, which the frontend already has, not ones a hook added (such as a key).
+        # A copy, as a hook may edit them in place.
+        model_args = copy.deepcopy(tool_args)
         if self.process_tool_call is not None:
-            return await self.process_tool_call(
-                ctx, functools.partial(self.direct_call_tool, use_task=use_task), name, tool_args
-            )
-        return await self.direct_call_tool(name, tool_args, use_task=use_task)
+            return_value = await self.process_tool_call(ctx, call_tool_func, name, tool_args)
+        else:
+            return_value = await call_tool_func(name, tool_args)
+
+        # Mapping the kept result again gives what the model would have got, so a `process_tool_call` hook that
+        # changed the result keeps the raw one from reaching the app.
+        if sent is None or return_value != _map_mcp_call_tool_result(sent):
+            return return_value
+        app = MCPAppToolResult(
+            resource_uri=resource_uri,
+            tool_input=model_args,
+            result=_call_tool_result_to_wire(sent),
+            # Only an `id` chosen for the server identifies it to the app, as before ids were derived.
+            toolset_id=self._explicit_id,
+        )
+        return messages.ToolReturn(return_value=return_value, metadata={MCP_APP_METADATA_KEY: app})
 
     async def list_prompts(self) -> list[Prompt]:
         """Retrieve the prompts currently exposed by the server.
@@ -1519,7 +1771,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """
         if self.cache_prompts and self._cached_prompts is not None:
             return self._cached_prompts
-        async with self:
+        async with self._connected():
             if not self.capabilities.prompts:
                 return []
             try:
@@ -1542,7 +1794,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             MCPError: If the server doesn't advertise the `prompts` capability, or if it returns
                 an error response.
         """
-        async with self:
+        async with self._connected():
             if not self.capabilities.prompts:
                 raise MCPError(
                     message=f'Server does not advertise the `prompts` capability; cannot get prompt {name!r}.',
@@ -1574,7 +1826,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """
         if self.cache_resources and self._cached_resources is not None:
             return self._cached_resources
-        async with self:
+        async with self._connected():
             if not self.capabilities.resources:
                 return []
             try:
@@ -1594,7 +1846,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         Raises:
             MCPError: If the server returns an error.
         """
-        async with self:
+        async with self._connected():
             if not self.capabilities.resources:
                 return []
             try:
@@ -1628,7 +1880,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             MCPError: If the server returns an error.
         """
         resource_uri = uri if isinstance(uri, str) else uri.uri
-        async with self:
+        async with self._connected():
             try:
                 contents = await self.client.read_resource(AnyUrl(resource_uri))
             except McpError as e:
@@ -1640,6 +1892,69 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             else [_resource_content_to_pai(c) for c in contents]
         )
 
+    async def call_tool_for_app(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Call a tool for an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) page.
+
+        An MCP Apps page runs in the browser and can't reach the server, so the host relays its `tools/call`
+        requests. Call this from the endpoint your frontend forwards them to, and send the result back to the
+        page as is.
+
+        Only tools on this server that are visible to apps can be called: `_meta.ui.visibility` includes `"app"`,
+        or is omitted. `isError` results are returned rather than raised, and
+        [`process_tool_call`][pydantic_ai.mcp.MCPToolset.process_tool_call] doesn't apply.
+
+        Args:
+            name: The name of the tool the page called.
+            arguments: The arguments the page passed.
+
+        Returns:
+            The MCP `CallToolResult` in wire format (camelCase keys): `content`, `structuredContent` and `_meta`
+            when the server sent them, and `isError`.
+
+        Raises:
+            MCPError: If `arguments` isn't an object or the tool isn't available to apps (code `INVALID_PARAMS`), or
+                the server returns a protocol error.
+        """
+        # The arguments come from the page's JSON, so their type is checked here rather than trusted.
+        if arguments is None:
+            arguments = {}
+        elif not _utils.is_str_dict(arguments):
+            raise MCPError(message='Tool arguments must be an object', code=mcp_types.INVALID_PARAMS)
+        async with self._connected():
+            try:
+                tool = next((t for t in await self.list_tools() if t.name == name), None)
+                if tool is None or not _is_visible_to(tool, 'app'):
+                    raise MCPError(message=f'Tool {name!r} is not available to apps', code=mcp_types.INVALID_PARAMS)
+                result = await self.client.call_tool(name=name, arguments=arguments, raise_on_error=False)
+            except McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
+        return _call_tool_result_to_wire(result)
+
+    async def read_resource_for_app(self, uri: str) -> dict[str, Any]:
+        """Read a resource for an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) page.
+
+        Unlike [`read_resource`][pydantic_ai.mcp.MCPToolset.read_resource], this keeps each item's MIME type and
+        `_meta`, where `_meta.ui` holds the Content Security Policy and permissions for the page's iframe. Use it to
+        load the page itself, and to answer the page's own `resources/read` requests: send the result back as is.
+        MCP Apps has no visibility setting for resources, so any resource on the server can be read; check `uri`
+        first if a page should only reach some.
+
+        Args:
+            uri: The URI of the resource.
+
+        Returns:
+            The MCP `ReadResourceResult` in wire format (camelCase keys), with its `contents`.
+
+        Raises:
+            MCPError: If the server returns an error.
+        """
+        async with self._connected():
+            try:
+                result = await self.client.read_resource_mcp(uri)
+            except McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
+        return result.model_dump(mode='json', by_alias=True, exclude_none=True)
+
     def __repr__(self) -> str:
         repr_args = [f'client={self.client!r}']
         if self._id is not None:
@@ -1647,10 +1962,25 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         return f'{self.__class__.__name__}({", ".join(repr_args)})'
 
     def __eq__(self, value: object, /) -> bool:
-        return isinstance(value, MCPToolset) and self._id == value._id and self.client is value.client
+        # A chosen `id` behaves differently from the same one derived from the URL (durable execution, tool
+        # definitions' `toolset_id`), so the two toolsets aren't interchangeable.
+        return (
+            isinstance(value, MCPToolset)
+            and self._id == value._id
+            and self._id_explicit == value._id_explicit
+            and self.client is value.client
+        )
 
     def __hash__(self) -> int:
-        return hash((self._id, id(self.client)))
+        return hash((self._id, self._id_explicit, id(self.client)))
+
+
+def _host_derived_id(client: object) -> str | None:
+    """The `id` an `MCPToolset` without one takes from its server URL's hostname, or `None` without a URL."""
+    url = getattr(getattr(client, 'transport', None), 'url', None)
+    host = urlparse(url).hostname if isinstance(url, str) else None
+    # `:` delimits instruction id segments, so an IPv6 literal such as `::1` is spelled with `-` instead.
+    return host.replace(':', '-') if host else None
 
 
 def _build_message_handler(toolset: MCPToolset[Any], user_handler: MessageHandlerT | None) -> MessageHandlerT:
@@ -1673,6 +2003,10 @@ def _build_message_handler(toolset: MCPToolset[Any], user_handler: MessageHandle
     return handler
 
 
+def _is_url(client: MCPToolsetClient) -> bool:
+    return isinstance(client, AnyUrl) or (isinstance(client, str) and client.startswith(('http://', 'https://')))
+
+
 def _build_transport(
     client: MCPToolsetClient,
     *,
@@ -1690,8 +2024,7 @@ def _build_transport(
     `Client` infer the transport.
     """
     needs_explicit_http = headers is not None or http_client is not None or auth is not None or verify is not None
-    is_url = isinstance(client, AnyUrl) or (isinstance(client, str) and client.startswith(('http://', 'https://')))
-    if needs_explicit_http and not is_url:
+    if needs_explicit_http and not _is_url(client):
         raise ValueError(
             '`headers`, `http_client`, `auth`, and `verify` only apply to HTTP transports built '
             'from a URL string. Pass them on your transport / `fastmcp.Client` directly instead.'
@@ -1790,7 +2123,9 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
         if stop_sequences is not None:  # pragma: no branch
             model_settings['stop_sequences'] = stop_sequences
 
-        model_response = await model_request(sampling_model, pai_messages, model_settings=model_settings)
+        # The server chose these `stop_sequences`, not the user, so a sampling model that ignores them doesn't warn.
+        with suppress_unsupported_setting_warnings(['stop_sequences'] if stop_sequences is not None else []):
+            model_response = await model_request(sampling_model, pai_messages, model_settings=model_settings)
         return mcp_types.CreateMessageResult(
             role='assistant',
             content=_mcp.map_from_model_response(model_response),
@@ -1815,6 +2150,41 @@ def _raise_mcp_tool_error(
         raise ToolError(message) from cause
     else:
         assert_never(behavior)
+
+
+def _app_resource_uri(tool_def: ToolDefinition) -> str | None:
+    """Return the MCP Apps UI resource a tool renders with, from `_meta.ui.resourceUri` or the deprecated flat key."""
+    match (tool_def.metadata or {}).get('meta'):
+        case {'ui': {'resourceUri': str(uri)}} | {'ui/resourceUri': str(uri)}:
+            return uri
+        case _:
+            return None
+
+
+def _is_visible_to(tool: mcp_types.Tool, audience: Literal['model', 'app']) -> bool:
+    """Whether `audience` can see `tool`, per MCP Apps (SEP-1865).
+
+    A server lists who can see a tool in `_meta.ui.visibility`, such as `["app"]` for a tool only its page calls.
+    A tool without that list is visible to both the model and the app.
+    """
+    match tool.meta:
+        case {'ui': {'visibility': visibility}} if isinstance(visibility, list):
+            return audience in visibility
+        case _:
+            return True
+
+
+def _call_tool_result_to_wire(result: CallToolResult) -> dict[str, Any]:
+    """Rebuild the MCP wire form of a `CallToolResult`, which MCP Apps hand to the app as is."""
+    wire: dict[str, Any] = {
+        'content': [block.model_dump(mode='json', by_alias=True, exclude_none=True) for block in result.content]
+    }
+    if result.structured_content is not None:
+        wire['structuredContent'] = result.structured_content
+    if result.meta is not None:
+        wire['_meta'] = result.meta
+    wire['isError'] = result.is_error
+    return wire
 
 
 def _map_mcp_call_tool_result(result: CallToolResult, *, prefer_structured: bool = False) -> Any:

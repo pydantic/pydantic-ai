@@ -4,7 +4,8 @@
 sdists built from each `main` commit that changes CLAI or a package it pins. It installs CLAI with the harness
 and core sdists from the same commit, whose exact dev pins are not on PyPI. Release downloads are not GitHub
 API requests, so neither the check nor the install needs `git` or meets the unauthenticated API rate limit. A
-source checkout is updated the same way: the install becomes a `uv tool` CLAI. CLAI then restarts as the new build and resumes the conversation.
+source checkout is updated the same way: the install becomes a `uv tool` CLAI. CLAI then restarts as the new build and resumes the conversation,
+serving its web UI again on the same port with the same token when one ran.
 On Windows, which locks the files of a running program, the install runs in a new PowerShell window after
 CLAI exits.
 """
@@ -24,11 +25,12 @@ from importlib import metadata
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
-from anyio import CancelScope, run_process, to_thread
+from anyio import CancelScope, open_process, run_process, to_thread
 from pydantic import StringConstraints, TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_clai2.config import UpdateChannel
+from pydantic_clai2.plugins import InstallProgress, UpdateStage
 from pydantic_clai2.ui.stderr_relay import terminal_stderr
 
 if TYPE_CHECKING:
@@ -151,11 +153,16 @@ class Update:
         return ''.join(f'{self.requirement(name)}\n' for name in PACKAGES)
 
     def command(self, *, uv: str, overrides: Path | None) -> list[str]:
-        """The `uv tool install` that replaces the current install; `main` reads `overrides`."""
+        """The `uv tool install` that replaces the current install; `main` reads `overrides`.
+
+        `--compile-bytecode` writes the `.pyc` files during the install, so the restart into the new build
+        does not compile every module it imports.
+        """
+        install = [uv, 'tool', 'install', '--force', '--compile-bytecode']
         if self.channel == 'stable':
-            return [uv, 'tool', 'install', '--force', f'{DISTRIBUTION}=={self.target}']
+            return [*install, f'{DISTRIBUTION}=={self.target}']
         assert overrides is not None, 'a main install needs the overrides file'
-        return [uv, 'tool', 'install', '--force', '--overrides', str(overrides), DISTRIBUTION]
+        return [*install, '--overrides', str(overrides), DISTRIBUTION]
 
 
 def find_update(channel: UpdateChannel, current: Installed, target: str) -> Update | None:
@@ -230,18 +237,34 @@ def install_after_exit(
     start([executable, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded])
 
 
+@dataclass(frozen=True, kw_only=True)
+class WebHandoff:
+    """The web UI a CLAI served when `/update` restarted it: the new build serves it again, so open pages reconnect."""
+
+    port: int
+    token: str
+
+
 class Relaunch(SystemExit):
-    """Raised by `chat` once the shell has closed after `/update`: the CLI starts `executable` in its place.
+    """Raised by `chat` and `run_web` once the shell has closed after `/update`: the CLI starts `executable` in its place.
 
     A `SystemExit`, so a caller other than the CLI exits as it did before CLAI restarted itself.
     """
 
-    def __init__(self, *, executable: str, session_id: str | None, new_session_id: str | None = None) -> None:
-        """Resume `session_id` when set, or else start the new conversation under `new_session_id`."""
+    def __init__(
+        self,
+        *,
+        executable: str,
+        session_id: str | None,
+        new_session_id: str | None = None,
+        web: WebHandoff | None = None,
+    ) -> None:
+        """Resume `session_id` when set, or else start the new conversation under `new_session_id`; serve `web` again."""
         super().__init__(0)
         self.executable = executable
         self.session_id = session_id
         self.new_session_id = new_session_id
+        self.web = web
 
 
 async def tool_executable(uv: str) -> str | None:
@@ -255,10 +278,35 @@ def _in_thread(work: Callable[[], None]) -> None:
     threading.Thread(target=work, name='clai-update-check', daemon=True).start()
 
 
-async def _run_uv(command: Sequence[str]) -> int:
-    # Use the terminal so uv's progress shows; slash commands run with the editor suspended.
-    result = await run_process(command, stdout=None, stderr=terminal_stderr(), check=False)
-    return result.returncode
+Output = Callable[[str], Awaitable[None]]
+"""Receives each line uv prints."""
+
+
+async def _run_uv(command: Sequence[str], output: Output | None = None) -> int:
+    if output is None:
+        # Use the terminal so uv's progress shows; slash commands run with the editor suspended.
+        result = await run_process(command, stdout=None, stderr=terminal_stderr(), check=False)
+        return result.returncode
+    # A plugin shows the install too, such as the web UI: read uv's lines, and still print them here.
+    async with await open_process(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as process:
+        assert process.stdout is not None, 'piped above'
+        pending = b''
+        async for chunk in process.stdout:
+            *lines, pending = (pending + chunk).split(b'\n')
+            for line in lines:
+                await _print_line(line, output)
+        if pending:
+            await _print_line(pending, output)
+    assert process.returncode is not None, 'the process exited with its context'
+    return process.returncode
+
+
+async def _print_line(line: bytes, output: Output) -> None:
+    text = line.decode(errors='replace').rstrip('\r')
+    # Straight to the terminal, as uv would have written it, before the editor comes back.
+    terminal = terminal_stderr()
+    os.write(2 if terminal is None else terminal, f'{text}\n'.encode())
+    await output(text)
 
 
 def _write_overrides(text: str) -> Path:
@@ -278,7 +326,14 @@ class Updates:
     fetch: Callable[[UpdateChannel], str] = latest
     spawn: Callable[[Callable[[], None]], None] = _in_thread
     """Runs the background check; tests run it inline."""
-    run: Callable[[Sequence[str]], Awaitable[int]] = _run_uv
+    run: Callable[[Sequence[str], Output | None], Awaitable[int]] = _run_uv
+    """Runs uv, handing its lines to the output when there is one."""
+    report: Callable[[], Callable[[InstallProgress], Awaitable[None]] | None] = lambda: None
+    """Who hears how an install goes: the shell's plugins, while one listens."""
+    capture: Callable[[], bool] = lambda: False
+    """Whether to read uv's lines for `report`, which turns uv's progress bars into plain lines: only for a page."""
+    serving: Callable[[], WebHandoff | None] = lambda: None
+    """The web UI served now, for the new `clai2` to serve again once `/update` restarts CLAI."""
     find_uv: Callable[[], str | None] = find_uv
     windows: bool = os.name == 'nt'
     hand_off: Callable[[str], None] = install_after_exit
@@ -289,6 +344,8 @@ class Updates:
     """Set after a successful install: the running environment was replaced, so the shell exits."""
     relaunch: str | None = None
     """The new `clai2` to start once the shell has exited, when the install found one."""
+    web: WebHandoff | None = None
+    """The web UI for the new `clai2` to serve again, read before uv replaced the installed code."""
     _checked: UpdateChannel | None = field(default=None, init=False)
     _found: Update | None = field(default=None, init=False)
 
@@ -339,18 +396,35 @@ class Updates:
                 f'Installing CLAI {update.label} ({channel}) in a new window once CLAI exits. '
                 'Exiting; start clai2 again when it finishes.'
             )
+        report = self.report()
+
+        async def tell(stage: UpdateStage, text: str = '') -> None:
+            if report is not None:
+                await report(InstallProgress(stage=stage, target=update.label, text=text))
+
+        async def line(text: str) -> None:
+            await tell('output', text)
+
         # Cancelling uv halfway could leave the environment half replaced, so let it finish.
         code: int | None = None
         try:
+            # Read now: once uv has run, a module imported for the first time is the new build's, which may need
+            # names the old build's modules already in memory lack.
+            served = self.serving()
             with CancelScope(shield=True):
-                code = await self.run(command)
+                await tell('installing')
+                code = await self.run(command, line if report is not None and self.capture() else None)
         finally:
             if overrides is not None:
                 overrides.unlink(missing_ok=True)
+            if code != 0:  # Also when uv could not run at all.
+                await tell('failed')
         if code != 0:
             return f'uv exited with status {code}; see its output above.'
         self.restart_required = True
         self.relaunch = await self.locate(uv)
+        self.web = served if self.relaunch is not None else None
+        await tell('installed' if self.relaunch is None else 'restarting')
         if self.relaunch is None:
             return f'Updated CLAI to {update.label} ({channel}). Exiting; start clai2 again to use it.'
         return f'Updated CLAI to {update.label} ({channel}). Restarting...'

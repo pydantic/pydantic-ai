@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from collections.abc import Generator
+from pathlib import Path
 from types import FrameType
 
 from rich.console import Console
@@ -100,8 +101,8 @@ def shell_command(text: str) -> str | None:
     return command if command.lstrip('!').strip() else None
 
 
-async def run_shell_command(command: str, *, console: Console, interrupts: Interrupts) -> str:
-    """Run locally and return context for the next model request.
+async def run_shell_command(command: str, *, console: Console, interrupts: Interrupts, cwd: Path) -> str:
+    """Run locally in `cwd`, the session's directory, and return context for the next model request.
 
     Output streams to the transcript and is saved. On CLAI's terminal the command runs on a
     pseudo-terminal (`PtyRun`), and a full-screen program gets the terminal itself, saving only its
@@ -110,7 +111,7 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
     shell's process tree.
     """
     if command.startswith('!'):
-        return await run_in_terminal(command[1:].strip(), console=console)
+        return await run_in_terminal(command[1:].strip(), console=console, cwd=cwd)
     console.print(Text.assemble(('$ ', theme.color(theme.ACCENT)), command))
     console.print('Shell command and output saved for the next prompt', style=theme.color(theme.MUTED))
     output = _ShellOutput(console=console)
@@ -142,6 +143,7 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
                 stdin=None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                cwd=cwd,
             )
             if pty is None
             else loop.subprocess_shell(
@@ -152,6 +154,7 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
                 stdout=pty.follower,
                 stderr=subprocess.PIPE,
                 env={**os.environ, **COMMAND_ENVIRONMENT},
+                cwd=cwd,
             )
         )
         try:
@@ -203,8 +206,8 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
     )
 
 
-async def run_in_terminal(command: str, *, console: Console) -> str:
-    """Hand the terminal to a command from the start and return context naming it and its exit status.
+async def run_in_terminal(command: str, *, console: Console, cwd: Path) -> str:
+    """Hand the terminal to a command in `cwd` from the start; return context naming it and its exit status.
 
     The live panel leaves the screen, the command inherits CLAI's standard streams, and the panel
     repaints once it exits. The command stays in CLAI's process group, in the terminal's foreground,
@@ -219,7 +222,7 @@ async def run_in_terminal(command: str, *, console: Console) -> str:
     exit_code = 0
     with full_terminal(), terminal_modes_kept(), _ctrl_c_ignored():
         try:
-            exit_code = await _wait_in_terminal(command)
+            exit_code = await _wait_in_terminal(command, cwd=cwd)
         except (OSError, ValueError) as exc:  # `ValueError`: the command text contains a NUL byte.
             error = str(exc)
     status = _report(console, error=error, completed=True, exit_code=exit_code, started=started)
@@ -252,10 +255,10 @@ def _interactive_context(command: str, status: str) -> str:
     )
 
 
-async def _wait_in_terminal(command: str) -> int:
+async def _wait_in_terminal(command: str, *, cwd: Path) -> int:
     """Run `command` with CLAI's standard streams and return its exit status; cancellation kills it."""
     # Spawning is shielded, so a cancellation that arrives meanwhile still finds the process to kill.
-    spawn = asyncio.create_task(asyncio.create_subprocess_shell(command, stderr=terminal_stderr()))
+    spawn = asyncio.create_task(asyncio.create_subprocess_shell(command, stderr=terminal_stderr(), cwd=cwd))
     try:
         process = await asyncio.shield(spawn)
         return await process.wait()

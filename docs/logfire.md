@@ -4,6 +4,8 @@ description: "Debug and monitor Pydantic AI agents with Pydantic Logfire or any 
 
 # Pydantic Logfire Debugging and Monitoring
 
+Once an agent is in production, its traces are how you find out why a run gave a wrong answer, took too long or cost too much. Pydantic AI emits OpenTelemetry traces of every run, model request and tool call; this page sets up [Pydantic Logfire](#pydantic-logfire) to view them, and covers [any other OpenTelemetry backend](#otel-without-logfire) too.
+
 Applications that use LLMs have some challenges that are well known and understood: LLMs are **slow**, **unreliable** and **expensive**.
 
 These applications also have some challenges that most developers have encountered much less often: LLMs are **fickle** and **non-deterministic**. Subtle changes in a prompt can completely change a model's performance, and there's no `EXPLAIN` query you can run to understand why.
@@ -262,7 +264,7 @@ Only an `unexpected` collapse — one that happens while the provider's document
 |-------------------|---------|-----------------|
 | `unexpected` | The retention window should still have been active, so the cached prefix most likely changed. Check for prefix changes and the provider's cache diagnostics. | Yes |
 | `ttl_expired` | The gap since the last request exceeded the provider's retention window. | No |
-| `compacted` | Provider-native compaction replaced the history before a [`CompactionPart`][pydantic_ai.messages.CompactionPart] with its summary, which shrinks the prefix by design. | No |
+| `compacted` | A [`CompactionPart`][pydantic_ai.messages.CompactionPart] (from provider-native compaction, or a summary the application or `SummarizingCompaction` wrote) replaced the history before it, which shrinks the prefix by design. A summary that replaces one with the same text and `metadata` can't be told apart from it, so give each summary you write distinct `metadata`, as `SummarizingCompaction` does. | No |
 | `unknown` | The provider publishes no retention window, so the collapse can't be attributed. | No |
 | `unreported` | The response reported no cache usage at all (see below). | No |
 
@@ -378,7 +380,14 @@ Builds on version 5 by giving tool results the message role the [GenAI semantic 
 - Old (v2-5): a tool result is a `tool_call_response` part inside a `{"role": "user"}` message
 - New (v6): it moves to a `{"role": "tool"}` message
 
-This applies to tool returns and to retries that answer a tool call. A retry that answers nothing — output validation, a `ModelRetry` from a validator — stays on `user`, which is the role it reaches the model as. A request whose parts span both roles is emitted as consecutive messages in part order rather than one merged message.
+This applies to tool returns and to retries that answer a tool call. A request whose parts span both roles is emitted as consecutive messages in part order rather than one merged message.
+
+Pydantic AI's own [retry feedback](retries.md#feedback-that-belongs-to-no-tool-call) — a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], the retry that answers no tool call — moves on the same version, for the same reason:
+
+- Old (v2-5): a text part inside a `{"role": "user"}` message, whatever its `retry.cause`
+- New (v6): it takes the voice the part reaches the model in — a `{"role": "system"}` message for a `'no_output'` cause, and the `{"role": "user"}` message it was already on for a `'validation_error'` or `'model_retry'`
+
+That move shows up on `pydantic_ai.all_messages`, which records the stored message history. A model request span's `gen_ai.input.messages` records the history as sent, and by then the part has been translated into the prompt part its `retry.cause` calls for, so that attribute reads the same at every version. A history recorded before this part existed carries these parts too — a stored [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] is [translated as it loads](retries.md#feedback-that-belongs-to-no-tool-call) — so only an instance your own code still holds records itself, and a tool-less one stays on `user`.
 
 ---
 
@@ -424,7 +433,7 @@ Agent.instrument_all(instrumentation_settings)
 
 For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. Pydantic AI allows you to exclude the actual content from telemetry while preserving the structural information needed for debugging and monitoring.
 
-When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content. Exceptions recorded on agent run, model request, model request attempt and tool spans keep only their type, since their message and stack trace can quote that content.
+When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content. Exceptions recorded on agent run, model request, model request attempt and tool spans keep only their type, since their message and stack trace can quote that content. It doesn't apply to [run metadata](agent.md#run-metadata), spans of your own, or request and response bodies captured by [`instrument_httpx(capture_all=True)`](#monitoring-http-requests).
 
 ```python {title="excluding_sensitive_content.py"}
 from pydantic_ai import Agent
@@ -473,7 +482,7 @@ A `decide` span is only emitted inside an instrumented model request, and only f
 | `pydantic_ai.decision.thresholds` | The thresholds applied: `{"boolean": ...}` for `decision_boolean_threshold`, plus `"route"` for `decision_route_threshold` when it's set |
 | `pydantic_ai.decision.usage.input_tokens`, `pydantic_ai.decision.usage.output_tokens` | This request's usage |
 | `pydantic_ai.decision.questions` | The questions as sent: `{name: {"type": ..., "instructions": ..., "criteria": ...}}`, where `type` is `noul` (yes/no), `choice` or `score` |
-| `pydantic_ai.decision.state` | The state as sent: the text being judged, or a JSON object that adds the conversation's `history` |
+| `pydantic_ai.decision.state` | The state built for the backend: the text being judged, or a JSON object that adds the conversation's `history`. A backend that takes the conversation natively, such as [OpenAI Decisions](models/openai.md#decisions-api), is sent the messages instead, which the model request span records |
 | `pydantic_ai.decision.answers` | The answers as received: `{"type": "noul", "noul": ...}` for a yes/no, whose `noul` is the probability of yes, `{"type": "choice", "choice": ..., "confidence": ..., "probabilities": {...}}` for a pick, and `{"type": "score", "score": ..., "confidence": ..., "probabilities": {...}, "legend": {...}}` for a rubric |
 | `pydantic_ai.decision.route` | When the request fills a route picked by an earlier request, or the one route left, that route's label |
 | `pydantic_ai.decision.confidence` | When the request asks field questions and their answers are used, each question's confidence as Pydantic AI derived it after applying `decision_boolean_threshold`, keyed like the questions and answers. Each option of a `list` or mapping gets its own entry under `field.option`, where `provider_details['confidence']` on the response gives the field the least sure of its options. A `float` field that asks for a probability has no entry, since the probability is the answer |

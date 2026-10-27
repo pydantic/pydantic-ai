@@ -1,0 +1,1 @@
+../../../.agents/skills/branch-context/issue-brief.template.md

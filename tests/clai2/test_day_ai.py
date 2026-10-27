@@ -1,11 +1,14 @@
 """The built-in `day_ai` plugin: a settings menu for `DayAI`'s options, with any token kept in `/keys`."""
 
 import io
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
 import anyio
 import pytest
+from anyio import to_thread
 from fastmcp import Client
 from fastmcp.client.auth import OAuth
 from fastmcp.client.auth.oauth import TokenStorageAdapter
@@ -15,6 +18,7 @@ from pydantic import JsonValue
 from rich.console import Console
 from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
+from termflow.tui.textinput import TextInput, TextInputResult
 
 import pydantic_clai2.builtin_plugins.day_ai as day_ai
 from pydantic_ai import Agent, RunContext
@@ -26,13 +30,19 @@ from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins.day_ai import SETUP, DayAISettings, DayAISource
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings, api_keys
-from pydantic_clai2.config.api_keys import KeyReference, SavedKey
+from pydantic_clai2.config.api_keys import SavedKey
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore, http_client
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.plugins.menus import Option
+from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.ui.menus import dialogs
+from pydantic_clai2.ui.menus.field_menu import Runners
+from pydantic_clai2.ui.menus.menu_worker import worker_stopping
 from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu, open_plugins_menu
-from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick
+from tests.clai2.dialog_script import Back, Confirm, Finish, Pick, ScriptedDialogs, Type
+from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick, typed
 
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'day_ai')
 CLOSE = MenuResult(cancelled=True)
@@ -53,6 +63,7 @@ class SignIn:
         if SignIn.error is not None:
             raise SignIn.error
         if SignIn.unfinished:
+            show('https://day.ai/authorize')
             await anyio.sleep_forever()
         await store_sign_in()
 
@@ -60,7 +71,7 @@ class SignIn:
 class Shell:
     """A loader plus what a test inspects: printed output and the plaintext settings file."""
 
-    def __init__(self, tmp_path: Path, *, terminal: bool = False, settings: dict[str, JsonValue] | None = None) -> None:
+    def __init__(self, tmp_path: Path, *, terminal: bool = True, settings: dict[str, JsonValue] | None = None) -> None:
         self.path = tmp_path / 'settings.db'
         self.store = SettingsStore(self.path)
         self.output = io.StringIO()
@@ -68,7 +79,7 @@ class Shell:
         declaration = BUILTIN if settings is None else BUILTIN.model_copy(update={'settings': settings})
         self.loader: PluginLoader[None] = PluginLoader(
             store=self.store,
-            console=Console(file=self.output, force_terminal=terminal, width=200),
+            console=Console(file=self.output, force_terminal=terminal, color_system=None, width=200),
             commands=self.commands,
             session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=self.store.load()),
             builtin=(declaration,),
@@ -84,14 +95,28 @@ class Shell:
         assert entry.loaded is not None
         return entry.loaded.host
 
+    def plugin(self) -> day_ai.DayAIPlugin[None]:
+        [entry] = self.loader.entries()
+        assert entry.loaded is not None
+        plugin = entry.loaded.plugin
+        assert isinstance(plugin, day_ai.DayAIPlugin)
+        return plugin
+
+    async def choose_auth(self, scripted: ScriptedDialogs) -> list[str]:
+        """Run the Sign-in row's action, as the web UI's Change button does."""
+        menu = self.plugin().settings_menu()
+        return list(await menu.actions['auth'](scripted))
+
     async def run_capability(self) -> DayAI[None] | None:
         """What a run gets from the browser sign-in's per-run factory."""
         [entry] = self.loader.entries()
         assert entry.loaded is not None
         plugin = entry.loaded.plugin
         assert isinstance(plugin, day_ai.DayAIPlugin)
-        assert self.loader.capabilities() == [plugin.for_run]
-        return await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        assert self.loader.capabilities() == [WorkspacelessCapability(plugin.for_run)]
+        capability = await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        assert capability is None or capability.defer_loading
+        return capability
 
     async def client(self) -> object:
         capability = await self.run_capability()
@@ -107,26 +132,23 @@ def sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(SignIn, 'unfinished', False)
 
 
-def script(monkeypatch: pytest.MonkeyPatch, lists: list[MenuResult], choices: list[MenuResult] | None = None) -> Script:
-    scripted = Script(lists=[*lists, CLOSE], choices=choices or [], texts=[])
-    monkeypatch.setattr(day_ai, 'RUNNERS', scripted.runners)
+def script(
+    monkeypatch: pytest.MonkeyPatch,
+    lists: list[MenuResult],
+    choices: list[MenuResult] | None = None,
+    texts: list[TextInputResult] | None = None,
+) -> Script:
+    scripted = Script(lists=[*lists, CLOSE], choices=choices or [], texts=texts or [])
+    monkeypatch.setattr(dialogs, 'RUNNERS', scripted.runners)
     return scripted
 
 
-def key_choice(monkeypatch: pytest.MonkeyPatch, choice: str | KeyReference | None) -> list[str]:
-    """Answer `prompt_api_key`, whose saved-key list needs a real terminal, and record its labels."""
-    labels: list[str] = []
-
-    async def prompt_api_key(*, prompt: object, label: str, optional: bool = False) -> str | KeyReference | None:
-        labels.append(label)
-        return choice
-
-    monkeypatch.setattr('pydantic_clai2.plugins.keys.prompt_api_key', prompt_api_key)
-    return labels
-
-
 def with_key(name: str = 'DAY_AI_ACCESS_TOKEN', *, include_instructions: bool = True) -> list[DayAI[None]]:
-    return [DayAI[None](auth=SavedKey(name=name, setup=SETUP), include_instructions=include_instructions)]
+    return [
+        DayAI[None](
+            defer_loading=True, auth=SavedKey(name=name, setup=SETUP), include_instructions=include_instructions
+        )
+    ]
 
 
 async def store_sign_in() -> None:
@@ -142,9 +164,11 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv('DAY_AI_ACCESS_TOKEN', 'the-environment-is-not-a-source')
-    labels = key_choice(monkeypatch, ' day-secret ')
     shown = script(
-        monkeypatch, lists=[pick('auth'), pick('include_instructions')], choices=[pick('key'), pick('false')]
+        monkeypatch,
+        lists=[pick('auth'), pick('include_instructions')],
+        choices=[pick('key'), pick('false')],
+        texts=[typed(' day-secret ')],
     )
     shell = Shell(tmp_path)
     assert await shell.loader.command(['enable', 'day_ai']) == '\n'.join(
@@ -155,8 +179,7 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(
         ]
     )
     assert 'Not signed in to Day AI. Run /day_ai login to sign in.' in shell.output.getvalue()
-    assert labels == ['Day AI access token (saved in /keys as DAY_AI_ACCESS_TOKEN)']
-    assert shown.opened == ['list', 'choice', 'list', 'choice', 'list']
+    assert shown.opened == ['list', 'choice', 'text', 'list', 'choice', 'list']
     assert api_keys.load_keys()['DAY_AI_ACCESS_TOKEN'].get_secret_value() == 'day-secret'
     assert shell.saved() == {'auth': {'name': 'DAY_AI_ACCESS_TOKEN'}, 'include_instructions': False}
     assert b'day-secret' not in shell.path.read_bytes()
@@ -188,8 +211,7 @@ async def test_reconfigure_picks_another_saved_key_without_reinstalling(
     assert 'Day AI has no token: GONE is not in /keys.' in shell.output.getvalue()
     assert shell.loader.capabilities() == with_key('GONE')
     assert DayAISource(shell.host()).rows()[0].note == 'missing from /keys'
-    key_choice(monkeypatch, KeyReference(name='WORK_DAY_AI'))
-    script(monkeypatch, lists=[pick('auth')], choices=[pick('key')])
+    script(monkeypatch, lists=[pick('auth')], choices=[pick('key'), pick('WORK_DAY_AI')])
     assert await shell.loader.configure('day_ai') == 'Day AI uses the saved key WORK_DAY_AI. Manage it in /keys.'
     assert shell.saved() == {'auth': {'name': 'WORK_DAY_AI'}, 'include_instructions': True}
     assert b'work-secret' not in shell.path.read_bytes()
@@ -201,7 +223,7 @@ async def test_browser_sign_in_is_the_default_even_with_the_conventional_key_sav
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     api_keys.save_key(name='DAY_AI_ACCESS_TOKEN', value='shared-with-another-tool')
-    shell = Shell(tmp_path, terminal=True)
+    shell = Shell(tmp_path)
     await shell.loader.enable('day_ai')
     assert await shell.run_capability() is None, 'a run without a sign-in leaves Day AI out'
     assert SignIn.attempts == 0, 'neither loading nor a run signs in'
@@ -243,7 +265,7 @@ async def test_failed_sign_in_is_reported_and_adds_no_capability(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     SignIn.error = RuntimeError('Client failed to connect: authorization denied')
-    shell = Shell(tmp_path, terminal=True)
+    shell = Shell(tmp_path)
     await shell.loader.enable('day_ai')
     script(monkeypatch, lists=[pick('auth')], choices=[pick('oauth'), UNTIL_CLOSED])
     assert await shell.loader.configure('day_ai') == '\n'.join(
@@ -289,7 +311,7 @@ async def test_esc_cancels_an_unfinished_sign_in_and_leaves_day_ai_signed_out(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     SignIn.unfinished = True
-    shell = Shell(tmp_path, terminal=True)
+    shell = Shell(tmp_path)
     await shell.loader.enable('day_ai')
     script(monkeypatch, lists=[pick('auth')], choices=[pick('oauth'), CLOSE])
     with anyio.fail_after(5):
@@ -307,7 +329,7 @@ async def test_day_ai_login_signs_in_and_the_next_run_connects_without_a_reload(
     monkeypatch.setattr(
         'pydantic_clai2.plugins.sign_in.RUNNERS', Script(lists=[], choices=[UNTIL_CLOSED], texts=[]).runners
     )
-    shell = Shell(tmp_path, terminal=True, settings={'auth': 'oauth'})
+    shell = Shell(tmp_path, settings={'auth': 'oauth'})
     await shell.loader.enable('day_ai')
     assert await shell.run_capability() is None
     commands = shell.commands
@@ -343,9 +365,13 @@ async def test_cancelling_or_resetting_in_the_menu(tmp_path: Path, monkeypatch: 
     shell = Shell(tmp_path, settings={'auth': 'oauth', 'include_instructions': False})
     await store_sign_in()
     await shell.loader.enable('day_ai')
-    key_choice(monkeypatch, None)
-    script(monkeypatch, lists=[pick('auth'), pick('auth')], choices=[CLOSE, pick('key')])
-    assert await shell.loader.configure('day_ai') == 'Day AI settings unchanged.'
+    script(
+        monkeypatch,
+        lists=[pick('auth'), pick('auth')],
+        choices=[CLOSE, pick('key')],
+        texts=[TextInputResult(cancelled=True)],
+    )
+    assert await shell.loader.configure('day_ai') == 'Day AI: nothing changed.'
     assert shell.saved() == {'auth': 'oauth', 'include_instructions': False}
     source = DayAISource(shell.host())
     [auth, instructions] = source.rows()
@@ -445,25 +471,105 @@ async def test_plugins_menu_stays_open_when_there_is_nothing_to_configure(tmp_pa
 async def test_cancelling_configure_cancels_an_open_key_picker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     shell = Shell(tmp_path)
     await shell.loader.enable('day_ai')
-    opened = anyio.Event()
+    opened = threading.Event()
     finished: list[str] = []
 
-    async def prompt_api_key(*, prompt: object, label: str, optional: bool = False) -> str | KeyReference | None:
+    def run_text(widget: TextInput) -> TextInputResult:
         opened.set()
-        try:
-            await anyio.sleep_forever()
-        finally:
-            finished.append(label)
-        return None  # pragma: no cover -- unreachable; keeps the signature honest
+        while not worker_stopping():
+            time.sleep(0.01)
+        finished.append(widget._title)  # pyright: ignore[reportPrivateUsage]
+        return TextInputResult(cancelled=True)
 
-    monkeypatch.setattr('pydantic_clai2.plugins.keys.prompt_api_key', prompt_api_key)
-    script(monkeypatch, lists=[pick('auth')], choices=[pick('key')])
+    shown = script(monkeypatch, lists=[pick('auth')], choices=[pick('key')])
+    monkeypatch.setattr(
+        dialogs, 'RUNNERS', Runners(run_list=shown.run_list, run_choice=shown.run_choice, run_text=run_text)
+    )
     with anyio.fail_after(10):
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(shell.loader.configure, 'day_ai')
-            await opened.wait()
+            assert await to_thread.run_sync(opened.wait, 5)
             tasks.cancel_scope.cancel()
     assert finished == ['Day AI access token (saved in /keys as DAY_AI_ACCESS_TOKEN)']
+    await shell.loader.close('exit')
+
+
+AUTH_OPTIONS = (
+    Option(value='oauth', label='browser sign-in'),
+    Option(value='key', label='choose or enter a key in /keys...'),
+)
+
+
+async def test_the_sign_in_action_signs_in_through_the_dialogs_it_is_given(tmp_path: Path) -> None:
+    shell = Shell(tmp_path, terminal=False, settings={'auth': {'name': 'GONE'}})
+    await shell.loader.enable('day_ai')
+    scripted = ScriptedDialogs([Pick(value='oauth'), Finish()])
+    assert await shell.choose_auth(scripted) == ['Saved Sign-in.', 'Signed in to Day AI.']
+    choose, wait = scripted.asked
+    assert (choose.kind, choose.title, choose.options, choose.current) == (
+        'choose',
+        'Choose Sign-in',
+        AUTH_OPTIONS,
+        'GONE',
+    )
+    assert (wait.kind, wait.title) == ('wait', 'Signing in to Day AI')
+    assert shell.saved() == {'auth': 'oauth', 'include_instructions': True}
+    assert SignIn.attempts == 1
+    scripted = ScriptedDialogs([Pick(value='oauth')])
+    assert await shell.choose_auth(scripted) == ['Saved Sign-in.'], 'already signed in: no browser'
+    assert scripted.asked[0].current == 'oauth' and SignIn.attempts == 1
+    await shell.loader.close('exit')
+
+
+async def test_backing_out_of_the_sign_in_wait_leaves_day_ai_signed_out(tmp_path: Path) -> None:
+    SignIn.unfinished = True
+    shell = Shell(tmp_path, terminal=False)
+    await shell.loader.enable('day_ai')
+    scripted = ScriptedDialogs([Pick(value='oauth'), Back()])
+    with anyio.fail_after(5):
+        messages = await shell.choose_auth(scripted)
+    assert messages == ['Saved Sign-in.', 'Day AI sign-in cancelled. Run /day_ai login to try again.']
+    assert await shell.run_capability() is None
+    await shell.loader.close('exit')
+
+
+async def test_the_key_action_saves_a_masked_token_in_keys(tmp_path: Path) -> None:
+    shell = Shell(tmp_path, terminal=False)
+    await shell.loader.enable('day_ai')
+    scripted = ScriptedDialogs([Pick(value='key'), Type(text=' day-secret ')])
+    assert await shell.choose_auth(scripted) == ['Day AI uses the saved key DAY_AI_ACCESS_TOKEN. Manage it in /keys.']
+    _, token = scripted.asked
+    assert (token.kind, token.title, token.secret) == (
+        'text',
+        'Day AI access token (saved in /keys as DAY_AI_ACCESS_TOKEN)',
+        True,
+    )
+    assert api_keys.load_keys()['DAY_AI_ACCESS_TOKEN'].get_secret_value() == 'day-secret'
+    assert shell.saved() == {'auth': {'name': 'DAY_AI_ACCESS_TOKEN'}, 'include_instructions': True}
+    assert b'day-secret' not in shell.path.read_bytes()
+    scripted = ScriptedDialogs([Pick(value='key'), Pick(value='enter'), Type(text='other'), Confirm(yes=False)])
+    assert await shell.choose_auth(scripted) == [], 'keeping the saved token changes nothing'
+    assert scripted.asked[-1].title == 'DAY_AI_ACCESS_TOKEN is already in /keys'
+    assert api_keys.load_keys()['DAY_AI_ACCESS_TOKEN'].get_secret_value() == 'day-secret'
+    await shell.loader.close('exit')
+
+
+async def test_backing_out_of_the_sign_in_action_changes_nothing(tmp_path: Path) -> None:
+    api_keys.save_key(name='WORK_DAY_AI', value='work-secret')
+    shell = Shell(tmp_path, terminal=False, settings={'include_instructions': False})
+    await shell.loader.enable('day_ai')
+    for answers in ([Back()], [Pick(value='key'), Back()]):
+        assert await shell.choose_auth(ScriptedDialogs(answers)) == []
+    assert shell.saved() == {'include_instructions': False}
+    assert SignIn.attempts == 0
+    await shell.loader.close('exit')
+
+
+async def test_configure_without_a_terminal_points_to_one(tmp_path: Path) -> None:
+    shell = Shell(tmp_path, terminal=False)
+    assert await shell.loader.command(['enable', 'day_ai']) == '\n'.join(
+        ['Enabled day_ai.', 'Configure Day AI from a terminal: /plugins configure day_ai']
+    )
     await shell.loader.close('exit')
 
 

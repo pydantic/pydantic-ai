@@ -237,7 +237,7 @@ agent = Agent.from_file('agent.yaml')
 ### Realtime (speech-to-speech) sessions
 
 For voice models that stream audio over a persistent connection (OpenAI Realtime, Azure OpenAI,
-Gemini Live, or xAI Grok Voice), use
+Gemini Live, xAI Grok Voice, ElevenLabs' Eleven Realtime, or ElevenLabs Agents), use
 `agent.realtime().session()` instead of `run()`. It reuses the agent's tools and instructions and runs
 the tool loop for you. Stream input with `send_audio`/`send`, and iterate the
 session to consume the **same part/event vocabulary as a streamed run** — `PartStartEvent` /
@@ -245,15 +245,29 @@ session to consume the **same part/event vocabulary as a streamed run** — `Par
 `FunctionToolCallEvent` / `FunctionToolResultEvent`, plus realtime control events (`RealtimeInputSpeechStartEvent`,
 `RealtimeInputSpeechEndEvent`, `RealtimeResponseInterruptedEvent`, ...). A part's `index` identifies it for the whole
 session: when text of an output item's transcript arrives after a later item started, the session streams that part
-again under the same `index`, so keep parts by `index`. Use `RealtimeTurnCompleteEvent` as the exchange
-boundary, when generation and tool work are complete. This is not always the end of audible speech:
-on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and `RealtimeOutputSpeechEndEvent`. Before
+again under the same `index`, so keep parts by `index`. Use `RealtimeTurnCompleteEvent` as the exchange boundary: it
+comes when what `wait_for_reply()` waits for is over (every reply owed has come, tool rounds included, each from the
+response that answers it: not one that was already under way when the input arrived). This is not
+always the end of audible speech: on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and
+`RealtimeOutputSpeechEndEvent`. On OpenAI Realtime and Azure OpenAI, a tool-heavy agent can set
+`openai_prune_tool_items` to delete answered tool rounds from the server conversation, which otherwise bills every
+later response for them (history keeps them). Before
 passing raw microphone bytes to `send_audio`, convert them to mono PCM16 at `session.audio_input_sample_rate`; raw
 chunks carry no sample-rate metadata.
 After `RealtimeTurnCompleteEvent` (or a greeting's finalized `SpeechPart`), await
 `session.wait_for_playback()` before closing the session or opening the microphone. It waits for the single
 device-paced `stream_audio()` view to account for all audio emitted so far — played, discarded on a barge-in or a
 full buffer, or emitted before the view subscribed; it requires exactly one audio view.
+ElevenLabs Agents wraps an agent hosted on ElevenLabs, addressed as `elevenlabs-agents:<agent_id>`: the agent must
+permit the conversation overrides the session sends (instructions, voice, ...) in its Security tab, and its client
+tools must match the session's unless `elevenlabs_agents_tool_sync` is `'sync'` (which updates the agent) or `'off'`.
+Eleven Realtime (`elevenlabs:eleven_realtime_v1_mini` / `elevenlabs:eleven_realtime_v1_max`) instead takes its
+instructions, tools, and history from the agent, like OpenAI Realtime; set its voice with `elevenlabs_voice`.
+OpenAI GPT-Live (`openai:gpt-live-1`) splits the agent across two models: the agent's instructions, system prompt
+and tools go only to the Responses backend that does delegated work, never to the voice model the caller hears. Put
+the persona, language and speaking style in `openai_live_instructions` (it replaces the default Live prompt, so say
+when to delegate there too); left in the agent's instructions, the voice model never sees them (it runs on its
+default prompt) and carries that style into delegated answers only in part.
 
 ```python {test="skip"}
 import anyio
@@ -311,11 +325,16 @@ Key facts for building realtime agents:
 - **A string sent with `session.send()` solicits a response**: use `respond=False` to add passive
   text context. Images are context-only by default; use `respond=True` to ask for a response to an
   image. Never pair `session.send('...')` with `session.create_response()`, because that asks twice.
-  A string sent during a reply queues on OpenAI/Azure/xAI and Gemini 2.5, but interrupts the active
-  reply on Gemini 3.1. On OpenAI GPT-Live a string is never a user turn at all: it is context the model
-  relays or answers (even with `respond=False`, which only doesn't *request* speech), it only lands
-  while audio is flowing (set `openai_live_idle_audio=True` for a session with no microphone), and text over 500 tokens raises `UserError`. Gemini speech models reject text output before connect, except the Vertex
+  A string sent during a reply queues on OpenAI/Azure/xAI/Eleven Realtime and Gemini 2.5, but interrupts the active
+  reply on Gemini 3.1. On OpenAI GPT-Live a string goes to the delegated backend as the user's message and
+  runs it (tools included), and Live speaks the answer, often after a filler line; `respond=False` is context only
+  (which Live may still mention), Live only speaks while audio is flowing (set `openai_live_idle_audio=True` for a
+  session with no microphone), and `respond=False` text over 500 tokens raises `UserError` (a longer typed turn still runs the backend, but Live isn't told what was typed). Gemini speech models reject text output before connect, except the Vertex
   `gemini-live-2.5-flash` half-cascade, which answers in text.
+- **Application notes mid-session are `session.send(SystemPromptPart(...), respond=False)`**: not a string,
+  which the model takes as the user's words. It goes out on the provider's operator channel (a `system` message on
+  OpenAI/Azure, a contextual update on ElevenLabs Agents, a note to GPT-Live's voice model, `<system>`-tagged
+  user text elsewhere), is recorded as a `SystemPromptPart`, and with the default `respond=True` gets a reply.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`, or with
   `conversation=result.conversation` to carry the running usage and `conversation_id` too. Transcripts
@@ -332,7 +351,8 @@ Key facts for building realtime agents:
   is cumulative; priced models get a `genai-prices` cost and enforce `UsageLimits.cost_limit`.
 - **Context window**: `session.context_window_used` (and `ctx.context_window_used` in a session's tools)
   is the fraction in use: reported by OpenAI GPT-Live, computed from the latest response's tokens on
-  OpenAI/Azure/Gemini, and `None` on xAI. It can drop after server-side compaction or truncation, which
+  OpenAI/Azure/Gemini, taken from the agent's `context_usage` reports on ElevenLabs Agents (`None` until the
+  first), and `None` on xAI and Eleven Realtime. It can drop after server-side compaction or truncation, which
   no provider announces; tune it with `openai_truncation` (OpenAI Realtime and Azure, not GPT-Live) or
   `google_context_compression` (Gemini).
 - **No `output_type`**: realtime models don't do structured output. Delegate hard work to a text
@@ -344,12 +364,15 @@ Key facts for building realtime agents:
   support all of these; OpenAI GPT-Live supports only `supports_session_seeding` (from text) and
   `supports_image_input` with `image_input_requires_response` (an image goes to its backend, sent with
   `respond=True`), since it owns turn-taking; Gemini Live lacks `supports_manual_turn_control`,
-  `supports_interruption`, and `supports_output_truncation` (automatic VAD only). Calling an unsupported method raises `UserError` up front.
+  `supports_interruption`, and `supports_output_truncation` (automatic VAD only); ElevenLabs Agents supports none of
+  them, nor images or seeding, since the hosted agent owns turn-taking; Eleven Realtime supports all of them but
+  images (and seeds text only). Calling an unsupported method raises `UserError` up front.
 - **Turn detection**: use the shared `TurnDetection` setting for sensitivity, prefix padding, and
-  silence duration across providers. Use `openai_turn_detection`, `xai_turn_detection`, or
+  silence duration across providers (Eleven Realtime maps it onto semantic VAD, the only kind it has). Use
+  `openai_turn_detection`, `xai_turn_detection`, or
   `google_vad` only for finer provider-specific control; when present, they fully override the shared
   setting. Automatic detection is on by default (`True`); set `turn_detection=False` for push-to-talk
-  (OpenAI/Azure/xAI only — Gemini has no manual turn controls and raises).
+  (OpenAI/Azure/xAI/Eleven Realtime only — Gemini and ElevenLabs Agents have no manual turn controls and raise).
 - **Barge-in** (the user speaking over the model): pass `handle_barge_in=True` to `.session()` and
   the session owns the local half — flushing the audio the user will never hear, truncating the
   provider's transcript to what was played, and adding a client cancel only on providers whose own
@@ -358,6 +381,12 @@ Key facts for building realtime agents:
   down. To keep the trigger yourself, `session.interrupt(played_bytes=session.played_audio_bytes)`
   gets the same treatment on your own signal. A playback layer that buffers ahead of the device
   makes `played_audio_bytes` read too far: count real device consumption and pass `played_ms`.
+  A reply cut off this way is recorded as interrupted with `SpeechPart.interrupted_at_ms`, even when it
+  had already finished generating (the usual case): a later snapshot holds an interrupted copy at the
+  same position, so persist the latest `all_messages()` rather than appending only what's past what you
+  stored. Its transcript stays what the model generated (except on ElevenLabs Agents, which reports what was heard:
+  the transcript becomes that, or `None` for a message never heard, and the generated text moves to the part's
+  `provider_details['original_transcript']`); text handoff and seeding add an interruption note.
 - **Mute with server VAD**: keep sending zero-valued PCM16 frames at the normal cadence. Sending
   nothing can leave an open speech segment open; pure tones do not reliably trigger speech VAD.
   Under manual turn control, stop sending and call `clear_audio()` instead.
@@ -365,7 +394,7 @@ Key facts for building realtime agents:
   the model keeps speaking and answering meanwhile is the profile's `async_tool_call_mode`:
   `'always'` (OpenAI, Azure, GPT-Live, xAI, `gemini-3.8-live-extended-thinking`), `'optional'`
   (Gemini native-audio and `gemini-3.8-live`, on only with the shared `async_tool_calls=True`
-  setting, which the other models ignore), or `'never'` (other Gemini Live models). Don't use the
+  setting, which the other models ignore), or `'never'` (other Gemini Live models, Eleven Realtime, ElevenLabs Agents). Don't use the
   deprecated `google_async_tool_calls` setting or `supports_async_tool_calls` profile flag.
   `gemini-3.8-live-extended-thinking` has no blocking mode and reasons in the background —
   it speaks a filler, runs the tool, and speaks again inside one exchange, so read
@@ -375,8 +404,11 @@ Key facts for building realtime agents:
   `stream_transcripts()` and is raised when the session context closes. The next outbound method
   raises an already-ended receive side's failure instead, and every failure is delivered only once.
   Its call is recorded with `outcome='failed'`, leaving history valid for a standard-agent handoff.
-  An `on_tool_execute_error` capability can return a replacement result or raise `ModelRetry` to keep
-  the session running. To end the call from a tool, await `ctx.realtime_session.hang_up()` for a clean
+  The model gets the generic result `{"error":"The tool raised an unhandled error."}` (never the
+  exception's message) and answers it, so `wait_for_reply()` waits for that answer; after a
+  `UsageLimitExceeded` nothing is sent and the exchange ends. To give the model something better than
+  the generic failure, raise `ToolFailed` from the tool, or use an `on_tool_execute_error` capability
+  to return a replacement result or raise `ModelRetry`. To end the call from a tool, await `ctx.realtime_session.hang_up()` for a clean
   hang-up (the tool does not resume, its call is recorded as interrupted, and a concurrent
   `send_audio()` async iterable returns cleanly at its next chunk), or call `ctx.cancel()` to make
   the session context raise `RunCancelled`. A watchdog can also await `session.close()` safely:
@@ -396,7 +428,7 @@ Key facts for building realtime agents:
   control-plane **sideband** with `.session(provider_session=answer.session)`. The browser owns the
   audio; the sideband session runs tools and builds history (its audio methods raise, and
   `audio_retention` must stay `'transcript_only'`). Closing the sideband only detaches it: call
-  `session.hang_up()` (or `agent.realtime(model).hang_up(answer.session)`) to end the browser's call (OpenAI only).
+  `session.hang_up()` (or `agent.realtime(model).hang_up(answer.session)`) to end the browser's call (OpenAI and Azure OpenAI).
 - **Browser WebSocket relays**: `handle_barge_in=True` cannot know browser playback position because
   forwarded chunks count as played. Have the browser report real playback and pass it to
   `interrupt(played_bytes=...)`; `played_ms=` does not flush session-queued audio.
@@ -409,15 +441,15 @@ Load only the most relevant reference first. Read additional references only if 
 
 | I want to... | Reference |
 |---|---|
-| Create/configure agents, choose output types, use deps, define specs, or pick run methods | [Agents Core](./references/AGENTS-CORE.md) |
+| Create/configure agents, choose output types, validate output, use deps, define specs, or pick run methods | [Agents Core](./references/AGENTS-CORE.md) |
 | Bundle reusable behavior or intercept lifecycle events | [Capabilities and Hooks](./references/CAPABILITIES-AND-HOOKS.md) |
 | Decide what should load eagerly vs on demand, apply progressive disclosure, defer capability loading, or explain `load_capability` | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
 | Add function tools, toolsets, MCP servers, or explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
 | Attach a workspace, expose workspace-backed tools, or manage workspace lifecycle and durable references | [Workspaces](./references/WORKSPACES.md) |
 | Use provider-native web search, web fetch, or code execution | [Native Tools](./references/NATIVE-TOOLS.md) |
-| Use advanced tool features such as approval, retries, failed tool results, `ToolReturn`, validators, timeouts, or tool search | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
-| Work with multimodal input, message history, `run_id` / `conversation_id`, or context trimming | [Input and History](./references/INPUT-AND-HISTORY.md) |
-| Test or debug agent behavior | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
+| Use advanced tool features such as approval, retries, failed tool results, `ToolReturn`, validators, timeouts, tool search, or tools added mid-run | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
+| Work with multimodal or structured input, message history, `run_id` / `conversation_id`, or context trimming | [Input and History](./references/INPUT-AND-HISTORY.md) |
+| Test or debug agent behavior, or recover a failed run's messages | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Set up observability with Logfire, or reach every model with one Gateway key | [Set Up Observability and Model Access](#set-up-observability-and-model-access), then [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior) |
 | Coordinate multiple agents or build graph workflows | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md#coordinate-multiple-agents) |
 | Call the model directly, expose A2A, use durable execution, embeddings, image generation, evals, or third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
@@ -454,11 +486,13 @@ These are mistakes agents commonly make with Pydantic AI. Getting these wrong pr
 
 - **`@agent.tool` requires `RunContext` as first param**; `@agent.tool_plain` must **not** have it. Mixing these up causes runtime errors. Use `tool_plain` when you don't need deps, usage, or messages.
 - **Model strings need the provider prefix**: `'openai:gpt-5.2'` not `'gpt-5.2'`. Without the prefix, Pydantic AI can't resolve the provider.
-- **`TestModel` requires `agent.override()`**: Don't set `agent.model` directly. Always use the context manager: `with agent.override(model=TestModel()):`.
+- **Temporarily replacing a model in tests**: Use `with agent.override(model=TestModel()):` to substitute a model for an existing agent instead of mutating `agent.model`.
 - **`str` in output_type allows plain text to end the run**: If your union includes `str` (or no `output_type` is set), the model can return plain text instead of structured output. Omit `str` from the union to force tool-based output.
 - **Hook decorator names on `.on` don't repeat `on_`**: Use `hooks.on.run_error` and `hooks.on.model_request_error` — not `hooks.on.on_run_error`.
-- **`history_processors` is deprecated; use `capabilities=[ProcessHistory(p), ...]`**, or hook `before_model_request` directly via `capabilities=[Hooks(before_model_request=fn)]`. `ProcessHistory` is a thin wrapper around that hook — the hook itself is the underlying primitive. The kwarg still works in 1.x but emits a `PydanticAIDeprecationWarning` and will be removed in v2.
-- **Enter the agent once in a long-lived service**: an agent that isn't entered with `async with agent:` closes and recreates its provider's HTTP client after every run, so no connections are reused, and a model name passed as `agent.run(..., model='provider:name')` creates a new provider and client per run. Enter the agent at startup and pass entered `Model` instances to switch models. To tune timeouts or connection pool limits, pass `http_client=create_async_httpx2_client(timeout=..., limits=...)` (from `pydantic_ai.models`) to the provider (Groq, Cohere and GitHub take a legacy `httpx.AsyncClient` instead); a client you pass in is yours to close.
+- **`history_processors=` was removed in v2; use `capabilities=[ProcessHistory(p), ...]`**, or hook `before_model_request` directly via `capabilities=[Hooks(before_model_request=fn)]`. `ProcessHistory` is a thin wrapper around that hook — the hook itself is the underlying primitive. Passing `history_processors=` to `Agent` raises `TypeError`.
+- **Domain checks belong in an output validator, not after `run()`**: checking `result.output` against deps or a database once the run has returned loses the retry. Raise `ModelRetry` from `@agent.output_validator` so the model corrects its output in the same run. See [Validate Output Against Your Domain](./references/AGENTS-CORE.md#validate-output-against-your-domain).
+- **A failed run's work isn't lost**: `UsageLimitExceeded` and other run errors don't carry the run's messages (except `RunCancelled`, whose `all_messages()` holds them), but `with capture_run_messages() as messages:` around the run records them. Resume with `agent.run(message_history=messages)` and no prompt, instead of re-running the prompt and repeating its tool calls. See [Recover a Failed Run](./references/TESTING-AND-DEBUGGING.md#recover-a-failed-run).
+- **Enter the agent once in a long-lived service**: without `async with agent:`, a model name passed as `agent.run(..., model='provider:name')` creates a new provider and HTTP client for each run, Pydantic AI never closes the client of the agent's own model, and a run on a new event loop (a second `asyncio.run()`, or `run_sync()` from a different worker thread than the last call) replaces that client without closing it, so a thread pool leaks a client and its connections each time the thread changes: give each thread its own model, or enter the agent in each thread. Inside the block, runs reuse one provider per model name, and each `Model` instance a model selector returns more than once, and the agent closes the clients on exit. An `http_client` or SDK client you pass in is never replaced, so it fails on a new event loop with the SDK's own error. To tune timeouts or connection pool limits, pass `http_client=create_async_httpx2_client(timeout=..., limits=...)` (from `pydantic_ai.models`) to the provider (Groq, Cohere and GitHub take a legacy `httpx.AsyncClient` instead); a client you pass in is yours to close.
 
 ## Task-Family References
 
@@ -466,15 +500,15 @@ Load exactly one of these unless the task clearly spans multiple families:
 
 | Task family | Reference |
 |---|---|
-| Core agent setup, output, deps, specs, models, run methods | [Agents Core](./references/AGENTS-CORE.md) |
+| Core agent setup, output and output validators, deps, specs, models, run methods | [Agents Core](./references/AGENTS-CORE.md) |
 | Capabilities, hooks, and reusable behavior | [Capabilities and Hooks](./references/CAPABILITIES-AND-HOOKS.md) |
 | Progressive disclosure, deferred capabilities, capabilities on demand, and `load_capability` semantics | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
 | Function tools, toolsets, MCP, explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
 | Workspaces, workspace-backed tools, lifecycle ownership, and durable references | [Workspaces](./references/WORKSPACES.md) |
 | Provider-native tools | [Native Tools](./references/NATIVE-TOOLS.md) |
-| Approval, retries, failed tool results, validators, timeouts, rich tool returns, tool search, and tool-level deferred loading | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
-| Multimodal input, message history, `run_id` / `conversation_id`, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
-| Testing, request inspection, and Logfire debugging | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
+| Approval, retries, failed tool results, validators, timeouts, rich tool returns, tool search, tool-level deferred loading, and mid-run tool additions | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
+| Multimodal or structured input (`StructuredContent`), message history, `run_id` / `conversation_id`, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
+| Testing, request inspection, failed-run recovery, and Logfire debugging | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Multi-agent patterns, graphs, direct API, A2A, durable execution, embeddings, image generation, evals, third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
 
 Use [Task Reference Map](./references/COMMON-TASKS.md) only for compatibility with older links or when you need a pointer from an old section name to the new file.

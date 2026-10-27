@@ -62,6 +62,13 @@ def config_dir() -> Path:
     return Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2'
 
 
+def state_dir() -> Path:
+    """Where CLAI keeps state that is not a preference, honouring an absolute `XDG_STATE_HOME`."""
+    root = os.environ.get('XDG_STATE_HOME', '')
+    state = Path(root) if os.path.isabs(root) else Path.home() / '.local' / 'state'
+    return state / 'pydantic-clai2'
+
+
 class SettingsStore:
     """Persist overrides, never credentials or conversation messages."""
 

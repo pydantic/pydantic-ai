@@ -24,9 +24,10 @@ from pydantic_ai import (
     BinaryContent,
     DocumentUrl,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryInfo,
     StructuredDict,
     SystemPromptPart,
     TextContent,
@@ -40,7 +41,14 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelConnectionError,
+    ModelHTTPError,
+    ModelRetry,
+    TransportPhase,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.settings import ThinkingLevel
@@ -172,6 +180,32 @@ class MockMistralAI:
                 response = cast(MistralChatCompletionResponse, self.completions)
         self.index += 1
         return response
+
+
+async def test_tool_call_args_sent_as_canonical_json_string(allow_model_requests: None):
+    """String and dict args for the same call go on the wire as the same compact JSON string.
+
+    Mistral returns arguments with whitespace (`{"city": "Paris"}`), while a history loaded back from a UI
+    protocol or storage may hold the same call's args as a dict. Sending both as one string keeps the request
+    bytes, and the prompt cache, stable across that round trip.
+    """
+
+    def history(args: str | dict[str, Any]) -> list[ModelMessage]:
+        return [
+            ModelRequest(parts=[UserPromptPart('What is the weather in Paris?')]),
+            ModelResponse(parts=[ToolCallPart('get_weather', args, tool_call_id='call_1')]),
+            ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='call_1')]),
+        ]
+
+    sent: list[Any] = []
+    for args in ('{"city": "Paris", "days": 2}', {'city': 'Paris', 'days': 2}):
+        mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='OK')))
+        model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+        await Agent(model).run(message_history=history(args))
+        assistant = cast(MockMistralAI, mock_client).chat_completion_kwargs[0]['messages'][1]
+        sent.append(assistant.tool_calls[0].function.arguments)
+
+    assert sent == snapshot(['{"city":"Paris","days":2}', '{"city":"Paris","days":2}'])
 
 
 def completion_message(
@@ -1673,11 +1707,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -1851,11 +1887,13 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -2299,11 +2337,13 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -3056,11 +3096,11 @@ def _stream_breaking_off(request: httpx2.Request) -> httpx2.Response:
 
 
 @pytest.mark.parametrize(
-    ('handler', 'stream', 'message', 'cause'),
+    ('handler', 'stream', 'message', 'cause', 'phase'),
     [
-        pytest.param(_connect_error, False, 'connection refused', httpx2.ConnectError, id='connect'),
-        pytest.param(_connect_error, True, 'connection refused', httpx2.ConnectError, id='stream-connect'),
-        pytest.param(_stream_breaking_off, True, 'connection reset', httpx2.ReadError, id='mid-stream'),
+        pytest.param(_connect_error, False, 'connection refused', httpx2.ConnectError, 'connect', id='connect'),
+        pytest.param(_connect_error, True, 'connection refused', httpx2.ConnectError, 'connect', id='stream-connect'),
+        pytest.param(_stream_breaking_off, True, 'connection reset', httpx2.ReadError, 'read', id='mid-stream'),
     ],
 )
 async def test_model_transport_error(
@@ -3069,6 +3109,7 @@ async def test_model_transport_error(
     stream: bool,
     message: str,
     cause: type[Exception],
+    phase: TransportPhase,
 ) -> None:
     """`mistralai` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
@@ -3081,7 +3122,8 @@ async def test_model_transport_error(
             else:
                 await agent.run('hello')
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == phase
     assert exc_info.value.message == message
     assert isinstance(exc_info.value.__cause__, cause)
 
@@ -3669,7 +3711,7 @@ async def test_stream_cancel(allow_model_requests: None):
 async def test_mistral_empty_response_skipped_in_history(allow_model_requests: None):
     """An empty `ModelResponse(parts=[])` must not be sent back as an assistant message with
     neither content nor tool calls, which Mistral rejects with a 400. The agent graph retries
-    empty responses by emitting a `RetryPromptPart`, relying on the model adapter to omit the
+    empty responses by emitting a `RetryFeedbackPart`, relying on the model adapter to omit the
     empty response from the API payload.
     """
     completions = [
@@ -3684,11 +3726,13 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
     assert result.output == 'hello back'
 
     # The empty response is omitted from the payload (no assistant message with neither content nor
-    # tool calls, which would trigger a 400); a retry prompt is appended instead so the model can
-    # self-correct.
+    # tool calls, which would trigger a 400); the retry feedback is appended instead so the model can
+    # self-correct. Mistral honors a mid-conversation system message, so the feedback keeps the
+    # system voice rather than degrading to `<system>`-tagged user text.
     second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
-    assert [message.role for message in second_call_messages] == ['user', 'user']
+    assert [message.role for message in second_call_messages] == ['user', 'system']
+    assert second_call_messages[-1].content == snapshot('Please return text.')
 
 
 #####################
@@ -3712,13 +3756,22 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
         pytest.param('xhigh', 'high', id='xhigh'),
     ],
 )
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'mistral-small-latest',
+        # Aliases of Mistral Medium 3.5 and Small 4, which reason only when asked to.
+        'magistral-medium-latest',
+        'magistral-small-latest',
+    ],
+)
 async def test_reasoning_effort_with_unified_thinking(
-    allow_model_requests: None, thinking: ThinkingLevel, expected: str
+    allow_model_requests: None, thinking: ThinkingLevel, expected: str, model_name: str
 ) -> None:
     """Unified `thinking` values map to Mistral's `reasoning_effort` ('high' for any enabled level, 'none' only for `False`)."""
     c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
     mock_client = MockMistralAI(completions=c)
-    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
     result = await agent.run('hello', model_settings=MistralModelSettings(thinking=thinking))
@@ -3742,11 +3795,11 @@ async def test_reasoning_effort_not_sent_for_unsupported_model(allow_model_reque
 async def test_reasoning_effort_not_sent_for_always_on_model(
     allow_model_requests: None, thinking: ThinkingLevel
 ) -> None:
-    """`magistral` always reasons, so `reasoning_effort` is never sent: enabled levels are dropped
-    by `_translate_thinking`'s always-on guard, `False` is stripped upstream in `prepare_request`."""
+    """A dated `magistral` id always reasons and has no effort knob, so `reasoning_effort` is never sent,
+    not even for `False`: there is nothing to turn down."""
     c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
     mock_client = MockMistralAI(completions=c)
-    m = MistralModel('magistral-medium-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    m = MistralModel('magistral-medium-2509', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
     result = await agent.run('hello', model_settings=MistralModelSettings(thinking=thinking))
@@ -4013,6 +4066,118 @@ async def test_mistral_enum_member_docstrings_reach_the_wire(
             'required': ['priority'],
             'type': 'object',
         }
+    )
+
+
+def _tool_call_ids_on_the_wire(body: dict[str, Any]) -> list[tuple[str, list[str]]]:
+    """Each message's role with the tool call IDs it carries: an assistant's calls, or a tool message's answer."""
+    ids: list[tuple[str, list[str]]] = []
+    for message in cast(list[dict[str, Any]], body['messages']):
+        if tool_calls := cast(list[dict[str, Any]], message.get('tool_calls') or []):
+            ids.append((message['role'], [call['id'] for call in tool_calls]))
+        elif message['role'] == 'tool':
+            ids.append(('tool', [message['tool_call_id']]))
+    return ids
+
+
+@pytest.mark.vcr()
+async def test_mistral_foreign_tool_call_ids_are_rewritten(
+    allow_model_requests: None, mistral_api_key: str, request_capture: RequestCapture
+):
+    """A history with IDs from other providers and Pydantic AI continues on a model that only takes 9 alphanumerics.
+
+    `voxtral-small` rejects every other ID with a 400. The rewrite is a function of the history, so a second
+    request over the same history sends the same bytes, and the stored history keeps its original IDs.
+    """
+    provider = MistralProvider(api_key=mistral_api_key, http_client=request_capture.client)
+    agent = Agent(MistralModel('voxtral-small-latest', provider=provider))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'Sunny in {city}.'  # pragma: no cover
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='What is the weather in Paris, London and Berlin?')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_abc123def456ghi789jkl012'),
+                ToolCallPart('get_weather', {'city': 'Londres'}, tool_call_id='toolu_01A09q90qw90lq917835lq9'),
+                ToolCallPart('get_weather', {'city': 'Berlin'}, tool_call_id='pyd_ai_0123456789abcdef0123456789abcdef'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_weather', 'Sunny, 21C', tool_call_id='call_abc123def456ghi789jkl012'),
+                ToolReturnPart(
+                    'get_weather',
+                    'Use the English city name.',
+                    tool_call_id='toolu_01A09q90qw90lq917835lq9',
+                    outcome='retried',
+                ),
+                ToolReturnPart('get_weather', 'Cloudy, 15C', tool_call_id='pyd_ai_0123456789abcdef0123456789abcdef'),
+            ]
+        ),
+        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='aB3dE5gH9')]),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Rainy, 12C', tool_call_id='aB3dE5gH9')]),
+    ]
+
+    prompt = 'Summarize the weather in those three cities in one sentence, without calling tools.'
+    first = await agent.run(prompt, message_history=history)
+    second = await agent.run(prompt, message_history=history)
+
+    assert first.output and second.output
+    first_body, _ = request_capture.bodies('/chat/completions')
+    # The valid ID passes through, the others become hashes, and every call still pairs with its answer.
+    assert _tool_call_ids_on_the_wire(first_body) == snapshot(
+        [
+            ('assistant', ['2pESUE4jw', 'l4LUGq9qS', '9qOPVjwIC']),
+            ('tool', ['2pESUE4jw']),
+            ('tool', ['l4LUGq9qS']),
+            ('tool', ['9qOPVjwIC']),
+            ('assistant', ['aB3dE5gH9']),
+            ('tool', ['aB3dE5gH9']),
+        ]
+    )
+    assert request_capture.raw_bodies[0] == request_capture.raw_bodies[1]
+    assert [part.tool_call_id for part in history[1].parts if isinstance(part, ToolCallPart)] == [
+        'call_abc123def456ghi789jkl012',
+        'toolu_01A09q90qw90lq917835lq9',
+        'pyd_ai_0123456789abcdef0123456789abcdef',
+    ]
+
+
+@pytest.mark.vcr()
+async def test_mistral_tool_result_tags_name_the_rewritten_tool_call_id(
+    allow_model_requests: None, mistral_api_key: str, request_capture: RequestCapture, image_content: BinaryImage
+):
+    """The `<tool_result>` tags framing a tool's image name the same rewritten ID as the call and its tool message."""
+    provider = MistralProvider(api_key=mistral_api_key, http_client=request_capture.client)
+    agent = Agent(MistralModel('mistral-small-latest', provider=provider))
+
+    @agent.tool_plain
+    def get_image() -> BinaryImage:
+        return image_content  # pragma: no cover
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Get the image.')]),
+        ModelResponse(parts=[ToolCallPart('get_image', {}, tool_call_id='call_abc123def456ghi789jkl012')]),
+        ModelRequest(parts=[ToolReturnPart('get_image', image_content, tool_call_id='call_abc123def456ghi789jkl012')]),
+    ]
+
+    result = await agent.run('Which fruit is in the image? Answer in one word.', message_history=history)
+
+    assert result.output
+    body = request_capture.body('/chat/completions')
+    assert _tool_call_ids_on_the_wire(body) == snapshot([('assistant', ['2pESUE4jw']), ('tool', ['2pESUE4jw'])])
+    tags = [
+        chunk['text']
+        for message in cast(list[dict[str, Any]], body['messages'])
+        if message['role'] == 'user' and isinstance(message['content'], list)
+        for chunk in cast(list[dict[str, Any]], message['content'])
+        if chunk['type'] == 'text' and chunk['text'].startswith('<tool_result')
+    ]
+    assert tags == snapshot(
+        [f'<tool_result tool_name="get_image" tool_call_id="2pESUE4jw" file_id="{image_content.identifier}">']
     )
 
 

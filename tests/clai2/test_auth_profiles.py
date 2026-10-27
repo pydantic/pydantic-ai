@@ -21,7 +21,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.github_copilot import GitHubCopilotCredentials
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexOAuthFlow
 from pydantic_clai2 import chat
-from pydantic_clai2._app import _ModelResolver  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.auth import CodexAuth, CodexCredentials, login_command
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
@@ -39,6 +38,7 @@ from pydantic_clai2.models.model_catalog import check_installed
 from pydantic_clai2.models.model_options import model_options, validate_model_options
 from pydantic_clai2.models.model_settings import ModelSettingsForm
 from pydantic_clai2.models.profiles import ModelRef, base_model, parse_model, provider_of, with_profile
+from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import ModelProvider, PluginLogin
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_summary
 from tests.clai2.test_app_edges import inputs
@@ -47,8 +47,8 @@ from tests.clai2.test_auth import fake_browser, never_pasted
 CREDENTIALS = OpenAICodexCredentials(access_token='work-access', refresh_token='work-refresh', account_id='work')
 
 
-def resolver(tmp_path: Path, providers: dict[str, ModelProvider] | None = None) -> _ModelResolver:
-    return _ModelResolver(
+def resolver(tmp_path: Path, providers: dict[str, ModelProvider] | None = None) -> ModelResolver:
+    return ModelResolver(
         console=Console(file=io.StringIO()),
         plugins=lambda: providers or {},
         store=SettingsStore(tmp_path / 'config.db'),
@@ -245,7 +245,10 @@ async def test_core_providers_need_a_profile_and_an_api_key(monkeypatch: pytest.
 async def test_connection_profiles_reuse_the_connection_prompt(
     monkeypatch: pytest.MonkeyPatch, provider: str, *, cancel: bool
 ) -> None:
-    async def openrouter_prompt() -> openrouter.Connection | None:
+    shell = Console(file=io.StringIO())
+
+    async def openrouter_prompt(*, console: Console) -> openrouter.Connection | None:
+        assert console is shell, 'the sign-in prints through the shell console, into the transcript'
         return None if cancel else openrouter.Connection(token=SecretStr('or-key'))
 
     async def vllm_prompt() -> vllm.Connection | None:
@@ -253,7 +256,7 @@ async def test_connection_profiles_reuse_the_connection_prompt(
 
     monkeypatch.setattr(openrouter, 'prompt_connection', openrouter_prompt)
     monkeypatch.setattr(vllm, 'prompt_connection', vllm_prompt)
-    message = await login_command([f'{provider}@lab'], codex=CodexAuth(Console(file=io.StringIO())))
+    message = await login_command([f'{provider}@lab'], codex=CodexAuth(shell))
     if cancel:
         assert message == 'Sign-in cancelled.'
         return
@@ -346,7 +349,7 @@ async def test_resolver_reports_profile_problems(tmp_path: Path, monkeypatch: py
     with pytest.raises(UserError, match=r'No chain named missing\. Create one with /model chains\.'):
         await models.resolve('chain:missing')
     with pytest.raises(UserError, match='No chain named any'):
-        await _ModelResolver(console=Console(file=io.StringIO())).resolve('chain:any')
+        await ModelResolver(console=Console(file=io.StringIO())).resolve('chain:any')
     with pytest.raises(UserError, match="openai@BAD:x: Profile 'BAD'"):
         await models.resolve('openai@BAD:x')
     with pytest.raises(UserError, match=r'single does not support profiles\. Use single:x\.'):

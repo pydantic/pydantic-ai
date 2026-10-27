@@ -4,25 +4,22 @@ Give an agent a structured, self-updating task list -- without ever invalidating
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/planning/)
 
-> [!NOTE]
-> This capability incorporates the task-list features of the standalone [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) library -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed (`write_todos` -> `write_plan`, `read_todos` -> `read_plan`, `add_todo` -> `add_task`, `update_todo_status(es)` -> `update_task_status(es)`, `remove_todo` -> `remove_task`; subtask tools keep their names).
-
 ## The problem
 
 Long agentic runs drift: the model loses track of what it set out to do and what's left. The usual fix -- keep a running plan and re-inject it into the system prompt each turn -- invalidates the prompt cache. The system prompt sits at the front of the request, so every plan edit changes the cached prefix and forces the whole conversation to be re-processed at full token price.
 
 ## The solution
 
-`Planning` gives the model a small toolset that owns the plan. The current plan is surfaced back to the model as an *ephemeral* reminder appended to the tail of each request, with the single cache breakpoint anchored on the last durable user content:
+`Planning` gives the model a small toolset that owns the plan. The current plan is surfaced back to the model as an *ephemeral* reminder appended to the tail of each request, led by the capability's single cache breakpoint:
 
 - The reminder is added after the durable history is persisted, so it reaches the model but is never written to `message_history`. No reminders accumulate across turns.
-- The `CachePoint` sits on the last durable user content, so the prefix it saves is a prefix of the next request and cache hits survive turn over turn. The reminder carries no breakpoint, so re-sending its mutable content never invalidates the cache.
+- The reminder opens with a `CachePoint`, which providers attach to the content right before it: the last user prompt, or in a tool loop the latest tool result. That content is what the next request starts with, so on Anthropic, Bedrock and OpenAI each request reads the previous one's prefix back from cache, tool results included, and only the reminder is sent uncached. On OpenRouter the breakpoint stops at the previous user message, so the assistant turns and tool results after it stay outside the explicit prefix.
 
-As with all capability cache breakpoints, provider mapping applies: OpenAI models only receive the `CachePoint` when the model profile enables explicit cache control, and with no durable user content to anchor on the reminder is sent without a breakpoint.
+As with all capability cache breakpoints, provider mapping applies: OpenAI models only receive the `CachePoint` when the model profile enables explicit prompt cache breakpoints, OpenRouter attaches it to the previous user message rather than to a tool result, and models without explicit breakpoints (such as Google's) ignore it. With Anthropic automatic caching (`anthropic_cache`), the automatic breakpoint lands on the reminder, which the next request doesn't contain; the `Planning` breakpoint right before it is the one the next request reads back. A request with no content before the reminder (an `instructions`-only first request) gets the reminder without a breakpoint, since there is no prefix to protect.
 
-Note that the anchor lands on the last `UserPromptPart` present in the request. A capability listed before `Planning` that appends user content each request (for example `SystemReminders`) displaces the anchor onto that part, so the prefix stays cache-stable only while that content is stable across turns.
+A capability listed before `Planning` that also appends a tail part each request puts its content between the durable history and the plan reminder. The `Planning` breakpoint then covers that content too, so its cache entry is only read back while that content stays the same. The earlier capability's own breakpoint still marks the durable history.
 
-So the plan stays current in the model's view while the cached prefix is never invalidated; the only added cost is re-reading the reminder each turn.
+So the plan stays current in the model's view while the conversation before the reminder is read from cache, up to where the provider puts the breakpoint; the only added cost is re-reading the reminder each turn.
 
 ```python
 from pydantic_ai import Agent
@@ -152,8 +149,9 @@ With a durable-execution capability attached, every plan store call is a journal
 operation: the plan read used to build that reminder, and each read and write the plan tools make.
 Replay reuses the recorded result instead of calling the store again, so recovering a run doesn't
 append a step to a persistent store a second time. Under an engine that runs function tools in workflow code,
-like DBOS, a plan tool call runs alone, without overlapping other tool calls, so its recorded store
-calls keep the same order on replay.
+like DBOS, a plan tool call runs alone, without overlapping other tool calls, and emits its run
+events after its last store call. So its recorded store calls keep the same order on replay,
+including relative to the steps an `event_stream_handler` runs for those events.
 `Planning` carries the stable default `id='planning'`, so durable recovery works without
 configuration.
 Engines that run tools and capability operations in a separate worker, like Temporal, don't
@@ -168,7 +166,7 @@ from pydantic_ai_harness import Planning
 
 Planning(
     guidance=None,           # static system-prompt guidance; None = default, '' = omit
-    cache_ttl='5m',          # TTL for the cache breakpoint anchored on the last durable user content ('5m' | '1h')
+    cache_ttl='5m',          # TTL for the cache breakpoint leading the plan reminder ('5m' | '1h')
     store=None,              # None = fresh in-memory plan per run; or a PlanStore to persist
     enable_subtasks=False,   # add subtask/dependency tools and the 'blocked' status
     inject=True,             # surface the current plan as a cache-safe tail reminder
@@ -194,6 +192,10 @@ from pydantic_ai_harness import Planning
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Planning])
 ```
+
+## Relationship to `pydantic-ai-todo`
+
+`Planning` incorporates the task-list features of [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo), a community package by [Vstorm](https://vstorm.co/) -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed (`write_todos` -`write_plan`, `read_todos` -`read_plan`, `add_todo` -`add_task`, `update_todo_status(es)` -`update_task_status(es)`, `remove_todo` -`remove_task`; subtask tools keep their names).
 
 ## Further reading
 

@@ -149,9 +149,9 @@ class TestConcurrencyLimiter:
 
             for _ in range(3):
                 tg.start_soon(waiter)
-            with anyio.fail_after(2):
-                while limiter.waiting_count < 3:
-                    await anyio.sleep(0.01)
+            # Each waiter registers, then parks on the limiter: once every task is blocked, all three have. (No clock, so
+            # a runner too loaded to schedule this process for a while can't time the test out.)
+            await anyio.wait_all_tasks_blocked()
             assert limiter.waiting_count == 3
 
             release.set()

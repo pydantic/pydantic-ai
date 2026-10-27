@@ -7,30 +7,21 @@ from collections.abc import Sequence
 from functools import partial
 from typing import Generic, get_args
 
-import anyio
-from prompt_toolkit import PromptSession
+from anyio import to_thread
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from termflow.tui import MenuBuilder, MenuItem
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.google_workspace import GoogleWorkspace, GoogleWorkspaceService
 from pydantic_clai2.commands import Command
-from pydantic_clai2.config.api_keys import (
-    KeyReference,
-    load_keys,
-    prompt_api_key,
-    resolve_key,
-    save_key,
-    save_key_connection,
-)
+from pydantic_clai2.config.api_keys import KeyReference, load_keys, resolve_key, save_key_connection
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
-from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, run_flow
-from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.plugins.keys import choose_key
+from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
+from pydantic_clai2.runtime._session import WorkspacelessCapability
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 TOKEN_LABEL = 'GOOGLE_ACCESS_TOKEN'
 """The `/keys` name used until `/google_workspace` picks another; a label, not an environment variable."""
@@ -91,28 +82,25 @@ def access_token() -> str:
     return resolve_key(token=reference)
 
 
-async def choose_key() -> str:
+async def pick_key(dialogs: Dialogs) -> list[str]:
     """Pick a saved key or enter one; only the key's name is remembered outside /keys."""
-    prompt: PromptSession[str] = PromptSession()
-    token = await prompt_api_key(prompt=prompt, label=f'Google OAuth access token (saved in /keys as {TOKEN_LABEL}): ')
+    token = await choose_key(name=TOKEN_LABEL, label='Google OAuth access token', dialogs=dialogs)
     if token is None:
-        return 'Google Workspace key unchanged.'
-    if not isinstance(token, KeyReference):
-        await anyio.to_thread.run_sync(partial(save_key, name=TOKEN_LABEL, value=token), abandon_on_cancel=True)
-        token = KeyReference(name=TOKEN_LABEL)
+        return ['Google Workspace key unchanged.']
     connection = Connection(token=token)
-    await anyio.to_thread.run_sync(
-        partial(save_key_connection, account=ACCOUNT, token=token, value=connection.model_dump_json()),
-        abandon_on_cancel=True,
-    )
-    return f'Google Workspace uses the saved key {token.name} from the next turn.'
-
-
-class _PickKey(Exception):
-    """Leave the menu worker so the key picker can prompt on the event loop, then reopen the menu."""
+    try:
+        await to_thread.run_sync(
+            partial(save_key_connection, account=ACCOUNT, token=token, value=connection.model_dump_json()),
+            abandon_on_cancel=True,
+        )
+    except UserError as exc:  # Deleted from /keys since it was picked.
+        return [str(exc)]
+    return [f'Google Workspace uses the saved key {token.name} from the next turn.']
 
 
 _BOOLEAN = ('true', 'false')
+_DONE = 'done'
+_AT_LEAST_ONE = 'Google Workspace needs at least one product.'
 
 
 class SettingsSource(Generic[DepsT]):
@@ -124,8 +112,6 @@ class SettingsSource(Generic[DepsT]):
         """Read and write through `host`, so edits reach the next run without reloading."""
         self._settings = partial(host.settings, GoogleWorkspaceSettings)
         self._save_settings = host.save_settings
-        self.log: list[str] = []
-        """What changed, in order; kept here because the key picker restarts the field menu."""
 
     def rows(self) -> list[FieldRow]:
         """The token's key name first, then the capability's non-secret options."""
@@ -144,7 +130,7 @@ class SettingsSource(Generic[DepsT]):
                 key='services',
                 label='Products',
                 default=', '.join(defaults.services),
-                description='Workspace products to connect. Enter opens a searchable checklist; the token must '
+                description='Workspace products to connect. Enter opens a checklist; the token must '
                 'carry the scopes each product needs.',
             ),
             FieldRow(
@@ -190,66 +176,42 @@ class SettingsSource(Generic[DepsT]):
         """Return one option to its default; for the token row, forget the chosen key name."""
         if row.key == 'token':
             delete_credentials(account=ACCOUNT)
-            message = f'Google Workspace uses the saved key {TOKEN_LABEL} again.'
-            self.log.append(message)
-            return message
+            return f'Google Workspace uses the saved key {TOKEN_LABEL} again.'
         default = getattr(GoogleWorkspaceSettings(), row.key)
         return self._save(f'Reset {row.label}.', **{row.key: default})
 
-    def edit_services(self, runners: Runners) -> list[str]:
-        """Toggle products until Esc; each toggle is saved, and the last product cannot be removed."""
-        cursor = 0
+    async def edit_services(self, dialogs: Dialogs) -> list[str]:
+        """Toggle products until Done or Esc; each toggle is saved, and the last product cannot be removed."""
+        messages: list[str] = []
+        refused = False
         while True:
-            chosen = self._settings().services
-            menu = (
-                MenuBuilder('Google Workspace products')
-                .style(markdown_style())
-                .items([MenuItem(f'[{"x" if name in chosen else " "}] {name}', value=name) for name in SERVICES])
-                .searchable()
-                .initial_index(cursor)
-                .footer_hint('type to filter - Enter toggle - Esc back')
-                .key_source(menu_key)
-                .build()
+            chosen = (await to_thread.run_sync(self._settings)).services
+            service = await dialogs.choose(
+                title='Google Workspace products',
+                options=[
+                    *(Option(value=name, label=f'[{"x" if name in chosen else " "}] {name}') for name in SERVICES),
+                    Option(value=_DONE, label='Done'),
+                ],
+                description=_AT_LEAST_ONE
+                if refused
+                else 'Enter toggles a product and saves it. The token must carry the scopes each product needs.',
             )
-            result = runners.run_choice(menu)
-            service = result.item.value if result.item is not None else None
-            if result.cancelled or service not in SERVICES:
-                return []
-            cursor = SERVICES.index(service)
-            if service in chosen and len(chosen) == 1:
-                self.log.append('Google Workspace needs at least one product.')
+            if service is None or service == _DONE:
+                return messages
+            refused = service in chosen and len(chosen) == 1
+            if refused:
+                if _AT_LEAST_ONE not in messages:
+                    messages.append(_AT_LEAST_ONE)
                 continue
             services = [name for name in SERVICES if (name in chosen) != (name == service)]
-            self._save(f'Products: {", ".join(services)}.', services=services)
-
-    def pick_key(self) -> list[str]:
-        """Hand the key choice to the event loop; see `_PickKey`."""
-        raise _PickKey
+            messages.append(
+                await to_thread.run_sync(partial(self._save, f'Products: {", ".join(services)}.', services=services))
+            )
 
     def _save(self, message: str, **changes: object) -> str:
         current = self._settings().model_dump()
         self._save_settings(GoogleWorkspaceSettings.model_validate({**current, **changes}))
-        self.log.append(message)
         return message
-
-
-async def configure(host: PluginHost[DepsT], args: list[str], *, runners: Runners = TERMINAL) -> str:
-    """Open the settings menu; Esc or Save & close leaves it with every edit already saved."""
-    if args:
-        raise ValueError('Usage: /google_workspace (opens the settings menu)')
-    source = SettingsSource(host)
-
-    def flow() -> list[str]:
-        submenus = {'services': partial(source.edit_services, runners), 'token': source.pick_key}
-        return run_flow(FieldMenu(source, searchable=False), runners, submenus=submenus)
-
-    while True:
-        try:
-            await run_worker(flow)
-        except _PickKey:
-            source.log.append(await choose_key())
-            continue
-        return '\n'.join(source.log) or 'No changes.'
 
 
 class GoogleWorkspacePlugin(Plugin[GoogleWorkspaceSettings, DepsT]):
@@ -266,29 +228,41 @@ class GoogleWorkspacePlugin(Plugin[GoogleWorkspaceSettings, DepsT]):
             # Built per run so `/google_workspace` edits apply to the next turn without a reload.
             settings = host.settings(GoogleWorkspaceSettings)
             return GoogleWorkspace[DepsT](
+                # A fixed id, not the one derived from the products, so a loaded capability stays loaded
+                # when the user changes the products mid-conversation.
+                id='google_workspace',
+                defer_loading=True,
                 services=settings.services,
                 auth=token,
                 read_only=settings.read_only,
                 include_instructions=settings.include_instructions,
             )
 
-        return (workspace,)
+        return (WorkspacelessCapability[DepsT](workspace),)
 
     def get_commands(self) -> Sequence[Command]:
         return (
             Command(
                 name='google_workspace',
                 description='Google Workspace settings: products, read-only tools, and the /keys token',
-                handler=partial(configure, self.host),
+                handler=self._command,
                 during_turn=True,
             ),
         )
 
-    async def configure(self) -> str:
-        return await configure(self.host, [])
+    def settings_menu(self) -> SettingsMenu:
+        source = SettingsSource(self.host)
+        return SettingsMenu(
+            source=source, actions={'token': pick_key, 'services': source.edit_services}, searchable=False
+        )
 
     async def on_session_start(self, event: SessionStart) -> None:
         try:
             access_token()
         except UserError as exc:
             self.host.console.print(str(exc), style=theme.color(theme.WARNING), markup=False)
+
+    async def _command(self, args: list[str]) -> str:
+        if args:
+            raise ValueError('Usage: /google_workspace (opens the settings menu)')
+        return await self.configure()

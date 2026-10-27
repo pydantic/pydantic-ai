@@ -92,6 +92,8 @@ class PromptSurface(io.StringIO):
         self._transcript_rows = 0
         """How many of the frame's top rows show the transcript, the only ones a selection covers."""
         self._paint_scheduled = False
+        self._paint_delayed = False
+        """A paint waits for the frame interval to end; see `changed`."""
         self._painted_as: tuple[int, int, str] | None = None
         """The geometry and theme of the last frame; transcript rows wrap and colour by both."""
 
@@ -151,11 +153,14 @@ class PromptSurface(io.StringIO):
         return len(text)
 
     def changed(self) -> None:
-        """Note new transcript content, painting now unless the last frame was too recent."""
+        """Note new transcript content, painting now, or once the frame interval ends if the last frame was too recent."""
         with self._lock:
             self._dirty = True
-            if self.clock() - self._painted_at >= FRAME_INTERVAL:
+            wait = FRAME_INTERVAL - (self.clock() - self._painted_at)
+            if wait <= 0:
                 self.refresh()
+            else:
+                self._paint_later(wait)
 
     def refresh(self) -> None:
         """Paint output that arrived since the last frame, unless another widget owns the screen."""
@@ -248,6 +253,20 @@ class PromptSurface(io.StringIO):
         if not self._paint_scheduled:
             self._paint_scheduled = True
             loop.call_soon(self._scheduled_paint)
+
+    def _paint_later(self, delay: float) -> None:
+        """Paint after `delay` seconds; outside the event loop, as from a worker thread, the editor's next tick does."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if not self._paint_delayed:
+            self._paint_delayed = True
+            loop.call_later(delay, self._delayed_paint)
+
+    def _delayed_paint(self) -> None:
+        self._paint_delayed = False
+        self.refresh()
 
     def _scheduled_paint(self) -> None:
         self._paint_scheduled = False

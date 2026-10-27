@@ -2,9 +2,10 @@
 
 The built-in `pylon` plugin: Pylon's support issues, accounts, and contacts through harness `Pylon`.
 
-The settings menu is `PylonPlugin.configure`, so turning the plugin on opens it, as do `c` in
-`/plugins`, `/plugins configure pylon`, and `/pylon`. Each edit is saved to the plugin's settings at once and
-applies from the next run, because the capability is rebuilt per run from the current settings.
+The settings menu is declared by `PylonPlugin.settings_menu`, so it opens in the terminal (on enable, `c` in
+`/plugins`, `/plugins configure pylon`, and `/pylon`) and in the web UI's plugins panel. Each edit is saved to the
+plugin's settings at once and applies from the next run, because the capability is rebuilt per run from the
+current settings.
 
 The token is never kept in plugin settings, which are plaintext SQLite. By default the plugin connects with a
 named key from `/keys`, chosen through the shared key picker; only the key's name is saved. The key is resolved
@@ -16,14 +17,12 @@ With browser sign-in, CLAI signs in the way `/mcp` OAuth servers do, keeping the
 prompt; see `pydantic_clai2.plugins.sign_in`. Until then, runs get no Pylon tools.
 """
 
-import asyncio
 import json
 from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Literal
 
 import anyio
-from prompt_toolkit import PromptSession
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
 from pydantic_ai.capabilities import AgentCapability
@@ -31,22 +30,16 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.pylon import Pylon
 from pydantic_clai2.commands import Command
-from pydantic_clai2.config.api_keys import (
-    KeyReference,
-    forget_connection,
-    load_keys,
-    prompt_api_key,
-    resolve_key,
-    save_key,
-    save_key_connection,
-)
+from pydantic_clai2.config.api_keys import KeyReference, forget_connection, resolve_key, save_key_connection
 from pydantic_clai2.config.credential_store import load_codex_credentials
 from pydantic_clai2.mcp import OAuthSignIn
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
-from pydantic_clai2.plugins.keys import on_loop
+from pydantic_clai2.plugins.keys import choose_key
+from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_clai2.plugins.sign_in import SUBCOMMANDS, run_subcommand, sign_in_now, status, warn_if_signed_out
-from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
-from pydantic_clai2.ui.menus.menu_worker import run_worker
+from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.ui.menus import dialogs as menu_dialogs
+from pydantic_clai2.ui.menus.field_menu import first_error
 
 PYLON_MCP_URL = 'https://mcp.usepylon.com'
 """Harness `Pylon`'s endpoint, repeated here because the browser sign-in's client owns its URL."""
@@ -69,6 +62,7 @@ _HELP = (
     'Usage: /pylon (settings menu), /pylon key (choose the /keys entry), /pylon login or logout (browser sign-in), '
     'or /pylon status'
 )
+_KEY_LABEL = f'{KEY_NAME} (a Pylon OAuth access token; Pylon API keys are not accepted)'
 
 
 class PylonSettings(BaseModel):
@@ -84,10 +78,6 @@ class PylonSettings(BaseModel):
 
 class _Saved(BaseModel):
     token: KeyReference
-
-
-class _ChooseKey(Exception):
-    """Release the menu worker so the async key picker can own the terminal."""
 
 
 def saved_key() -> KeyReference | None:
@@ -107,10 +97,9 @@ class PylonConfig:
     title = 'Pylon settings'
 
     def __init__(self, settings: PylonSettings, save: Callable[[PylonSettings], None]) -> None:
-        """`save` persists new settings; every applied edit is also recorded in `notes`."""
+        """`save` persists new settings."""
         self.settings = settings
         self._save = save
-        self.notes: list[str] = []
 
     def rows(self) -> Sequence[FieldRow]:
         """Sign-in first, the key only when it is used, then the capability's switches."""
@@ -174,7 +163,7 @@ class PylonConfig:
         """Restore a setting's default, or forget the key reference."""
         if row.key == 'key':
             forget_connection(account=ACCOUNT)
-            return self._note('Pylon no longer uses a /keys entry; runs get no Pylon tools until you choose one.')
+            return 'Pylon no longer uses a /keys entry; runs get no Pylon tools until you choose one.'
         return self._store(self.settings.model_copy(update={row.key: PylonSettings.model_fields[row.key].default}), row)
 
     def _validated(self, row: FieldRow, raw: str) -> PylonSettings:
@@ -185,11 +174,7 @@ class PylonConfig:
         self._save(settings)
         self.settings = settings
         shown = row.display(_text(getattr(settings, row.key)))
-        return self._note(f'Pylon {row.label.lower()}: {shown}. Applies from the next run.')
-
-    def _note(self, message: str) -> str:
-        self.notes.append(message)
-        return message
+        return f'Pylon {row.label.lower()}: {shown}. Applies from the next run.'
 
 
 _AUTH = FieldRow(
@@ -208,42 +193,6 @@ def _text(value: object) -> str:
     return json.dumps(value) if isinstance(value, bool) else str(value)
 
 
-def _release_for_key() -> list[str]:
-    raise _ChooseKey
-
-
-async def configure(config: PylonConfig, runners: Runners | None = None) -> str:
-    """Open the settings menu until Esc, stepping out of the menu worker whenever the key picker is needed."""
-    notes = len(config.notes)
-    shown = runners or TERMINAL
-    loop = asyncio.get_running_loop()
-
-    def pick_auth(menu: FieldMenu) -> list[str]:
-        pick = shown.run_choice(menu.build_choices(_AUTH))
-        if pick.cancelled or pick.item is None:
-            return []
-        menu.apply(_AUTH, str(pick.item.value))
-        if pick.item.value == 'browser' and not SIGN_IN.signed_in():
-            message = on_loop(lambda: sign_in_now(SIGN_IN, shown), loop)
-            config.notes.extend([] if message is None else [message])
-        return []
-
-    def flow() -> list[str]:
-        menu = FieldMenu(config)
-        return run_flow(menu, shown, submenus={'key': _release_for_key, 'auth': lambda: pick_auth(menu)})
-
-    while True:
-        try:
-            await run_worker(flow)
-        except _ChooseKey:
-            try:
-                config.notes.append(await choose_key())
-            except (ValueError, UserError) as exc:
-                config.notes.append(str(exc))
-            continue
-        return '\n'.join(config.notes[notes:]) or 'Pylon settings unchanged.'
-
-
 class PylonPlugin(Plugin[PylonSettings, DepsT]):
     """A per-run `Pylon` built from the current settings, its settings menu, and `/pylon`."""
 
@@ -252,7 +201,7 @@ class PylonPlugin(Plugin[PylonSettings, DepsT]):
         self.config = PylonConfig(settings, host.save_settings)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
-        return (self._for_run,)
+        return (WorkspacelessCapability[DepsT](self._for_run),)
 
     def get_commands(self) -> Sequence[Command]:
         return (
@@ -268,8 +217,8 @@ class PylonPlugin(Plugin[PylonSettings, DepsT]):
             ),
         )
 
-    async def configure(self) -> str:
-        return await configure(self.config)
+    def settings_menu(self) -> SettingsMenu:
+        return SettingsMenu(source=self.config, actions={'auth': self._pick_auth, 'key': pick_key})
 
     async def on_session_start(self, event: SessionStart) -> None:
         if self.config.settings.auth == 'browser':
@@ -290,17 +239,34 @@ class PylonPlugin(Plugin[PylonSettings, DepsT]):
                 return None
             client, token = None, resolve_key(token=reference)
         return Pylon[DepsT](
+            defer_loading=True,
             auth=token,
             client=client,
             read_only=settings.read_only,
             include_instructions=settings.include_instructions,
         )
 
+    async def _pick_auth(self, dialogs: Dialogs) -> list[str]:
+        """Pick how Pylon signs in, and sign in through the browser now when that is picked and needed."""
+        picked = await dialogs.choose(
+            title=f'Choose {_AUTH.label}',
+            options=[Option(value=choice, label=_AUTH.display(choice)) for choice in _AUTH.choices],
+            current=self.config.settings.auth,
+        )
+        if picked is None:
+            return []
+        messages = [await anyio.to_thread.run_sync(self.config.apply, _AUTH, picked)]
+        if picked == 'browser' and not await anyio.to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
+            messages.append(await sign_in_now(SIGN_IN, dialogs))
+        return messages
+
     async def _command(self, args: list[str]) -> str:
         if not args:
             return await self.configure()
         if args == ['key']:
-            return await choose_key()
+            # The module's `RUNNERS` is read here, not imported, so tests can script the terminal.
+            messages = await pick_key(menu_dialogs.TerminalDialogs(menu_dialogs.RUNNERS))
+            return '\n'.join(messages) or 'Pylon key unchanged.'
         if args == ['status']:
             return await anyio.to_thread.run_sync(_status, self.config, abandon_on_cancel=True)
         message = await run_subcommand(SIGN_IN, args)
@@ -320,29 +286,16 @@ def _status(config: PylonConfig) -> str:
     return f'Pylon connects with {reference.name} from /keys; {options}.'
 
 
-async def choose_key() -> str:
-    """Pick a saved key or enter a new masked one; only the key's name is saved for Pylon."""
-    prompt: PromptSession[str] = PromptSession()
-    label = f'{KEY_NAME} (a Pylon OAuth access token; Pylon API keys are not accepted): '
-    token = await prompt_api_key(prompt=prompt, label=label)
-    if token is None:
-        return 'Pylon key unchanged.'
-    if isinstance(token, str):
-        if not token.strip():
-            raise ValueError('A Pylon access token is required.')
-        if KEY_NAME in await anyio.to_thread.run_sync(load_keys, abandon_on_cancel=True):
-            try:
-                answer = await prompt.prompt_async(
-                    f'Replace {KEY_NAME} in /keys for every connection using it? [y/N]: '
-                )
-            except (EOFError, KeyboardInterrupt):
-                return 'Pylon key unchanged.'
-            if answer.strip().lower() != 'y':
-                return 'Pylon key unchanged.'
-        await anyio.to_thread.run_sync(partial(save_key, name=KEY_NAME, value=token), abandon_on_cancel=True)
-        token = KeyReference(name=KEY_NAME)
-    saved = json.dumps({'token': token.model_dump()})
-    await anyio.to_thread.run_sync(
-        partial(save_key_connection, account=ACCOUNT, token=token, value=saved), abandon_on_cancel=True
-    )
-    return f'Pylon connects with {token.name} from /keys.'
+async def pick_key(dialogs: Dialogs) -> list[str]:
+    """Pick a saved key or enter a new masked one through `dialogs`; only the key's name is saved for Pylon."""
+    reference = await choose_key(name=KEY_NAME, label=_KEY_LABEL, dialogs=dialogs)
+    if reference is None:
+        return []
+    saved = json.dumps({'token': reference.model_dump()})
+    try:
+        await anyio.to_thread.run_sync(
+            partial(save_key_connection, account=ACCOUNT, token=reference, value=saved), abandon_on_cancel=True
+        )
+    except UserError as exc:  # The picked key was deleted meanwhile.
+        return [str(exc)]
+    return [f'Pylon connects with {reference.name} from /keys.']

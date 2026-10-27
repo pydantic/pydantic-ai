@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from typing_extensions import TypedDict
 
+from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from ..exceptions import PydanticAIDeprecationWarning
-from ..messages import CachePoint, ModelRequest, ModelResponse, UserPromptPart
+from ..messages import CachePoint, DocumentMediaType, ModelRequest, ModelResponse, UserPromptPart
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
 from ..settings import CacheRetention
@@ -102,6 +103,54 @@ class ModelProfile(TypedDict, total=False):
     provider accepts audio in user messages.
     """
 
+    supports_image_input: bool
+    """Whether the model accepts images. Default: `True`.
+
+    The file-input flags (this one, `supports_document_input`, `supported_document_media_types`,
+    `supports_audio_file_input` and `supports_video_input`) say which files can be sent to the model.
+    A model adapter turns off what its message mapping cannot send, whatever the profile says.
+
+    A file a tool returns that the model cannot take is replaced, in the request only, by a note naming
+    it: see [Where a returned file is sent](../tools-advanced.md#tool-return-file-provenance). A file in a
+    user prompt is sent as it is, and the request fails if the model cannot take it.
+    [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] reads the same flags to describe
+    such files in text instead.
+
+    Shipped profiles turn these off where an adapter or a model family is known not to take the file; `True`
+    means nothing says otherwise, not that the model was checked. A text-only model served through an adapter
+    that sends images (a text-only Llama on vLLM, say) needs `profile=ModelProfile(supports_image_input=False)`.
+    """
+
+    supports_document_input: bool
+    """Whether the model accepts documents, such as PDFs. Default: `True`.
+
+    Which document media types it accepts is narrowed by `supported_document_media_types`.
+    See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supported_document_media_types: frozenset[DocumentMediaType]
+    """The document media types the model accepts, when it accepts documents at all. Default: every
+    media type in `DocumentMediaType`.
+
+    Only narrows those known types: a document with any other media type is judged by
+    `supports_document_input` alone. Anthropic, for example, reads PDFs and plain text but not Word or
+    Excel files. See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supports_audio_file_input: bool
+    """Whether the model accepts audio files, such as an [`AudioUrl`][pydantic_ai.messages.AudioUrl]
+    or audio [`BinaryContent`][pydantic_ai.messages.BinaryContent]. Default: `True`.
+
+    Separate from `supports_audio_input`, which is about realtime speech history. See
+    `supports_image_input` for how the file-input flags are used.
+    """
+
+    supports_video_input: bool
+    """Whether the model accepts video. Default: `True`.
+
+    See `supports_image_input` for how the file-input flags are used.
+    """
+
     supports_inline_system_prompts: bool
     """Whether the provider's API accepts `SystemPromptPart`s inline at any position. Default: `False`.
 
@@ -123,6 +172,33 @@ class ModelProfile(TypedDict, total=False):
     this in its own `Model.profile` override, as Anthropic does for Microsoft Foundry. Narrowing the
     flag rather than special-casing the adapter's own rendering keeps `Model.prepare_messages` the
     only place that knows the `<system>...</system>` fallback.
+    """
+
+    supports_request_scoped_system_prompts: bool
+    """Whether the provider's API keeps a request-scoped `SystemPromptPart` in the conversation and stops rendering it itself. Default: `False`.
+
+    A [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] part applies to one model request.
+    When this is `True`, the model adapter sends every such part in the history, and the API stops
+    rendering each one once a later request exists, as Anthropic's `clear_at: 'next_user_message'` does.
+    Sending it unchanged keeps the cached prefix and any reasoning bound to it valid. When `False`,
+    `Model.prepare_messages` leaves a request-scoped part out of every request after its own, and the part
+    renders like any other mid-conversation `SystemPromptPart` while it's current.
+
+    Only meaningful together with `supports_inline_system_prompts`, and only set it on a model whose adapter
+    renders a self-clearing entry, currently `AnthropicModel`. On any other adapter, `True` makes every
+    request-scoped part render as a lasting system prompt on every later request.
+    """
+
+    supports_mid_conversation_effort: bool
+    """Whether the provider's API can change the thinking effort from a point in the conversation onward. Default: `False`.
+
+    When `True`, on a model whose adapter renders the change (`OpenAIResponsesModel`'s `configuration_update`
+    item, `AnthropicModel`'s per-message `output_config`, `OpenRouterModel`'s `configuration_update` system
+    message), a
+    [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] is sent in place and the request
+    keeps the conversation's earlier request-level effort, so the prompt cache survives the change. When
+    `False`, `Model.prepare_messages` drops those parts and the current effort goes out as the request-level
+    setting.
     """
 
     default_structured_output_mode: StructuredOutputMode
@@ -151,9 +227,14 @@ class ModelProfile(TypedDict, total=False):
     supports_auto_cache: bool
     """Whether the provider has a server-managed automatic prompt-caching mode the request can switch on. Default: `False`.
 
-    When True, the unified `cache` setting uses that mode, which places and moves the cache breakpoint
-    itself. Otherwise the library places explicit cache breakpoints at the end of the tool definitions,
-    the static instructions, and the conversation. Only meaningful when `supports_cache` is True.
+    The unified `cache` setting consults it only when `supports_cache` is True: then, if this is True, the
+    conversation is cached with that mode, which places and moves the cache breakpoint itself; otherwise the
+    library places an explicit breakpoint at the end of the conversation too, as it does at the end of the tool
+    definitions and the static instructions.
+
+    On Anthropic, the explicit `anthropic_cache` setting consults it whatever `supports_cache` says: if this is
+    True, the request carries the top-level `cache_control` parameter; otherwise `anthropic_cache` falls back
+    to a breakpoint on the last block.
     """
 
     supported_cache_retentions: tuple[CacheRetention, ...]
@@ -198,7 +279,7 @@ class ModelProfile(TypedDict, total=False):
     thinking_always_enabled: bool
     """Whether the model always uses thinking/reasoning (e.g., OpenAI o-series, DeepSeek R1). Default: `False`.
 
-    When True, `thinking=False` is silently ignored since the model cannot disable thinking.
+    When True, the model can't disable thinking, so `thinking=False` uses the lowest effort the model accepts instead.
     Implies `supports_thinking=True`.
     """
 
@@ -241,6 +322,30 @@ class ModelProfile(TypedDict, total=False):
     thinking_tags: tuple[str, str]
     """The tags used to indicate thinking parts in the model's output. Default: [`DEFAULT_THINKING_TAGS`][pydantic_ai.profiles.DEFAULT_THINKING_TAGS]."""
 
+    mimics_assistant_message_formatting: bool
+    """Whether the model reproduces markup it finds in prior assistant messages in its own visible output. Default: `False`.
+
+    A model with this quirk reads the assistant turns of the history as examples of how it is supposed to
+    write, so replaying another model's reasoning as assistant text teaches it to emit those tags in the
+    answers the user reads — and once that answer is persisted, the next turn reinforces it.
+
+    When `True`, a `ThinkingPart` that can't be sent through the model's native reasoning channel is
+    rendered into a *user* message ahead of the assistant turn instead of into the turn itself, which
+    stops the imitation. Attributed to the user, that reasoning would read as something the user thought,
+    so it is wrapped in an `assistant_thinking` tag rather than in the model's own thinking tags. The cost
+    is that the model reports the reasoning's authorship inaccurately when asked about it, which naming the
+    source in the tag would not change.
+
+    This is used by `AnthropicModel`, `BedrockConverseModel`, `OpenAIChatModel` (and the models built on it)
+    and `OpenAIResponsesModel`, so it also covers Claude served through an OpenAI-compatible provider. An
+    `OpenAIChatModel` profile that sends reasoning back in a field (`openai_chat_send_back_thinking_parts='field'`,
+    as OpenRouter's does) never renders it as text, so there is nothing for this key to move.
+
+    Where the carried reasoning goes is each adapter's own decision rather than a shared rewrite ahead of
+    them: it has to land in front of whatever that provider renders next out of the same request — an
+    Anthropic `system` entry, for one — which has no message-level existence to insert before.
+    """
+
     ignore_streamed_leading_whitespace: bool
     """Whether to ignore leading whitespace when streaming a response. Default: `False`.
 
@@ -259,6 +364,18 @@ class ModelProfile(TypedDict, total=False):
     When no profile layer sets this, `Model.profile` fills it in from
     [genai-prices](https://github.com/pydantic/genai-prices) data if the model is known there.
     Set it explicitly for custom or local models, e.g. `profile={'context_window': 128_000}`.
+    """
+
+    tool_call_id_length: int | None
+    """The exact length of the ASCII-alphanumeric tool call IDs the model accepts. Default: `None` (any ID).
+
+    Some models only accept tool call IDs of exactly this many `a-z`, `A-Z` and `0-9` characters, and reject
+    a history whose IDs came from another provider (OpenAI's `call_...`, Anthropic's `toolu_...`) or were
+    generated by Pydantic AI (`pyd_ai_...`). When set, `Model.prepare_messages` replaces every function tool
+    call ID that doesn't fit with a hash of it that does, and leaves IDs that already fit unchanged. The
+    calls, their results and the `<tool_result>` tags that reference them keep pairing up, and since the
+    replacement depends only on the history, the same history is sent as the same bytes on every request.
+    Only the outgoing copy changes: stored message history keeps the original IDs.
     """
 
     tool_deferral_mode: ToolDeferralMode | None
@@ -364,6 +481,11 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_json_object_output': False,
     'supports_image_output': False,
     'supports_audio_input': False,
+    'supports_image_input': True,
+    'supports_document_input': True,
+    'supported_document_media_types': KNOWN_DOCUMENT_MEDIA_TYPES,
+    'supports_audio_file_input': True,
+    'supports_video_input': True,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     'native_output_requires_schema_in_instructions': False,
@@ -379,9 +501,11 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_forced_tool_choice_with_thinking': True,
     'forced_tool_choice_disables_thinking': False,
     'thinking_tags': DEFAULT_THINKING_TAGS,
+    'mimics_assistant_message_formatting': False,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
     'context_window': None,
+    'tool_call_id_length': None,
     'tool_deferral_mode': None,
     'tool_addition_mode': None,
 }

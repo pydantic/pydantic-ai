@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 
+from pydantic_ai_harness.ask_user import AskUser
 from pydantic_ai_harness.compaction import (
     FallbackCompaction,
     SlidingWindowCompaction,
@@ -30,6 +31,8 @@ INCLUDED: Mapping[str, Mapping[str, Binds]] = {
         'pydantic_clai2.builtin_plugins.compaction': HISTORY_COMPACTION,
         'pydantic_ai_harness.subagents:SubAgents': SubAgents,
     },
+    # `web` answers questions in the browser and the terminal at once while its `ask_user` setting is on.
+    'pydantic_clai2.builtin_plugins.web': {'pydantic_clai2.builtin_plugins.ask_user_menu': AskUser},
 }
 """Factory of a plugin, to the factories of the plugins it already provides.
 

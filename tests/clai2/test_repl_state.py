@@ -18,7 +18,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -28,15 +27,17 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.cli import headless
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import TurnStart
 from pydantic_clai2.runtime import repl_state
 from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.monty_cells import NOTE_CHARS, MontyCell
 from pydantic_clai2.runtime.repl_state import ReplStates
+from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculative_mode import guidance
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -63,8 +64,8 @@ class Script:
             self.instructions.append(info.instructions or '')
             args: dict[str, object] = {'code': self.CODE[part.content], 'restart': part.content == 'restart'}
             return ModelResponse(parts=[ToolCallPart('run_code', args)])
-        assert isinstance(part, ToolReturnPart | RetryPromptPart)
-        self.results.append(f'retry: {part.content}' if isinstance(part, RetryPromptPart) else str(part.content))
+        assert isinstance(part, ToolReturnPart)
+        self.results.append(f'retry: {part.content}' if part.outcome == 'retried' else str(part.content))
         return ModelResponse(parts=[TextPart('done')])
 
     async def stream(self, messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
@@ -194,22 +195,26 @@ async def test_busy_session_resumes_as_a_fork_with_a_copy(workspace: Path) -> No
     assert dump(workspace, resumed.conversation_id).read_bytes() == b'state'
 
 
-async def test_deleting_a_session_removes_its_state(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    script = Script()
-    await turn(workspace, script, 'set', session_id=SESSION_ID)
-    assert dump(workspace, SESSION_ID).exists()
-
+def catalog(workspace: Path) -> 'Sessions[None, str]':
+    """The saved sessions as `/resume` and `PluginHost.sessions` manage them, from a shell on another session."""
     store = SqliteConversationStore(database=workspace / 'sessions.db')
     context = CommandContext(
         settings=Settings(model=None),
         store=SettingsStore(workspace / 'config.db'),
         apply_setting=lambda key, settings: None,
     )
-    service = Sessions(
+    return Sessions(
         session=Session(Agent(TestModel()), deps=None, conversations=store, workspace=workspace),
         store=store,
         context=context,
     )
+
+
+async def test_deleting_a_session_removes_its_state(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    script = Script()
+    await turn(workspace, script, 'set', session_id=SESSION_ID)
+    assert dump(workspace, SESSION_ID).exists()
+    service = catalog(workspace)
 
     def delete(browser: SessionBrowser) -> str:
         browser.reload()
@@ -220,6 +225,20 @@ async def test_deleting_a_session_removes_its_state(workspace: Path, monkeypatch
     monkeypatch.setattr(SessionBrowser, 'run', delete)
     assert await service.command([]) == ''
     assert not dump(workspace, SESSION_ID).exists()
+
+
+async def test_the_session_catalog_forks_and_deletes_the_state(workspace: Path) -> None:
+    """A fork or delete from `host.sessions`, as the web UI's sidebar makes, treats the Monty state as `/resume` does."""
+    script = Script()
+    await turn(workspace, script, 'set', session_id=SESSION_ID)
+    service = catalog(workspace)
+    copy = await service.fork(SESSION_ID)
+    await turn(workspace, script, 'get', resume=copy.id)
+    assert script.results[-1] == '42', 'the copy continues from the Monty state the original had'
+
+    await service.delete(SESSION_ID)
+    assert not dump(workspace, SESSION_ID).exists()
+    assert dump(workspace, copy.id).exists(), 'the copy keeps its own'
 
 
 async def test_unreadable_state_starts_a_fresh_repl(workspace: Path) -> None:
@@ -347,3 +366,112 @@ class TestReplStates:
         await states.save(run_context(SESSION_ID), b'state')
 
         assert list(tmp_path.iterdir()) == []
+
+
+class Asker:
+    """Answers each prompt with one `run_code` cell, and records the prompts and what the cells returned."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        self.prompts: list[str] = []
+        self.results: list[str] = []
+
+    def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        part = request.parts[-1]
+        if isinstance(part, UserPromptPart):
+            content = part.content
+            self.prompts.append(content if isinstance(content, str) else '\n'.join(str(item) for item in content))
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': self.code})])
+        assert isinstance(part, ToolReturnPart)
+        self.results.append(part.model_response_str())
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def stream(self, messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        [part] = self.respond(messages, info).parts
+        if isinstance(part, TextPart):
+            yield part.content
+        else:
+            assert isinstance(part, ToolCallPart)
+            yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+
+
+def monty_shell(workspace: Path, asker: Asker, *, code_mode: bool = True) -> 'SessionRuntime[None, str]':
+    return create_shell(
+        Agent(FunctionModel(asker.respond, stream_function=asker.stream)),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=Settings(model=None, code_mode=code_mode),
+        store=SettingsStore(workspace / 'config.db'),
+        project=ProjectSettings(),
+        builtin_plugins=[],
+        headless=True,
+    )
+
+
+async def test_a_user_cell_runs_in_the_session_monty(workspace: Path) -> None:
+    """`/monty` runs the user's own cell in the Monty sandbox code mode keeps, and the next prompt tells the model."""
+    asker = Asker('x + 1')
+    shell = monty_shell(workspace, asker)
+    assert await shell.commands.execute_async('/monty x = 41') == '(no output)'
+    assert await shell.commands.execute_async('/monty print("x is", x)\nx') == 'x is 41\n-> 41'
+    assert shell.session.messages == [], 'cells stay out of the conversation'
+
+    await shell.run_turn(TurnStart(text='what is x + 1?'), headless=True)
+    assert asker.results == ['42']
+    [prompt] = asker.prompts
+    assert prompt.count('Between turns, the user ran this cell in Monty, the sandbox your `run_code` runs in') == 2
+    assert 'x = 41' in prompt and prompt.endswith('what is x + 1?')
+
+    # Told once: the next prompt carries no note.
+    await shell.run_turn(TurnStart(text='again'), headless=True)
+    assert asker.prompts[-1] == 'again'
+
+
+async def test_a_failing_cell_is_reported_not_retried(workspace: Path) -> None:
+    shell = monty_shell(workspace, Asker('pass'))
+    with pytest.raises(ValueError, match='The cell failed') as failed:
+        await shell.commands.execute_async('/monty 1 / 0')
+    assert 'ZeroDivisionError' in str(failed.value)
+
+
+async def test_notes_stay_with_their_conversation(workspace: Path) -> None:
+    asker = Asker('pass')
+    shell = monty_shell(workspace, asker)
+    await shell.commands.execute_async('/monty y = 1')
+    await shell.commands.execute_async('/new')
+    await shell.run_turn(TurnStart(text='fresh'), headless=True)
+    assert asker.prompts == ['fresh'], 'a cell run in another conversation is not mentioned'
+
+
+async def test_monty_refusals(workspace: Path) -> None:
+    shell = monty_shell(workspace, Asker('pass'), code_mode=False)
+    with pytest.raises(ValueError, match='Usage: /monty CODE'):
+        await shell.commands.execute_async('/monty   ')
+    with pytest.raises(ValueError, match='Code mode is off'):
+        await shell.commands.execute_async('/monty x = 1')
+    on = monty_shell(workspace, Asker('pass'))
+    on.session.repl_states = None
+    with pytest.raises(ValueError, match='saves no sessions'):
+        await on.commands.execute_async('/monty x = 1')
+
+
+async def test_no_cell_runs_during_a_turn(workspace: Path) -> None:
+    shell = monty_shell(workspace, Asker('pass'))
+    shell.session._running = True  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(RuntimeError, match='A turn is running'):
+        await shell.session.run_in_monty('x = 1')
+
+
+def test_a_cell_report_reads_its_result() -> None:
+    assert MontyCell(code='', returned='not json').report() == 'not json'
+    assert MontyCell(code='', returned='[1, 2]').report() == '[1, 2]'
+    assert MontyCell(code='', returned='{"result": {"a": 1}}').report() == '-> {"a": 1}'
+    assert MontyCell(code='', returned='{"result": "text"}').report() == '-> text'
+    assert MontyCell(code='', returned=None).report() == ''
+    long = MontyCell(code='x', returned='y' * (NOTE_CHARS + 3)).note()
+    assert long.endswith('\n... 3 more characters') and 'It returned:' in long
+    assert MontyCell(code='x', returned='', failed=True).note().endswith('It failed:\n(nothing)')

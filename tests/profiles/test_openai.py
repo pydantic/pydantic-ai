@@ -3,7 +3,8 @@
 Tests verify model profile detection for different OpenAI models, particularly the full desired
 reasoning-flag matrix per model version: `openai_supports_reasoning`,
 `thinking_enabled_by_default`, `openai_supports_reasoning_effort_none`,
-`openai_supports_minimal_reasoning_effort`, and `openai_responses_supports_reasoning_mode`.
+`openai_supports_minimal_reasoning_effort`, `openai_reasoning_efforts`,
+`openai_responses_supports_max_reasoning_effort`, and `openai_responses_supports_reasoning_mode`.
 """
 
 from __future__ import annotations as _annotations
@@ -26,6 +27,8 @@ with try_import() as imports_successful:
         openai_model_profile,
         validate_openai_profile,
     )
+    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -47,27 +50,67 @@ class ReasoningCase:
     supports_minimal_reasoning_effort: bool = True
     """The model accepts `reasoning.effort='minimal'`."""
 
+    supports_max_reasoning_effort: bool = False
+    """The Responses API accepts `reasoning.effort='max'` (verified live on 2026-10-21)."""
+
     supports_context: bool = False
     """The Responses API accepts `reasoning.context='all_turns'`."""
+
+    efforts: tuple[str, ...] | None = None
+    """The `reasoning.effort` values the model accepts, where they're pinned."""
 
 
 # The `enabled_by_default` and `can_be_disabled` cells were verified against the live Responses API
 # (2026-07): "enabled by default" = sampling params rejected with no `reasoning.effort` set;
-# "can be disabled" = `effort='none'` accepted.
+# "can be disabled" = `effort='none'` accepted. The `efforts` of models that always reason were verified the same way
+# (2026-10): every other value is rejected with a 400 that lists the supported ones. The retired GPT-5.x chat
+# variants are pinned to the fixed `medium` effort they accepted.
 REASONING_CASES = [
     # o-series: always reasons, no off switch
-    ReasoningCase(model='o1', enabled_by_default=True),
-    ReasoningCase(model='o1-mini', enabled_by_default=True),
-    ReasoningCase(model='o1-preview-2024-09-12', enabled_by_default=True),
-    ReasoningCase(model='o3', enabled_by_default=True),
-    ReasoningCase(model='o3-mini', enabled_by_default=True),
-    ReasoningCase(model='o4-mini', enabled_by_default=True),
-    ReasoningCase(model='o4-mini-2025-04-16', enabled_by_default=True),
+    ReasoningCase(
+        model='o1', enabled_by_default=True, efforts=('low', 'medium', 'high'), supports_minimal_reasoning_effort=False
+    ),
+    ReasoningCase(
+        model='o1-mini',
+        enabled_by_default=True,
+        efforts=('low', 'medium', 'high'),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='o1-preview-2024-09-12',
+        enabled_by_default=True,
+        efforts=('low', 'medium', 'high'),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='o3', enabled_by_default=True, efforts=('low', 'medium', 'high'), supports_minimal_reasoning_effort=False
+    ),
+    ReasoningCase(
+        model='o3-mini',
+        enabled_by_default=True,
+        efforts=('low', 'medium', 'high'),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='o4-mini',
+        enabled_by_default=True,
+        efforts=('low', 'medium', 'high'),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='o4-mini-2025-04-16',
+        enabled_by_default=True,
+        efforts=('low', 'medium', 'high'),
+        supports_minimal_reasoning_effort=False,
+    ),
     # gpt-5 (not 5.x): always reasons, no off switch
-    ReasoningCase(model='gpt-5', enabled_by_default=True),
-    ReasoningCase(model='gpt-5-pro', enabled_by_default=True),
+    ReasoningCase(model='gpt-5', enabled_by_default=True, efforts=('minimal', 'low', 'medium', 'high')),
+    ReasoningCase(
+        model='gpt-5-pro', enabled_by_default=True, efforts=('high',), supports_minimal_reasoning_effort=False
+    ),
+    # Retired (404), so its efforts aren't pinned.
     ReasoningCase(model='gpt-5-codex', enabled_by_default=True),
-    ReasoningCase(model='gpt-5-turbo', enabled_by_default=True),
+    ReasoningCase(model='gpt-5-turbo', enabled_by_default=True, efforts=('minimal', 'low', 'medium', 'high')),
     # gpt-5.1..5.4 mainline: reasoning off by default, opt-in via effort
     ReasoningCase(model='gpt-5.1', can_be_disabled=True),
     ReasoningCase(model='gpt-5.1-turbo', can_be_disabled=True),
@@ -84,13 +127,45 @@ REASONING_CASES = [
     # -pro and gpt-5.1 codex variants: always reason, no `effort='none'`
     ReasoningCase(model='gpt-5.1-codex', enabled_by_default=True),
     ReasoningCase(model='gpt-5.1-codex-max', enabled_by_default=True),
-    ReasoningCase(model='gpt-5.2-pro', enabled_by_default=True),
-    ReasoningCase(model='gpt-5.4-pro', enabled_by_default=True, supports_context=True),
-    ReasoningCase(model='gpt-5.5-pro', enabled_by_default=True, supports_context=True),
+    ReasoningCase(
+        model='gpt-5.2-pro',
+        enabled_by_default=True,
+        efforts=('medium', 'high', 'xhigh'),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='gpt-5.4-pro',
+        enabled_by_default=True,
+        supports_context=True,
+        efforts=('medium', 'high', 'xhigh'),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='gpt-5.5-pro',
+        enabled_by_default=True,
+        supports_context=True,
+        efforts=('medium', 'high', 'xhigh'),
+        supports_minimal_reasoning_effort=False,
+    ),
     # gpt-5.1+ chat variants: always reason at a fixed 'medium' effort (sampling params rejected)
-    ReasoningCase(model='gpt-5.1-chat-latest', enabled_by_default=True),
-    ReasoningCase(model='gpt-5.2-chat-latest', enabled_by_default=True),
-    ReasoningCase(model='gpt-5.3-chat-latest', enabled_by_default=True),
+    ReasoningCase(
+        model='gpt-5.1-chat-latest',
+        enabled_by_default=True,
+        efforts=('medium',),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='gpt-5.2-chat-latest',
+        enabled_by_default=True,
+        efforts=('medium',),
+        supports_minimal_reasoning_effort=False,
+    ),
+    ReasoningCase(
+        model='gpt-5.3-chat-latest',
+        enabled_by_default=True,
+        efforts=('medium',),
+        supports_minimal_reasoning_effort=False,
+    ),
     # gpt-5.5: reasons by default AND can be turned off, like gpt-5.6 but without `reasoning.mode`
     ReasoningCase(model='gpt-5.5', enabled_by_default=True, can_be_disabled=True, supports_context=True),
     # gpt-5.6: reasons by default AND can be turned off; the only family with `reasoning.mode`, and
@@ -103,6 +178,7 @@ REASONING_CASES = [
         can_be_disabled=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
     ),
     ReasoningCase(
@@ -111,6 +187,7 @@ REASONING_CASES = [
         can_be_disabled=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
     ),
     ReasoningCase(
@@ -119,6 +196,7 @@ REASONING_CASES = [
         can_be_disabled=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
     ),
     # gpt-6-astra and gpt-6.1-sol: reason by default with no `effort='none'`; carry over
@@ -128,14 +206,18 @@ REASONING_CASES = [
         enabled_by_default=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
+        efforts=('low', 'medium', 'high', 'xhigh', 'max'),
     ),
     ReasoningCase(
         model='gpt-6.1-sol',
         enabled_by_default=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
+        efforts=('low', 'medium', 'high', 'xhigh', 'max'),
     ),
     ReasoningCase(
         model='gpt-6-sol',
@@ -143,6 +225,7 @@ REASONING_CASES = [
         can_be_disabled=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
     ),
     ReasoningCase(
@@ -151,6 +234,7 @@ REASONING_CASES = [
         can_be_disabled=True,
         supports_mode=True,
         supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
         supports_context=True,
     ),
     # no reasoning
@@ -175,10 +259,25 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('thinking_enabled_by_default', False) is case.enabled_by_default
     assert profile.get('openai_supports_reasoning_effort_none', False) is case.can_be_disabled
     assert profile.get('openai_supports_minimal_reasoning_effort', True) is case.supports_minimal_reasoning_effort
+    # Set by `OpenAIProvider`, not the shared profile, which OpenAI-compatible endpoints reuse unverified.
+    assert profile.get('openai_responses_supports_max_reasoning_effort', False) is False
+    provider_profile = OpenAIProvider.model_profile(case.model)
+    assert isinstance(provider_profile, dict)
+    assert provider_profile.get('openai_responses_supports_max_reasoning_effort') is case.supports_max_reasoning_effort
+    # OpenAI's Chat Completions API rejects `max` on every model.
+    assert profile.get('openai_chat_supports_max_reasoning_effort', False) is False
     assert profile.get('openai_responses_supports_reasoning_mode', False) is case.supports_mode
     assert profile.get('openai_responses_supports_reasoning_context', False) is case.supports_context
     assert profile.get('supports_thinking', False) is supports_reasoning
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
+    assert profile.get('openai_reasoning_efforts') == (None if case.efforts is None else frozenset(case.efforts))
+
+
+def test_openai_compatible_endpoints_fall_back_from_max_effort():
+    """`max` is verified only on OpenAI's own Responses API, so an endpoint reusing the OpenAI profile sends `xhigh`."""
+    profile = AzureProvider.model_profile('gpt-5.6-sol')
+    assert isinstance(profile, dict)
+    assert profile.get('openai_responses_supports_max_reasoning_effort', False) is False
 
 
 class TestEncryptedReasoningContent:

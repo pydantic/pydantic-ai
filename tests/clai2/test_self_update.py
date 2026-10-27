@@ -9,8 +9,11 @@ import sys
 import threading
 from collections.abc import Callable, Sequence
 from importlib import metadata
+from importlib.abc import MetaPathFinder
+from importlib.machinery import ModuleSpec
 from io import StringIO
 from pathlib import Path
+from types import ModuleType
 
 import httpx
 import pytest
@@ -20,7 +23,7 @@ from rich.console import Console
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2 import _app, chat
+from pydantic_clai2 import _app, chat, cli
 from pydantic_clai2.cli import _cli, self_update
 from pydantic_clai2.cli._cli import relaunch_argv
 from pydantic_clai2.cli.self_update import (
@@ -28,9 +31,11 @@ from pydantic_clai2.cli.self_update import (
     PACKAGES,
     PYPI_URL,
     Installed,
+    Output,
     Relaunch,
     Update,
     Updates,
+    WebHandoff,
     _in_thread,  # pyright: ignore[reportPrivateUsage]
     _run_uv,  # pyright: ignore[reportPrivateUsage]
     after_exit_script,
@@ -46,8 +51,12 @@ from pydantic_clai2.cli.self_update import (
 from pydantic_clai2.commands import set_completions
 from pydantic_clai2.config import Settings, UpdateChannel
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import InstallProgress
+from pydantic_clai2.runtime import session_runtime
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.set_menu import SettingsSource
+from pydantic_clai2.ui.menus.update_menu import VERSION, update_menu
+from tests.clai2.dialog_script import Back, Confirm, ScriptedDialogs
 from tests.clai2.menu_script import make_context
 from tests.clai2.test_app_edges import inputs
 
@@ -181,7 +190,15 @@ def test_find_update() -> None:
 
 def test_install_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     stable = Update(channel='stable', target='0.53.0')
-    assert stable.command(uv='uv', overrides=None) == ['uv', 'tool', 'install', '--force', 'pydantic-clai2==0.53.0']
+    # Compiling bytecode at install time spares the restart after `/update` from compiling it on import.
+    assert stable.command(uv='uv', overrides=None) == [
+        'uv',
+        'tool',
+        'install',
+        '--force',
+        '--compile-bytecode',
+        'pydantic-clai2==0.53.0',
+    ]
     monkeypatch.delenv('CLAI_BLEEDING_URL', raising=False)
     release = 'https://github.com/pydantic/pydantic-ai/releases/download/clai2-bleeding'
     update = Update(channel='main', target=NEWER)
@@ -191,6 +208,7 @@ def test_install_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         'tool',
         'install',
         '--force',
+        '--compile-bytecode',
         '--overrides',
         str(overrides),
         'pydantic-clai2',
@@ -257,11 +275,15 @@ def _updates(
     codes: list[int] | None = None,
     uv: str | None = '/bin/uv',
     executable: str | None = '/tools/clai2',
+    lines: Sequence[str] = (),
 ) -> tuple[Updates, list[Sequence[str]]]:
     ran: list[Sequence[str]] = []
 
-    async def run(command: Sequence[str]) -> int:
+    async def run(command: Sequence[str], output: Output | None) -> int:
         ran.append(command)
+        for line in lines:
+            assert output is not None, 'uv prints to the terminal while nobody listens'
+            await output(line)
         if '--overrides' in command:
             # The overrides file exists while uv runs and preserves the packages' required extras.
             text = Path(command[command.index('--overrides') + 1]).read_text(encoding='utf-8')
@@ -330,7 +352,7 @@ async def test_command_installs_and_restarts() -> None:
     assert updates.restart_required
     assert updates.relaunch == '/tools/clai2'
     [command] = ran
-    overrides = Path(command[5])
+    overrides = Path(command[command.index('--overrides') + 1])
     assert command == Update(channel='main', target=NEWER).command(uv='/bin/uv', overrides=overrides)
     assert not overrides.exists()
 
@@ -342,7 +364,9 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
     assert await failed.command([]) == 'uv exited with status 2; see its output above.'
     assert not failed.restart_required
     no_uv, _ = _updates(['stable'], uv=None)
-    assert (await no_uv.command([])).endswith('To update by hand, run:\nuv tool install --force pydantic-clai2==0.53.0')
+    assert (await no_uv.command([])).endswith(
+        'To update by hand, run:\nuv tool install --force --compile-bytecode pydantic-clai2==0.53.0'
+    )
     # A source checkout installs too, as a `uv tool` CLAI.
     source, installs = _updates(['main'], current=Installed(version='0.52.0'))
     assert await source.command([]) == 'Updated CLAI to 9e08a34ee (main). Restarting...'
@@ -353,10 +377,11 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
     assert lost.relaunch is None
     manual, _ = _updates(['main'], uv=None)
     printed = (await manual.command([])).splitlines()[-1]
-    assert printed.startswith('uv tool install --force --overrides ')
+    assert printed.startswith('uv tool install --force --compile-bytecode --overrides ')
     assert printed.endswith(' pydantic-clai2')
     # The printed command still needs its overrides file.
-    overrides = Path(shlex.split(printed)[5])
+    argv = shlex.split(printed)
+    overrides = Path(argv[argv.index('--overrides') + 1])
     assert 'pydantic-graph @ ' in overrides.read_text(encoding='utf-8')
     overrides.unlink()
     assert ran == []
@@ -364,16 +389,90 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
         await current.command(['now'])
 
 
-@pytest.mark.subprocess(reason='runs a Python one-liner in place of `uv` to check the exit status is returned')
-async def test_run_uv_returns_the_exit_status() -> None:
+@pytest.mark.subprocess(
+    reason='runs Python one-liners in place of `uv` to check its exit status and lines are returned'
+)
+async def test_run_uv_returns_the_exit_status(
+    capfd: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert await _run_uv([sys.executable, '-c', 'raise SystemExit(3)']) == 3
+    lines: list[str] = []
+
+    async def output(line: str) -> None:
+        lines.append(line)
+
+    script = "import sys; print('Resolved'); sys.stderr.write('Prepared\\r\\nfailed'); raise SystemExit(2)"
+    assert await _run_uv([sys.executable, '-u', '-c', script], output) == 2
+    assert lines == ['Resolved', 'Prepared', 'failed']
+    assert capfd.readouterr().err == 'Resolved\nPrepared\nfailed\n', 'the terminal still shows them'
+    # While the shell relays standard error, the lines go straight to the terminal, before the editor is back.
+    source, terminal = os.pipe()
+    monkeypatch.setattr(self_update, 'terminal_stderr', lambda: terminal)
+    assert await _run_uv([sys.executable, '-c', "print('Installed')"], output) == 0
+    os.close(terminal)
+    with os.fdopen(source) as relayed:
+        assert relayed.read() == 'Installed\n'
+    assert lines[-1] == 'Installed'
+
+
+async def test_command_reports_its_progress() -> None:
+    """While a plugin listens, it hears the install start, each line uv prints, and how the install ended."""
+    heard: list[InstallProgress] = []
+
+    async def report(event: InstallProgress) -> None:
+        heard.append(event)
+
+    restarted, _ = _updates(['stable'], lines=['Resolved 3 packages', 'Installed 3 packages'])
+    restarted.report = lambda: report
+    restarted.capture = lambda: True
+    served = WebHandoff(port=4321, token=WEB_TOKEN)
+    restarted.serving = lambda: served
+    assert await restarted.command([]) == 'Updated CLAI to 0.53.0 (stable). Restarting...'
+    assert restarted.web == served, 'the new build serves the page again'
+    assert heard == [
+        InstallProgress(stage='installing', target='0.53.0'),
+        InstallProgress(stage='output', target='0.53.0', text='Resolved 3 packages'),
+        InstallProgress(stage='output', target='0.53.0', text='Installed 3 packages'),
+        InstallProgress(stage='restarting', target='0.53.0'),
+    ]
+    heard.clear()
+    # Without a page to show them, uv's lines stay on the terminal, where uv draws its progress itself.
+    quiet, _ = _updates(['stable'])
+    quiet.report = lambda: report
+    await quiet.command([])
+    assert [event.stage for event in heard] == ['installing', 'restarting']
+    heard.clear()
+    lost, _ = _updates(['stable'], executable=None)
+    failed, _ = _updates(['stable'], codes=[1])
+    vanished, _ = _updates(['main'])
+
+    async def missing(command: Sequence[str], output: Output | None) -> int:
+        raise OSError('uv vanished')
+
+    vanished.run = missing
+    for updates in (lost, failed, vanished):
+        updates.report = lambda: report
+        updates.serving = lambda: served
+    await lost.command([])
+    await failed.command([])
+    with pytest.raises(OSError):
+        await vanished.command([])
+    assert (lost.web, failed.web) == (None, None), 'nothing restarts to serve it'
+    assert [event.stage for event in heard] == [
+        'installing',
+        'installed',
+        'installing',
+        'failed',
+        'installing',
+        'failed',
+    ]
 
 
 async def test_failed_install_removes_the_overrides_file() -> None:
     seen: list[Path] = []
 
-    async def run(command: Sequence[str]) -> int:
-        seen.append(Path(command[5]))
+    async def run(command: Sequence[str], output: Output | None) -> int:
+        seen.append(Path(command[command.index('--overrides') + 1]))
         raise OSError('uv vanished')
 
     updates, _ = _updates(['main'])
@@ -449,7 +548,7 @@ async def test_windows_hands_the_install_off_and_exits() -> None:
     assert ran == []
     [script] = scripts
     assert f'Wait-Process -Id {os.getpid()} ' in script
-    assert "& '/bin/uv' 'tool' 'install' '--force' '--overrides' " in script
+    assert "& '/bin/uv' 'tool' 'install' '--force' '--compile-bytecode' '--overrides' " in script
     # The overrides file outlives CLAI; the script removes it after uv reads it.
     overrides = Path(script.split("Remove-Item -LiteralPath '")[1].split("'")[0])
     assert overrides.read_text(encoding='utf-8') == Update(channel='main', target=NEWER).overrides()
@@ -463,9 +562,9 @@ async def test_windows_manual_command_is_powershell(channel: UpdateChannel) -> N
     updates.windows = True
     printed = (await updates.command([])).splitlines()[-1]
     if channel == 'stable':
-        assert printed == "& 'uv' 'tool' 'install' '--force' 'pydantic-clai2==0.53.0'"
+        assert printed == "& 'uv' 'tool' 'install' '--force' '--compile-bytecode' 'pydantic-clai2==0.53.0'"
     else:
-        assert printed.startswith("& 'uv' 'tool' 'install' '--force' '--overrides' ")
+        assert printed.startswith("& 'uv' 'tool' 'install' '--force' '--compile-bytecode' '--overrides' ")
         assert printed.endswith(" 'pydantic-clai2'")
         overrides = Path(printed.split("'--overrides' '")[1].split("'")[0])
         assert overrides.read_text(encoding='utf-8') == Update(channel='main', target=NEWER).overrides()
@@ -490,14 +589,20 @@ async def test_tool_executable_asks_uv_for_its_bin_directory(tmp_path: Path) -> 
 
 
 async def _relaunch_after(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, prompts: list[str], *, session_id: str | None = None
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    prompts: list[str],
+    *,
+    session_id: str | None = None,
+    updates: Updates | None = None,
 ) -> Relaunch:
-    updates, _ = _updates(['main'])
+    if updates is None:
+        updates, _ = _updates(['main'])
 
     def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
         return updates
 
-    monkeypatch.setattr(_app, 'Updates', build)
+    monkeypatch.setattr(session_runtime, 'Updates', build)
     inputs(monkeypatch, [*prompts, '/update', '/exit'])
     with pytest.raises(Relaunch) as raised:
         await chat(
@@ -534,8 +639,50 @@ async def test_shell_relaunches_after_an_install(tmp_path: Path, monkeypatch: py
     assert saved.messages
 
 
+class _NewBuild(MetaPathFinder):
+    """The code uv installed: once it has run, a CLAI module imported for the first time is the new build's."""
+
+    def __init__(self) -> None:
+        self.installed = False
+
+    def find_spec(
+        self, fullname: str, path: Sequence[str] | None, target: ModuleType | None = None
+    ) -> ModuleSpec | None:
+        if self.installed and fullname.partition('.')[0] in {'pydantic_ai', 'pydantic_ai_harness', 'pydantic_clai2'}:
+            raise ImportError(f'{fullname} would come from the new build')  # pragma: no cover -- the defect
+        return None
+
+
+async def test_restart_imports_nothing_after_the_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The new build's modules may need names the old build's, already in memory, lack: restarting imports none."""
+    new_build = _NewBuild()
+    monkeypatch.setattr(sys, 'meta_path', [new_build, *sys.meta_path])
+    # A session that never served the web UI has not imported its module.
+    monkeypatch.delitem(sys.modules, 'pydantic_clai2.cli.web', raising=False)
+    monkeypatch.delattr(cli, 'web', raising=False)
+    updates, _ = _updates(['main'])
+    install = updates.run
+
+    async def run(command: Sequence[str], output: Output | None) -> int:
+        code = await install(command, output)
+        new_build.installed = True
+        return code
+
+    updates.run = run
+    relaunched = await _relaunch_after(monkeypatch, tmp_path, [], updates=updates)
+    assert new_build.installed
+    assert relaunched.web is None
+
+
+def _args(**options: object) -> argparse.Namespace:
+    defaults: dict[str, object] = dict(
+        agent=None, model=None, request_limit=None, database=None, web=False, port=None, token_file=None
+    )
+    return argparse.Namespace(**(defaults | options))
+
+
 def test_relaunch_argv(tmp_path: Path) -> None:
-    bare = argparse.Namespace(agent=None, model=None, request_limit=None, database=None)
+    bare = _args()
     assert relaunch_argv(bare, executable='/b/clai2', session_id=None) == ['/b/clai2']
     assert relaunch_argv(bare, executable='/b/clai2', session_id=None, new_session_id='u') == [
         '/b/clai2',
@@ -547,7 +694,19 @@ def test_relaunch_argv(tmp_path: Path) -> None:
         '--resume',
         's',
     ]
-    full = argparse.Namespace(agent='m:a', model='test', request_limit=5, database=tmp_path / 'c.db')
+    # `--web` stays a web launch; the token stays in its file, off the command line.
+    web = _args(web=True)
+    assert relaunch_argv(web, executable='/b/clai2', session_id='s') == ['/b/clai2', '--web', '--resume', 's']
+    launcher = _args(web=True, port=0, token_file=tmp_path / 'token')
+    assert relaunch_argv(launcher, executable='/b/clai2', session_id=None) == [
+        '/b/clai2',
+        '--web',
+        '--port',
+        '0',
+        '--token-file',
+        str(tmp_path / 'token'),
+    ]
+    full = _args(agent='m:a', model='test', request_limit=5, database=tmp_path / 'c.db')
     assert relaunch_argv(full, executable='/b/clai2', session_id='abc') == [
         '/b/clai2',
         '--agent',
@@ -581,6 +740,79 @@ def test_cli_execs_the_new_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert execs == [
         ('/b/clai2', ['/b/clai2', '--model', 'test', '--database', str(tmp_path / 'config.db'), '--resume', 'new'])
     ]
+    assert 'CLAI_RELAUNCH_WEB' not in os.environ, 'no web UI to hand over'
+
+
+WEB_TOKEN = 'k' * 43
+
+
+def test_cli_hands_the_web_ui_to_the_new_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`clai2 --web` restarts as `clai2 --web`, with its port and token in the environment, never in `ps`."""
+    token = tmp_path / 'token'
+    token.write_text(WEB_TOKEN)
+    token.chmod(0o600)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr('sys.argv', ['clai2', '--web', '--port', '0', '--token-file', 'token', '--database', 'c.db'])
+    calls: list[dict[str, object]] = []
+
+    async def run_web(**kwargs: object) -> None:
+        calls.append(kwargs)
+        raise Relaunch(executable='/b/clai2', session_id='s', web=WebHandoff(port=4321, token=WEB_TOKEN))
+
+    execs: list[list[str]] = []
+
+    def execv(path: str, argv: list[str]) -> None:
+        execs.append(argv)
+
+    monkeypatch.setattr('pydantic_clai2.cli.web.run_web', run_web)
+    monkeypatch.setattr(os, 'execv', execv)
+    monkeypatch.setenv('CLAI_RELAUNCH_WEB', f'4321 {WEB_TOKEN}')
+    _cli.run()
+    [call] = calls
+    assert (call['port'], call['token'], call['restart']) == (0, WEB_TOKEN, WebHandoff(port=4321, token=WEB_TOKEN))
+    [argv] = execs
+    database = str(tmp_path / 'c.db')
+    assert argv == [
+        '/b/clai2',
+        '--web',
+        '--port',
+        '0',
+        '--token-file',
+        str(token),
+        '--database',
+        database,
+        '--resume',
+        's',
+    ]
+    assert WEB_TOKEN not in ' '.join(argv)
+    assert os.environ['CLAI_RELAUNCH_WEB'] == f'4321 {WEB_TOKEN}'
+
+
+@pytest.mark.parametrize(
+    ('value', 'handoff'),
+    [
+        (f'4321 {WEB_TOKEN}', WebHandoff(port=4321, token=WEB_TOKEN)),
+        (f'99999 {WEB_TOKEN}', None),
+        (f'port {WEB_TOKEN}', None),
+        ('4321 short', None),
+        ('', None),
+    ],
+)
+def test_a_terminal_session_serves_the_handed_over_web_ui(
+    value: str, handoff: WebHandoff | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The handed-over port and token reach the shell, and leave the environment before any tool could read them."""
+    monkeypatch.setattr('sys.argv', ['clai2', '--database', str(tmp_path / 'c.db'), '-m', 'test'])
+    monkeypatch.setenv('CLAI_RELAUNCH_WEB', value)
+    calls: list[dict[str, object]] = []
+
+    async def chat(*args: object, **kwargs: object) -> None:
+        calls.append(kwargs)
+        assert 'CLAI_RELAUNCH_WEB' not in os.environ
+
+    monkeypatch.setattr(_app, 'chat', chat)
+    _cli.run()
+    assert calls[0]['web'] == handoff
 
 
 async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -591,7 +823,7 @@ async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.
         channels.append(channel())
         return updates
 
-    monkeypatch.setattr(_app, 'Updates', build)
+    monkeypatch.setattr(session_runtime, 'Updates', build)
     inputs(monkeypatch, ['/update', '/exit'])
     output = StringIO()
     await chat(
@@ -606,3 +838,43 @@ async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.
     assert 'Updated CLAI to 0.53.0 (stable). Exiting; start clai2 again to use it.' in text
     assert 'Goodbye.' not in text
     assert len(ran) == 1
+
+
+async def test_the_about_menu_keeps_the_version_read_only_and_updates_only_when_confirmed(tmp_path: Path) -> None:
+    """`/update`'s declared menu, which the web UI shows as Settings > About."""
+    context, _ = make_context(tmp_path)
+    entered: list[str] = []
+    updates = Updates(
+        channel=lambda: context.settings.update_channel, current=Installed(version='1.2.3', commit='a' * 40)
+    )
+    menu = update_menu(context, updates, run=entered.append)
+    source = menu.source
+    version, channel = source.rows()
+    assert (version.key, source.current(version), version.default) == (
+        VERSION,
+        f'1.2.3 ({"a" * 9})',
+        source.current(version),
+    )
+    assert source.problem(version, '2.0') == 'The version is read-only; Update installs a newer one.'
+    with pytest.raises(ValueError, match='read-only'):
+        source.apply(version, '2.0')
+    assert source.reset(version) == 'The version has nothing to reset.'
+    assert source.problem(channel, 'nightly') is not None
+    assert source.apply(channel, 'main').startswith('Saved updates.channel')
+    assert source.current(channel) == 'main'
+    assert source.reset(channel).startswith('Reset updates.channel')
+    plain = update_menu(
+        context, Updates(channel=lambda: 'stable', current=Installed(version='1.2.3')), run=entered.append
+    )
+    assert plain.source.current(plain.source.rows()[0]) == '1.2.3'
+
+    update = menu.actions[VERSION]
+    assert await update(ScriptedDialogs([Back()])) == [] and entered == []
+    asked = ScriptedDialogs([Confirm(yes=True)])
+    assert await update(asked) == ['Running /update on the stable channel.']
+    assert entered == ['/update'], 'entered as typing it would, so it queues behind a running turn'
+    assert 'stable channel' in asked.asked[0].description
+    refusals = iter([None, 'A session started a turn.'])
+    racing = update_menu(context, updates, run=entered.append, refusal=lambda: next(refusals))
+    assert await racing.actions[VERSION](ScriptedDialogs([Confirm(yes=True)])) == ['A session started a turn.']
+    assert entered == ['/update'], 'refused after the dialog: nothing entered'

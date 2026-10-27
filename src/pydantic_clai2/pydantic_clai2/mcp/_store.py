@@ -74,6 +74,11 @@ class MCPStore:
         self.logs = directory / 'mcp_logs'
         self._workspace = workspace
 
+    @property
+    def workspace(self) -> Path:
+        """The session's directory: project files are found from it, and stdio servers start in it."""
+        return self._workspace or Path.cwd()
+
     def load(self) -> UserFile:
         """The saved file, or an empty one. A malformed file fails loudly with its path."""
         try:
@@ -105,8 +110,7 @@ class MCPStore:
         return list(self._project_files())
 
     def _project_files(self) -> dict[Path, type[ProjectFile | ClaudeProjectFile]]:
-        workspace = self._workspace or Path.cwd()
-        found = ((find_project_file(workspace, name), model) for name, model in _FORMATS.items())
+        found = ((find_project_file(self.workspace, name), model) for name, model in _FORMATS.items())
         return {path: model for path, model in found if path is not None}
 
     def trust_state(self, path: Path) -> TrustState:
@@ -141,6 +145,15 @@ class MCPStore:
             trusted = {k: v for k, v in data.trusted_projects.items() if k not in keys}
             self.save(data.model_copy(update={'trusted_projects': trusted}))
         return revoked
+
+    def review(self, path: Path) -> str:
+        """A project file's text, to read before trusting it, or why it cannot be read."""
+        if not _regular(path):
+            return 'A symlink, which is never trusted.'
+        try:
+            return _read_regular(path).decode(errors='replace')
+        except OSError as exc:
+            return f'Cannot read it: {exc}'
 
     def project_servers(self) -> dict[Path, Servers]:
         """Each trusted project file's servers, in precedence order; absent and untrusted files are left out."""

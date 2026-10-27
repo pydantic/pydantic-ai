@@ -1,13 +1,10 @@
 """Server configuration models, in the JSON shape Code Puppy's `/mcp` form edits."""
 
-import logging
 import os
 from collections.abc import Mapping
 from string import Template
 from typing import Annotated, Literal
 
-import httpx
-from mcp.shared._httpx_utils import create_mcp_http_client
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, HttpUrl, TypeAdapter, model_validator
 
 ServerName = Annotated[str, Field(pattern=r'^[A-Za-z][A-Za-z0-9-]{0,63}$')]
@@ -16,11 +13,6 @@ ServerName = Annotated[str, Field(pattern=r'^[A-Za-z][A-Za-z0-9-]{0,63}$')]
 ServerType = Literal['stdio', 'http', 'sse']
 OAUTH_TIMEOUT = 330.0
 """Seconds to allow for the initialize handshake when it includes a browser sign-in."""
-
-# FastMCP logs the OAuth URL and callback server at INFO through its own handler, over the prompt.
-# The browser opening is the signal; an explicit `FASTMCP_LOG_LEVEL` still wins for debugging.
-if 'FASTMCP_LOG_LEVEL' not in os.environ:  # pragma: no branch
-    logging.getLogger('fastmcp').setLevel(logging.WARNING)
 
 
 class ServerSettings(BaseModel):
@@ -99,25 +91,6 @@ class MCPSettings(BaseModel):
 
     model_config = ConfigDict(extra='forbid', frozen=True, hide_input_in_errors=True)
     servers: Servers = Field(default_factory=dict[str, StdioServer | HTTPServer | SSEServer])
-
-
-def http_client(
-    headers: dict[str, str] | None = None,
-    timeout: httpx.Timeout | None = None,
-    auth: httpx.Auth | None = None,
-    follow_redirects: bool = False,
-) -> httpx.AsyncClient:
-    """Do not let a configured endpoint redirect MCP requests to another server.
-
-    The MCP SDK builds the client, so it is the HTTPX the installed FastMCP drives: legacy `httpx` under
-    FastMCP 3, `httpx2` under FastMCP 4, where a browser sign-in (`SignIn`) is an `httpx2.Auth` that a legacy
-    client rejects. The annotations name legacy `httpx`, the generation this workspace locks.
-    FastMCP passes `follow_redirects=True` to every client factory; it is accepted and overridden.
-    """
-    del follow_redirects
-    client = create_mcp_http_client(headers=headers, timeout=timeout, auth=auth)
-    client.follow_redirects = False
-    return client
 
 
 def references(server: Server) -> list[str]:

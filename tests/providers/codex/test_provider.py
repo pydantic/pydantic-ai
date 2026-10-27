@@ -16,7 +16,6 @@ import hashlib
 import json
 import locale
 import pickle
-import socket
 import sys
 import time
 from collections.abc import AsyncIterator
@@ -28,16 +27,19 @@ import anyio
 import httpx
 import httpx2
 import pytest
+from pydantic import TypeAdapter
 
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.models import infer_model, infer_model_profile
 from pydantic_ai.providers import infer_provider_class
 
 from ...conftest import TestEnv, try_import
-from .conftest import CODEX_URL, TOKEN_RESPONSE, FakeCredentialSource, make_credentials, make_jwt
+from ..oauth_helpers import free_port, get_callback, make_jwt
+from .conftest import CODEX_URL, TOKEN_RESPONSE, FakeCredentialSource, make_credentials
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai_codex import OpenAICodexModel
+    from pydantic_ai.providers._oauth_provider import OAuthCredentialsAuth, jwt_expires_at
     from pydantic_ai.providers.openai_codex import (
         CredentialsPersistenceError,
         CredentialsRefreshError,
@@ -46,8 +48,6 @@ with try_import() as imports_successful:
         OpenAICodexProvider,
         _account_id_from_id_token,  # pyright: ignore[reportPrivateUsage]
         _credentials_from_token_response,  # pyright: ignore[reportPrivateUsage]
-        _jwt_expires_at,  # pyright: ignore[reportPrivateUsage]
-        _OpenAICodexAuth,  # pyright: ignore[reportPrivateUsage]
         _post_token_request,  # pyright: ignore[reportPrivateUsage]
         _refresh_credentials,  # pyright: ignore[reportPrivateUsage]
         _token_response_ta,  # pyright: ignore[reportPrivateUsage]
@@ -73,19 +73,25 @@ class TokenEndpointMock:
         self.forms: list[dict[str, Any]] = []
 
     async def __call__(
-        self, url: str, form: dict[str, Any], http_client: httpx2.AsyncClient | None = None
+        self,
+        url: str,
+        form: dict[str, Any],
+        response: TypeAdapter[_TokenResponse],
+        *,
+        provider_name: str,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> _TokenResponse:
         self.forms.append(form)
         await asyncio.sleep(0.001)  # widen race windows for single-flight assertions
         result = self.results[min(len(self.forms), len(self.results)) - 1]
         if isinstance(result, Exception):
             raise result
-        return _token_response_ta.validate_python(result)
+        return response.validate_python(result)
 
 
 def authed_client(provider: OpenAICodexProvider, handler: Any) -> httpx2.AsyncClient:
     transport = httpx2.MockTransport(handler)
-    return httpx2.AsyncClient(transport=transport, auth=_OpenAICodexAuth(provider))
+    return httpx2.AsyncClient(transport=transport, auth=OAuthCredentialsAuth(provider))
 
 
 # --- Credentials parsing and CLI loading ---
@@ -214,8 +220,8 @@ def test_no_openai_api_key_fallback(env: TestEnv, tmp_path: Path):
 
 def test_jwt_expiry_hint():
     now = time.time()
-    assert _jwt_expires_at(make_jwt({'exp': now - 100})) is not None
-    assert _jwt_expires_at('garbage') is None
+    assert jwt_expires_at(make_jwt({'exp': now - 100})) is not None
+    assert jwt_expires_at('garbage') is None
 
 
 def test_account_id_claim_fallbacks():
@@ -268,18 +274,18 @@ async def test_post_token_request_success_and_error_shapes(monkeypatch: pytest.M
     monkeypatch.setattr(httpx2, 'AsyncClient', client_factory)
 
     url = 'https://auth.openai.com/oauth/token'
-    assert await _post_token_request(url, {'grant_type': 'refresh_token'}) == _TokenResponse(
-        access_token='a', refresh_token='r'
-    )
+    assert await _post_token_request(
+        url, {'grant_type': 'refresh_token'}, _token_response_ta, provider_name='openai-codex'
+    ) == _TokenResponse(access_token='a', refresh_token='r')
     # A 200 that omits the tokens is as unusable as an error: pydantic catches it at the boundary.
     with pytest.raises(CredentialsRefreshError, match='unexpected response'):
-        await _post_token_request(url, {})
+        await _post_token_request(url, {}, _token_response_ta, provider_name='openai-codex')
     with pytest.raises(CredentialsRefreshError, match='expired; the grant was rejected'):
-        await _post_token_request(url, {})
+        await _post_token_request(url, {}, _token_response_ta, provider_name='openai-codex')
     with pytest.raises(CredentialsRefreshError, match='access_denied'):
-        await _post_token_request(url, {})
+        await _post_token_request(url, {}, _token_response_ta, provider_name='openai-codex')
     with pytest.raises(CredentialsRefreshError, match='gateway exploded'):
-        await _post_token_request(url, {})
+        await _post_token_request(url, {}, _token_response_ta, provider_name='openai-codex')
 
 
 async def test_post_token_request_rejects_non_object_success_bodies():
@@ -297,13 +303,19 @@ async def test_post_token_request_rejects_non_object_success_bodies():
     async with client:
         for _ in range(3):
             with pytest.raises(CredentialsRefreshError, match='unexpected response'):
-                await _post_token_request('https://auth.openai.com/oauth/token', {}, http_client=client)
-    assert _jwt_expires_at('a.b') is None
-    assert _jwt_expires_at(f'a.{base64.urlsafe_b64encode(b"not json").decode()}.c') is None
-    assert _jwt_expires_at(make_jwt({'exp': 'soon'})) is None
-    assert _jwt_expires_at(make_jwt({'exp': True})) is None
-    assert _jwt_expires_at(make_jwt({'exp': 10**14})) is None  # absurd values degrade to None
-    assert _jwt_expires_at(make_jwt({})) is None
+                await _post_token_request(
+                    'https://auth.openai.com/oauth/token',
+                    {},
+                    _token_response_ta,
+                    provider_name='openai-codex',
+                    http_client=client,
+                )
+    assert jwt_expires_at('a.b') is None
+    assert jwt_expires_at(f'a.{base64.urlsafe_b64encode(b"not json").decode()}.c') is None
+    assert jwt_expires_at(make_jwt({'exp': 'soon'})) is None
+    assert jwt_expires_at(make_jwt({'exp': True})) is None
+    assert jwt_expires_at(make_jwt({'exp': 10**14})) is None  # absurd values degrade to None
+    assert jwt_expires_at(make_jwt({})) is None
 
 
 # --- Proactive (expiry-hint) refresh: single flight under concurrency ---
@@ -674,7 +686,7 @@ async def test_save_failure_on_the_401_path_updates_memory_but_raises(monkeypatc
 
 def test_sync_auth_flow_is_rejected():
     """Refresh-and-replay is async, so a sync client must fail loudly rather than send no auth."""
-    auth = _OpenAICodexAuth(make_provider())
+    auth = OAuthCredentialsAuth(make_provider())
     with pytest.raises(UserError, match='requires an async HTTP client'):
         auth.sync_auth_flow(httpx2.Request('GET', 'https://example.com'))
 
@@ -771,7 +783,7 @@ async def test_caller_supplied_http_client_gets_scoped_auth():
     http_client = httpx2.AsyncClient()
     try:
         OpenAICodexProvider(credentials=make_credentials(), http_client=http_client)
-        assert isinstance(http_client.auth, _OpenAICodexAuth)
+        assert isinstance(http_client.auth, OAuthCredentialsAuth)
     finally:
         await http_client.aclose()
 
@@ -784,7 +796,7 @@ async def test_reopen_after_close_reattaches_auth():
     async with provider:
         http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
         assert not http_client.is_closed
-        assert isinstance(http_client.auth, _OpenAICodexAuth)
+        assert isinstance(http_client.auth, OAuthCredentialsAuth)
 
 
 # --- Flow primitives ---
@@ -843,34 +855,17 @@ async def test_exchange_code_posts_pkce_form(monkeypatch: pytest.MonkeyPatch):
     assert credentials.account_id == 'acc-9'  # extracted from the nested id_token claim
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0))
-        return sock.getsockname()[1]
-
-
-async def _get_callback(url: str, params: dict[str, str]) -> httpx2.Response:
-    """GET the callback URL, retrying briefly while the one-shot server binds."""
-    async with httpx2.AsyncClient() as client:
-        for _ in range(50):
-            try:
-                return await client.get(url, params=params)
-            except httpx2.ConnectError:
-                await asyncio.sleep(0.05)
-        raise AssertionError('callback server never came up')  # pragma: no cover
-
-
 async def test_exchange_code_from_callback(monkeypatch: pytest.MonkeyPatch):
     """The built-in one-shot server ignores foreign-state requests and exchanges the real one."""
     mock = TokenEndpointMock(TOKEN_RESPONSE)
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
-    url = f'http://127.0.0.1:{_free_port()}/auth/callback'
+    url = f'http://127.0.0.1:{free_port()}/auth/callback'
     flow = OpenAICodexOAuthFlow(redirect_uri=url)
     exchange = asyncio.create_task(flow.exchange_code_from_callback())
 
-    stray = await _get_callback(url, {'state': 'not-this-flow', 'code': 'stray-code'})
+    stray = await get_callback(url, {'state': 'not-this-flow', 'code': 'stray-code'})
     assert stray.status_code == 200  # answered politely, but ignored: the server keeps serving
-    accepted = await _get_callback(url, {'state': flow.state, 'code': 'the-code'})
+    accepted = await get_callback(url, {'state': flow.state, 'code': 'the-code'})
     assert 'close this tab' in accepted.text
 
     credentials = await exchange
@@ -895,12 +890,12 @@ async def test_exchange_code_from_callback_survives_malformed_request_line(monke
     """
     mock = TokenEndpointMock(TOKEN_RESPONSE)
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
-    port = _free_port()
+    port = free_port()
     url = f'http://127.0.0.1:{port}/auth/callback'
     flow = OpenAICodexOAuthFlow(redirect_uri=url)
     exchange = asyncio.create_task(flow.exchange_code_from_callback())
 
-    await _get_callback(url, {'state': 'not-this-flow'})  # also waits for the server to bind
+    await get_callback(url, {'state': 'not-this-flow'})  # also waits for the server to bind
     reader, writer = await asyncio.open_connection('127.0.0.1', port)
     writer.write(b'GET http://[/auth/callback HTTP/1.1\r\nHost: x\r\n\r\n')
     await writer.drain()
@@ -908,7 +903,7 @@ async def test_exchange_code_from_callback_survives_malformed_request_line(monke
     assert b'400' in status_line
     writer.close()
 
-    accepted = await _get_callback(url, {'state': flow.state, 'code': 'the-code'})
+    accepted = await get_callback(url, {'state': flow.state, 'code': 'the-code'})
     assert 'close this tab' in accepted.text
     credentials = await exchange
     assert credentials.account_id == 'acc-9'
@@ -919,17 +914,17 @@ async def test_exchange_code_from_callback_drops_stalled_client(monkeypatch: pyt
     mock = TokenEndpointMock(TOKEN_RESPONSE)
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
     monkeypatch.setattr('pydantic_ai.providers._oauth._CALLBACK_READ_TIMEOUT', 0.2)
-    port = _free_port()
+    port = free_port()
     url = f'http://127.0.0.1:{port}/auth/callback'
     flow = OpenAICodexOAuthFlow(redirect_uri=url)
     exchange = asyncio.create_task(flow.exchange_code_from_callback())
 
-    await _get_callback(url, {'state': 'not-this-flow'})  # also waits for the server to bind
+    await get_callback(url, {'state': 'not-this-flow'})  # also waits for the server to bind
     reader, writer = await asyncio.open_connection('127.0.0.1', port)
     assert await reader.read() == b''  # the server hangs up on the silent connection
     writer.close()
 
-    accepted = await _get_callback(url, {'state': flow.state, 'code': 'the-code'})
+    accepted = await get_callback(url, {'state': flow.state, 'code': 'the-code'})
     assert 'close this tab' in accepted.text
     credentials = await exchange
     assert credentials.account_id == 'acc-9'
@@ -937,11 +932,11 @@ async def test_exchange_code_from_callback_drops_stalled_client(monkeypatch: pyt
 
 async def test_exchange_code_from_callback_denied():
     """An error callback (e.g. the user clicked Deny) surfaces instead of hanging."""
-    url = f'http://127.0.0.1:{_free_port()}/auth/callback'
+    url = f'http://127.0.0.1:{free_port()}/auth/callback'
     flow = OpenAICodexOAuthFlow(redirect_uri=url)
     exchange = asyncio.create_task(flow.exchange_code_from_callback())
 
-    await _get_callback(url, {'state': flow.state, 'error': 'access_denied'})
+    await get_callback(url, {'state': flow.state, 'error': 'access_denied'})
 
     with pytest.raises(UserError, match='Authorization failed: access_denied'):
         await exchange

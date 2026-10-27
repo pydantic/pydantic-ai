@@ -293,7 +293,7 @@ def _history_ending_in(*tail: ModelMessage) -> list[ModelMessage]:
 async def test_openai_chat_leading_cache_point_attaches_to_previous_message(allow_model_requests: None):
     """A `CachePoint` opening a user message after a tool result marks the tool result instead of raising.
 
-    That is where a tail reminder (`SystemReminders`, `Planning`) puts its breakpoint once a tool loop
+    That is where a tail reminder (such as `Planning`'s) puts its breakpoint once a tool loop
     is underway; the request used to fail with `CachePoint cannot be the first content in a user message`.
     """
     mock_client = MockOpenAI.create_mock(chat_completion())
@@ -803,6 +803,45 @@ async def test_openai_chat_cache_instructions_after_last_static(allow_model_requ
                 ],
             },
             {'role': 'system', 'content': 'Today is 2026-08-18.'},
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_chat_cache_instructions_single_breakpoint_before_appending_blocks(allow_model_requests: None):
+    """An `on_change='append'` block gets no breakpoint of its own: only the one after the static instructions.
+
+    OpenAI keeps a request's last four breakpoints, so a second one would push out the static instructions' one
+    first, and that's the one a new conversation reads even when its append blocks differ.
+    """
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIChatModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, instructions='Support policies.', model_settings=settings)
+
+    @agent.instructions(name='memory', on_change='append')
+    def memory() -> str:
+        return 'The customer prefers email.'
+
+    await agent.run('Where is order 1234?')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {'type': 'text', 'text': 'Support policies.', 'prompt_cache_breakpoint': {'mode': 'explicit'}}
+                ],
+            },
+            {
+                'role': 'system',
+                'content': """\
+<context id="agent:memory">
+The customer prefers email.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+            },
             {'role': 'user', 'content': 'Where is order 1234?'},
         ]
     )
@@ -1635,7 +1674,7 @@ async def test_openai_responses_cache_instructions_relocated_once_per_request_in
                 {'role': 'user', 'content': 'Where is order 1234?'},
                 {
                     'name': 'get_order_status',
-                    'arguments': '{"order_id": "1234"}',
+                    'arguments': '{"order_id":"1234"}',
                     'call_id': 'call_1',
                     'type': 'function_call',
                     'id': 'fc_1',

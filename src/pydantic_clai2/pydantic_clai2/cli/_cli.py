@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import os
+import re
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -13,10 +14,21 @@ from pydantic_clai2.ui.rendering.splash import Splash
 from pydantic_clai2.ui.stderr_relay import relay_stderr
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pydantic_clai2.cli.self_update import WebHandoff
+    from pydantic_clai2.config import Settings
+    from pydantic_clai2.config.project_settings import ProjectSettings
+    from pydantic_clai2.config.settings_store import SettingsStore
     from pydantic_clai2.runtime.worktrees import Worktree
 
 _RELAUNCH_WORKTREE = 'CLAI_RELAUNCH_WORKTREE'
 """Carries a removable checkout's launch `HEAD` across `/update`; an environment variable, so older builds ignore it."""
+_RELAUNCH_WEB = 'CLAI_RELAUNCH_WEB'
+"""Carries the web UI's port and token across `/update`, so its open pages reconnect.
+
+In the environment, which only you can read, rather than on the command line `ps` shows every user.
+"""
 
 
 def run(*, splash: Splash | None = None) -> None:
@@ -31,7 +43,9 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument(
         '--fork-session',
         action='store_true',
-        help='With --resume, continue in a copy of the session under a new ID, leaving the original as it was',
+        help=(
+            'With --resume or --continue, continue in a copy of the session under a new ID, leaving the original as it was'
+        ),
     )
     parser.add_argument(
         '--worktree',
@@ -54,6 +68,26 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument(
         '-p', '--prompt', metavar='TEXT', help='Run one prompt without interaction and print only the answer'
     )
+    parser.add_argument(
+        '--web',
+        action='store_true',
+        help='Drive CLAI from a local web UI instead of the terminal prompt; prints the address and opens it',
+    )
+    parser.add_argument(
+        '--port',
+        type=int,
+        metavar='PORT',
+        help='With --web, listen on PORT for this launch instead of the saved port; 0 picks a free one',
+    )
+    parser.add_argument(
+        '--token-file',
+        type=Path,
+        metavar='PATH',
+        help=(
+            "With --web, read this launch's access token from PATH, a file only you can read, instead of making one; "
+            'the address printed leaves it out and no browser opens'
+        ),
+    )
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
     parser.add_argument('command', nargs='?', choices=('config', 'plugins'))
@@ -64,13 +98,14 @@ def run(*, splash: Splash | None = None) -> None:
     if args.database is not None:
         # Before `--worktree` changes directory, so a restart after `/update` reopens the same database.
         args.database = args.database.resolve()
+    if args.token_file is not None:
+        args.token_file = args.token_file.resolve()  # Also before `--worktree` changes directory.
     try:
         from pydantic_ai.usage import UsageLimits
         from pydantic_clai2._app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
         from pydantic_clai2.cli.agent_import import import_agent
         from pydantic_clai2.cli.self_update import Relaunch
         from pydantic_clai2.commands import config_command, plugins_command
-        from pydantic_clai2.config import resolve_settings
         from pydantic_clai2.config.project_settings import load_project_settings
         from pydantic_clai2.config.settings_store import SettingsStore
         from pydantic_clai2.runtime.worktrees import offer_worktree_cleanup
@@ -78,6 +113,7 @@ def run(*, splash: Splash | None = None) -> None:
         if splash is not None:
             splash.stop()
     relaunched = os.environ.pop(_RELAUNCH_WORKTREE, None)  # Popped so tools and later launches never see it.
+    served = _web_handoff(os.environ.pop(_RELAUNCH_WEB, None))  # Likewise, and the model never reads the token.
     worktree = launched = None
     try:
         store = SettingsStore(args.database)
@@ -88,17 +124,18 @@ def run(*, splash: Splash | None = None) -> None:
             return
         agent = import_agent(args.agent) if args.agent is not None else None
         if args.worktree is not None:
-            worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None)
+            worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web)
         project = load_project_settings(Path.cwd())
-        overrides = store.overrides() | project.overrides
-        if model := args.model or os.getenv('CLAI_MODEL'):
-            overrides['model'] = model
-        if args.request_limit is not None:
-            overrides['run.request_limit'] = args.request_limit
-        settings = resolve_settings(overrides)
-        if agent is not None and agent.model is not None and not model:
+        _continue_session(args, store)
+        model = args.model or os.getenv('CLAI_MODEL')
+        settings_for = _settings_for(
+            store,
+            model=model,
+            request_limit=args.request_limit,
             # Keep the agent's own model over saved, project, and default ones; only -m or CLAI_MODEL replaces it.
-            settings = settings.model_copy(update={'model': None})
+            agent_model=agent is not None and agent.model is not None and not model,
+        )
+        settings = settings_for(project)
         if args.prompt is not None:
             from pydantic_clai2.cli.headless import run_headless
 
@@ -117,6 +154,27 @@ def run(*, splash: Splash | None = None) -> None:
                     )
                 )
             )
+        if args.web:
+            from rich.console import Console
+
+            from pydantic_clai2.cli.web import run_web
+
+            asyncio.run(
+                run_web(
+                    settings_for=settings_for,
+                    store=store,
+                    project=project,
+                    console=Console(force_terminal=False, highlight=False),
+                    resume=args.resume,
+                    resume_from=args.resume_from,
+                    session_id=args.session_id,
+                    fork_session=args.fork_session,
+                    port=args.port,
+                    token=None if args.token_file is None else read_token(args.token_file),
+                    restart=served,
+                )
+            )
+            return
         # `chat` relays stderr itself; this also covers the `git` calls around it.
         with relay_stderr():
             # Before the session, so commits made during it count as changes on exit.
@@ -136,6 +194,8 @@ def run(*, splash: Splash | None = None) -> None:
                     session_id=args.session_id,
                     fork_session=args.fork_session,
                     worktree=worktree,
+                    web=served,
+                    settings_for=settings_for,
                 )
             )
             offer_worktree_cleanup(worktree=launched)
@@ -148,6 +208,8 @@ def run(*, splash: Splash | None = None) -> None:
             new_session_id=relaunch.new_session_id,
         )
         _remember_worktree(launched)
+        if relaunch.web is not None:
+            os.environ[_RELAUNCH_WEB] = f'{relaunch.web.port} {relaunch.web.token}'
         sys.stdout.flush()
         os.execv(relaunch.executable, argv)
     except (ValueError, TypeError, ImportError, AttributeError, LookupError, OSError) as exc:
@@ -156,8 +218,29 @@ def run(*, splash: Splash | None = None) -> None:
             print(f'Worktree kept at {worktree.path} (branch: {worktree.branch}).', file=sys.stderr)
         parser.error(str(exc))
     except KeyboardInterrupt:
-        if args.prompt is not None:
+        if args.prompt is not None or args.web:
             raise SystemExit(130) from None
+
+
+def _settings_for(
+    store: 'SettingsStore', *, model: str | None, request_limit: int | None, agent_model: bool = False
+) -> 'Callable[[ProjectSettings], Settings]':
+    """The settings CLAI starts with beside a project file: saved ones, then the project's, then the launch flags.
+
+    With `agent_model`, no model: the `--agent` agent's own one is used.
+    """
+    from pydantic_clai2.config import resolve_settings
+
+    def settings_for(project: 'ProjectSettings') -> 'Settings':
+        overrides = store.overrides() | project.overrides
+        if model:
+            overrides['model'] = model
+        if request_limit is not None:
+            overrides['run.request_limit'] = request_limit
+        settings = resolve_settings(overrides)
+        return settings.model_copy(update={'model': None}) if agent_model else settings
+
+    return settings_for
 
 
 def _enter_worktree(*, name: str, headless: bool) -> 'Worktree':
@@ -199,9 +282,16 @@ def relaunch_argv(
 ) -> list[str]:
     """The launch options to restart with after `/update`, resuming `session_id` instead of any `--resume`.
 
-    An unsaved conversation started with `--session-id` restarts under `new_session_id`.
+    An unsaved conversation started with `--session-id` restarts under `new_session_id`. The token
+    `--token-file` names stays in its file.
     """
     argv = [executable]
+    if args.web:
+        argv.append('--web')
+        if args.port is not None:
+            argv += ['--port', str(args.port)]
+        if args.token_file is not None:
+            argv += ['--token-file', str(args.token_file)]
     if args.agent is not None:
         argv += ['--agent', args.agent]
     if args.model is not None:
@@ -217,11 +307,67 @@ def relaunch_argv(
     return argv
 
 
+_TOKEN = re.compile(r'[A-Za-z0-9_-]{32,256}')
+
+
+def _web_handoff(value: str | None) -> 'WebHandoff | None':
+    """The web UI `/update` handed over as `PORT TOKEN`; `None` when there is none, or it is malformed."""
+    from pydantic_clai2.cli.self_update import WebHandoff
+
+    port, _, token = (value or '').partition(' ')
+    if not port.isdigit() or int(port) > 65535 or not _TOKEN.fullmatch(token):
+        return None
+    return WebHandoff(port=int(port), token=token)
+
+
+def read_token(path: Path) -> str:
+    """The access token in `path`; `ValueError` unless only this user can read the file and it holds a long random token."""
+    info = path.stat()
+    if sys.platform != 'win32' and (info.st_mode & 0o077 or info.st_uid != os.geteuid()):
+        raise ValueError(f'{path} must belong to you and be readable by you alone (mode 0600).')
+    token = path.read_text(encoding='utf-8').strip()
+    if not _TOKEN.fullmatch(token):
+        raise ValueError(f'{path} must hold one URL-safe token of at least 32 characters.')
+    return token
+
+
+def _continue_session(args: argparse.Namespace, store: 'SettingsStore') -> None:
+    """With `--continue`, resume this directory's latest session, or start a new one when there is none."""
+    if not args.continue_session:
+        return
+    args.resume = asyncio.run(_latest_session(store))
+    if args.resume is None:
+        print(f'No saved session in {Path.cwd()}; starting a new one.', file=sys.stderr)
+        args.fork_session = False  # Nothing to copy: the new session takes any `--session-id`.
+
+
+async def _latest_session(store: 'SettingsStore') -> str | None:
+    """The ID of the newest unarchived conversation saved in this directory, for `--continue`; `None` when there is none."""
+    from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+
+    conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
+    workspace = str(Path.cwd().resolve())  # As `Session.workspace` saves it.
+    offset = 0
+    # The listing spans every directory, newest first, so page through it until one was saved here.
+    while page := await conversations.listing(limit=200, offset=offset, archived=False):
+        if (found := next((entry.id for entry in page if entry.workspace == workspace), None)) is not None:
+            return found
+        offset += len(page)
+    return None
+
+
 def _add_resume_flags(parser: argparse.ArgumentParser) -> None:
-    """`--resume` and its Claude Code and Codex counterparts, of which one may be given."""
+    """`--resume`, `--continue`, and the Claude Code and Codex counterparts of `--resume`, of which one may be given."""
     flags = parser.add_mutually_exclusive_group()
     flags.add_argument(
         '--resume', nargs='?', const='', metavar='SESSION-ID', help='Restore a saved session; no ID opens the browser'
+    )
+    flags.add_argument(
+        '-c',
+        '--continue',
+        dest='continue_session',
+        action='store_true',
+        help="Restore this directory's most recent saved session, or start a new one when there is none",
     )
     for flag, name in (('--resume-claude', 'Claude Code'), ('--resume-codex', 'Codex')):
         flags.add_argument(
@@ -244,20 +390,37 @@ def _resume_source(args: argparse.Namespace) -> None:
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     if args.command and (
         args.resume is not None
+        or args.continue_session
         or args.worktree is not None
         or args.agent is not None
         or args.session_id is not None
         or args.fork_session
     ):
         parser.error(
-            '--resume, --session-id, --fork-session, --worktree, and --agent cannot be combined with config or plugins'
+            '--resume, --continue, --session-id, --fork-session, --worktree, and --agent cannot be combined with'
+            ' config or plugins'
         )
+    # `--continue` resumes the session it finds at startup, so it is checked as a `--resume` would be.
+    resume = '' if args.continue_session else args.resume
+    if args.continue_session and args.session_id is not None and not args.fork_session:
+        parser.error('--session-id can only be combined with --continue when --fork-session is given')
     try:
-        args.session_id = launch_session_id(resume=args.resume, session_id=args.session_id, fork=args.fork_session)
+        args.session_id = launch_session_id(resume=resume, session_id=args.session_id, fork=args.fork_session)
     except ValueError as exc:
         parser.error(str(exc))
-    if args.worktree is not None and args.resume is not None:
-        parser.error('--worktree cannot be combined with --resume; resume from an existing worktree directory')
+    if args.worktree is not None and resume is not None:
+        parser.error(
+            '--worktree cannot be combined with --resume or --continue; resume from an existing worktree directory'
+        )
+    if args.web:
+        if args.command or args.prompt is not None or args.agent is not None:
+            parser.error('--web cannot be combined with config, plugins, --prompt, or --agent')
+        if args.resume == '':
+            parser.error('--web requires an explicit --resume SESSION-ID')
+    elif args.port is not None or args.token_file is not None:
+        parser.error('--port and --token-file need --web')
+    if args.port is not None and not 0 <= args.port < 65536:
+        parser.error('--port must be between 0 and 65535')
     if args.prompt is not None:
         if args.command:
             parser.error('--prompt cannot be combined with config or plugins')

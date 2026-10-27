@@ -1,29 +1,28 @@
 """The `/mcp install` and `/mcp edit` form, ported from Code Puppy's custom server form.
 
-A menu of fields: the server name, its type (stdio, http, or sse), and its JSON configuration,
-edited in `$VISUAL`/`$EDITOR` with a one-line fallback. Remote servers also get an OAuth toggle,
-which Code Puppy's HTTP wizard asks about. The preview pane shows the JSON and whether it is valid.
-Everything here is synchronous and runs in a menu worker thread.
+A list of fields: the server name, its type (stdio, http, or sse), and its JSON configuration,
+edited in `$VISUAL`/`$EDITOR` in the terminal, else in a text dialog. Remote servers also get an
+OAuth toggle, which Code Puppy's HTTP wizard asks about. The list's description shows the JSON and
+whether it is valid. It asks through `Dialogs`, so the web UI shows the same form.
 """
 
 import json
 import shlex
 import shutil
 from collections.abc import Callable
+from functools import partial
 from typing import get_args
 
+from anyio import to_thread
 from pydantic import HttpUrl, JsonValue, TypeAdapter, ValidationError
-from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
-from termflow.tui.menu import Menu
-from termflow.tui.textinput import TextInput
 
 from pydantic_clai2.mcp._settings import OAUTH_TIMEOUT, Server, ServerName, ServerType, StdioServer, missing
 from pydantic_clai2.mcp._store import MCPStore
 from pydantic_clai2.mcp._tokens import TokenStore
-from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners, first_error
-from pydantic_clai2.ui.menus.menu_worker import menu_key
+from pydantic_clai2.plugins.menus import Dialogs, Option
+from pydantic_clai2.ui.menus.field_menu import first_error
+from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.text_editor import editor_command, run_editor
-from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 SERVER_TYPES: tuple[ServerType, ...] = get_args(ServerType)
 TYPE_DESCRIPTIONS: dict[ServerType, str] = {
@@ -242,29 +241,32 @@ class ServerForm:
         self.config = json.dumps(data, indent=2)
         self.status = None
 
-    def items(self) -> list[MenuItem]:
+    @property
+    def title(self) -> str:
+        """`Edit MCP Server` or `Add Custom MCP Server`."""
+        return 'Edit MCP Server' if self.editing else 'Add Custom MCP Server'
+
+    def options(self) -> list[Option]:
         """The form's rows; the OAuth row only for remote servers."""
         rows = [
-            MenuItem(f'Server Name: {self.name or "(not set)"}', value=NAME),
-            MenuItem(f'Server Type: {self.type}', value=TYPE),
-            MenuItem(f'{self.target_label}: {self.target() or "(not set)"}', value=TARGET),
+            Option(value=NAME, label=f'Server Name: {self.name or "(not set)"}'),
+            Option(value=TYPE, label=f'Server Type: {self.type}'),
+            Option(value=TARGET, label=f'{self.target_label}: {self.target() or "(not set)"}'),
         ]
         if self.type != 'stdio':
-            rows.append(MenuItem(f'OAuth sign-in: {"on" if self.oauth else "off"}', value=OAUTH))
+            rows.append(Option(value=OAUTH, label=f'OAuth sign-in: {"on" if self.oauth else "off"}'))
         return [
             *rows,
-            MenuItem(f'JSON Configuration ({"INVALID" if self.problem() else "valid"})', value=CONFIG),
-            MenuItem(f'Load example for {self.type}', value=EXAMPLE),
-            MenuItem('Save changes' if self.editing else 'Save & Install', value=SAVE),
-            MenuItem('Cancel', value=CANCEL),
+            Option(value=CONFIG, label=f'JSON Configuration ({"INVALID" if self.problem() else "valid"})'),
+            Option(value=EXAMPLE, label=f'Load example for {self.type}'),
+            Option(value=SAVE, label='Save changes' if self.editing else 'Save & Install'),
+            Option(value=CANCEL, label='Cancel'),
         ]
 
     def preview(self) -> str:
-        """The right-hand pane: name, type, JSON, and validation status."""
+        """Beside the rows: name, type, JSON, and validation status."""
         problem = self.problem()
         lines = [
-            'Edit MCP Server' if self.editing else 'Add Custom MCP Server',
-            '',
             f'Name   {self.name or "(not set)"}',
             f'Type   {self.type} - {TYPE_DESCRIPTIONS[self.type]}',
             '',
@@ -280,83 +282,6 @@ class ServerForm:
         return '\n'.join(lines)
 
 
-def build_form_menu(form: ServerForm, initial: int = 0) -> Menu:
-    """The field list with the live preview."""
-    return (
-        MenuBuilder('Edit MCP Server' if form.editing else 'Add Custom MCP Server')
-        .style(markdown_style())
-        .items(form.items())
-        .list_width(38)
-        .initial_index(initial)
-        .preview(lambda _: form.preview())
-        .footer_hint('Enter edit field - Esc cancel')
-        .key_source(menu_key)
-        .build()
-    )
-
-
-def build_type_menu(form: ServerForm) -> Menu:
-    """stdio, http, or sse, with descriptions."""
-    return (
-        MenuBuilder('Server Type')
-        .style(markdown_style())
-        .items([MenuItem(kind, value=kind, description=TYPE_DESCRIPTIONS[kind]) for kind in SERVER_TYPES])
-        .initial_index(SERVER_TYPES.index(form.type))
-        .footer_hint('Enter select - Esc keep current')
-        .key_source(menu_key)
-        .build()
-    )
-
-
-def build_name_input(form: ServerForm) -> TextInput:
-    """The server name, validated as you type."""
-    return (
-        TextInputBuilder('Server Name')
-        .style(markdown_style())
-        .prompt('Name: ')
-        .initial(form.name)
-        .placeholder('letters, digits, and hyphens')
-        .validator(form.name_problem)
-        .footer_hint('Enter save - Esc cancel')
-        .key_source(menu_key)
-        .build()
-    )
-
-
-def build_target_input(form: ServerForm) -> TextInput:
-    """The URL, or the command line for a stdio server."""
-    remote = form.type != 'stdio'
-    return (
-        TextInputBuilder(form.target_label)
-        .style(markdown_style())
-        .prompt(f'{form.target_label}: ')
-        .initial(form.target())
-        .placeholder('https://example.com/mcp' if remote else 'uvx my-mcp-server --flag')
-        .validator(form.target_problem)
-        .footer_hint('Enter save - Esc cancel')
-        .key_source(menu_key)
-        .build()
-    )
-
-
-def build_json_input(form: ServerForm) -> TextInput:
-    """The one-line JSON fallback when no editor could run."""
-    try:
-        compact = json.dumps(json.loads(form.config))
-    except json.JSONDecodeError:
-        compact = form.config
-    return (
-        TextInputBuilder('JSON Configuration (single line)')
-        .style(markdown_style())
-        .prompt('JSON: ')
-        .initial(compact)
-        .validator(_json_problem)
-        .footer_hint('Enter save - Esc cancel')
-        .key_source(menu_key)
-        .build()
-    )
-
-
 def _json_problem(text: str) -> str | None:
     try:
         json.loads(text)
@@ -369,52 +294,81 @@ def edit_in_editor(initial: str) -> str | None:
     """Open `$VISUAL` or `$EDITOR` (default `vi`) on the JSON; `None` when it could not run."""
     try:
         return run_editor(editor_command(default='vi'), initial, prefix='mcp_server_', suffix='.json')
-    except (OSError, ValueError):  # ValueError: an unparsable $EDITOR; the one-line input takes over.
+    except (OSError, ValueError):  # ValueError: an unparsable $EDITOR; the text dialog takes over.
         return None
 
 
-def run_form(form: ServerForm, runners: Runners = TERMINAL, editor: Editor = edit_in_editor) -> bool:
-    """The field-edit loop, until Save succeeds (`True`) or Cancel/Esc (`False`)."""
-    cursor = 0
+async def run_form(form: ServerForm, dialogs: Dialogs, editor: Editor | None = None) -> bool:
+    """The field-edit loop, until Save succeeds (`True`) or Cancel or backing out (`False`).
+
+    `editor` edits the JSON on the terminal, as `edit_in_editor` does; without one, or when it cannot
+    run, a text dialog asks for it. The web UI passes none: an editor would open on CLAI's terminal.
+    """
     while True:
-        result = runners.run_list(build_form_menu(form, cursor))
-        if result.cancelled or result.item is None or result.item.value == CANCEL:
+        row = await dialogs.choose(title=form.title, options=form.options(), description=form.preview())
+        if row is None or row == CANCEL:
             return False
-        value = result.item.value
-        values = [item.value for item in form.items()]
-        cursor = values.index(value) if value in values else 0
-        if value == SAVE:
-            if form.save():
+        if row == SAVE:
+            # Renaming forgets the old name's sign-in, which is in the keyring.
+            if await to_thread.run_sync(form.save):
                 return True
         else:
-            _edit_row(form, value, runners, editor)
+            await _edit_row(form, row, dialogs, editor)
 
 
-def _edit_row(form: ServerForm, row: object, runners: Runners, editor: Editor) -> None:
+async def _edit_row(form: ServerForm, row: str, dialogs: Dialogs, editor: Editor | None) -> None:
     if row == NAME:
-        typed = runners.run_text(build_name_input(form))
-        if not typed.cancelled and isinstance(typed.value, str):
-            form.name = typed.value.strip()
+        name = await dialogs.text(
+            title='Server Name',
+            label='Name',
+            placeholder='letters, digits, and hyphens',
+            initial=form.name,
+            check=form.name_problem,
+        )
+        if name:
+            form.name = name
     elif row == TYPE:
-        picked = runners.run_choice(build_type_menu(form))
-        if not picked.cancelled and picked.item is not None and picked.item.value in SERVER_TYPES:
-            form.select_type(picked.item.value)
+        options = [Option(value=kind, label=kind, description=TYPE_DESCRIPTIONS[kind]) for kind in SERVER_TYPES]
+        picked = await dialogs.choose(title='Server Type', options=options, current=form.type)
+        for kind in SERVER_TYPES:
+            if kind == picked:
+                form.select_type(kind)
     elif row == TARGET:
-        typed = runners.run_text(build_target_input(form))
-        if not typed.cancelled and isinstance(typed.value, str) and not form.target_problem(typed.value):
-            form.set_target(typed.value)
+        remote = form.type != 'stdio'
+        target = await dialogs.text(
+            title=form.target_label,
+            label=form.target_label,
+            placeholder='https://example.com/mcp' if remote else 'uvx my-mcp-server --flag',
+            initial=form.target(),
+            check=form.target_problem,
+        )
+        if target:
+            form.set_target(target)
     elif row == OAUTH:
         form.toggle_oauth()
     elif row == CONFIG:
-        edited = editor(form.config)
-        if edited is None:
-            typed = runners.run_text(build_json_input(form))
-            if not typed.cancelled and isinstance(typed.value, str) and not _json_problem(typed.value):
-                edited = json.dumps(json.loads(typed.value), indent=2)
-        if edited is not None:
-            form.config = edited
-    elif row == EXAMPLE:
+        await _edit_json(form, dialogs, editor)
+    else:  # EXAMPLE: `choose` answers only with a row it offered.
         form.load_example()
+
+
+async def _edit_json(form: ServerForm, dialogs: Dialogs, editor: Editor | None) -> None:
+    edited = None if editor is None else await run_worker(partial(editor, form.config))
+    if edited is None:
+        # The terminal's input holds one line; the browser's dialog edits the indented JSON as it is.
+        initial = form.config if editor is None else _one_line(form.config)
+        typed = await dialogs.text(title='JSON Configuration', label='JSON', initial=initial, check=_json_problem)
+        if typed:
+            edited = json.dumps(json.loads(typed), indent=2)
+    if edited is not None:
+        form.config = edited
+
+
+def _one_line(config: str) -> str:
+    try:
+        return json.dumps(json.loads(config))
+    except json.JSONDecodeError:
+        return config
 
 
 def saved_message(form: ServerForm, server: Server) -> str:
@@ -429,19 +383,19 @@ def saved_message(form: ServerForm, server: Server) -> str:
     return '\n'.join(lines)
 
 
-def install_form(store: MCPStore, runners: Runners = TERMINAL, editor: Editor = edit_in_editor) -> str:
+async def install_form(store: MCPStore, dialogs: Dialogs, editor: Editor | None = None) -> str:
     """`/mcp install`: add a server through the form."""
     form = ServerForm(store)
-    if not run_form(form, runners, editor):
+    if not await run_form(form, dialogs, editor):
         return 'Exited custom server form.'
     return saved_message(form, store.load().servers[form.name])
 
 
-def edit_form(
-    store: MCPStore, name: str, runners: Runners = TERMINAL, editor: Editor = edit_in_editor
+async def edit_form(
+    store: MCPStore, name: str, dialogs: Dialogs, editor: Editor | None = None
 ) -> tuple[str, str] | None:
     """`/mcp edit NAME`: the same form, prefilled. The saved name and message, or `None` when cancelled."""
     form = ServerForm(store, name=name, server=store.load().servers[name])
-    if not run_form(form, runners, editor):
+    if not await run_form(form, dialogs, editor):
         return None
     return form.name, saved_message(form, store.load().servers[form.name])

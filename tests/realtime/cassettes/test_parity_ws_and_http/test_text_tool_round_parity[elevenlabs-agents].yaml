@@ -1,0 +1,141 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: conversation_initiation_client_data
+    source_info:
+      source: unknown
+      version: pydantic-ai/<version>
+    conversation_config_override:
+      agent:
+        prompt:
+          prompt: Always call get_weather for a weather question, then answer in one
+            short sentence.
+      conversation:
+        text_only: true
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    conversation_initiation_metadata_event:
+      conversation_id: conv_6601m5djskfger6smptzyz2dxypa
+      agent_output_audio_format: pcm_16000
+      user_input_audio_format: pcm_16000
+      persistent_session_token: null
+    type: conversation_initiation_metadata
+- kind: message
+  direction: sent
+  at: 0.001
+  data:
+    type: user_message
+    text: What is the weather in London?
+    id: pydantic_ai_input_0
+- kind: message
+  direction: received
+  at: 0.722
+  data:
+    client_tool_call:
+      tool_name: get_weather
+      tool_call_id: get_weather_0bea6d768afa47d2ac907f9ac611820c
+      parameters:
+        city: London
+      event_id: 1
+      expects_response: true
+    type: client_tool_call
+- kind: message
+  direction: sent
+  at: 0.723
+  data:
+    type: client_tool_result
+    tool_call_id: get_weather_0bea6d768afa47d2ac907f9ac611820c
+    result: It is foggy and 12 degrees in London.
+    is_error: false
+- kind: message
+  direction: received
+  at: 0.727
+  data:
+    text_response_part:
+      text: ''
+      type: start
+      event_id: 1
+      response_id: 15eecbbb-379f-4a38-8992-3417ffa27e70
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 0.727
+  data:
+    text_response_part:
+      text: ''
+      type: stop
+      event_id: 1
+      response_id: 15eecbbb-379f-4a38-8992-3417ffa27e70
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 0.773
+  data:
+    agent_tool_response:
+      tool_name: get_weather
+      tool_call_id: get_weather_0bea6d768afa47d2ac907f9ac611820c
+      tool_type: client
+      is_error: false
+      is_blocked: false
+      event_id: 1
+      is_called: true
+      status: success
+    type: agent_tool_response
+- kind: message
+  direction: received
+  at: 1.134
+  data:
+    text_response_part:
+      text: ''
+      type: start
+      event_id: 1
+      response_id: 97ca9860-9027-4ba9-b3cd-546c7c07d5ab
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.134
+  data:
+    text_response_part:
+      text: It is foggy and 1
+      type: delta
+      event_id: 1
+      response_id: 97ca9860-9027-4ba9-b3cd-546c7c07d5ab
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.169
+  data:
+    text_response_part:
+      text: 2 degrees in London.
+      type: delta
+      event_id: 1
+      response_id: 97ca9860-9027-4ba9-b3cd-546c7c07d5ab
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.221
+  data:
+    text_response_part:
+      text: ''
+      type: stop
+      event_id: 1
+      response_id: 97ca9860-9027-4ba9-b3cd-546c7c07d5ab
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.223
+  data:
+    agent_response_event:
+      agent_response: It is foggy and 12 degrees in London.
+      event_id: 1
+      response_id: 97ca9860-9027-4ba9-b3cd-546c7c07d5ab
+      in_response_to_ids:
+      - pydantic_ai_input_0
+      response_type: text
+      attachments: []
+    type: agent_response
