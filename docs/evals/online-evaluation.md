@@ -1056,7 +1056,7 @@ agent = Agent(
 
 Keep the `id` stable once workflows that use it are deployed, as it names the recorded operation.
 
-Each completed run adds one durable operation unless every evaluator's sample rate is `0`, including runs where no evaluator ends up sampled. A failed run adds one only when an evaluator has `run_on_errors=True`.
+Each `OnlineEvaluation` capability adds one durable operation to each completed run unless every one of its evaluators' sample rates is `0`, including runs where none ends up sampled. To a failed run, it adds one only when one of its evaluators has `run_on_errors=True`.
 
 Sampling happens inside the operation, after the run. An exception from a `sample_rate` callable without an `on_sampling_error` handler fails the operation, and the engine retries it according to its retry policy. Once the operation has failed for good, so does the run, unless the run had already failed: then its own exception reaches the caller, with a warning that the evaluation wasn't dispatched. Temporal's default activity retry policy has no attempt limit, so set `on_sampling_error` to keep such a workflow from retrying indefinitely. A `retry_policy` with `maximum_attempts` in the `activity_config` of [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] also limits it, but that config applies to the agent's model and tool activities too; see [Activity Configuration](../durable_execution/temporal.md#activity-configuration).
 
@@ -1066,7 +1066,7 @@ Sampling happens inside the operation, after the run. An exception from a `sampl
 What the evaluators see depends on whether the engine serializes the operation's arguments:
 
 - DBOS and Prefect run the operation in the run's own process, so evaluators see the same [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] values as without durable execution.
-- Temporal serializes the arguments to send them to an activity, so `inputs`, `output` and `metadata` arrive in their JSON form, such as a dict for a Pydantic model output, and sampling callables see `inputs` the same way. The span tree doesn't cross, so [`span_tree`][pydantic_evals.evaluators.EvaluatorContext.span_tree] raises a [`SpanTreeRecordingError`][pydantic_evals.otel.SpanTreeRecordingError]. An evaluator with `run_on_errors=True` receives an `Exception` whose message starts with the original exception's type name, such as `'UsageLimitExceeded: ...'`.
+- Temporal, and any other engine that serializes the arguments, sends them to another process, so `inputs`, `output` and `metadata` arrive in their JSON form, such as a dict for a Pydantic model output, and sampling callables see `inputs` the same way. The span tree doesn't cross, so [`span_tree`][pydantic_evals.evaluators.EvaluatorContext.span_tree] raises a [`SpanTreeRecordingError`][pydantic_evals.otel.SpanTreeRecordingError]. An evaluator with `run_on_errors=True` receives an `Exception` whose message starts with the original exception's type name, such as `'UsageLimitExceeded: ...'`. Keep `inputs` and `metadata` JSON-serializable there (datetimes, UUIDs, enums and Pydantic models are fine): a value that can't be serialized raises an error in workflow code when the engine records the operation.
 
 The operation starts the evaluators in the background and completes without waiting for them, as evaluation without durable execution does. If the worker stops before the evaluators finish, their results are lost: the engine has already recorded the operation, so it doesn't run it again.
 

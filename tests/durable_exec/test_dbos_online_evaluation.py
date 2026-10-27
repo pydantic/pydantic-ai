@@ -72,6 +72,10 @@ class Answer(BaseModel):
     text: str
 
 
+def _failing_sample_rate(ctx: SamplingContext) -> bool:
+    raise RuntimeError('sampling failed')
+
+
 async def test_dbos_online_evaluation_dispatches_once_on_replay(dbos: DBOS) -> None:
     """Replaying the workflow returns the recorded dispatch step, so the run's evaluators don't run again.
 
@@ -169,9 +173,6 @@ async def test_dbos_online_evaluation_dispatch_step_only_when_an_evaluator_may_b
 async def test_dbos_online_evaluation_dispatch_failure_keeps_run_error(dbos: DBOS) -> None:
     """When dispatching a failed run's evaluation fails, the run's own exception still reaches the caller."""
 
-    def failing_sample_rate(ctx: SamplingContext) -> bool:
-        raise RuntimeError('sampling failed')
-
     @dataclass
     class RecordRun(Evaluator):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
@@ -185,7 +186,7 @@ async def test_dbos_online_evaluation_dispatch_failure_keeps_run_error(dbos: DBO
             OnlineEvaluation(
                 id='online_evaluation',
                 evaluators=[
-                    OnlineEvaluator(evaluator=RecordRun(), sample_rate=failing_sample_rate, run_on_errors=True)
+                    OnlineEvaluator(evaluator=RecordRun(), sample_rate=_failing_sample_rate, run_on_errors=True)
                 ],
             ),
         ],
@@ -206,9 +207,6 @@ async def test_dbos_online_evaluation_dispatch_failure_keeps_run_error(dbos: DBO
 async def test_dbos_online_evaluation_dispatch_failure_fails_completed_run(dbos: DBOS) -> None:
     """When dispatching a completed run's evaluation fails, the run fails with the dispatch error, without a warning."""
 
-    def failing_sample_rate(ctx: SamplingContext) -> bool:
-        raise RuntimeError('sampling failed')
-
     @dataclass
     class RecordRun(Evaluator):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
@@ -221,7 +219,7 @@ async def test_dbos_online_evaluation_dispatch_failure_fails_completed_run(dbos:
             DBOSDurability[object](),
             OnlineEvaluation(
                 id='online_evaluation',
-                evaluators=[OnlineEvaluator(evaluator=RecordRun(), sample_rate=failing_sample_rate)],
+                evaluators=[OnlineEvaluator(evaluator=RecordRun(), sample_rate=_failing_sample_rate)],
             ),
         ],
     )

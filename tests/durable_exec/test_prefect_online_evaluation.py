@@ -8,7 +8,9 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import UsageLimits
 
 try:
     from prefect import flow
@@ -19,7 +21,7 @@ except ImportError:  # pragma: lax no cover
 
 try:
     from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-    from pydantic_evals.online import wait_for_evaluations
+    from pydantic_evals.online import OnlineEvaluator, SamplingContext, wait_for_evaluations
     from pydantic_evals.online_capability import OnlineEvaluation
 except ImportError:  # pragma: lax no cover
     pytest.skip('pydantic_evals not installed', allow_module_level=True)
@@ -62,3 +64,46 @@ async def test_prefect_online_evaluation_sees_live_output() -> None:
     run_id = await run_flow()
     await wait_for_evaluations()
     assert evaluated == [(run_id, Answer(text='a'))]
+
+
+def _failing_sample_rate(ctx: SamplingContext) -> bool:
+    raise RuntimeError('sampling failed')
+
+
+@dataclass
+class NeverRun(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        raise AssertionError('not sampled')  # pragma: no cover
+
+
+async def test_prefect_online_evaluation_dispatch_failure() -> None:
+    """A failed run whose dispatch task fails keeps its own error, with a warning; a completed run fails with it."""
+    agent = Agent(
+        TestModel(),
+        name='prefect_online_evaluation_failing',
+        capabilities=[
+            PrefectDurability[object](),
+            OnlineEvaluation(
+                id='online_evaluation',
+                evaluators=[
+                    OnlineEvaluator(evaluator=NeverRun(), sample_rate=_failing_sample_rate, run_on_errors=True)
+                ],
+            ),
+        ],
+    )
+
+    @flow
+    async def failed_run_flow() -> None:
+        await agent.run('go', usage_limits=UsageLimits(request_limit=0))
+
+    @flow
+    async def completed_run_flow() -> None:
+        await agent.run('go')
+
+    with (
+        pytest.warns(UserWarning, match='Online evaluation of the failed agent run was not dispatched'),
+        pytest.raises(UsageLimitExceeded),
+    ):
+        await failed_run_flow()
+    with pytest.raises(RuntimeError, match='sampling failed'):
+        await completed_run_flow()
