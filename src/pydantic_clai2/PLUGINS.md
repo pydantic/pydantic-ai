@@ -3578,17 +3578,24 @@ models get that provider's controls instead, such as Claude's thinking mode and
 effort, and the status row shows that provider's known context window for them
 before a turn measures one. Any other value raises `ValueError`.
 
-CLAI applies a bounded-wait policy to Anthropic SDK models returned under the
-`claude-code` prefix, including named profiles and fallback-chain members. A Messages
-API HTTP 429 whose effective `Retry-After` exceeds 60 seconds is surfaced without the
-SDK's long sleep. This covers model requests and token counts, not other requests on
-the shared client such as account usage. The SDK keeps its other retry behavior,
-authentication and client ownership; existing HTTP response hooks are preserved.
-The retry delay, response body and quota/reset headers remain available on the typed
-error, but its `x-should-retry` header is CLAI's local `false` veto, not the provider's
-original retry decision. A configured fallback chain can advance normally; without
-one, CLAI ends the turn visibly and keeps its history. Other plugin
-prefixes and preconstructed models that bypass model resolution are unchanged.
+When CLAI resolves a `claude-code` model, directly, through a profile or in a chain,
+and it is an `AnthropicModel` using `AsyncAnthropic`, CLAI adds a response hook to
+its HTTP client. Existing hooks remain in place. CLAI keeps the same client and
+authentication, and leaves the SDK's normal retry budget unchanged.
+
+The hook stays for that client's lifetime. It also applies to Messages API requests
+the plugin makes on its own with that client, outside the resolved model. When a
+`POST` to `/v1/messages` or `/v1/messages/count_tokens` gets a 429 asking for a wait of
+over 60 seconds, the hook sets `x-should-retry: false`. The SDK then raises at once
+instead of sleeping. The typed error keeps the status, body and other headers,
+including `Retry-After` and quota/reset headers. Its `x-should-retry` value is CLAI's
+local veto, not the provider's original retry decision. Other requests on the client,
+such as account usage, are unchanged.
+
+CLAI does not add this hook for other prefixes or preconstructed models that bypass
+resolution. Sharing an already-decorated HTTP client also shares its policy. A
+configured fallback chain can advance normally; without one, CLAI ends the turn
+visibly and keeps its history.
 
 The built-in `/effort [VALUE|reset]` shortcut uses the active model's
 `/model settings` effort control, including a plugin provider's `settings_from`
