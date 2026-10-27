@@ -820,13 +820,14 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
         projects = web_.get('/api/sessions').json()
         assert projects[0]['current'] is True
         [here] = projects[0]['worktrees']
-        assert [(entry['title'], entry['state'], entry['current']) for entry in here['sessions']] == [
-            ('first', 'completed', True)
-        ]
+        assert [
+            (entry['title'], entry['state'], entry['current'], entry['openable']) for entry in here['sessions']
+        ] == [('first', 'completed', True, True)]
         assert [(project['name'], [w['label'] for w in project['worktrees']]) for project in projects[1:]] == [
             ('Removed folders', ['else'])
         ]
-        assert web_.get('/api/sessions?q=Elsewhere').json()[0]['worktrees'][0]['sessions'][0]['id'] == elsewhere.id
+        [listed] = web_.get('/api/sessions?q=Elsewhere').json()[0]['worktrees'][0]['sessions']
+        assert (listed['id'], listed['openable']) == (elsewhere.id, False), 'its row says it only shows'
 
         transcript = web_.get(f'/api/sessions/{elsewhere.id}').json()
         assert (transcript['title'], transcript['openable'], transcript['items']) == ('Elsewhere', False, [])
@@ -904,6 +905,8 @@ def test_a_session_another_process_runs_shows_read_only_until_forked(make_web: '
     transcript = web_.get(f'/api/sessions/{busy.id}').json()
     assert (transcript['openable'], transcript['missing'], transcript['owner_pid']) == (False, False, os.getppid())
     assert [entry.id for entry in web_.portal.call(store.listing)] == [busy.id]
+    [row] = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions']
+    assert (row['id'], row['state'], row['openable']) == (busy.id, 'busy', False), 'a click fetches the transcript'
     # A fork the user made from the row menu is theirs; continuing the busy session does not take it over.
     mine = web_.portal.call(web_.shell.sessions.fork, busy.id).id
 
@@ -1127,6 +1130,10 @@ def test_new_session_completes_a_typed_path_with_its_repository_worktrees(make_w
     assert completed(at('.f')) == [('.free', [('.free', at('.free'))])]
     assert completed(at('fresh') + os.sep) == [('src', [('src', at('fresh', 'src'))])]
     assert completed('fresh') == completed(at('nowhere') + os.sep) == completed(at('a\0', 'b')) == completed('') == []
+    # At most `COMPLETIONS` directories, in name order.
+    for index in range(13):
+        (tmp_path / f'z{index:02}').mkdir()
+    assert [name for name, _ in completed(at('z'))] == [f'z{index:02}' for index in range(12)]
 
 
 def test_a_bare_repository_is_not_a_worktree(tmp_path: Path) -> None:
@@ -2033,6 +2040,13 @@ def test_sessions_continue_in_their_own_directories(
     repo_context = shell.loader._loaded['repo_context']  # pyright: ignore[reportPrivateUsage]
     assert web_.get('/api/state').json()['follows_workspace'] is True
     assert [web_.get(f'/api/sessions/{id}').json()['openable'] for id in (here, there, lost)] == [True, True, False]
+    rows = {
+        entry['id']: entry['openable']
+        for project in web_.get('/api/sessions').json()
+        for worktree in project['worktrees']
+        for entry in worktree['sessions']
+    }
+    assert [rows[id] for id in (here, there, lost)] == [True, True, False], 'each row says what its transcript says'
     assert web_.get(f'/api/sessions/{lost}').json()['missing'] is True
     with web_.client.websocket_connect(
         f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}

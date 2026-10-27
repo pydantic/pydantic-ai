@@ -2012,6 +2012,41 @@ class TestWalkerEntryResolution:
         assert 'alias.txt' in await ts.find_files('*.txt', workspace=ws)
         assert 'alias.txt:1:Hello, world!' in await ts.search_files('Hello', workspace=FilesystemOnlyWorkspace(ws))
 
+    @pytest.mark.parametrize('backend', ['walk', 'ripgrep', 'posix'])
+    async def test_search_applies_allowed_patterns_to_the_real_path(
+        self, tmp_path: Path, no_rg_path: str, backend: str
+    ) -> None:
+        """A link the allowed patterns cover, to a file they don't, is not searched, as a target or under one."""
+        (tmp_path / 'src').mkdir()
+        (tmp_path / 'secrets').mkdir()
+        (tmp_path / 'src' / 'ok.txt').write_text('needle\n')
+        (tmp_path / 'secrets' / 'key.txt').write_text('needle\n')
+        (tmp_path / 'src' / 'link').symlink_to(tmp_path / 'secrets' / 'key.txt')
+        (tmp_path / 'src' / 'alias').symlink_to(tmp_path / 'src' / 'ok.txt')
+        ts = FileSystemToolset(
+            root_dir=tmp_path,
+            allowed_patterns=['src/**'],
+            denied_patterns=[],
+            read_only_patterns=[],
+            max_read_lines=2000,
+            max_list_results=1000,
+            max_search_results=1000,
+            max_find_results=1000,
+        )
+        workspace = {
+            # A read-only workspace runs no commands, so the search walks the files itself.
+            'walk': ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path))),
+            'ripgrep': LocalWorkspaceBackend(tmp_path),
+            'posix': LocalWorkspaceBackend(tmp_path, env={'PATH': no_rg_path}),
+        }[backend]
+        with pytest.raises(ModelRetry, match='does not match any allowed pattern'):
+            await ts.read_file('src/link', workspace=workspace)
+        assert await ts.search_files('needle', path='src/link', workspace=workspace) == 'No matches found.'
+        assert await ts.search_files('needle', path='src/alias', workspace=workspace) == 'src/alias:1:needle'
+        in_directory = await ts.search_files('needle', path='src', workspace=workspace)
+        assert 'src/ok.txt:1:needle' in in_directory
+        assert 'src/link' not in in_directory
+
 
 class TestCreateDirectory:
     async def test_create_basic(

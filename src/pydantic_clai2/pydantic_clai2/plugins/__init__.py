@@ -24,6 +24,7 @@ from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import BinaryContent, ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai.providers import infer_provider_class
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SavedConversation
@@ -915,6 +916,8 @@ class PluginHost(Generic[DepsT]):
         live: LiveSessions | None = None,
         default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
         default_model_name: Callable[[], Awaitable[str | None]] | None = None,
+        resolve_model: Callable[[str], Awaitable[Model | str]] | None = None,
+        model_settings: Callable[[str], ModelSettings | None] | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
@@ -962,6 +965,8 @@ class PluginHost(Generic[DepsT]):
         self._workspace = workspace
         self._default_model = default_model
         self._default_model_name = default_model_name
+        self._resolve_model = resolve_model
+        self._model_settings = model_settings
         self.live = live
         """Every live session of this CLAI, for a plugin with `scope = 'process'`; `None` for any other.
 
@@ -971,6 +976,17 @@ class PluginHost(Generic[DepsT]):
         that one has closed, the oldest live session). Its other attributes, such as `conversation` and
         `status`, always name the session that loaded it.
         """
+
+    async def resolve_model(self, name: str) -> Model | str:
+        """Resolve a model ID, saved chain, or account through the session's providers.
+
+        A host outside CLAI without a resolver returns the ID unchanged for core to resolve.
+        """
+        return await self._resolve_model(name) if self._resolve_model is not None else name
+
+    def model_settings(self, name: str) -> ModelSettings | None:
+        """The session's defaults and saved settings for this model or chain, without the parent's run overrides."""
+        return self._model_settings(name) if self._model_settings is not None else None
 
     @property
     def workspace(self) -> Path:

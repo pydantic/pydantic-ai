@@ -681,12 +681,24 @@ class WebService:
         places = placements(entries, identities=self._identities)
         here = places[workspace]
         default = self.default().id
+        saved_in = {entry.workspace for entry in entries}
+        follows = self.catalog.follows_workspace
+        # Whether each opens may check its folder, off the event loop; what is live here is read before, on it.
+        openable = await to_thread.run_sync(
+            lambda: {folder: continuable(folder, here=workspace, follows=follows) for folder in saved_in}
+        )
         grouped: dict[str, dict[str, tuple[ProjectIdentity, list[SessionEntry]]]] = {}
         for entry in entries:
             identity = places[entry.workspace]
             _, sessions = grouped.setdefault(identity.key, {}).setdefault(identity.root, (identity, []))
             sessions.append(
-                session_entry(entry, live=live.get(entry.id), busy=entry.id in busy, current=entry.id == default)
+                session_entry(
+                    entry,
+                    live=live.get(entry.id),
+                    busy=entry.id in busy,
+                    current=entry.id == default,
+                    openable=openable[entry.workspace],
+                )
             )
         for folder in empty:
             if not (identity := places[folder]).missing:
@@ -719,15 +731,9 @@ class WebService:
 
     def _continuable(self, workspace: str) -> bool:
         """Whether a session saved in `workspace` can be opened: here, or there while CLAI follows sessions."""
-        if workspace == str(self.default().session.workspace):
-            return True
-        if not self.catalog.follows_workspace:
-            return False
-        try:
-            workspace_directory(workspace)
-        except ValueError:
-            return False
-        return True
+        return continuable(
+            workspace, here=str(self.default().session.workspace), follows=self.catalog.follows_workspace
+        )
 
     async def rename(self, conversation_id: str, title: str) -> None:
         await self.catalog.rename(conversation_id, title)
@@ -765,6 +771,19 @@ class WebService:
             self.hub.publish(SessionsChanged())
         if refused:
             raise ValueError(f'Archived {len(unique) - len(refused)} of {len(unique)} sessions. ' + ' '.join(refused))
+
+
+def continuable(workspace: str, *, here: str, follows: bool) -> bool:
+    """Whether a session saved in `workspace` can be opened from a session in `here`, which may stat its folder."""
+    if workspace == here:
+        return True
+    if not follows:
+        return False
+    try:
+        workspace_directory(workspace)
+    except ValueError:
+        return False
+    return True
 
 
 async def _view(panel: SidePanel) -> PanelView:
