@@ -49,6 +49,20 @@ In this case, unless the user appears to be uniquely well-suited to build a feat
 
 (It's also worth noting that overly lengthy AI-generated issues, comments, and proposals are less likely to be helpful and more likely to be ignored than a user's attempt at explaining what they want in their own (possibly translated) words: if they are not able to, they are unlikely to be the right person to be requesting and helping implement the change.)
 
+## Filing issues for maintainers
+
+When filing an issue for a maintainer, honor any route they already selected.
+Otherwise, ask whether to send the issue to Pydanty's general queue or start work immediately with their current agent.
+Combine this choice with issue-draft approval when both are needed. An unanswered choice does not authorize either route.
+
+- **General queue:** create the approved issue without claiming it for local maintainer work, then explicitly request Pydanty triage. Do not also start local implementation.
+- **Immediate work:** assign the issue to the maintainer owning the work and keep Pydanty off it. Assign the resulting PR to the same maintainer.
+
+Assign the human maintainer, not an agent account. Do not transfer ownership or reroute an existing issue found during deduplication.
+Keep external contributors in normal triage.
+Follow the [follow-up issue skill](.agents/skills/file-followup-issue/SKILL.md) for follow-up creation mechanics and scope gates.
+Follow the [PR skill](.agents/skills/pushing-commits-to-the-repo/SKILL.md#carry-maintainer-ownership-onto-the-pr) to carry immediate-work ownership onto the PR.
+
 # Philosophy
 
 Pydantic AI is meant to be a light-weight library that any Python developer who wants to work with LLMs and agents (whether simple or complex) should feel no hesitation to pull into their project. It's not meant to be everything to everyone, but it should enable people to build just about anything.

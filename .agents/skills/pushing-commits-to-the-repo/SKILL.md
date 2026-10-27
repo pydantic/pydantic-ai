@@ -57,6 +57,18 @@ A human approval does not substitute for douwebot.
 
 ## When you open the PR
 
+### Carry maintainer ownership onto the PR
+
+For [immediate maintainer work](../../../AGENTS.md#filing-issues-for-maintainers), assign the PR to the maintainer who owns the issue.
+Read the selected route, issue URL, and maintainer login from the session or the implementing branch's `issue-brief.md`.
+Persist that context in the brief during initialization so later PR creation retains the ownership choice.
+Honor an explicit selection without asking again. If required ownership context is missing, confirm the route and owner before assigning.
+Do not infer immediate work from issue assignment alone.
+
+Use `gh pr create --assignee <maintainer-login>` or `gh pr edit <number> --add-assignee <maintainer-login>` for an existing PR.
+Assign the human maintainer, not an agent account. Issue assignment does not automatically assign a PR.
+This carries out the maintainer's ownership choice; it does not change autonomous routing or external-contributor assignment requirements.
+
 ### Write the title and body
 
 Follow the title and template rules in the root `AGENTS.md`.
