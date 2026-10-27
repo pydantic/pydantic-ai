@@ -24,6 +24,7 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityInstructionSource,
+    ModelMessage,
     ModelResponse,
     ToolCallPart,
 )
@@ -421,6 +422,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         here. Override this alongside `on_event` when you can report something narrower.
         """
         return type(self).on_event is not AbstractCapability.on_event or marked_listens_to(type(self), event)
+
+    async def _process_seeded_history(
+        self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage]
+    ) -> list[ModelMessage]:
+        """Transform the history a realtime session is seeded with, once, before seeding it.
+
+        A session never calls `before_model_request`, so [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory]
+        runs its processor here instead. Containers and wrappers dispatch it as they dispatch `before_model_request`.
+        """
+        return messages
 
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
         """The hooks this capability itself implements that a realtime session never calls.

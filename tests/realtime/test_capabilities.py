@@ -12,7 +12,8 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import contextvars
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
+import warnings
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import Any
@@ -29,6 +30,7 @@ from pydantic_ai.capabilities import (
     NativeTool,
     PrefixTools,
     ProcessEventStream,
+    ProcessHistory,
     WebSearch,
     WrapperCapability,
 )
@@ -56,6 +58,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     SpeechPart,
     SpeechPartDelta,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -123,6 +126,7 @@ class _RecordingModel(RealtimeModel):
         self.tools: list[ToolDefinition] | None = None
         self.native_tools: list[AbstractNativeTool] | None = None
         self.model_settings: RealtimeModelSettings | None = None
+        self.messages: list[ModelMessage] | None = None
 
     @property
     def model_name(self) -> str:
@@ -152,6 +156,7 @@ class _RecordingModel(RealtimeModel):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[RealtimeConnection]:
         self.instructions = get_instructions(messages)
+        self.messages = list(messages)
         self.tools = model_request_parameters.function_tools
         self.native_tools = model_request_parameters.native_tools
         self.model_settings = model_settings
@@ -391,6 +396,194 @@ async def test_seeded_history_keeps_a_loaded_capabilitys_instructions() -> None:
     model = _RecordingModel()
     await _drain(Agent(instructions='Be helpful.'), model, message_history=history)
     assert model.instructions == 'Be helpful.'
+
+
+_REDACTED = ModelRequest(parts=[UserPromptPart('[redacted]')])
+
+
+def _redact_secret(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return [_REDACTED if 'secret' in str(message.parts) else message for message in messages]
+
+
+_SECRET_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart('My code is secret-42.')]),
+    ModelResponse(parts=[TextPart('Noted.')]),
+]
+
+
+async def test_process_history_transforms_seeded_history() -> None:
+    """`ProcessHistory` runs once over `message_history` before it seeds the session, after `before_run`.
+
+    A redaction a standard run applies before every model request must not be skipped when the same
+    history seeds a session, so the provider is seeded with, and the session records, the processed history.
+    """
+    calls: list[str] = []
+
+    class BeforeRun(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            calls.append('before_run')
+
+    def redact(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+        calls.append('process_history')
+        assert ctx.model is model
+        return _redact_secret(messages)
+
+    model = _RecordingModel()
+    agent = Agent(capabilities=[BeforeRun(), ProcessHistory(redact)], deps_type=type(None))
+    redacted = _redact_secret(_SECRET_HISTORY)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        async with agent.realtime(model, message_history=_SECRET_HISTORY).session() as session:
+            async for _ in session:
+                pass
+
+    assert calls == ['before_run', 'process_history']
+    assert model.messages is not None
+    assert model.messages[:2] == redacted
+    assert 'secret' not in str(model.messages)
+    assert session.all_messages()[:2] == redacted
+    assert session.new_messages() == session.all_messages()[2:]
+
+
+async def test_process_history_sees_reevaluated_dynamic_system_prompts() -> None:
+    """Seeded dynamic system prompts are re-evaluated before the processors run, as in a standard run.
+
+    So a processor that redacts what a dynamic system prompt injects also redacts its current content, and a
+    processor that empties the history doesn't make the session add the agent's fresh system prompts.
+    """
+    agent = Agent(deps_type=type(None))
+
+    @agent.system_prompt(dynamic=True)
+    def account() -> str:
+        return 'Account secret-99.'
+
+    @agent.system_prompt
+    def fresh() -> str:
+        return 'Fresh system prompt.'  # pragma: no cover
+
+    seeded: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Account secret-00.', dynamic_ref=account.__qualname__)]),
+        ModelResponse(parts=[TextPart('Noted.')]),
+    ]
+    seen: list[str] = []
+
+    def mask(messages: list[ModelMessage]) -> list[ModelMessage]:
+        seen.append(str(messages[0].parts))
+        return [
+            ModelRequest(parts=[replace(part, content='Account [masked].') for part in message.parts])
+            if isinstance(message, ModelRequest)
+            else message
+            for message in messages
+        ]
+
+    model = _RecordingModel()
+    await _drain(agent, model, capabilities=[ProcessHistory(mask)], message_history=seeded)
+    assert 'secret-99' in seen[0]
+    assert model.messages is not None
+    assert 'secret' not in str(model.messages)
+
+    model = _RecordingModel()
+    await _drain(agent, model, capabilities=[ProcessHistory(lambda messages: [])], message_history=seeded)
+    assert model.messages is not None
+    assert 'Fresh system prompt.' not in str(model.messages)
+
+
+async def test_process_history_skipped_without_seeded_history() -> None:
+    """With nothing to seed, there's nothing for the processors to transform."""
+
+    def fail(messages: list[ModelMessage]) -> list[ModelMessage]:
+        raise AssertionError('not called')  # pragma: no cover
+
+    await _drain(Agent(capabilities=[ProcessHistory(fail)]), _RecordingModel())
+
+
+async def test_process_history_seeding_follows_capability_tree() -> None:
+    """Processors run in application order through wrappers, and a deferred one only once it's loaded."""
+
+    def append(marker: str) -> Callable[[list[ModelMessage]], list[ModelMessage]]:
+        def processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+            return [*messages, markers[marker]]
+
+        return processor
+
+    markers = {marker: ModelRequest(parts=[UserPromptPart(marker)]) for marker in ('first', 'wrapped', 'deferred')}
+
+    model = _RecordingModel()
+    capabilities: list[AbstractCapability[None]] = [
+        ProcessHistory(append('first')),
+        WrapperCapability(wrapped=ProcessHistory(append('wrapped'))),
+        ProcessHistory(append('deferred'), id='deferred_processor', defer_loading=True),
+    ]
+    await _drain(Agent(capabilities=capabilities, deps_type=type(None)), model, message_history=_SECRET_HISTORY)
+    assert model.messages is not None
+    assert model.messages[:4] == [
+        *_SECRET_HISTORY,
+        markers['first'],
+        markers['wrapped'],
+    ]
+    assert markers['deferred'] not in model.messages
+
+
+async def test_loaded_capability_instructions_follow_processed_history() -> None:
+    """The instructions of a capability the seeded history loaded are read from the processed history.
+
+    A processor that drops the turn which loaded the capability drops its instructions too, as the model
+    in a standard run wouldn't see them either.
+    """
+
+    class Pirate(AbstractCapability[None]):
+        id = 'pirate'
+        defer_loading = True
+
+        def get_description(self) -> str:
+            return 'Talk like a pirate.'
+
+        def get_instructions(self) -> str | None:
+            return 'Speak like a pirate at all times.'
+
+    def load_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'pirate'})])
+        return ModelResponse(parts=[TextPart('Arr.')])
+
+    result = await Agent(FunctionModel(load_then_answer), deps_type=type(None), capabilities=[Pirate()]).run('Hello.')
+
+    def keep_first(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[:1]
+
+    model = _RecordingModel()
+    agent = Agent(instructions='Be helpful.', capabilities=[ProcessHistory(keep_first)])
+    await _drain(agent, model, capabilities=[Pirate()], message_history=result.all_messages())
+    assert model.instructions is not None
+    assert 'Speak like a pirate' not in model.instructions
+
+
+async def test_cancelled_session_new_messages_follow_processed_history() -> None:
+    """`RunCancelled.new_messages()` starts after the processed history the session was seeded with."""
+
+    class CancelAfterRun(AbstractCapability[None]):
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[str]) -> AgentRunResult[str]:
+            ctx.cancel()
+            await asyncio.sleep(0)
+            return result  # pragma: no cover
+
+    def drop_first(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[1:]
+
+    agent = Agent(capabilities=[ProcessHistory(drop_first), CancelAfterRun()], deps_type=type(None))
+    model = _RecordingModel(connection_events=[OutputTranscript(text='answer', is_final=True), ResponseDone()])
+    sessions: list[RealtimeSession] = []
+    with pytest.raises(RunCancelled) as exc_info:
+        async with agent.realtime(model, message_history=_SECRET_HISTORY).session() as session:
+            sessions.append(session)
+            async for _ in session:
+                pass
+
+    assert exc_info.value.all_messages()[:1] == _SECRET_HISTORY[1:]
+    new_messages = exc_info.value.new_messages()
+    assert new_messages == exc_info.value.all_messages()[1:]
+    assert new_messages == sessions[0].new_messages() != []
 
 
 async def test_capability_native_tool_survives_native_tools_override() -> None:

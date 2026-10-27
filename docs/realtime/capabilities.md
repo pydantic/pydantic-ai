@@ -34,7 +34,8 @@ naming the capability and its hooks, since what it does there won't happen in th
 example, [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] works through
 `before_model_request`. A [`Hooks`][pydantic_ai.capabilities.Hooks] capability warns only for the
 hooks it registers. Built-ins whose behavior the session provides another way, such as
-[`Instrumentation`][pydantic_ai.capabilities.Instrumentation], don't warn.
+[`Instrumentation`][pydantic_ai.capabilities.Instrumentation] and
+[`ProcessHistory`](#processing-seeded-history), don't warn.
 
 ## Run hooks
 
@@ -80,11 +81,19 @@ a realtime model. Pass [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeMo
     `before_run` and instruction functions. Use tool hooks or `on_event` when a capability needs the
     live session.
 
-## Seeded history is not processed
+## Processing seeded history
 
-History-processing capabilities do not transform `message_history` before it is
-[seeded into a session](history.md#seeding-a-session); preprocess the history before opening the
-session when filtering or redaction is required.
+[`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] capabilities transform `message_history`
+before it is [seeded into a session](history.md#seeding-a-session), so a filter or redaction that a
+standard run applies before each model request also applies to what the provider is seeded with. The
+processors run once, in the order a standard run applies them, after `before_run` and after the
+history's dynamic system prompts are re-evaluated, so they see and can redact the current content. The
+session records the processed history: it is the start of
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages], and the instructions of
+capabilities it [loaded](#deferred-capability-loading) are resolved from it. A
+session can't rewrite the provider's conversation before each response, so the messages it records
+afterwards aren't processed. Other `before_model_request` hooks still don't run, so a transformation
+that has to apply at seeding belongs in a `ProcessHistory` capability.
 
 ## Deferred capability loading
 

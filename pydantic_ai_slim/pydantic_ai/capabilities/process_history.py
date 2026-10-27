@@ -39,6 +39,17 @@ class ProcessHistory(AbstractCapability[AgentDepsT]):
 
         return request_context
 
+    async def _process_seeded_history(
+        self, ctx: RunContext[AgentDepsT], messages: list[_messages.ModelMessage]
+    ) -> list[_messages.ModelMessage]:
+        messages = await _run_history_processor(self.processor, ctx, messages)
+        ctx.messages[:] = messages
+        return messages
+
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # A realtime session runs the processor once over the history it's seeded with, in `_process_seeded_history`.
+        return self._realtime_uncalled_hooks_overriding(ProcessHistory)
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         return None  # Not spec-serializable (takes a callable)

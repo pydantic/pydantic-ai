@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, normalize_instructions
 from pydantic_ai._utils import aclose_all, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -293,6 +293,11 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_wrapper_model(self, model: Model) -> Model | None:
         return self.wrapped.get_wrapper_model(model)
+
+    async def _process_seeded_history(
+        self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage]
+    ) -> list[ModelMessage]:
+        return await self.wrapped._process_seeded_history(ctx, messages)
 
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
         # Every hook here delegates to `wrapped`, which the session asks for itself.
