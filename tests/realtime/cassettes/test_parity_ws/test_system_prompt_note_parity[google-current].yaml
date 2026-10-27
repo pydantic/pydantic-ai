@@ -1,0 +1,184 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: models/gemini-3.1-flash-live-preview
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: You are Sam, a phone support agent for Acme Telecom. Answer in one
+            short sentence.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.112
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  at: 0.118
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: <system>The caller has been verified as the account holder, Jamie.
+            Address them by name.</system>
+        role: user
+      turnComplete: false
+- kind: message
+  direction: sent
+  at: 0.119
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: Hi, can you tell me whose account this is?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 0.524
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 0.798
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 5f/l/+X/5P/m/+f/5f/i/+f/7P/v/+3/6//p/+L/6f/p
+      outputTranscription:
+        text: This is
+- kind: message
+  direction: received
+  at: 0.799
+  data:
+    sessionResumptionUpdate:
+      newHandle: 99115e5f-bb1f-43a4-8f65-e531998a4ce1
+      resumable: true
+- kind: message
+  direction: received
+  at: 0.811
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 1h0mJG8kHyJEH9cZdhrCGt8UKA8NBoP9r/ey88jxmfLe
+- kind: message
+  direction: received
+  at: 0.827
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 7B17IkAjKCQXJEkhgh8GHoge/SFHIo8hlCAfHEMYUxeF
+- kind: message
+  direction: received
+  at: 0.915
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: CRWrG2kRgAuzFa4ZVx2RDMYFvSIKGhn9kBEiI7v+BwPa
+      outputTranscription:
+        text: ' your account,'
+- kind: message
+  direction: received
+  at: 0.938
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: rSpyKDgmjCJWHCAVUQ2MBM/6E/Ho5ojbt9HqyTnBiLrB
+- kind: message
+  direction: received
+  at: 0.983
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 5gHaAOf93/21AJYBHgBOAHcCQAWxBQwEjQDu/aD+7v96
+- kind: message
+  direction: received
+  at: 1.062
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: oBDQD84O1g3/DIYMLAytCxQLaQrDCUEJ2ghPCH8HLwas
+      outputTranscription:
+        text: ' Jamie.'
+- kind: message
+  direction: received
+  at: 1.084
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: I/ld+ZH5rPm++b/5o/l6+Yf5lvnO+Q/6Nvo2+sD5WPn6
+- kind: message
+  direction: received
+  at: 1.126
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: zP0y/3sAqgFVAnADzQPUBKkF1AZbCJcInAm+CSMK8Qo+
+- kind: message
+  direction: received
+  at: 1.167
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 4//j/+n/6v/n/+n/6P/m/+r/6//u/+v/5//t/+v/5v/p
+- kind: message
+  direction: received
+  at: 1.222
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 2.486
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 195
+      responseTokenCount: 47
+      totalTokenCount: 242
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 172
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 47

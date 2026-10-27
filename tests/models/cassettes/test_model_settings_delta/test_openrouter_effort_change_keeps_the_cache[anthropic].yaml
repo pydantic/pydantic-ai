@@ -1,0 +1,1020 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "24217"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-opus-5.5
+        stream: false
+        messages:
+        - role: system
+          content:
+          - type: text
+            text: |-
+              You answer questions about the catalogue below in one short sentence.
+              Item 0000: shelf 0, bin 0, revision 0, status verified.
+              Item 0001: shelf 1, bin 1, revision 1, status verified.
+              Item 0002: shelf 2, bin 2, revision 2, status verified.
+              Item 0003: shelf 3, bin 3, revision 3, status verified.
+              Item 0004: shelf 4, bin 4, revision 4, status verified.
+              Item 0005: shelf 5, bin 5, revision 5, status verified.
+              Item 0006: shelf 6, bin 6, revision 6, status verified.
+              Item 0007: shelf 7, bin 7, revision 7, status verified.
+              Item 0008: shelf 8, bin 8, revision 8, status verified.
+              Item 0009: shelf 9, bin 9, revision 9, status verified.
+              Item 0010: shelf 10, bin 10, revision 10, status verified.
+              Item 0011: shelf 11, bin 0, revision 11, status verified.
+              Item 0012: shelf 12, bin 1, revision 12, status verified.
+              Item 0013: shelf 13, bin 2, revision 13, status verified.
+              Item 0014: shelf 14, bin 3, revision 14, status verified.
+              Item 0015: shelf 15, bin 4, revision 15, status verified.
+              Item 0016: shelf 16, bin 5, revision 16, status verified.
+              Item 0017: shelf 17, bin 6, revision 17, status verified.
+              Item 0018: shelf 18, bin 7, revision 18, status verified.
+              Item 0019: shelf 19, bin 8, revision 19, status verified.
+              Item 0020: shelf 20, bin 9, revision 20, status verified.
+              Item 0021: shelf 21, bin 10, revision 21, status verified.
+              Item 0022: shelf 22, bin 0, revision 22, status verified.
+              Item 0023: shelf 23, bin 1, revision 23, status verified.
+              Item 0024: shelf 24, bin 2, revision 24, status verified.
+              Item 0025: shelf 25, bin 3, revision 25, status verified.
+              Item 0026: shelf 26, bin 4, revision 26, status verified.
+              Item 0027: shelf 27, bin 5, revision 27, status verified.
+              Item 0028: shelf 28, bin 6, revision 28, status verified.
+              Item 0029: shelf 29, bin 7, revision 29, status verified.
+              Item 0030: shelf 30, bin 8, revision 30, status verified.
+              Item 0031: shelf 31, bin 9, revision 31, status verified.
+              Item 0032: shelf 32, bin 10, revision 32, status verified.
+              Item 0033: shelf 33, bin 0, revision 33, status verified.
+              Item 0034: shelf 34, bin 1, revision 34, status verified.
+              Item 0035: shelf 35, bin 2, revision 35, status verified.
+              Item 0036: shelf 36, bin 3, revision 36, status verified.
+              Item 0037: shelf 0, bin 4, revision 37, status verified.
+              Item 0038: shelf 1, bin 5, revision 38, status verified.
+              Item 0039: shelf 2, bin 6, revision 39, status verified.
+              Item 0040: shelf 3, bin 7, revision 40, status verified.
+              Item 0041: shelf 4, bin 8, revision 41, status verified.
+              Item 0042: shelf 5, bin 9, revision 42, status verified.
+              Item 0043: shelf 6, bin 10, revision 43, status verified.
+              Item 0044: shelf 7, bin 0, revision 44, status verified.
+              Item 0045: shelf 8, bin 1, revision 45, status verified.
+              Item 0046: shelf 9, bin 2, revision 46, status verified.
+              Item 0047: shelf 10, bin 3, revision 47, status verified.
+              Item 0048: shelf 11, bin 4, revision 48, status verified.
+              Item 0049: shelf 12, bin 5, revision 49, status verified.
+              Item 0050: shelf 13, bin 6, revision 50, status verified.
+              Item 0051: shelf 14, bin 7, revision 51, status verified.
+              Item 0052: shelf 15, bin 8, revision 52, status verified.
+              Item 0053: shelf 16, bin 9, revision 53, status verified.
+              Item 0054: shelf 17, bin 10, revision 54, status verified.
+              Item 0055: shelf 18, bin 0, revision 55, status verified.
+              Item 0056: shelf 19, bin 1, revision 56, status verified.
+              Item 0057: shelf 20, bin 2, revision 57, status verified.
+              Item 0058: shelf 21, bin 3, revision 58, status verified.
+              Item 0059: shelf 22, bin 4, revision 59, status verified.
+              Item 0060: shelf 23, bin 5, revision 60, status verified.
+              Item 0061: shelf 24, bin 6, revision 61, status verified.
+              Item 0062: shelf 25, bin 7, revision 62, status verified.
+              Item 0063: shelf 26, bin 8, revision 63, status verified.
+              Item 0064: shelf 27, bin 9, revision 64, status verified.
+              Item 0065: shelf 28, bin 10, revision 65, status verified.
+              Item 0066: shelf 29, bin 0, revision 66, status verified.
+              Item 0067: shelf 30, bin 1, revision 67, status verified.
+              Item 0068: shelf 31, bin 2, revision 68, status verified.
+              Item 0069: shelf 32, bin 3, revision 69, status verified.
+              Item 0070: shelf 33, bin 4, revision 70, status verified.
+              Item 0071: shelf 34, bin 5, revision 71, status verified.
+              Item 0072: shelf 35, bin 6, revision 72, status verified.
+              Item 0073: shelf 36, bin 7, revision 73, status verified.
+              Item 0074: shelf 0, bin 8, revision 74, status verified.
+              Item 0075: shelf 1, bin 9, revision 75, status verified.
+              Item 0076: shelf 2, bin 10, revision 76, status verified.
+              Item 0077: shelf 3, bin 0, revision 77, status verified.
+              Item 0078: shelf 4, bin 1, revision 78, status verified.
+              Item 0079: shelf 5, bin 2, revision 79, status verified.
+              Item 0080: shelf 6, bin 3, revision 80, status verified.
+              Item 0081: shelf 7, bin 4, revision 81, status verified.
+              Item 0082: shelf 8, bin 5, revision 82, status verified.
+              Item 0083: shelf 9, bin 6, revision 83, status verified.
+              Item 0084: shelf 10, bin 7, revision 84, status verified.
+              Item 0085: shelf 11, bin 8, revision 85, status verified.
+              Item 0086: shelf 12, bin 9, revision 86, status verified.
+              Item 0087: shelf 13, bin 10, revision 87, status verified.
+              Item 0088: shelf 14, bin 0, revision 88, status verified.
+              Item 0089: shelf 15, bin 1, revision 89, status verified.
+              Item 0090: shelf 16, bin 2, revision 90, status verified.
+              Item 0091: shelf 17, bin 3, revision 91, status verified.
+              Item 0092: shelf 18, bin 4, revision 92, status verified.
+              Item 0093: shelf 19, bin 5, revision 93, status verified.
+              Item 0094: shelf 20, bin 6, revision 94, status verified.
+              Item 0095: shelf 21, bin 7, revision 95, status verified.
+              Item 0096: shelf 22, bin 8, revision 96, status verified.
+              Item 0097: shelf 23, bin 9, revision 97, status verified.
+              Item 0098: shelf 24, bin 10, revision 98, status verified.
+              Item 0099: shelf 25, bin 0, revision 99, status verified.
+              Item 0100: shelf 26, bin 1, revision 100, status verified.
+              Item 0101: shelf 27, bin 2, revision 101, status verified.
+              Item 0102: shelf 28, bin 3, revision 102, status verified.
+              Item 0103: shelf 29, bin 4, revision 103, status verified.
+              Item 0104: shelf 30, bin 5, revision 104, status verified.
+              Item 0105: shelf 31, bin 6, revision 105, status verified.
+              Item 0106: shelf 32, bin 7, revision 106, status verified.
+              Item 0107: shelf 33, bin 8, revision 107, status verified.
+              Item 0108: shelf 34, bin 9, revision 108, status verified.
+              Item 0109: shelf 35, bin 10, revision 109, status verified.
+              Item 0110: shelf 36, bin 0, revision 110, status verified.
+              Item 0111: shelf 0, bin 1, revision 111, status verified.
+              Item 0112: shelf 1, bin 2, revision 112, status verified.
+              Item 0113: shelf 2, bin 3, revision 113, status verified.
+              Item 0114: shelf 3, bin 4, revision 114, status verified.
+              Item 0115: shelf 4, bin 5, revision 115, status verified.
+              Item 0116: shelf 5, bin 6, revision 116, status verified.
+              Item 0117: shelf 6, bin 7, revision 117, status verified.
+              Item 0118: shelf 7, bin 8, revision 118, status verified.
+              Item 0119: shelf 8, bin 9, revision 119, status verified.
+              Item 0120: shelf 9, bin 10, revision 120, status verified.
+              Item 0121: shelf 10, bin 0, revision 121, status verified.
+              Item 0122: shelf 11, bin 1, revision 122, status verified.
+              Item 0123: shelf 12, bin 2, revision 123, status verified.
+              Item 0124: shelf 13, bin 3, revision 124, status verified.
+              Item 0125: shelf 14, bin 4, revision 125, status verified.
+              Item 0126: shelf 15, bin 5, revision 126, status verified.
+              Item 0127: shelf 16, bin 6, revision 127, status verified.
+              Item 0128: shelf 17, bin 7, revision 128, status verified.
+              Item 0129: shelf 18, bin 8, revision 129, status verified.
+              Item 0130: shelf 19, bin 9, revision 130, status verified.
+              Item 0131: shelf 20, bin 10, revision 131, status verified.
+              Item 0132: shelf 21, bin 0, revision 132, status verified.
+              Item 0133: shelf 22, bin 1, revision 133, status verified.
+              Item 0134: shelf 23, bin 2, revision 134, status verified.
+              Item 0135: shelf 24, bin 3, revision 135, status verified.
+              Item 0136: shelf 25, bin 4, revision 136, status verified.
+              Item 0137: shelf 26, bin 5, revision 137, status verified.
+              Item 0138: shelf 27, bin 6, revision 138, status verified.
+              Item 0139: shelf 28, bin 7, revision 139, status verified.
+              Item 0140: shelf 29, bin 8, revision 140, status verified.
+              Item 0141: shelf 30, bin 9, revision 141, status verified.
+              Item 0142: shelf 31, bin 10, revision 142, status verified.
+              Item 0143: shelf 32, bin 0, revision 143, status verified.
+              Item 0144: shelf 33, bin 1, revision 144, status verified.
+              Item 0145: shelf 34, bin 2, revision 145, status verified.
+              Item 0146: shelf 35, bin 3, revision 146, status verified.
+              Item 0147: shelf 36, bin 4, revision 147, status verified.
+              Item 0148: shelf 0, bin 5, revision 148, status verified.
+              Item 0149: shelf 1, bin 6, revision 149, status verified.
+              Item 0150: shelf 2, bin 7, revision 150, status verified.
+              Item 0151: shelf 3, bin 8, revision 151, status verified.
+              Item 0152: shelf 4, bin 9, revision 152, status verified.
+              Item 0153: shelf 5, bin 10, revision 153, status verified.
+              Item 0154: shelf 6, bin 0, revision 154, status verified.
+              Item 0155: shelf 7, bin 1, revision 155, status verified.
+              Item 0156: shelf 8, bin 2, revision 156, status verified.
+              Item 0157: shelf 9, bin 3, revision 157, status verified.
+              Item 0158: shelf 10, bin 4, revision 158, status verified.
+              Item 0159: shelf 11, bin 5, revision 159, status verified.
+              Item 0160: shelf 12, bin 6, revision 160, status verified.
+              Item 0161: shelf 13, bin 7, revision 161, status verified.
+              Item 0162: shelf 14, bin 8, revision 162, status verified.
+              Item 0163: shelf 15, bin 9, revision 163, status verified.
+              Item 0164: shelf 16, bin 10, revision 164, status verified.
+              Item 0165: shelf 17, bin 0, revision 165, status verified.
+              Item 0166: shelf 18, bin 1, revision 166, status verified.
+              Item 0167: shelf 19, bin 2, revision 167, status verified.
+              Item 0168: shelf 20, bin 3, revision 168, status verified.
+              Item 0169: shelf 21, bin 4, revision 169, status verified.
+              Item 0170: shelf 22, bin 5, revision 170, status verified.
+              Item 0171: shelf 23, bin 6, revision 171, status verified.
+              Item 0172: shelf 24, bin 7, revision 172, status verified.
+              Item 0173: shelf 25, bin 8, revision 173, status verified.
+              Item 0174: shelf 26, bin 9, revision 174, status verified.
+              Item 0175: shelf 27, bin 10, revision 175, status verified.
+              Item 0176: shelf 28, bin 0, revision 176, status verified.
+              Item 0177: shelf 29, bin 1, revision 177, status verified.
+              Item 0178: shelf 30, bin 2, revision 178, status verified.
+              Item 0179: shelf 31, bin 3, revision 179, status verified.
+              Item 0180: shelf 32, bin 4, revision 180, status verified.
+              Item 0181: shelf 33, bin 5, revision 181, status verified.
+              Item 0182: shelf 34, bin 6, revision 182, status verified.
+              Item 0183: shelf 35, bin 7, revision 183, status verified.
+              Item 0184: shelf 36, bin 8, revision 184, status verified.
+              Item 0185: shelf 0, bin 9, revision 185, status verified.
+              Item 0186: shelf 1, bin 10, revision 186, status verified.
+              Item 0187: shelf 2, bin 0, revision 187, status verified.
+              Item 0188: shelf 3, bin 1, revision 188, status verified.
+              Item 0189: shelf 4, bin 2, revision 189, status verified.
+              Item 0190: shelf 5, bin 3, revision 190, status verified.
+              Item 0191: shelf 6, bin 4, revision 191, status verified.
+              Item 0192: shelf 7, bin 5, revision 192, status verified.
+              Item 0193: shelf 8, bin 6, revision 193, status verified.
+              Item 0194: shelf 9, bin 7, revision 194, status verified.
+              Item 0195: shelf 10, bin 8, revision 195, status verified.
+              Item 0196: shelf 11, bin 9, revision 196, status verified.
+              Item 0197: shelf 12, bin 10, revision 197, status verified.
+              Item 0198: shelf 13, bin 0, revision 198, status verified.
+              Item 0199: shelf 14, bin 1, revision 199, status verified.
+              Item 0200: shelf 15, bin 2, revision 200, status verified.
+              Item 0201: shelf 16, bin 3, revision 201, status verified.
+              Item 0202: shelf 17, bin 4, revision 202, status verified.
+              Item 0203: shelf 18, bin 5, revision 203, status verified.
+              Item 0204: shelf 19, bin 6, revision 204, status verified.
+              Item 0205: shelf 20, bin 7, revision 205, status verified.
+              Item 0206: shelf 21, bin 8, revision 206, status verified.
+              Item 0207: shelf 22, bin 9, revision 207, status verified.
+              Item 0208: shelf 23, bin 10, revision 208, status verified.
+              Item 0209: shelf 24, bin 0, revision 209, status verified.
+              Item 0210: shelf 25, bin 1, revision 210, status verified.
+              Item 0211: shelf 26, bin 2, revision 211, status verified.
+              Item 0212: shelf 27, bin 3, revision 212, status verified.
+              Item 0213: shelf 28, bin 4, revision 213, status verified.
+              Item 0214: shelf 29, bin 5, revision 214, status verified.
+              Item 0215: shelf 30, bin 6, revision 215, status verified.
+              Item 0216: shelf 31, bin 7, revision 216, status verified.
+              Item 0217: shelf 32, bin 8, revision 217, status verified.
+              Item 0218: shelf 33, bin 9, revision 218, status verified.
+              Item 0219: shelf 34, bin 10, revision 219, status verified.
+              Item 0220: shelf 35, bin 0, revision 220, status verified.
+              Item 0221: shelf 36, bin 1, revision 221, status verified.
+              Item 0222: shelf 0, bin 2, revision 222, status verified.
+              Item 0223: shelf 1, bin 3, revision 223, status verified.
+              Item 0224: shelf 2, bin 4, revision 224, status verified.
+              Item 0225: shelf 3, bin 5, revision 225, status verified.
+              Item 0226: shelf 4, bin 6, revision 226, status verified.
+              Item 0227: shelf 5, bin 7, revision 227, status verified.
+              Item 0228: shelf 6, bin 8, revision 228, status verified.
+              Item 0229: shelf 7, bin 9, revision 229, status verified.
+              Item 0230: shelf 8, bin 10, revision 230, status verified.
+              Item 0231: shelf 9, bin 0, revision 231, status verified.
+              Item 0232: shelf 10, bin 1, revision 232, status verified.
+              Item 0233: shelf 11, bin 2, revision 233, status verified.
+              Item 0234: shelf 12, bin 3, revision 234, status verified.
+              Item 0235: shelf 13, bin 4, revision 235, status verified.
+              Item 0236: shelf 14, bin 5, revision 236, status verified.
+              Item 0237: shelf 15, bin 6, revision 237, status verified.
+              Item 0238: shelf 16, bin 7, revision 238, status verified.
+              Item 0239: shelf 17, bin 8, revision 239, status verified.
+              Item 0240: shelf 18, bin 9, revision 240, status verified.
+              Item 0241: shelf 19, bin 10, revision 241, status verified.
+              Item 0242: shelf 20, bin 0, revision 242, status verified.
+              Item 0243: shelf 21, bin 1, revision 243, status verified.
+              Item 0244: shelf 22, bin 2, revision 244, status verified.
+              Item 0245: shelf 23, bin 3, revision 245, status verified.
+              Item 0246: shelf 24, bin 4, revision 246, status verified.
+              Item 0247: shelf 25, bin 5, revision 247, status verified.
+              Item 0248: shelf 26, bin 6, revision 248, status verified.
+              Item 0249: shelf 27, bin 7, revision 249, status verified.
+              Item 0250: shelf 28, bin 8, revision 250, status verified.
+              Item 0251: shelf 29, bin 9, revision 251, status verified.
+              Item 0252: shelf 30, bin 10, revision 252, status verified.
+              Item 0253: shelf 31, bin 0, revision 253, status verified.
+              Item 0254: shelf 32, bin 1, revision 254, status verified.
+              Item 0255: shelf 33, bin 2, revision 255, status verified.
+              Item 0256: shelf 34, bin 3, revision 256, status verified.
+              Item 0257: shelf 35, bin 4, revision 257, status verified.
+              Item 0258: shelf 36, bin 5, revision 258, status verified.
+              Item 0259: shelf 0, bin 6, revision 259, status verified.
+              Item 0260: shelf 1, bin 7, revision 260, status verified.
+              Item 0261: shelf 2, bin 8, revision 261, status verified.
+              Item 0262: shelf 3, bin 9, revision 262, status verified.
+              Item 0263: shelf 4, bin 10, revision 263, status verified.
+              Item 0264: shelf 5, bin 0, revision 264, status verified.
+              Item 0265: shelf 6, bin 1, revision 265, status verified.
+              Item 0266: shelf 7, bin 2, revision 266, status verified.
+              Item 0267: shelf 8, bin 3, revision 267, status verified.
+              Item 0268: shelf 9, bin 4, revision 268, status verified.
+              Item 0269: shelf 10, bin 5, revision 269, status verified.
+              Item 0270: shelf 11, bin 6, revision 270, status verified.
+              Item 0271: shelf 12, bin 7, revision 271, status verified.
+              Item 0272: shelf 13, bin 8, revision 272, status verified.
+              Item 0273: shelf 14, bin 9, revision 273, status verified.
+              Item 0274: shelf 15, bin 10, revision 274, status verified.
+              Item 0275: shelf 16, bin 0, revision 275, status verified.
+              Item 0276: shelf 17, bin 1, revision 276, status verified.
+              Item 0277: shelf 18, bin 2, revision 277, status verified.
+              Item 0278: shelf 19, bin 3, revision 278, status verified.
+              Item 0279: shelf 20, bin 4, revision 279, status verified.
+              Item 0280: shelf 21, bin 5, revision 280, status verified.
+              Item 0281: shelf 22, bin 6, revision 281, status verified.
+              Item 0282: shelf 23, bin 7, revision 282, status verified.
+              Item 0283: shelf 24, bin 8, revision 283, status verified.
+              Item 0284: shelf 25, bin 9, revision 284, status verified.
+              Item 0285: shelf 26, bin 10, revision 285, status verified.
+              Item 0286: shelf 27, bin 0, revision 286, status verified.
+              Item 0287: shelf 28, bin 1, revision 287, status verified.
+              Item 0288: shelf 29, bin 2, revision 288, status verified.
+              Item 0289: shelf 30, bin 3, revision 289, status verified.
+              Item 0290: shelf 31, bin 4, revision 290, status verified.
+              Item 0291: shelf 32, bin 5, revision 291, status verified.
+              Item 0292: shelf 33, bin 6, revision 292, status verified.
+              Item 0293: shelf 34, bin 7, revision 293, status verified.
+              Item 0294: shelf 35, bin 8, revision 294, status verified.
+              Item 0295: shelf 36, bin 9, revision 295, status verified.
+              Item 0296: shelf 0, bin 10, revision 296, status verified.
+              Item 0297: shelf 1, bin 0, revision 297, status verified.
+              Item 0298: shelf 2, bin 1, revision 298, status verified.
+              Item 0299: shelf 3, bin 2, revision 299, status verified.
+              Item 0300: shelf 4, bin 3, revision 300, status verified.
+              Item 0301: shelf 5, bin 4, revision 301, status verified.
+              Item 0302: shelf 6, bin 5, revision 302, status verified.
+              Item 0303: shelf 7, bin 6, revision 303, status verified.
+              Item 0304: shelf 8, bin 7, revision 304, status verified.
+              Item 0305: shelf 9, bin 8, revision 305, status verified.
+              Item 0306: shelf 10, bin 9, revision 306, status verified.
+              Item 0307: shelf 11, bin 10, revision 307, status verified.
+              Item 0308: shelf 12, bin 0, revision 308, status verified.
+              Item 0309: shelf 13, bin 1, revision 309, status verified.
+              Item 0310: shelf 14, bin 2, revision 310, status verified.
+              Item 0311: shelf 15, bin 3, revision 311, status verified.
+              Item 0312: shelf 16, bin 4, revision 312, status verified.
+              Item 0313: shelf 17, bin 5, revision 313, status verified.
+              Item 0314: shelf 18, bin 6, revision 314, status verified.
+              Item 0315: shelf 19, bin 7, revision 315, status verified.
+              Item 0316: shelf 20, bin 8, revision 316, status verified.
+              Item 0317: shelf 21, bin 9, revision 317, status verified.
+              Item 0318: shelf 22, bin 10, revision 318, status verified.
+              Item 0319: shelf 23, bin 0, revision 319, status verified.
+              Item 0320: shelf 24, bin 1, revision 320, status verified.
+              Item 0321: shelf 25, bin 2, revision 321, status verified.
+              Item 0322: shelf 26, bin 3, revision 322, status verified.
+              Item 0323: shelf 27, bin 4, revision 323, status verified.
+              Item 0324: shelf 28, bin 5, revision 324, status verified.
+              Item 0325: shelf 29, bin 6, revision 325, status verified.
+              Item 0326: shelf 30, bin 7, revision 326, status verified.
+              Item 0327: shelf 31, bin 8, revision 327, status verified.
+              Item 0328: shelf 32, bin 9, revision 328, status verified.
+              Item 0329: shelf 33, bin 10, revision 329, status verified.
+              Item 0330: shelf 34, bin 0, revision 330, status verified.
+              Item 0331: shelf 35, bin 1, revision 331, status verified.
+              Item 0332: shelf 36, bin 2, revision 332, status verified.
+              Item 0333: shelf 0, bin 3, revision 333, status verified.
+              Item 0334: shelf 1, bin 4, revision 334, status verified.
+              Item 0335: shelf 2, bin 5, revision 335, status verified.
+              Item 0336: shelf 3, bin 6, revision 336, status verified.
+              Item 0337: shelf 4, bin 7, revision 337, status verified.
+              Item 0338: shelf 5, bin 8, revision 338, status verified.
+              Item 0339: shelf 6, bin 9, revision 339, status verified.
+              Item 0340: shelf 7, bin 10, revision 340, status verified.
+              Item 0341: shelf 8, bin 0, revision 341, status verified.
+              Item 0342: shelf 9, bin 1, revision 342, status verified.
+              Item 0343: shelf 10, bin 2, revision 343, status verified.
+              Item 0344: shelf 11, bin 3, revision 344, status verified.
+              Item 0345: shelf 12, bin 4, revision 345, status verified.
+              Item 0346: shelf 13, bin 5, revision 346, status verified.
+              Item 0347: shelf 14, bin 6, revision 347, status verified.
+              Item 0348: shelf 15, bin 7, revision 348, status verified.
+              Item 0349: shelf 16, bin 8, revision 349, status verified.
+              Item 0350: shelf 17, bin 9, revision 350, status verified.
+              Item 0351: shelf 18, bin 10, revision 351, status verified.
+              Item 0352: shelf 19, bin 0, revision 352, status verified.
+              Item 0353: shelf 20, bin 1, revision 353, status verified.
+              Item 0354: shelf 21, bin 2, revision 354, status verified.
+              Item 0355: shelf 22, bin 3, revision 355, status verified.
+              Item 0356: shelf 23, bin 4, revision 356, status verified.
+              Item 0357: shelf 24, bin 5, revision 357, status verified.
+              Item 0358: shelf 25, bin 6, revision 358, status verified.
+              Item 0359: shelf 26, bin 7, revision 359, status verified.
+              Item 0360: shelf 27, bin 8, revision 360, status verified.
+              Item 0361: shelf 28, bin 9, revision 361, status verified.
+              Item 0362: shelf 29, bin 10, revision 362, status verified.
+              Item 0363: shelf 30, bin 0, revision 363, status verified.
+              Item 0364: shelf 31, bin 1, revision 364, status verified.
+              Item 0365: shelf 32, bin 2, revision 365, status verified.
+              Item 0366: shelf 33, bin 3, revision 366, status verified.
+              Item 0367: shelf 34, bin 4, revision 367, status verified.
+              Item 0368: shelf 35, bin 5, revision 368, status verified.
+              Item 0369: shelf 36, bin 6, revision 369, status verified.
+              Item 0370: shelf 0, bin 7, revision 370, status verified.
+              Item 0371: shelf 1, bin 8, revision 371, status verified.
+              Item 0372: shelf 2, bin 9, revision 372, status verified.
+              Item 0373: shelf 3, bin 10, revision 373, status verified.
+              Item 0374: shelf 4, bin 0, revision 374, status verified.
+              Item 0375: shelf 5, bin 1, revision 375, status verified.
+              Item 0376: shelf 6, bin 2, revision 376, status verified.
+              Item 0377: shelf 7, bin 3, revision 377, status verified.
+              Item 0378: shelf 8, bin 4, revision 378, status verified.
+              Item 0379: shelf 9, bin 5, revision 379, status verified.
+              Item 0380: shelf 10, bin 6, revision 380, status verified.
+              Item 0381: shelf 11, bin 7, revision 381, status verified.
+              Item 0382: shelf 12, bin 8, revision 382, status verified.
+              Item 0383: shelf 13, bin 9, revision 383, status verified.
+              Item 0384: shelf 14, bin 10, revision 384, status verified.
+              Item 0385: shelf 15, bin 0, revision 385, status verified.
+              Item 0386: shelf 16, bin 1, revision 386, status verified.
+              Item 0387: shelf 17, bin 2, revision 387, status verified.
+              Item 0388: shelf 18, bin 3, revision 388, status verified.
+              Item 0389: shelf 19, bin 4, revision 389, status verified.
+              Item 0390: shelf 20, bin 5, revision 390, status verified.
+              Item 0391: shelf 21, bin 6, revision 391, status verified.
+              Item 0392: shelf 22, bin 7, revision 392, status verified.
+              Item 0393: shelf 23, bin 8, revision 393, status verified.
+              Item 0394: shelf 24, bin 9, revision 394, status verified.
+              Item 0395: shelf 25, bin 10, revision 395, status verified.
+              Item 0396: shelf 26, bin 0, revision 396, status verified.
+              Item 0397: shelf 27, bin 1, revision 397, status verified.
+              Item 0398: shelf 28, bin 2, revision 398, status verified.
+              Item 0399: shelf 29, bin 3, revision 399, status verified.
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+        - role: user
+          content:
+          - type: text
+            text: Where is item 12?
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+        reasoning:
+          effort: low
+          enabled: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793047739-WuNNsuA7bDjjqVak4ZXR
+        object: chat.completion
+        created: 1793047739
+        model: anthropic/claude-opus-5.5
+        provider: Claude Platform on AWS
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: Item 0012 is on shelf 12, bin 1 (revision 12, status verified).
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 10835
+          completion_tokens: 31
+          total_tokens: 10866
+          cost: 0.0028022
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 10831
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0028022
+            upstream_inference_prompt_cost: 0.0021822
+            upstream_inference_completions_cost: 0.00062
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-26T20:49:01.523582+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "24441"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-opus-5.5
+        stream: false
+        messages:
+        - role: system
+          content:
+          - type: text
+            text: |-
+              You answer questions about the catalogue below in one short sentence.
+              Item 0000: shelf 0, bin 0, revision 0, status verified.
+              Item 0001: shelf 1, bin 1, revision 1, status verified.
+              Item 0002: shelf 2, bin 2, revision 2, status verified.
+              Item 0003: shelf 3, bin 3, revision 3, status verified.
+              Item 0004: shelf 4, bin 4, revision 4, status verified.
+              Item 0005: shelf 5, bin 5, revision 5, status verified.
+              Item 0006: shelf 6, bin 6, revision 6, status verified.
+              Item 0007: shelf 7, bin 7, revision 7, status verified.
+              Item 0008: shelf 8, bin 8, revision 8, status verified.
+              Item 0009: shelf 9, bin 9, revision 9, status verified.
+              Item 0010: shelf 10, bin 10, revision 10, status verified.
+              Item 0011: shelf 11, bin 0, revision 11, status verified.
+              Item 0012: shelf 12, bin 1, revision 12, status verified.
+              Item 0013: shelf 13, bin 2, revision 13, status verified.
+              Item 0014: shelf 14, bin 3, revision 14, status verified.
+              Item 0015: shelf 15, bin 4, revision 15, status verified.
+              Item 0016: shelf 16, bin 5, revision 16, status verified.
+              Item 0017: shelf 17, bin 6, revision 17, status verified.
+              Item 0018: shelf 18, bin 7, revision 18, status verified.
+              Item 0019: shelf 19, bin 8, revision 19, status verified.
+              Item 0020: shelf 20, bin 9, revision 20, status verified.
+              Item 0021: shelf 21, bin 10, revision 21, status verified.
+              Item 0022: shelf 22, bin 0, revision 22, status verified.
+              Item 0023: shelf 23, bin 1, revision 23, status verified.
+              Item 0024: shelf 24, bin 2, revision 24, status verified.
+              Item 0025: shelf 25, bin 3, revision 25, status verified.
+              Item 0026: shelf 26, bin 4, revision 26, status verified.
+              Item 0027: shelf 27, bin 5, revision 27, status verified.
+              Item 0028: shelf 28, bin 6, revision 28, status verified.
+              Item 0029: shelf 29, bin 7, revision 29, status verified.
+              Item 0030: shelf 30, bin 8, revision 30, status verified.
+              Item 0031: shelf 31, bin 9, revision 31, status verified.
+              Item 0032: shelf 32, bin 10, revision 32, status verified.
+              Item 0033: shelf 33, bin 0, revision 33, status verified.
+              Item 0034: shelf 34, bin 1, revision 34, status verified.
+              Item 0035: shelf 35, bin 2, revision 35, status verified.
+              Item 0036: shelf 36, bin 3, revision 36, status verified.
+              Item 0037: shelf 0, bin 4, revision 37, status verified.
+              Item 0038: shelf 1, bin 5, revision 38, status verified.
+              Item 0039: shelf 2, bin 6, revision 39, status verified.
+              Item 0040: shelf 3, bin 7, revision 40, status verified.
+              Item 0041: shelf 4, bin 8, revision 41, status verified.
+              Item 0042: shelf 5, bin 9, revision 42, status verified.
+              Item 0043: shelf 6, bin 10, revision 43, status verified.
+              Item 0044: shelf 7, bin 0, revision 44, status verified.
+              Item 0045: shelf 8, bin 1, revision 45, status verified.
+              Item 0046: shelf 9, bin 2, revision 46, status verified.
+              Item 0047: shelf 10, bin 3, revision 47, status verified.
+              Item 0048: shelf 11, bin 4, revision 48, status verified.
+              Item 0049: shelf 12, bin 5, revision 49, status verified.
+              Item 0050: shelf 13, bin 6, revision 50, status verified.
+              Item 0051: shelf 14, bin 7, revision 51, status verified.
+              Item 0052: shelf 15, bin 8, revision 52, status verified.
+              Item 0053: shelf 16, bin 9, revision 53, status verified.
+              Item 0054: shelf 17, bin 10, revision 54, status verified.
+              Item 0055: shelf 18, bin 0, revision 55, status verified.
+              Item 0056: shelf 19, bin 1, revision 56, status verified.
+              Item 0057: shelf 20, bin 2, revision 57, status verified.
+              Item 0058: shelf 21, bin 3, revision 58, status verified.
+              Item 0059: shelf 22, bin 4, revision 59, status verified.
+              Item 0060: shelf 23, bin 5, revision 60, status verified.
+              Item 0061: shelf 24, bin 6, revision 61, status verified.
+              Item 0062: shelf 25, bin 7, revision 62, status verified.
+              Item 0063: shelf 26, bin 8, revision 63, status verified.
+              Item 0064: shelf 27, bin 9, revision 64, status verified.
+              Item 0065: shelf 28, bin 10, revision 65, status verified.
+              Item 0066: shelf 29, bin 0, revision 66, status verified.
+              Item 0067: shelf 30, bin 1, revision 67, status verified.
+              Item 0068: shelf 31, bin 2, revision 68, status verified.
+              Item 0069: shelf 32, bin 3, revision 69, status verified.
+              Item 0070: shelf 33, bin 4, revision 70, status verified.
+              Item 0071: shelf 34, bin 5, revision 71, status verified.
+              Item 0072: shelf 35, bin 6, revision 72, status verified.
+              Item 0073: shelf 36, bin 7, revision 73, status verified.
+              Item 0074: shelf 0, bin 8, revision 74, status verified.
+              Item 0075: shelf 1, bin 9, revision 75, status verified.
+              Item 0076: shelf 2, bin 10, revision 76, status verified.
+              Item 0077: shelf 3, bin 0, revision 77, status verified.
+              Item 0078: shelf 4, bin 1, revision 78, status verified.
+              Item 0079: shelf 5, bin 2, revision 79, status verified.
+              Item 0080: shelf 6, bin 3, revision 80, status verified.
+              Item 0081: shelf 7, bin 4, revision 81, status verified.
+              Item 0082: shelf 8, bin 5, revision 82, status verified.
+              Item 0083: shelf 9, bin 6, revision 83, status verified.
+              Item 0084: shelf 10, bin 7, revision 84, status verified.
+              Item 0085: shelf 11, bin 8, revision 85, status verified.
+              Item 0086: shelf 12, bin 9, revision 86, status verified.
+              Item 0087: shelf 13, bin 10, revision 87, status verified.
+              Item 0088: shelf 14, bin 0, revision 88, status verified.
+              Item 0089: shelf 15, bin 1, revision 89, status verified.
+              Item 0090: shelf 16, bin 2, revision 90, status verified.
+              Item 0091: shelf 17, bin 3, revision 91, status verified.
+              Item 0092: shelf 18, bin 4, revision 92, status verified.
+              Item 0093: shelf 19, bin 5, revision 93, status verified.
+              Item 0094: shelf 20, bin 6, revision 94, status verified.
+              Item 0095: shelf 21, bin 7, revision 95, status verified.
+              Item 0096: shelf 22, bin 8, revision 96, status verified.
+              Item 0097: shelf 23, bin 9, revision 97, status verified.
+              Item 0098: shelf 24, bin 10, revision 98, status verified.
+              Item 0099: shelf 25, bin 0, revision 99, status verified.
+              Item 0100: shelf 26, bin 1, revision 100, status verified.
+              Item 0101: shelf 27, bin 2, revision 101, status verified.
+              Item 0102: shelf 28, bin 3, revision 102, status verified.
+              Item 0103: shelf 29, bin 4, revision 103, status verified.
+              Item 0104: shelf 30, bin 5, revision 104, status verified.
+              Item 0105: shelf 31, bin 6, revision 105, status verified.
+              Item 0106: shelf 32, bin 7, revision 106, status verified.
+              Item 0107: shelf 33, bin 8, revision 107, status verified.
+              Item 0108: shelf 34, bin 9, revision 108, status verified.
+              Item 0109: shelf 35, bin 10, revision 109, status verified.
+              Item 0110: shelf 36, bin 0, revision 110, status verified.
+              Item 0111: shelf 0, bin 1, revision 111, status verified.
+              Item 0112: shelf 1, bin 2, revision 112, status verified.
+              Item 0113: shelf 2, bin 3, revision 113, status verified.
+              Item 0114: shelf 3, bin 4, revision 114, status verified.
+              Item 0115: shelf 4, bin 5, revision 115, status verified.
+              Item 0116: shelf 5, bin 6, revision 116, status verified.
+              Item 0117: shelf 6, bin 7, revision 117, status verified.
+              Item 0118: shelf 7, bin 8, revision 118, status verified.
+              Item 0119: shelf 8, bin 9, revision 119, status verified.
+              Item 0120: shelf 9, bin 10, revision 120, status verified.
+              Item 0121: shelf 10, bin 0, revision 121, status verified.
+              Item 0122: shelf 11, bin 1, revision 122, status verified.
+              Item 0123: shelf 12, bin 2, revision 123, status verified.
+              Item 0124: shelf 13, bin 3, revision 124, status verified.
+              Item 0125: shelf 14, bin 4, revision 125, status verified.
+              Item 0126: shelf 15, bin 5, revision 126, status verified.
+              Item 0127: shelf 16, bin 6, revision 127, status verified.
+              Item 0128: shelf 17, bin 7, revision 128, status verified.
+              Item 0129: shelf 18, bin 8, revision 129, status verified.
+              Item 0130: shelf 19, bin 9, revision 130, status verified.
+              Item 0131: shelf 20, bin 10, revision 131, status verified.
+              Item 0132: shelf 21, bin 0, revision 132, status verified.
+              Item 0133: shelf 22, bin 1, revision 133, status verified.
+              Item 0134: shelf 23, bin 2, revision 134, status verified.
+              Item 0135: shelf 24, bin 3, revision 135, status verified.
+              Item 0136: shelf 25, bin 4, revision 136, status verified.
+              Item 0137: shelf 26, bin 5, revision 137, status verified.
+              Item 0138: shelf 27, bin 6, revision 138, status verified.
+              Item 0139: shelf 28, bin 7, revision 139, status verified.
+              Item 0140: shelf 29, bin 8, revision 140, status verified.
+              Item 0141: shelf 30, bin 9, revision 141, status verified.
+              Item 0142: shelf 31, bin 10, revision 142, status verified.
+              Item 0143: shelf 32, bin 0, revision 143, status verified.
+              Item 0144: shelf 33, bin 1, revision 144, status verified.
+              Item 0145: shelf 34, bin 2, revision 145, status verified.
+              Item 0146: shelf 35, bin 3, revision 146, status verified.
+              Item 0147: shelf 36, bin 4, revision 147, status verified.
+              Item 0148: shelf 0, bin 5, revision 148, status verified.
+              Item 0149: shelf 1, bin 6, revision 149, status verified.
+              Item 0150: shelf 2, bin 7, revision 150, status verified.
+              Item 0151: shelf 3, bin 8, revision 151, status verified.
+              Item 0152: shelf 4, bin 9, revision 152, status verified.
+              Item 0153: shelf 5, bin 10, revision 153, status verified.
+              Item 0154: shelf 6, bin 0, revision 154, status verified.
+              Item 0155: shelf 7, bin 1, revision 155, status verified.
+              Item 0156: shelf 8, bin 2, revision 156, status verified.
+              Item 0157: shelf 9, bin 3, revision 157, status verified.
+              Item 0158: shelf 10, bin 4, revision 158, status verified.
+              Item 0159: shelf 11, bin 5, revision 159, status verified.
+              Item 0160: shelf 12, bin 6, revision 160, status verified.
+              Item 0161: shelf 13, bin 7, revision 161, status verified.
+              Item 0162: shelf 14, bin 8, revision 162, status verified.
+              Item 0163: shelf 15, bin 9, revision 163, status verified.
+              Item 0164: shelf 16, bin 10, revision 164, status verified.
+              Item 0165: shelf 17, bin 0, revision 165, status verified.
+              Item 0166: shelf 18, bin 1, revision 166, status verified.
+              Item 0167: shelf 19, bin 2, revision 167, status verified.
+              Item 0168: shelf 20, bin 3, revision 168, status verified.
+              Item 0169: shelf 21, bin 4, revision 169, status verified.
+              Item 0170: shelf 22, bin 5, revision 170, status verified.
+              Item 0171: shelf 23, bin 6, revision 171, status verified.
+              Item 0172: shelf 24, bin 7, revision 172, status verified.
+              Item 0173: shelf 25, bin 8, revision 173, status verified.
+              Item 0174: shelf 26, bin 9, revision 174, status verified.
+              Item 0175: shelf 27, bin 10, revision 175, status verified.
+              Item 0176: shelf 28, bin 0, revision 176, status verified.
+              Item 0177: shelf 29, bin 1, revision 177, status verified.
+              Item 0178: shelf 30, bin 2, revision 178, status verified.
+              Item 0179: shelf 31, bin 3, revision 179, status verified.
+              Item 0180: shelf 32, bin 4, revision 180, status verified.
+              Item 0181: shelf 33, bin 5, revision 181, status verified.
+              Item 0182: shelf 34, bin 6, revision 182, status verified.
+              Item 0183: shelf 35, bin 7, revision 183, status verified.
+              Item 0184: shelf 36, bin 8, revision 184, status verified.
+              Item 0185: shelf 0, bin 9, revision 185, status verified.
+              Item 0186: shelf 1, bin 10, revision 186, status verified.
+              Item 0187: shelf 2, bin 0, revision 187, status verified.
+              Item 0188: shelf 3, bin 1, revision 188, status verified.
+              Item 0189: shelf 4, bin 2, revision 189, status verified.
+              Item 0190: shelf 5, bin 3, revision 190, status verified.
+              Item 0191: shelf 6, bin 4, revision 191, status verified.
+              Item 0192: shelf 7, bin 5, revision 192, status verified.
+              Item 0193: shelf 8, bin 6, revision 193, status verified.
+              Item 0194: shelf 9, bin 7, revision 194, status verified.
+              Item 0195: shelf 10, bin 8, revision 195, status verified.
+              Item 0196: shelf 11, bin 9, revision 196, status verified.
+              Item 0197: shelf 12, bin 10, revision 197, status verified.
+              Item 0198: shelf 13, bin 0, revision 198, status verified.
+              Item 0199: shelf 14, bin 1, revision 199, status verified.
+              Item 0200: shelf 15, bin 2, revision 200, status verified.
+              Item 0201: shelf 16, bin 3, revision 201, status verified.
+              Item 0202: shelf 17, bin 4, revision 202, status verified.
+              Item 0203: shelf 18, bin 5, revision 203, status verified.
+              Item 0204: shelf 19, bin 6, revision 204, status verified.
+              Item 0205: shelf 20, bin 7, revision 205, status verified.
+              Item 0206: shelf 21, bin 8, revision 206, status verified.
+              Item 0207: shelf 22, bin 9, revision 207, status verified.
+              Item 0208: shelf 23, bin 10, revision 208, status verified.
+              Item 0209: shelf 24, bin 0, revision 209, status verified.
+              Item 0210: shelf 25, bin 1, revision 210, status verified.
+              Item 0211: shelf 26, bin 2, revision 211, status verified.
+              Item 0212: shelf 27, bin 3, revision 212, status verified.
+              Item 0213: shelf 28, bin 4, revision 213, status verified.
+              Item 0214: shelf 29, bin 5, revision 214, status verified.
+              Item 0215: shelf 30, bin 6, revision 215, status verified.
+              Item 0216: shelf 31, bin 7, revision 216, status verified.
+              Item 0217: shelf 32, bin 8, revision 217, status verified.
+              Item 0218: shelf 33, bin 9, revision 218, status verified.
+              Item 0219: shelf 34, bin 10, revision 219, status verified.
+              Item 0220: shelf 35, bin 0, revision 220, status verified.
+              Item 0221: shelf 36, bin 1, revision 221, status verified.
+              Item 0222: shelf 0, bin 2, revision 222, status verified.
+              Item 0223: shelf 1, bin 3, revision 223, status verified.
+              Item 0224: shelf 2, bin 4, revision 224, status verified.
+              Item 0225: shelf 3, bin 5, revision 225, status verified.
+              Item 0226: shelf 4, bin 6, revision 226, status verified.
+              Item 0227: shelf 5, bin 7, revision 227, status verified.
+              Item 0228: shelf 6, bin 8, revision 228, status verified.
+              Item 0229: shelf 7, bin 9, revision 229, status verified.
+              Item 0230: shelf 8, bin 10, revision 230, status verified.
+              Item 0231: shelf 9, bin 0, revision 231, status verified.
+              Item 0232: shelf 10, bin 1, revision 232, status verified.
+              Item 0233: shelf 11, bin 2, revision 233, status verified.
+              Item 0234: shelf 12, bin 3, revision 234, status verified.
+              Item 0235: shelf 13, bin 4, revision 235, status verified.
+              Item 0236: shelf 14, bin 5, revision 236, status verified.
+              Item 0237: shelf 15, bin 6, revision 237, status verified.
+              Item 0238: shelf 16, bin 7, revision 238, status verified.
+              Item 0239: shelf 17, bin 8, revision 239, status verified.
+              Item 0240: shelf 18, bin 9, revision 240, status verified.
+              Item 0241: shelf 19, bin 10, revision 241, status verified.
+              Item 0242: shelf 20, bin 0, revision 242, status verified.
+              Item 0243: shelf 21, bin 1, revision 243, status verified.
+              Item 0244: shelf 22, bin 2, revision 244, status verified.
+              Item 0245: shelf 23, bin 3, revision 245, status verified.
+              Item 0246: shelf 24, bin 4, revision 246, status verified.
+              Item 0247: shelf 25, bin 5, revision 247, status verified.
+              Item 0248: shelf 26, bin 6, revision 248, status verified.
+              Item 0249: shelf 27, bin 7, revision 249, status verified.
+              Item 0250: shelf 28, bin 8, revision 250, status verified.
+              Item 0251: shelf 29, bin 9, revision 251, status verified.
+              Item 0252: shelf 30, bin 10, revision 252, status verified.
+              Item 0253: shelf 31, bin 0, revision 253, status verified.
+              Item 0254: shelf 32, bin 1, revision 254, status verified.
+              Item 0255: shelf 33, bin 2, revision 255, status verified.
+              Item 0256: shelf 34, bin 3, revision 256, status verified.
+              Item 0257: shelf 35, bin 4, revision 257, status verified.
+              Item 0258: shelf 36, bin 5, revision 258, status verified.
+              Item 0259: shelf 0, bin 6, revision 259, status verified.
+              Item 0260: shelf 1, bin 7, revision 260, status verified.
+              Item 0261: shelf 2, bin 8, revision 261, status verified.
+              Item 0262: shelf 3, bin 9, revision 262, status verified.
+              Item 0263: shelf 4, bin 10, revision 263, status verified.
+              Item 0264: shelf 5, bin 0, revision 264, status verified.
+              Item 0265: shelf 6, bin 1, revision 265, status verified.
+              Item 0266: shelf 7, bin 2, revision 266, status verified.
+              Item 0267: shelf 8, bin 3, revision 267, status verified.
+              Item 0268: shelf 9, bin 4, revision 268, status verified.
+              Item 0269: shelf 10, bin 5, revision 269, status verified.
+              Item 0270: shelf 11, bin 6, revision 270, status verified.
+              Item 0271: shelf 12, bin 7, revision 271, status verified.
+              Item 0272: shelf 13, bin 8, revision 272, status verified.
+              Item 0273: shelf 14, bin 9, revision 273, status verified.
+              Item 0274: shelf 15, bin 10, revision 274, status verified.
+              Item 0275: shelf 16, bin 0, revision 275, status verified.
+              Item 0276: shelf 17, bin 1, revision 276, status verified.
+              Item 0277: shelf 18, bin 2, revision 277, status verified.
+              Item 0278: shelf 19, bin 3, revision 278, status verified.
+              Item 0279: shelf 20, bin 4, revision 279, status verified.
+              Item 0280: shelf 21, bin 5, revision 280, status verified.
+              Item 0281: shelf 22, bin 6, revision 281, status verified.
+              Item 0282: shelf 23, bin 7, revision 282, status verified.
+              Item 0283: shelf 24, bin 8, revision 283, status verified.
+              Item 0284: shelf 25, bin 9, revision 284, status verified.
+              Item 0285: shelf 26, bin 10, revision 285, status verified.
+              Item 0286: shelf 27, bin 0, revision 286, status verified.
+              Item 0287: shelf 28, bin 1, revision 287, status verified.
+              Item 0288: shelf 29, bin 2, revision 288, status verified.
+              Item 0289: shelf 30, bin 3, revision 289, status verified.
+              Item 0290: shelf 31, bin 4, revision 290, status verified.
+              Item 0291: shelf 32, bin 5, revision 291, status verified.
+              Item 0292: shelf 33, bin 6, revision 292, status verified.
+              Item 0293: shelf 34, bin 7, revision 293, status verified.
+              Item 0294: shelf 35, bin 8, revision 294, status verified.
+              Item 0295: shelf 36, bin 9, revision 295, status verified.
+              Item 0296: shelf 0, bin 10, revision 296, status verified.
+              Item 0297: shelf 1, bin 0, revision 297, status verified.
+              Item 0298: shelf 2, bin 1, revision 298, status verified.
+              Item 0299: shelf 3, bin 2, revision 299, status verified.
+              Item 0300: shelf 4, bin 3, revision 300, status verified.
+              Item 0301: shelf 5, bin 4, revision 301, status verified.
+              Item 0302: shelf 6, bin 5, revision 302, status verified.
+              Item 0303: shelf 7, bin 6, revision 303, status verified.
+              Item 0304: shelf 8, bin 7, revision 304, status verified.
+              Item 0305: shelf 9, bin 8, revision 305, status verified.
+              Item 0306: shelf 10, bin 9, revision 306, status verified.
+              Item 0307: shelf 11, bin 10, revision 307, status verified.
+              Item 0308: shelf 12, bin 0, revision 308, status verified.
+              Item 0309: shelf 13, bin 1, revision 309, status verified.
+              Item 0310: shelf 14, bin 2, revision 310, status verified.
+              Item 0311: shelf 15, bin 3, revision 311, status verified.
+              Item 0312: shelf 16, bin 4, revision 312, status verified.
+              Item 0313: shelf 17, bin 5, revision 313, status verified.
+              Item 0314: shelf 18, bin 6, revision 314, status verified.
+              Item 0315: shelf 19, bin 7, revision 315, status verified.
+              Item 0316: shelf 20, bin 8, revision 316, status verified.
+              Item 0317: shelf 21, bin 9, revision 317, status verified.
+              Item 0318: shelf 22, bin 10, revision 318, status verified.
+              Item 0319: shelf 23, bin 0, revision 319, status verified.
+              Item 0320: shelf 24, bin 1, revision 320, status verified.
+              Item 0321: shelf 25, bin 2, revision 321, status verified.
+              Item 0322: shelf 26, bin 3, revision 322, status verified.
+              Item 0323: shelf 27, bin 4, revision 323, status verified.
+              Item 0324: shelf 28, bin 5, revision 324, status verified.
+              Item 0325: shelf 29, bin 6, revision 325, status verified.
+              Item 0326: shelf 30, bin 7, revision 326, status verified.
+              Item 0327: shelf 31, bin 8, revision 327, status verified.
+              Item 0328: shelf 32, bin 9, revision 328, status verified.
+              Item 0329: shelf 33, bin 10, revision 329, status verified.
+              Item 0330: shelf 34, bin 0, revision 330, status verified.
+              Item 0331: shelf 35, bin 1, revision 331, status verified.
+              Item 0332: shelf 36, bin 2, revision 332, status verified.
+              Item 0333: shelf 0, bin 3, revision 333, status verified.
+              Item 0334: shelf 1, bin 4, revision 334, status verified.
+              Item 0335: shelf 2, bin 5, revision 335, status verified.
+              Item 0336: shelf 3, bin 6, revision 336, status verified.
+              Item 0337: shelf 4, bin 7, revision 337, status verified.
+              Item 0338: shelf 5, bin 8, revision 338, status verified.
+              Item 0339: shelf 6, bin 9, revision 339, status verified.
+              Item 0340: shelf 7, bin 10, revision 340, status verified.
+              Item 0341: shelf 8, bin 0, revision 341, status verified.
+              Item 0342: shelf 9, bin 1, revision 342, status verified.
+              Item 0343: shelf 10, bin 2, revision 343, status verified.
+              Item 0344: shelf 11, bin 3, revision 344, status verified.
+              Item 0345: shelf 12, bin 4, revision 345, status verified.
+              Item 0346: shelf 13, bin 5, revision 346, status verified.
+              Item 0347: shelf 14, bin 6, revision 347, status verified.
+              Item 0348: shelf 15, bin 7, revision 348, status verified.
+              Item 0349: shelf 16, bin 8, revision 349, status verified.
+              Item 0350: shelf 17, bin 9, revision 350, status verified.
+              Item 0351: shelf 18, bin 10, revision 351, status verified.
+              Item 0352: shelf 19, bin 0, revision 352, status verified.
+              Item 0353: shelf 20, bin 1, revision 353, status verified.
+              Item 0354: shelf 21, bin 2, revision 354, status verified.
+              Item 0355: shelf 22, bin 3, revision 355, status verified.
+              Item 0356: shelf 23, bin 4, revision 356, status verified.
+              Item 0357: shelf 24, bin 5, revision 357, status verified.
+              Item 0358: shelf 25, bin 6, revision 358, status verified.
+              Item 0359: shelf 26, bin 7, revision 359, status verified.
+              Item 0360: shelf 27, bin 8, revision 360, status verified.
+              Item 0361: shelf 28, bin 9, revision 361, status verified.
+              Item 0362: shelf 29, bin 10, revision 362, status verified.
+              Item 0363: shelf 30, bin 0, revision 363, status verified.
+              Item 0364: shelf 31, bin 1, revision 364, status verified.
+              Item 0365: shelf 32, bin 2, revision 365, status verified.
+              Item 0366: shelf 33, bin 3, revision 366, status verified.
+              Item 0367: shelf 34, bin 4, revision 367, status verified.
+              Item 0368: shelf 35, bin 5, revision 368, status verified.
+              Item 0369: shelf 36, bin 6, revision 369, status verified.
+              Item 0370: shelf 0, bin 7, revision 370, status verified.
+              Item 0371: shelf 1, bin 8, revision 371, status verified.
+              Item 0372: shelf 2, bin 9, revision 372, status verified.
+              Item 0373: shelf 3, bin 10, revision 373, status verified.
+              Item 0374: shelf 4, bin 0, revision 374, status verified.
+              Item 0375: shelf 5, bin 1, revision 375, status verified.
+              Item 0376: shelf 6, bin 2, revision 376, status verified.
+              Item 0377: shelf 7, bin 3, revision 377, status verified.
+              Item 0378: shelf 8, bin 4, revision 378, status verified.
+              Item 0379: shelf 9, bin 5, revision 379, status verified.
+              Item 0380: shelf 10, bin 6, revision 380, status verified.
+              Item 0381: shelf 11, bin 7, revision 381, status verified.
+              Item 0382: shelf 12, bin 8, revision 382, status verified.
+              Item 0383: shelf 13, bin 9, revision 383, status verified.
+              Item 0384: shelf 14, bin 10, revision 384, status verified.
+              Item 0385: shelf 15, bin 0, revision 385, status verified.
+              Item 0386: shelf 16, bin 1, revision 386, status verified.
+              Item 0387: shelf 17, bin 2, revision 387, status verified.
+              Item 0388: shelf 18, bin 3, revision 388, status verified.
+              Item 0389: shelf 19, bin 4, revision 389, status verified.
+              Item 0390: shelf 20, bin 5, revision 390, status verified.
+              Item 0391: shelf 21, bin 6, revision 391, status verified.
+              Item 0392: shelf 22, bin 7, revision 392, status verified.
+              Item 0393: shelf 23, bin 8, revision 393, status verified.
+              Item 0394: shelf 24, bin 9, revision 394, status verified.
+              Item 0395: shelf 25, bin 10, revision 395, status verified.
+              Item 0396: shelf 26, bin 0, revision 396, status verified.
+              Item 0397: shelf 27, bin 1, revision 397, status verified.
+              Item 0398: shelf 28, bin 2, revision 398, status verified.
+              Item 0399: shelf 29, bin 3, revision 399, status verified.
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+        - role: user
+          content: Where is item 12?
+        - role: assistant
+          content: Item 0012 is on shelf 12, bin 1 (revision 12, status verified).
+        - role: user
+          content:
+          - type: text
+            text: And item 40?
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+        - role: system
+          content: ""
+          configuration_update:
+            reasoning:
+              effort: high
+        reasoning:
+          effort: low
+          enabled: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1793047741-SlmBEAFDxbrHJN0i9Wo6
+        object: chat.completion
+        created: 1793047741
+        model: anthropic/claude-opus-5.5
+        provider: Claude Platform on AWS
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: Item 0040 is on **shelf 3, bin 7** (revision 40, status verified).
+            refusal: null
+            reasoning: |+
+              Item 40 checks out: shelf 3, bin 7, revision 40, verified.
+
+            reasoning_details:
+            - type: reasoning.text
+              text: |+
+                Item 40 checks out: shelf 3, bin 7, revision 40, verified.
+
+              format: anthropic-claude-v1
+              index: 0
+              signature: >-
+                CAQSrwUKEAgTGAI4AUIIdGhpbmtpbmcSDFrWs0fvMIKFOE0vORoMIiJyi8eL2GJAwMpGIjDhr5+2Ttm+C14DSyZDwKV535ujxJXNa9lW8u33gadcmkmZLpqPZaoxRE+f0Hc3PYgqzATEYQ5sETi92qjNpOZrKEUHXH2LYqmspZrWlfZ0GEQb107yYcjjtIp8swYX9Y7BoF5S/5MlAvjC5ZZeMfddajGoncorHarrWX1aL0EReXtnpuhKLP/qz0vuZTcJPgcVJJr1K0NQJarGwh3QGZ2egavMWGzF82oR4fjyAjZSrxiwU469pihNjZZ3rvR4x4WUt9fX5cellV/ianRyLUCk6ONPqXd5YuqsrEzA7YMJVCJY7+d6uCdgALgXRPDyYrKVE/y+3SDqGPKJrbTKTGnaJy41gvcTSMAX4RymxYg7WyKzW6u3RfCqcc3ZoevulDgbvn08uTbg8l0t3OkuVPjPIgxUwkIS7f2JpgCRfAmJ8eLBjnYMdnQWvlHzUAm42UHU2KV8medq1vArBG4SxpgSXoA+zkZdc84jEAIPKaWISC+WyC7wa+tfTKTMFu+qRoqEvz4C3sNEnSCf+OgeoSMrGjm91WDBurvtCXPIt0n9KaQS1FglkDBt1rakbTsT7h2Ae/seZ+G+LTzkndu9i7XU3C1LQGznqB7pzzK5lJsnjwvPrI4lxYIGsA/n5KaAWX8OKNxR29iwQfOZQChRySV90jCG0DaaVg3NZ7Nzh2Sp9EDWUZzGFteg91WMq9tp0KedFaeNFJi32eXPd2DpX+KXjoCfIpUUh+XxI/nN0L1fyeVTXEC6M630vvN8CaAH6T1UURtZNDKYzpBj1d/H2e7wk3k/pkB8NCcb0yf0kkSoFasN5RT4M3q820bEL6HFZukZSd3jRYbv+QnLkGEUCQcYAQ==.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1vcHVzLTUuNS0yMDI2MDkyMXxjbGF1ZGUtb24tYXdzIn0
+        usage:
+          prompt_tokens: 10873
+          completion_tokens: 60
+          total_tokens: 10933
+          cost: 0.0033898
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 10869
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0033898
+            upstream_inference_prompt_cost: 0.0021898
+            upstream_inference_completions_cost: 0.0012
+          completion_tokens_details:
+            reasoning_tokens: 28
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-26T20:49:05.128019+00:00
