@@ -85,6 +85,9 @@ jobs:
                   models/__init__.py|models/_abstract.py|models/_continuation.py|models/_known_model_names.py) return 0 ;;
                   models/_prompt_cache.py|models/_request_timeout.py|models/_speech.py|models/concurrency.py) return 0 ;;
                   models/fallback.py|models/function.py|models/instrumented.py|models/test.py|models/wrapper.py) return 0 ;;
+                  # `BatchModelRequests` and the `Model.batch_*` methods are exported, so these load with the core.
+                  models/_batch_codec.py|models/_batch_model.py|models/_batch_settings.py|models/_in_memory_batch.py) return 0 ;;
+                  models/batch.py) return 0 ;;
                   # These entry modules are imported without loading provider implementations or profiles.
                   profiles/__init__.py|profiles/decision.py|providers/__init__.py) return 0 ;;
                   # Public exports import shared primitives without loading engine or live-provider integrations.

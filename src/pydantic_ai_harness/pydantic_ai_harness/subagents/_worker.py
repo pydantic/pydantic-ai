@@ -18,7 +18,12 @@ from pydantic_ai.exceptions import RunCancelled, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage, UserPromptPart
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness._sub_agent_output import resumable_output_reason, unresumable_output_message
+from pydantic_ai_harness._sub_agent_output import (
+    ServingModelRecorder,
+    cancel_pending_output,
+    resumable_output_reason,
+    unresumable_output_message,
+)
 from pydantic_ai_harness.subagents._control import TaskLink, task_group, validate_agent_name
 from pydantic_ai_harness.subagents._events import (
     TaskAnswerEvent,
@@ -283,6 +288,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
         attempt = 0
         while True:
             attempt += 1
+            serving_model = ServingModelRecorder()
             try:
                 result = await agent.run(
                     start.prompt,
@@ -290,7 +296,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
                     deps=self.deps,
                     usage=usage,
                     usage_limits=start.usage_limits,
-                    capabilities=[link],
+                    capabilities=[link, serving_model],
                     cancellation_token=link.token,
                 )
             except RunCancelled as e:
@@ -310,6 +316,8 @@ class SubAgentWorker(Generic[AgentDepsT]):
                 continue
             self._keep(task_id, result.all_messages())
             if (reason := resumable_output_reason(result.output)) is not None:
+                # The delegating run can't check on a request the run left pending, so it's cancelled.
+                await cancel_pending_output(result.output, serving_model)
                 return TaskFailedEvent(
                     task_id=task_id,
                     agent_name=agent_name,

@@ -22,6 +22,8 @@ A durable agent has three building blocks:
 
 A step interrupted before its result was journaled runs again on retry, even if its external side effect already happened. Make side-effecting tools idempotent, for example by passing an idempotency key to the external service.
 
+[Batched model requests](../batch.md#durable-execution) aren't journaled, so recovery submits a request that was waiting on its batch again, in a new batch that's billed too.
+
 ```text
                   Clients
               (HTTP, Kafka, etc.)

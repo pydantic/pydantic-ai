@@ -299,6 +299,12 @@
       "fingerprint": "0193ad7865a550457966edbb39656950ed55a8ccbe1398362bb08ebdaff9c63f",
       "reason": "`HostEvent` names the renamed `TaskProgress` and `InstallProgress`, the same classes the deprecated `TaskEvent` and `UpdateProgress` names still resolve to; every member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11354"
+    },
+    {
+      "against": "v2.61.0",
+      "fingerprint": "e7227083e7391a9760af16f36f7e38c947b660d8a7ad4ff9bc81cc1248aec0db",
+      "reason": "Adds `BatchModelRequests` to the agent-spec capability registry; every existing entry is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10672"
     }
   ],
   "model_name_literals": [

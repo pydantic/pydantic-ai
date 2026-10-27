@@ -43,7 +43,7 @@ from .._run_context import set_current_run_context
 from ..capabilities import AgentCapability
 from ..conversation import Conversation
 from ..exceptions import RunCancelled
-from ..output import OutputDataT, OutputSpec
+from ..output import OutputDataT, OutputSpec, PendingModelResponse
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
@@ -1127,9 +1127,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # So we call `process_tool_calls` directly and then end the run with the found final result.
 
                                 parts: list[_messages.ModelRequestPart] = []
+                                # A response the provider is still working on ended the run as `PendingModelResponse`,
+                                # so its tool calls aren't complete and don't run.
+                                pending = isinstance(final_result.output, PendingModelResponse)
                                 async for _event in _agent_graph.process_tool_calls(
                                     tool_manager=graph_ctx.deps.tool_manager,
-                                    tool_calls=stream.response.tool_calls,
+                                    tool_calls=[] if pending else stream.response.tool_calls,
                                     tool_call_results=None,
                                     tool_call_metadata=None,
                                     final_result=final_result,
