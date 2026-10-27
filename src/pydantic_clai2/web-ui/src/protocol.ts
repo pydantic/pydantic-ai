@@ -348,6 +348,8 @@ export interface SessionEntry {
   current: boolean
   /** Hidden from the sidebar unless it lists archived sessions too. */
   archived: boolean
+  /** Whether it opens live, as `Transcript.openable` says, so a click opens it without fetching its transcript first. */
+  openable: boolean
 }
 
 export interface Worktree {
