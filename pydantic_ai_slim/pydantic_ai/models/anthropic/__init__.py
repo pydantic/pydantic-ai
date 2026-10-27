@@ -422,11 +422,13 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, Asy
 # that ignores the entry on *every* transport — which measured the model, not the transport.
 _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 # Per-message effort (`mid-conversation-output-config-2026-07-01`) is documented for the Claude API, Google Cloud
-# and Amazon Bedrock. The AWS-operated Bedrock Messages API doesn't accept Anthropic beta headers, and Foundry
-# isn't listed, so those two send effort changes as the request-level setting. The legacy InvokeModel client
-# serves a narrower model list, which `AnthropicModel.profile` applies.
+# and Amazon Bedrock. Foundry isn't listed, so it sends effort changes as the request-level setting. Both Bedrock
+# APIs serve a narrower model list, which `AnthropicModel.profile` applies. The Bedrock Messages API
+# (`AsyncAnthropicBedrockMantle`) accepts the beta on `anthropic.claude-opus-5-5` but rejects a per-message
+# `output_config` on `anthropic.claude-opus-5` ("Extra inputs are not permitted"), as the legacy InvokeModel
+# API does. https://github.com/pydantic/pydantic-ai/issues/11481
 # https://platform.claude.com/docs/en/build-with-claude/effort#per-message-effort-beta
-_MID_CONVERSATION_EFFORT_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrockMantle, AsyncAnthropicFoundry)
+_MID_CONVERSATION_EFFORT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 _MID_CONVERSATION_EFFORT_BETA = 'mid-conversation-output-config-2026-07-01'
 # Cache diagnostics are documented as Claude API only. Verified live: the Bedrock InvokeModel and Messages APIs
 # both reject the `diagnostics` field with a 400 ("Extra inputs are not permitted").
@@ -1025,7 +1027,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             _profile.get('supports_mid_conversation_effort', False)
             and not isinstance(client, _MID_CONVERSATION_EFFORT_UNSUPPORTED_CLIENTS)
             and (
-                not isinstance(client, AsyncAnthropicBedrock)
+                not isinstance(client, AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle)
                 or bedrock_claude_supports_mid_conversation_effort(self._model_name)
             )
         )
