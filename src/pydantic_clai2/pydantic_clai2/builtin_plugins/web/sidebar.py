@@ -4,11 +4,7 @@ import os
 from collections.abc import Mapping
 from pathlib import Path, PurePath
 
-from pydantic_ai_harness.step_persistence.conversations import (
-    ConversationConflict,
-    ConversationSummary,
-    ensure_inactive,
-)
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins.web.protocol import Project, SessionEntry, SessionState, Worktree
 from pydantic_clai2.plugins import LiveSession
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, git_checkout, project_identity, worktree_roots
@@ -38,7 +34,8 @@ def session_entry(
         model=summary.model,
         current=current,
         archived=summary.archived_at is not None,
-        openable=openable,
+        # Another CLAI's session shows read-only until the user forks it, as its transcript says.
+        openable=openable and state != 'busy',
     )
 
 
@@ -109,15 +106,3 @@ def completions(typed: str) -> list[Project]:
         )
         for key, checkouts in found.items()
     ]
-
-
-def busy_elsewhere(summary: ConversationSummary) -> bool:
-    """Whether another live CLAI process runs this saved session now, rather than one that died mid-turn."""
-    if summary.owner_pid == os.getpid():
-        # Not live here, so this process's turn in it ended without saving its outcome.
-        return False
-    try:
-        ensure_inactive(summary)
-    except ConversationConflict:
-        return True
-    return False

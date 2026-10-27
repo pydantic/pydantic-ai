@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
 from starlette.datastructures import Headers
 
 from pydantic_ai_harness.ask_user import AskUserAnswer
+from pydantic_clai2.builtin_plugins.web.changes import Changes, ChangeScope, session_changes
 from pydantic_clai2.builtin_plugins.web.channel import SessionChannel, Switch
 from pydantic_clai2.builtin_plugins.web.framing import FRAME_SOURCES
 from pydantic_clai2.builtin_plugins.web.live import RESYNC
@@ -244,6 +245,7 @@ def create_app(*, service: WebService, token: str, hosts: frozenset[str], static
     _prompt(app, service)
     _queue(app, service)
     _images(app, service)
+    _changes(app, service)
     _sessions(app, service)
     _plugins(app, service)
     _commands(app, service)
@@ -465,6 +467,22 @@ def _images(app: FastAPI, service: WebService) -> None:
 
     for prefix in ('/api', '/api/sessions/{conversation_id}'):
         app.get(f'{prefix}/images/{{image_id}}')(image)
+
+
+def _changes(app: FastAPI, service: WebService) -> None:
+    """The Changes panel: the files a session changed in a scope, each with its diff, or without for `diffs=false`.
+
+    Each route is there twice, as the composer's are.
+    """
+
+    async def changes(
+        scope: ChangeScope = 'session', diffs: bool = True, conversation_id: str | None = None
+    ) -> Changes:
+        session = _run(service.default if conversation_id is None else lambda: service.session(conversation_id)).session
+        return await session_changes(session.conversation.messages, session.workspace, scope=scope, diffs=diffs)
+
+    for prefix in ('/api', '/api/sessions/{conversation_id}'):
+        app.get(f'{prefix}/changes')(changes)
 
 
 def _answer(answer: Answer) -> AskUserAnswer:
