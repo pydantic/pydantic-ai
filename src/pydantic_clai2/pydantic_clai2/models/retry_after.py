@@ -30,12 +30,14 @@ def limit_retry_after(*, model: Model) -> None:
 async def _limit_retry_after(response: httpx2.Response) -> None:
     if response.status_code != 429 or response.headers.get('x-should-retry') == 'false':
         return
+    request = response.request
+    if request.method != 'POST' or not request.url.path.endswith(('/v1/messages', '/v1/messages/count_tokens')):
+        return
     delay = _retry_after(headers=response.headers)
     if delay is not None and delay > _MAX_RETRY_AFTER:
-        # This is a local wait-budget decision, not a header the provider sent. Keep the original
-        # for diagnostics, and leave the status, body, Retry-After and quota/reset headers intact.
+        # This is a local wait-budget decision, not a header the provider sent.
+        # Leave the status, body, Retry-After and quota/reset headers intact.
         response.extensions[_REJECTED_RETRY_AFTER] = delay
-        response.extensions['clai2.original_x_should_retry'] = response.headers.get('x-should-retry')
         response.headers['x-should-retry'] = 'false'
 
 

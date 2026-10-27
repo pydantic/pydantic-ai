@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import anyio
 import httpx2
 import pytest
-from anthropic import AsyncAnthropicBedrock
+from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, RateLimitError
 from pydantic import JsonValue
 from rich.console import Console
 
@@ -145,12 +145,10 @@ async def test_claude_code_retry_budget(
     headers: dict[str, str], blocked: bool, delay: float | None, stream: bool, sdk_sleeps: list[float]
 ) -> None:
     calls: list[str | None] = []
-    responses: list[httpx2.Response] = []
 
     def respond(request: httpx2.Request) -> httpx2.Response:
         calls.append(request.headers.get('authorization'))
         response = rejection(headers=headers) if len(calls) == 1 else success(stream=stream)
-        responses.append(response)
         return response
 
     observed: list[int] = []
@@ -187,7 +185,6 @@ async def test_claude_code_retry_budget(
                 assert error.headers['x-should-retry'] == 'false'
                 assert 'Claude Code rate limit (HTTP 429)' in error_message(error)
                 assert '/model' in error_message(error)
-                assert responses[0].extensions['clai2.original_x_should_retry'] == headers.get('x-should-retry')
                 assert sdk_sleeps == []
             else:
                 result = await Agent(model).run(
@@ -289,6 +286,62 @@ async def test_other_models_keep_their_retry_policy(sdk_sleeps: list[float]) -> 
     assert sdk_sleeps == [10511.0]
     ordinary = TestModel()
     assert await plugin_resolver(model=ordinary).resolve('claude-code:any') is ordinary
+
+
+@pytest.mark.parametrize(
+    ('method', 'path'),
+    [('GET', '/api/oauth/usage'), ('POST', '/api/oauth/usage'), ('GET', '/v1/messages'), ('POST', '/v1/models')],
+)
+async def test_shared_client_non_model_requests_are_unchanged(method: str, path: str, sdk_sleeps: list[float]) -> None:
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(
+            lambda request: rejection(headers={'retry-after': '10511', 'x-should-retry': 'true'})
+        )
+    ) as client:
+        model = claude_model(client)
+        await plugin_resolver(model=model).resolve('claude-code:claude-sonnet-4-5')
+        assert isinstance(model.client, AsyncAnthropic)
+        sdk = model.client.with_options(max_retries=0)
+        request = sdk.get if method == 'GET' else sdk.post
+        with pytest.raises(RateLimitError) as caught:
+            await request(path, cast_to=object)
+        assert caught.value.response.headers['x-should-retry'] == 'true'
+        assert 'clai2.rejected_retry_after' not in caught.value.response.extensions
+    assert sdk_sleeps == []
+
+
+@pytest.mark.parametrize('guarded', [False, True])
+async def test_token_count_rejections_share_the_model_retry_budget(guarded: bool, sdk_sleeps: list[float]) -> None:
+    calls = 0
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        assert request.method == 'POST' and request.url.path == '/v1/messages/count_tokens'
+        return (
+            rejection(headers={'retry-after': '10511'})
+            if calls == 1
+            else httpx2.Response(200, json={'input_tokens': 1})
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as client:
+        model = claude_model(client)
+        if guarded:
+            await plugin_resolver(model=model).resolve('claude-code:claude-sonnet-4-5')
+        assert isinstance(model.client, AsyncAnthropic)
+        if guarded:
+            with pytest.raises(RateLimitError) as caught:
+                await model.client.beta.messages.count_tokens(
+                    model='claude-sonnet-4-5', messages=[{'role': 'user', 'content': 'go'}]
+                )
+            assert caught.value.response.headers['x-should-retry'] == 'false'
+        else:
+            result = await model.client.beta.messages.count_tokens(
+                model='claude-sonnet-4-5', messages=[{'role': 'user', 'content': 'go'}]
+            )
+            assert result.input_tokens == 1
+    assert calls == (1 if guarded else 2)
+    assert sdk_sleeps == ([] if guarded else [10511.0])
 
 
 async def test_nonstandard_anthropic_client_is_not_decorated() -> None:
@@ -506,6 +559,7 @@ async def test_unrepresentable_retry_date_does_not_break_the_response_hook(
         model = claude_model(client)
         retry_after.limit_retry_after(model=model)
         response = rejection(headers={'retry-after': 'Fri, 23 Oct 2026 00:02:00 GMT'})
+        response.request = httpx2.Request('POST', 'https://api.anthropic.com/v1/messages')
         await retry_after._limit_retry_after(response)  # pyright: ignore[reportPrivateUsage]
         assert 'x-should-retry' not in response.headers
 
