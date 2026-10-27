@@ -448,9 +448,9 @@ This file is off limits; read the copy instead.
 </message>
 <message role="retry_feedback" cause="model_retry">
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-&lt;retry_feedback>
+<retry_feedback>
 Say more.
-&lt;/retry_feedback>
+</retry_feedback>
 </message>
 </earlier_step>\
 """)

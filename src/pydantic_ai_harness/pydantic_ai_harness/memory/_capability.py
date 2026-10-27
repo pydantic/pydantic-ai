@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Literal, TypeAlias
 
-from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.framing import neutralize_tags
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -63,10 +62,6 @@ _DEFAULT_GUIDANCE = (
     'Never claim something was remembered or saved unless you actually called `write_memory` '
     'in this turn. A later `<memory>` block for this memory supersedes its earlier ones.'
 )
-
-# The slash is inside the optional group so the two `\s*` never compete for one run of spaces.
-_MEMORY_TAG_RE = re.compile(r'<(?=(?:\s*/)?\s*memory\b)', re.IGNORECASE)
-"""The `<` of a `<memory>` or `</memory>` tag in stored content, which could otherwise close the block early."""
 
 WriteMetadataFunc: TypeAlias = Callable[[RunContext[AgentDepsT]], Mapping[str, str] | None]
 """Resolves the metadata recorded with one `write_memory` write, or `None` to record none."""
@@ -401,8 +396,8 @@ class Memory(AbstractCapability[AgentDepsT]):
         reserved: int = 0,
     ) -> tuple[str, bool] | None:
         """The framed snapshot, and whether a fresh conversation can skip it, or `None` when it doesn't fit the budget."""
-        main_content = '' if main is None else _neutralize(main.content)
-        subfiles = [_neutralize(name) for name in subfiles]
+        main_content = '' if main is None else neutralize_tags(main.content)
+        subfiles = [neutralize_tags(name) for name in subfiles]
         guidance = self._render_guidance()
         # The `directory` instruction, when there is one, shares `max_tokens` with the guidance and the snapshot.
         content_budget = snapshot_content_budget(self.max_tokens, guidance) - reserved
@@ -523,15 +518,6 @@ def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> 
                 if isinstance(item, TextContent) and (item.metadata == metadata or item.metadata in legacy):
                     return item.content
     return None
-
-
-def _neutralize(text: str) -> str:
-    """Escape every framing tag in stored memory, and `<memory>` itself, so it can't end its block or forge one.
-
-    Memory is model- or user-written data: a `<system>` in it must not read as the application speaking.
-    """
-    # TODO: switch to `pydantic_ai.framing.wrap()` with `memory` registered as a framing tag (#10957).
-    return _MEMORY_TAG_RE.sub('&lt;', neutralize_tags(text))
 
 
 def _responded_in_run(ctx: RunContext[AgentDepsT]) -> bool:

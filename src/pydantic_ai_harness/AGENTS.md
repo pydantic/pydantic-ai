@@ -94,8 +94,11 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
 ## Framing tags
 
 A capability that writes a tag into prompt text, such as `<memory>`, `<judge_feedback>` or
-`<task_output>`, registers it once at module level with `pydantic_ai.framing.register_tag()` and
-renders it with `pydantic_ai.framing.wrap()`. Registering is what makes core's own data frames, such as a
+`<task_output>`, registers it with `pydantic_ai.framing.register_tag()` in
+`pydantic_ai_harness/_framing_tags.py`, which the package imports first, so every harness tag is
+registered whichever capabilities a process imports, and renders it with `pydantic_ai.framing.wrap()`
+(or `open_tag()`/`close_tag()` around a body escaped some other way). `tests/harness/test_framing_tags.py`
+fails on a frame built by hand or a local tag-escaping pattern. Registering is what makes core's own data frames, such as a
 `<tool_result>`, neutralize the tag, so a tool result can't close the capability's frame. Use
 `neutralize_tags()` for untrusted text placed inside a frame some other way. Do not hand-roll an escaper:
 escaping only a frame's own closing tag leaves its opener and the `<system>` voice tag free to forge

@@ -17,6 +17,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import ModelRetry
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ToolFailed, UserError
+from pydantic_ai.framing import close_tag, open_tag
 from pydantic_ai.messages import InstructionChangePolicy, InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
@@ -27,6 +28,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._durable import RetryRequest, raise_retry, retry_as_result
+from pydantic_ai_harness._framing_tags import MEMORY_TAG
 from pydantic_ai_harness._workspace import in_working_dir, raise_tool_failure
 from pydantic_ai_harness.filesystem import READ_FILE_KIND
 from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
@@ -61,8 +63,8 @@ _READ_TRUNCATION_MARKER = (
 )
 
 
-MEMORY_DATA_PREFIX = '<memory>\n'
-MEMORY_DATA_SUFFIX = '\n</memory>'
+MEMORY_DATA_PREFIX = f'{open_tag(MEMORY_TAG)}\n'
+MEMORY_DATA_SUFFIX = f'\n{close_tag(MEMORY_TAG)}'
 
 
 MEMORY_ORIGIN = 'pydantic-ai-harness.memory.v1'

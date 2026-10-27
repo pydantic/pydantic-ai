@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import html
 import logging
-import re
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from copy import copy
@@ -12,9 +10,9 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Generic, Literal, TypeGuard
 
 from pydantic_ai import Agent
-from pydantic_ai._framing import neutralize_tags
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.framing import wrap
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -28,6 +26,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._framing_tags import GENERATED_REMINDER_TAG, GOAL_TAG, MESSAGE_TAG, SUMMARY_TAG
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_ignored, warn_default_changed
 from pydantic_ai_harness.system_reminders._events import ReminderFiredEvent
@@ -86,7 +85,7 @@ class GeneratedReminder:
     @property
     def data(self) -> str:
         """`text` quoted in a `<generated_reminder>` tag, sent on the user channel."""
-        return _quote('generated_reminder', self.text, model=self.model)
+        return wrap(GENERATED_REMINDER_TAG, f'\n{self.text}\n', model=self.model)
 
     def __str__(self) -> str:
         return f'{self.note}\n\n{self.data}'
@@ -606,9 +605,9 @@ def _build_compact_transcript(messages: Sequence[ModelMessage], max_messages: in
     recent = _recent_texts(window, max_messages)
     sections: list[str] = []
     if summary is not None:
-        sections.append(f'Summary of earlier conversation:\n{_quote("summary", summary)}')
+        sections.append('Summary of earlier conversation:\n' + wrap(SUMMARY_TAG, f'\n{summary}\n'))
     if goal is not None:
-        sections.append(f'Original goal:\n{_quote("goal", goal)}')
+        sections.append('Original goal:\n' + wrap(GOAL_TAG, f'\n{goal}\n'))
     if recent:
         sections.append('Recent activity:\n' + '\n'.join(recent))
     return '\n\n'.join(sections) if sections else 'No activity yet.'
@@ -640,30 +639,7 @@ def _recent_texts(messages: Sequence[ModelMessage], max_messages: int) -> list[s
             if isinstance(part, UserPromptPart) and not _is_reminder_data(part):
                 text = _prompt_text(part.content)
                 if text:
-                    fragments.append(_quote('message', text, role='user'))
+                    fragments.append(wrap(MESSAGE_TAG, f'\n{text}\n', role='user'))
             elif isinstance(part, TextPart) and part.content:
-                fragments.append(_quote('message', part.content, role='assistant'))
+                fragments.append(wrap(MESSAGE_TAG, f'\n{part.content}\n', role='assistant'))
     return fragments[-max_messages:]
-
-
-_HARNESS_TAGS = ('goal', 'message', 'generated_reminder', 'summary')
-"""The data tags the reminders write, which core's framing tags don't include."""
-
-_HARNESS_TAG_OPENERS = re.compile(
-    rf'<(?=\s*(?:/\s*)?(?:{"|".join(_HARNESS_TAGS)})(?=[\s/>]|$))',
-    re.IGNORECASE,
-)
-"""The `<` of an opening or closing reminder tag in every spelling, matched the way core matches its own."""
-
-
-def _quote(tag: str, body: str, **attrs: str) -> str:
-    """Quote `body` as data in a `<tag>` element it can't end early, open another frame in, or speak as the system from.
-
-    The `<` of every opening and closing spelling of every core framing tag (`system`, `context` and
-    `context_diff` among them) and of every reminder tag is neutralized as `&lt;`; nothing else changes.
-    Attribute values are HTML-escaped.
-    """
-    # TODO: switch to the public `pydantic_ai.framing.wrap()` with registered tags (#10957).
-    escaped = _HARNESS_TAG_OPENERS.sub('&lt;', neutralize_tags(body))
-    attributes = ''.join(f' {name}="{html.escape(value)}"' for name, value in attrs.items())
-    return f'<{tag}{attributes}>\n{escaped}\n</{tag}>'

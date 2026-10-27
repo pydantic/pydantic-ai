@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import html
 import re
 import warnings
 from collections.abc import AsyncIterable, Callable, Sequence
@@ -12,11 +11,11 @@ from datetime import UTC, datetime
 from string import Formatter
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
 
-from pydantic_ai._framing import neutralize_tags
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.framing import close_tag, neutralize_tags, open_tag
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -36,6 +35,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import TextOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._framing_tags import HARNESS_DATA_TAG, MESSAGE_TAG
 from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts, with_text
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
@@ -313,27 +313,19 @@ _TranscriptRole: TypeAlias = Literal[
 ]
 """The `role` of a `<message>` element in the summarizer transcript."""
 
-_TRANSCRIPT_TAG_OPENER = re.compile(
-    r'<(?=\s*(?:/\s*)?(?:messages?|previous-summary|harness_data)(?:[\s/>]|$))', re.IGNORECASE
-)
-"""The `<` of an opening or closing tag of the summarizer transcript's own markup.
-
-Any case, whitespace around the `/`, attributes and a trailing `/>` all match, as `pydantic_ai._framing`
-matches core's framing tags, which `neutralize_tags` escapes; a longer tag name that merely starts with
-one of these doesn't. The optional `/` is grouped with the whitespace after it, so a long run of
-whitespace with no tag name after it is scanned once rather than split every possible way.
-"""
+# TODO: register `previous-summary` with the other transcript tags in `_framing_tags`, or rename it, once #11497
+# settles whether framing tag names may have hyphens.
+_PREVIOUS_SUMMARY_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?previous-summary(?=[\s/>]|$))', re.IGNORECASE)
+"""The `<` of an opening or closing `previous-summary` tag, which `neutralize_tags` doesn't cover, in any spelling."""
 
 
 def _neutralize_transcript_tags(content: str) -> str:
-    """Escape the transcript's own tags and every framing tag core writes in *content*.
+    """Escape every framing tag in *content*, core's and every registered one, and `<previous-summary>`.
 
     Content then can't open or close a message, the transcript, or the previous summary, and a
     `<system>`, `<context>` or `<tool_result>` tag in it stays inside its element.
     """
-    # TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
-    # the transcript's tags as framing tags there.
-    return _TRANSCRIPT_TAG_OPENER.sub('&lt;', neutralize_tags(content))
+    return _PREVIOUS_SUMMARY_TAG_OPENER.sub('&lt;', neutralize_tags(content))
 
 
 def _message_element(
@@ -348,16 +340,13 @@ def _message_element(
     """One transcript entry: *content* in a `<message>` element tagged with its *role*, for tools *name*, and for retry feedback *cause*.
 
     *content* is escaped before it is cut to *max_chars*, so the cap bounds what the summarizer receives.
-    *core_framed* content was framed by core, which escaped the framing tags in its body, so its own frame
-    stays as written and only the transcript's tags are escaped.
+    *core_framed* content was framed by core, which escaped every framing tag in its body, the registered
+    transcript tags included, so its own frame stays as written and only `<previous-summary>` is escaped.
     """
-    attrs = ''.join(
-        f' {key}="{html.escape(value)}"' for key, value in (('name', name), ('cause', cause)) if value is not None
-    )
-    body = _TRANSCRIPT_TAG_OPENER.sub('&lt;', content) if core_framed else _neutralize_transcript_tags(content)
+    body = _PREVIOUS_SUMMARY_TAG_OPENER.sub('&lt;', content) if core_framed else _neutralize_transcript_tags(content)
     if max_chars is not None:
         body = _truncate_with_marker(body, max_chars)
-    return f'<message role="{role}"{attrs}>\n{body}\n</message>'
+    return f'{open_tag(MESSAGE_TAG, role=role, name=name, cause=cause)}\n{body}\n{close_tag(MESSAGE_TAG)}'
 
 
 def _harness_data_element(origin: str, content: str, max_chars: int | None) -> str:
@@ -365,7 +354,7 @@ def _harness_data_element(origin: str, content: str, max_chars: int | None) -> s
     body = _neutralize_transcript_tags(content)
     if max_chars is not None:
         body = _truncate_with_marker(body, max_chars)
-    return f'<harness_data origin="{html.escape(origin)}">\n{body}\n</harness_data>'
+    return f'{open_tag(HARNESS_DATA_TAG, origin=origin)}\n{body}\n{close_tag(HARNESS_DATA_TAG)}'
 
 
 def user_prompt_text(part: UserPromptPart) -> str:

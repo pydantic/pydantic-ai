@@ -1438,7 +1438,7 @@ class TestEndToEnd:
             else:
                 notes = prompt.count('A reminder model reviewing this run wrote a stay-on-task note.')
                 assert notes >= 1
-                assert prompt.count('<generated_reminder model=') == notes
+                assert prompt.count('&lt;generated_reminder model=') == notes
 
     async def test_kept_user_messages_leave_out_generated_reminders(self) -> None:
         """`keep_user_messages` keeps what the user said, never generated text whose note it would drop."""
