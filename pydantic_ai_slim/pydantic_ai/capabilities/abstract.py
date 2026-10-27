@@ -895,7 +895,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         the error is suppressed and the recovery result is used directly without `after_run`.
 
         Note: if the caller cancels the run (e.g. by breaking out of an
-        `iter()` loop), this method receives an `asyncio.CancelledError`.
+        `iter()` loop, or by raising `GeneratorExit` or `KeyboardInterrupt` in its `async with` block,
+        as closing a generator that owns the run does), this method receives an `asyncio.CancelledError`.
         Implementations that hold resources should handle cleanup accordingly. Cancellation is
         terminal: the hook may observe it and clean up, but cannot recover the run to success.
 

@@ -43,6 +43,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._instrumentation import model_request_parameters_attributes
 from pydantic_ai._run_context import with_tool_name_layer
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -3080,10 +3081,11 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     else:
         await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
 
+    # Foundry serves no mid-conversation system messages, so the standing prompt also says what `<system>` means.
     assert rendered_requests == snapshot(
         [
             {
-                'system': 'leading',
+                'system': f'leading\n\n{SYSTEM_VOICE_ANNOUNCEMENT}',
                 'messages': [
                     {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
                     {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},

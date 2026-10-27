@@ -28,6 +28,21 @@ Standard tool calling often needs another model turn for each dependent batch of
 
 Durable execution integrations can record nested calls for deterministic replay.
 
+## Code Mode or IPython Code Mode
+
+[IPython Code Mode](ipython-code-mode.md) offers the same `run_code` tool backed by a persistent IPython kernel instead of Monty. Pick by where the agent runs:
+
+| | Code Mode | [IPython Code Mode](ipython-code-mode.md) |
+|---|---|---|
+| Built for | Production and web-facing agents | Local agents you trust to do whatever the code asks |
+| Safe in a webserver | Yes | No, unless the agent runs in a sandbox |
+| Python | The Monty subset, with time and memory limits | Full CPython, with any installed package |
+| Filesystem and network | Only through `mount`, `os_access`, and tools | Unrestricted, with the agent process's permissions |
+| State | Per run, plus an optional `repl_store` | A kernel per run, or one `IPythonKernel` kept across runs |
+
+!!! warning "Use Code Mode for anything web-facing"
+    IPython Code Mode runs model-written code with the permissions of the user running the agent. Do not run it in a webserver, or anywhere it handles untrusted input, without a sandbox around the agent. For production and web-facing agents, Code Mode is strongly recommended.
+
 ## Installation
 
 Code mode requires the Monty sandbox, available via the `codemode` extra (the `code-mode` extra is an equivalent alias):
@@ -286,7 +301,7 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(repl_store=InMemo
 - A restored REPL keeps the resource limits it was saved under, so the state records the run's resolved `resource_limits`. A state saved under other limits, or one Monty cannot load, such as a truncated dump or one from an incompatible Monty version, is dropped with a logged warning, and the run starts a fresh REPL.
 - Monty does not authenticate a dump. Return only states your application saved, from storage no one else can write to.
 - A timeout, worker crash, or cancelled snippet that resets the REPL keeps the state saved before the run, unless a later snippet in the run builds a new REPL, which is then saved. A cancelled run still saves an idle REPL.
-- A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save` leaves the stored state as it was. A `save` still running after 10 seconds is cancelled, but work it handed to a thread may still finish, so write atomically. Each is logged as a warning.
+- A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save` leaves the stored state as it was. A run whose `load` failed does not save, so the next run can still restore the state it could not read, unless it used `restart: true`. A `save` still running after 10 seconds is cancelled, but work it handed to a thread may still finish, so write atomically. Each is logged as a warning.
 - Restored state skips the type check a fresh REPL's first snippet gets, since the checker does not know the restored names.
 - The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one. With `monty_sandbox`, a server that keeps sessions returns a record ID instead, which lives as long as the server keeps it, and a server that keeps nothing fails every save with a logged warning.
 - The store is not used under durable execution, where its I/O would run in replayed workflow code.

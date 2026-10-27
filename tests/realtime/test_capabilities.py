@@ -556,6 +556,38 @@ async def test_run_lifecycle_hooks_fire_for_a_session() -> None:
     assert session.result.new_messages() == session.new_messages()
 
 
+async def test_closing_generator_that_owns_a_session_drains_wrap_run() -> None:
+    """Closing a generator suspended inside a session cancels `wrap_run` and finishes its cleanup first."""
+    calls: list[str] = []
+
+    class LifecycleCapability(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+            try:
+                return await handler()
+            except asyncio.CancelledError:
+                calls.append('wrap_run:cancelled')
+                raise
+            finally:
+                await asyncio.sleep(0)
+                calls.append('wrap_run:finally')
+
+    agent = Agent(capabilities=[LifecycleCapability()], deps_type=type(None))
+    sessions: list[RealtimeSession] = []
+
+    async def session_owner() -> AsyncGenerator[None]:
+        async with agent.realtime(_RecordingModel(connection_events=[])).session() as session:
+            sessions.append(session)
+            yield
+
+    generator = session_owner()
+    await anext(generator)
+    await generator.aclose()
+    calls.append('closed')
+
+    assert calls == ['wrap_run:cancelled', 'wrap_run:finally', 'closed']
+    assert sessions[0].result is None
+
+
 async def test_wrap_run_recovers_session_error() -> None:
     """`wrap_run` recovery suppresses a session error and supplies `session.result`."""
 

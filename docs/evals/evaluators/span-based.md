@@ -336,13 +336,15 @@ evaluators = [
         evaluation_name='had_retries',
     ),
 
-    # Fallback was used
+    # A model request attempt failed, so another one was made
     HasMatchingSpan(
-        query={'name_contains': 'fallback_model'},
-        evaluation_name='used_fallback',
+        query={'name_contains': 'model request attempt'},
+        evaluation_name='had_failed_attempts',
     ),
 ]
 ```
+
+Each attempt at a model request that failed or was rejected gets a `model request attempt <model name>` span, whether [`ModelFallback`](../../capabilities/model-fallback.md#failed-attempts-and-telemetry), a [`FallbackModel`](../../models/overview.md#failed-attempts-and-usage) or another capability that raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] moved on from it, so it shows that the request was attempted again, not that it fell back to another model. The span's `gen_ai.request.model` attribute names the model it tried.
 
 ### Complex Behavioral Checks
 
