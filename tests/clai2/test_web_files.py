@@ -90,7 +90,7 @@ async def test_a_folder_outside_git_is_walked(tmp_path: Path, monkeypatch: pytes
     assert await list_paths(tmp_path) == ('.env', 'README.md')
 
 
-async def test_git_stops_at_the_file_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_git_listing_is_sorted_and_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
     write(tmp_path, 'a.py', 'b.py', 'c.py', 'big/d.py')
     assert await list_paths(tmp_path) == ('a.py', 'b.py', 'big/d.py', 'c.py', 'big/')
