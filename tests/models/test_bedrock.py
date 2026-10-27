@@ -5,6 +5,7 @@ import json
 import os
 from collections.abc import Callable, Generator, Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from itertools import count
@@ -64,7 +65,6 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool
-from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelConnectionError,
@@ -9025,74 +9025,28 @@ def test_bedrock_non_anthropic_raw_thinking_does_not_override_unified_thinking(
 
 
 @pytest.mark.parametrize(
-    'model_name,output_mode,expected_mode',
-    [
-        ('zai.glm-5', 'tool', 'tool'),
-        ('deepseek.v3.2', 'tool', 'tool'),
-        ('zai.glm-5', 'auto', 'native'),
-        ('deepseek.v3.2', 'auto', 'prompted'),
-    ],
+    'model_name,expected_mode',
+    [('zai.glm-5', 'native'), ('deepseek.v3.2', 'prompted')],
 )
-def test_bedrock_output_mode_while_thinking_on(
-    bedrock_provider: BedrockProvider,
-    model_name: str,
-    output_mode: Literal['tool', 'auto'],
-    expected_mode: Literal['tool', 'native', 'prompted'],
+def test_bedrock_default_output_mode_falls_back_while_thinking_on(
+    bedrock_provider: BedrockProvider, model_name: str, expected_mode: Literal['native', 'prompted']
 ) -> None:
-    """An explicit output tool is kept with thinking on. A default output type falls back, as it did on `main`.
+    """A default output type falls back from Tool Output with thinking on, and an explicit output tool is refused.
 
     Not a VCR test: this is the pre-request output-mode decision, which a recording doesn't capture.
     """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
     params = ModelRequestParameters(
         output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
-        output_mode=output_mode,
+        output_mode='auto',
         allow_text_output=False,
     )
 
     _, prepared_params = model.prepare_request(BedrockModelSettings(thinking=True), params)
-
     assert prepared_params.output_mode == expected_mode
 
-
-async def test_bedrock_explicit_forced_tool_choice_sent_while_thinking_on(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
-) -> None:
-    """An explicit `tool_choice='required'` goes out as `toolChoice: any` on Z.AI GLM with thinking on.
-
-    Mocked rather than recorded: the test checks the forced `toolChoice` that is sent, which a recording's matchers
-    don't compare.
-    """
-    model = BedrockConverseModel('zai.glm-5', provider=bedrock_provider)
-    params = ModelRequestParameters(
-        function_tools=[ToolDefinition(name='get_answer', parameters_json_schema={'type': 'object'})],
-        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
-        output_mode='tool',
-        allow_text_output=False,
-    )
-    mock_converse = mocker.patch.object(model.client, 'converse')
-    mock_converse.return_value = {
-        'output': {
-            'message': {
-                'role': 'assistant',
-                'content': [{'toolUse': {'toolUseId': 'call_1', 'name': 'final_result', 'input': {'answer': 120}}}],
-            }
-        },
-        'stopReason': 'tool_use',
-        'usage': {'inputTokens': 1, 'outputTokens': 1},
-        'ResponseMetadata': {'HTTPStatusCode': 200},
-    }
-
-    await model_request(
-        model,
-        [ModelRequest.user_text_prompt('What is the answer?')],
-        model_settings=ModelSettings(thinking=True, tool_choice='required'),
-        model_request_parameters=params,
-    )
-
-    kwargs = mock_converse.call_args.kwargs
-    assert kwargs['toolConfig']['toolChoice'] == {'any': {}}
-    assert kwargs['additionalModelRequestFields'] == {'reasoning_effort': 'high'}
+    with pytest.raises(UserError, match='does not support thinking and output tools'):
+        model.prepare_request(BedrockModelSettings(thinking=True), replace(params, output_mode='tool'))
 
 
 @pytest.mark.parametrize('thinking_config', [{'type': 'disabled'}, 'invalid'])
