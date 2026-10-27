@@ -13,7 +13,7 @@ import fractions
 import importlib
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -915,18 +915,18 @@ async def test_webrtc_browser_hang_up_ends_the_session(
             return
         yield REAL_SDP_OFFER, _no_browser_to_connect, lambda: None
 
-    browser_call = browser()
-    offer, connect, _ = await browser_call.__aenter__()
-    answer = await realtime.answer_webrtc_offer(offer)
-    await connect(answer.sdp)
-    async with realtime.session(provider_session=answer.session) as session:
-        if realtime_recording:  # pragma: no cover
-            await anyio.sleep(2)
-        # The browser hangs up.
-        await browser_call.__aexit__(None, None, None)
-        with anyio.fail_after(90):
-            # The browser said nothing, so the call ends without an event, and above all without an error.
-            events = [event async for event in session]
+    async with AsyncExitStack() as browser_call:
+        offer, connect, _ = await browser_call.enter_async_context(browser())
+        answer = await realtime.answer_webrtc_offer(offer)
+        await connect(answer.sdp)
+        async with realtime.session(provider_session=answer.session) as session:
+            if realtime_recording:  # pragma: no cover
+                await anyio.sleep(2)
+            # The browser hangs up.
+            await browser_call.aclose()
+            with anyio.fail_after(90):
+                # The browser said nothing, so the call ends without an event, and above all without an error.
+                events = [event async for event in session]
 
     assert session.closed
     assert events == []
