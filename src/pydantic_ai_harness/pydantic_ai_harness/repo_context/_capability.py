@@ -121,14 +121,6 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     scans only the working directory -- no walk-up -- unless `root_markers` is set.
     """
 
-    root_markers: Sequence[str] = ()
-    """Entry names that mark the repository root, e.g. `('.git',)`, as an alternative to `home_dir`.
-
-    The walk-up stops at the nearest directory, starting at the working directory, that contains one of
-    them. When no such directory exists, only the working directory is scanned. Cannot be combined with
-    `home_dir`.
-    """
-
     filenames: Sequence[str] = ('CLAUDE.md', 'AGENTS.md')
     """Instruction filenames to look for, in within-directory precedence order."""
 
@@ -156,6 +148,14 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     asset_roots: Sequence[str] = ('.claude', '.agents', '.codex', '.grok')
     """Root directories the inventory tool scans, relative to the working directory."""
+
+    root_markers: Sequence[str] = ()
+    """Entry names that mark the repository root, e.g. `('.git',)`, as an alternative to `home_dir`.
+
+    The walk-up stops at the nearest directory, starting at the working directory, that contains one of
+    them. When no such directory exists, only the working directory is scanned. Cannot be combined with
+    `home_dir`.
+    """
 
     _context_files: list[ContextFile] | None = field(default=None, init=False, repr=False, compare=False)
     """Walk-up result for this run, loaded once in `before_run` via `ctx.workspace`."""

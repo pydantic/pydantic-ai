@@ -39,7 +39,7 @@ print(result.output)
 ### 1. Walk-up instruction autoload (on by default)
 
 Loads `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor up to
-`home_dir` (inclusive). Precedence is ancestor-first, workspace-last: broadest
+`home_dir` (inclusive), or up to the nearest ancestor holding one of `root_markers`. Precedence is ancestor-first, workspace-last: broadest
 context first, most specific last. Files are deduped by the path a symlink resolves
 to and by content hash, so a symlinked `CLAUDE.md -> AGENTS.md` or two ancestors
 sharing identical content load once. Where the workspace can resolve symlinks, a
@@ -120,7 +120,7 @@ the same note twice.
 
 Walk-up files become part of the agent's instructions, so the model gives them
 the same weight as the instructions you write yourself. That is what the strategy
-is for, and it means the working directory and `home_dir` should hold only
+is for, and it means the working directory and the walk-up bound (`home_dir`, or the directory `root_markers` finds) should hold only
 instruction files you would put in your own instructions.
 
 Nested files are different: the model chooses which directories to read, and
@@ -157,7 +157,6 @@ cache-relevant paths separate:
 ```python {test="skip"}
 RepoContext(
     home_dir=None,                  # str | Path | None -- shallowest workspace dir to stop walk-up at, inclusive
-    root_markers=(),                # Sequence[str] -- stop the walk-up at the nearest dir containing one, e.g. ('.git',)
     filenames=('CLAUDE.md', 'AGENTS.md'),
     autoload_instructions=True,     # Strategy 1
     expose_inventory_tool=False,    # Strategy 2
@@ -167,6 +166,7 @@ RepoContext(
     traversal_tool_names=frozenset({'list_directory', 'read_file'}),  # deprecated fallback
     traversal_path_arg='path',                                       # deprecated fallback
     asset_roots=('.claude', '.agents', '.codex', '.grok'),
+    root_markers=(),                # Sequence[str] -- stop the walk-up at the nearest dir containing one, e.g. ('.git',)
 )
 ```
 
