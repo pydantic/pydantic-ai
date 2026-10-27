@@ -876,6 +876,17 @@ class TestPeers:
         assert await inbox.pending() == []
         assert await PeerInbox(path=tmp_path / 'pending.json').pending() == []
 
+    async def test_accepting_flag_controls_new_messages_without_discarding_pending(self) -> None:
+        inbox = PeerInbox(accepting=False)
+        first = message()
+        assert (await inbox.receive(first)).status == 'refused'
+        assert await inbox.pending() == []
+        inbox.accepting = True
+        assert (await inbox.receive(first)).status == 'queued'
+        inbox.accepting = False
+        assert await inbox.pending() == [first]
+        assert (await inbox.receive(message(id='another'))).status == 'refused'
+
     async def test_join_without_an_inbox_is_send_only(self) -> None:
         network = InMemoryPeerNetwork()
         network.join(handle='without-inbox')

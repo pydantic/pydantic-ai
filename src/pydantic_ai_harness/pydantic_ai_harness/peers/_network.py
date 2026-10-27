@@ -61,8 +61,7 @@ class InMemoryPeerNetwork:
             raise UserError(f'Peer handle {handle!r} is already in use.')
         info = PeerInfo(id=uuid4().hex, handle=handle, workspace=workspace, title=title)
         if inbox is None:
-            inbox = PeerInbox()
-            inbox.accepting = False
+            inbox = PeerInbox(accepting=False)
         member = _Peer(members=self._members, info=info, inbox=inbox)
         self._members[info.id] = member
         return member

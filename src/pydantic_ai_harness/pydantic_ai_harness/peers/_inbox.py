@@ -26,15 +26,23 @@ class PeerInbox:
     its directory is private to the user. An idle inbox never starts an agent run.
     """
 
+    accepting: bool
+    """Whether new messages are accepted. Changing this flag does not discard pending messages."""
+
     def __init__(
-        self, *, path: Path | None = None, max_pending: int = MAX_PENDING, max_message_bytes: int = MAX_MESSAGE_BYTES
+        self,
+        *,
+        path: Path | None = None,
+        max_pending: int = MAX_PENDING,
+        max_message_bytes: int = MAX_MESSAGE_BYTES,
+        accepting: bool = True,
     ) -> None:
         if max_pending < 1 or max_message_bytes < 1:
             raise UserError('Inbox limits must be positive.')
         self.path = path
         self.max_pending = max_pending
         self.max_message_bytes = max_message_bytes
-        self.accepting = True
+        self.accepting = accepting
         self._messages: dict[str, PeerMessage] = {}
         self._loaded = False
         self._lock = Lock()
