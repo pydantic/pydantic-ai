@@ -9254,7 +9254,7 @@ async def _collect_adapter_events(
 
 
 @requires_ag_ui('1.0.0')
-async def test_run_started_protocol_version_is_omitted_below_1_0() -> None:
+async def test_run_started_has_no_protocol_version_for_an_older_ag_ui_version() -> None:
     """A peer below 1.0 gets no `protocolVersion`; from 1.0 on it is the SDK's own, see `run_started_protocol_version()`."""
     agent = Agent(model=FunctionModel(stream_function=simple_stream))
     events = await _collect_adapter_events(
@@ -9280,7 +9280,7 @@ def _cancelling_agent() -> Agent:
 
 
 @requires_ag_ui('1.0.0')
-async def test_run_finished_cancelled_outcome() -> None:
+async def test_run_finished_cancelled_outcome_and_usage() -> None:
     """A cancelled run ends with a `cancelled` outcome on 1.0 and reports the usage of the calls it made;
     below 1.0 see `test_run_cancelled_finishes_without_error_or_outcome`."""
     agent = _cancelling_agent()
@@ -9449,11 +9449,20 @@ async def test_resumed_run_usage_excludes_history() -> None:
 
 
 @requires_ag_ui('1.0.0')
-async def test_frontend_tool_calls_are_pending_on_success() -> None:
-    """Frontend tool calls the run hands back are listed in `pendingToolCallIds`, in call order, on 1.0 only.
-
-    A server-side tool called in the same step is answered, so it is not pending.
-    """
+@pytest.mark.parametrize(
+    ('declared', 'ag_ui_version', 'pending'),
+    [
+        pytest.param('1.0', '1.0.0', True, id='declared_1_0'),
+        pytest.param(None, '1.0.0', False, id='undeclared'),
+        pytest.param('1.0', '0.1.19', False, id='older_ag_ui_version'),
+    ],
+)
+async def test_frontend_tool_calls_are_pending_on_success(
+    declared: str | None, ag_ui_version: str, pending: bool
+) -> None:
+    """Frontend tool calls the run hands back are listed in `pendingToolCallIds`, in call order, but only for a client
+    that declared 1.0 on a 1.0 `ag_ui_version`; pre-1.0 clients reject the field. A server-side tool called in the same
+    step is answered, so it is never pending."""
 
     async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         yield {
@@ -9473,58 +9482,26 @@ async def test_frontend_tool_calls_are_pending_on_success() -> None:
         create_input(
             UserMessage(id='m1', content='call tools'),
             tools=[get_weather(), get_weather('get_weather_parts')],
-            protocol_version='1.0',
+            protocol_version=declared,
         ),
-        ag_ui_version='1.0.0',
+        ag_ui_version=ag_ui_version,
     )
-    outcome = next(event for event in events if event['type'] == 'RUN_FINISHED')['outcome']
-    assert outcome['type'] == 'success'
     call_ids = {event['toolCallName']: event['toolCallId'] for event in events if event['type'] == 'TOOL_CALL_START'}
     results = {event['toolCallId']: event['content'] for event in events if event['type'] == 'TOOL_CALL_RESULT'}
     assert results == {call_ids['get_time']: 'noon'}
-    assert outcome['pendingToolCallIds'] == [call_ids['get_weather'], call_ids['get_weather_parts']]
-
-    legacy_events = await _collect_adapter_events(
-        agent,
-        create_input(
-            UserMessage(id='m1', content='call tools'), tools=[get_weather(), get_weather('get_weather_parts')]
-        ),
-        ag_ui_version='0.1.19',
+    outcome = next(event for event in events if event['type'] == 'RUN_FINISHED')['outcome']
+    assert outcome == (
+        {'type': 'success', 'pendingToolCallIds': [call_ids['get_weather'], call_ids['get_weather_parts']]}
+        if pending
+        else {'type': 'success'}
     )
-    assert next(event for event in legacy_events if event['type'] == 'RUN_FINISHED')['outcome'] == {'type': 'success'}
-
-
-@requires_ag_ui('1.0.0')
-async def test_undeclared_client_gets_plain_success_outcome() -> None:
-    """A client that declares no `protocolVersion` predates 1.0, so pending calls are not named for it."""
-
-    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
-        yield {0: DeltaToolCall(name='get_weather', json_args='{}')}
-
-    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
-    events = await _collect_adapter_events(
-        agent,
-        create_input(UserMessage(id='m1', content='call tools'), tools=[get_weather()]),
-        ag_ui_version='1.0.0',
-    )
-    assert next(event for event in events if event['type'] == 'RUN_FINISHED')['outcome'] == {'type': 'success'}
-
-
-@requires_ag_ui('1.0.0')
-async def test_undeclared_client_gets_bare_run_finished_on_cancellation() -> None:
-    """The `cancelled` outcome is withheld from a client that declares no `protocolVersion`."""
-    agent = _cancelling_agent()
-
-    events = await _collect_adapter_events(
-        agent, create_input(UserMessage(id='m1', content='hi')), ag_ui_version='1.0.0'
-    )
-    assert 'outcome' not in next(event for event in events if event['type'] == 'RUN_FINISHED')
 
 
 @requires_ag_ui('1.0.0')
 @pytest.mark.parametrize(
     ('declared', 'outcome'),
     [
+        pytest.param(None, None, id='undeclared'),
         pytest.param('0.9', None, id='older'),
         pytest.param('next', {'type': 'cancelled'}, id='unreadable'),
         pytest.param('1.0-next', {'type': 'cancelled'}, id='suffixed'),
@@ -9533,8 +9510,10 @@ async def test_undeclared_client_gets_bare_run_finished_on_cancellation() -> Non
         pytest.param('2.0', {'type': 'cancelled'}, id='newer_major'),
     ],
 )
-async def test_client_protocol_version_decides_1_0_outcomes(declared: str, outcome: dict[str, str] | None) -> None:
-    """A client declaring a version before 1.0 gets the pre-1.0 shapes. One newer than the SDK speaks, or outside the
+async def test_client_protocol_version_decides_1_0_outcomes(
+    declared: str | None, outcome: dict[str, str] | None
+) -> None:
+    """A client declaring no version, or one before 1.0, gets the pre-1.0 shapes. One newer than the SDK speaks, or outside the
     `MAJOR.MINOR` grammar, is handled like a newer one, as the spec requires, and gets the 1.0 shapes without a warning:
     the server operator can't change what the client declares."""
     agent = _cancelling_agent()
@@ -9598,12 +9577,10 @@ _DOCUMENT_FROM_DATA = {
     ],
 )
 def test_retired_binary_part_is_translated_on_1_0(part: dict[str, Any], expected: dict[str, Any]) -> None:
-    """A retired `binary` part becomes the typed media part for its MIME type, without a warning."""
-    with warnings.catch_warnings(record=True) as caught:
-        run_input = AGUIAdapter.build_run_input(
-            build_run_input_body({'id': 'msg-1', 'role': 'user', 'content': [{'type': 'binary', **part}]})
-        )
-    assert not caught
+    """A retired `binary` part becomes the typed media part for its MIME type."""
+    run_input = AGUIAdapter.build_run_input(
+        build_run_input_body({'id': 'msg-1', 'role': 'user', 'content': [{'type': 'binary', **part}]})
+    )
     content = run_input.messages[0].content
     assert isinstance(content, list)
     assert content[0].model_dump(exclude_none=True) == expected
@@ -9676,55 +9653,63 @@ def test_file_source_without_known_provider_is_skipped(provider: str | None, mat
     assert messages == []
 
 
-@requires_ag_ui('1.0.0')
-def test_tool_message_content_parts_load_as_typed_content(tiny_image: BinaryImage) -> None:
-    """From 1.0 a tool message can carry content parts: a lone text part rehydrates like string content, one among
-    several stays text, media loads as the typed content a reloaded return has, and `sanitize_messages` checks it
-    like a user message's.
-
-    A tool message left with no parts keeps its place with no content, so its call isn't orphaned.
-    """
-    messages: list[Message] = [
-        AssistantMessage(id='m1', tool_calls=[ToolCall(id='c1', function=FunctionCall(name='chart', arguments='{}'))]),
-        ToolMessage(
-            id='m2',
-            tool_call_id='c1',
-            content=[
-                TextInputContent(text='[1, 2, 3]'),
-                ImageInputContent(
-                    source=InputContentDataSource(value=tiny_image.base64, mime_type=tiny_image.media_type)
-                ),
-            ],
-        ),
-        AssistantMessage(id='m3', tool_calls=[ToolCall(id='c2', function=FunctionCall(name='lookup', arguments='{}'))]),
-        ToolMessage(id='m4', tool_call_id='c2', content=[TextInputContent(text='{"answer": 42}')]),
-        AssistantMessage(id='m5', tool_calls=[ToolCall(id='c3', function=FunctionCall(name='fetch', arguments='{}'))]),
-        ToolMessage(
-            id='m6',
-            tool_call_id='c3',
-            content=[ImageInputContent(source=FileSource(value='file-1', provider='openai', mime_type='image/png'))],
-        ),
-        AssistantMessage(id='m7', tool_calls=[ToolCall(id='c4', function=FunctionCall(name='fetch', arguments='{}'))]),
-        ToolMessage(id='m8', tool_call_id='c4', content=[ImageInputContent(source=FileSource(value='file-2'))]),
+def _tool_call_with_result(content: list[dict[str, Any]]) -> list[Message]:
+    """A tool call and its 1.0 tool message carrying `content` parts, as a client sends them."""
+    return [
+        AssistantMessage(id='m1', tool_calls=[ToolCall(id='c1', function=FunctionCall(name='tool', arguments='{}'))]),
+        ToolMessage.model_validate({'id': 'm2', 'role': 'tool', 'toolCallId': 'c1', 'content': content}),
     ]
 
-    def tool_returns(history: list[ModelMessage]) -> list[ToolReturnPart]:
-        return [part for message in history for part in message.parts if isinstance(part, ToolReturnPart)]
 
+_TOOL_IMAGE = {'type': 'image', 'source': {'type': 'data', 'value': 'AAEC', 'mimeType': 'image/png'}}
+_TOOL_UPLOADED_FILE = {
+    'type': 'image',
+    'source': {'type': 'file', 'value': 'file-1', 'provider': 'openai', 'mimeType': 'image/png'},
+}
+
+
+@requires_ag_ui('1.0.0')
+@pytest.mark.parametrize(
+    ('content', 'expected'),
+    [
+        pytest.param([{'type': 'text', 'text': '{"answer": 42}'}], {'answer': 42}, id='lone_text_is_the_string_form'),
+        pytest.param(
+            [{'type': 'text', 'text': '[1, 2, 3]'}, _TOOL_IMAGE],
+            ['[1, 2, 3]', BinaryImage(data=b'\x00\x01\x02', media_type='image/png')],
+            id='text_among_media_stays_text',
+        ),
+        pytest.param(
+            [_TOOL_UPLOADED_FILE],
+            UploadedFile(file_id='file-1', provider_name='openai', media_type='image/png'),
+            id='uploaded_file',
+        ),
+    ],
+)
+def test_tool_message_content_parts_load_as_tool_return(content: list[dict[str, Any]], expected: Any) -> None:
+    """From 1.0 a tool message can carry content parts, which load like a user message's. A lone text part is the
+    string form, so it rehydrates like string content; text next to other parts stays text."""
+    loaded = AGUIAdapter.load_messages(_tool_call_with_result(content))
+    assert message_part(loaded, ToolReturnPart, message_index=1).content == expected
+
+
+@requires_ag_ui('1.0.0')
+def test_tool_message_with_no_parts_left_keeps_its_place() -> None:
+    """A tool message whose only part is dropped still loads, with no content, so its call isn't orphaned."""
     with pytest.warns(UserWarning, match='with no provider was skipped'):
-        loaded = AGUIAdapter.load_messages(messages)
-    chart, lookup, fetch, emptied = tool_returns(loaded)
-    image = BinaryImage(data=tiny_image.data, media_type=tiny_image.media_type, identifier=tiny_image.identifier)
-    assert chart.content == ['[1, 2, 3]', image]
-    assert chart.files == [image]
-    assert lookup.content == {'answer': 42}
-    assert fetch.content == UploadedFile(file_id='file-1', provider_name='openai', media_type='image/png')
-    assert emptied.content is None
+        loaded = AGUIAdapter.load_messages(
+            _tool_call_with_result([{'type': 'image', 'source': {'type': 'file', 'value': 'file-2'}}])
+        )
+    assert message_part(loaded, ToolReturnPart, message_index=1).content is None
 
-    adapter = AGUIAdapter(Agent(TestModel()), create_input())
+
+@requires_ag_ui('1.0.0')
+def test_tool_message_uploaded_file_is_dropped_by_sanitize_messages() -> None:
+    """Media in a tool message's parts passes the same checks as a user message's, so a client-sent uploaded file is
+    dropped unless `allow_uploaded_files` is set."""
+    adapter = AGUIAdapter(Agent(TestModel()), create_input(*_tool_call_with_result([_TOOL_UPLOADED_FILE])))
     with pytest.warns(UserWarning, match='uploaded file'):
-        sanitized = tool_returns(adapter.sanitize_messages(loaded))
-    assert [part.content for part in sanitized] == [['[1, 2, 3]', image], {'answer': 42}, None, None]
+        sanitized = adapter.sanitize_messages(adapter.messages)
+    assert message_part(sanitized, ToolReturnPart, message_index=1).content is None
 
 
 @pytestmark_interrupts
