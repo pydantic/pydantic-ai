@@ -71,7 +71,11 @@ export function GitChip({
         <GitDialog
           git={git}
           status={status}
-          onStatus={setStatus}
+          onStatus={(fresh) => {
+            // Newer than any status still being asked for.
+            request.current++
+            setStatus(fresh)
+          }}
           onRefresh={() => void load()}
           onClose={close}
           onNotice={onNotice}
@@ -379,15 +383,17 @@ function PullRequest({
   const [drafting, setDrafting] = useState(true)
   const [draftProblem, setDraftProblem] = useState<string | null>(null)
   const [url, setUrl] = useState<string | null>(null)
-  const typed = useRef(false)
+  // The draft fills only the fields not typed in yet.
+  const typedTitle = useRef(false)
+  const typedBody = useRef(false)
   useEffect(() => {
     let current = true
     git
       .draftPullRequest()
       .then((draft) => {
-        if (!current || typed.current) return
-        setTitle(draft.title)
-        setBody(draft.body)
+        if (!current) return
+        if (!typedTitle.current) setTitle(draft.title)
+        if (!typedBody.current) setBody(draft.body)
       })
       .catch((error: unknown) => current && setDraftProblem(message(error)))
       .finally(() => current && setDrafting(false))
@@ -417,7 +423,7 @@ function PullRequest({
           placeholder={drafting ? 'The model is drafting a title…' : 'What the pull request does'}
           disabled={busy}
           onChange={(event) => {
-            typed.current = true
+            typedTitle.current = true
             setTitle(event.target.value)
           }}
         />
@@ -430,7 +436,7 @@ function PullRequest({
           value={body}
           disabled={busy}
           onChange={(event) => {
-            typed.current = true
+            typedBody.current = true
             setBody(event.target.value)
           }}
         />

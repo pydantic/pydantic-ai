@@ -283,8 +283,11 @@ async def _pull_request_problem(remote: str | None, *, branch: str | None, on_de
         token = await to_thread.run_sync(gh_cli.gh_token, host)
     except UserError as exc:  # `gh` did not answer, as while the keyring is locked.
         return str(exc)
-    if token is None:
+    if token is None and host == 'github.com':
         return f'The GitHub CLI is not signed in to {host}: run gh auth login --hostname {host}.'
+    if token is None:
+        # Any host may be GitHub Enterprise, so it cannot tell GitLab from GitHub by name.
+        return f'The GitHub CLI is not signed in to {host}; it opens pull requests on GitHub hosts only.'
     return None
 
 
@@ -539,11 +542,22 @@ def git_commands(*, workspace: Callable[[], Path], model: ModelSource) -> tuple[
         done = await push(directory, confirmed=confirmed)
         return f'{done}\n{await _summary(directory)}'
 
+    shown: list[PullRequestDraft] = []
+    """The draft bare `/pr` showed last, which `/pr confirm` opens: nothing is published unseen."""
+
     async def pull_request_command(args: list[str]) -> str:
         directory = workspace()
-        draft = await draft_pull_request(directory, model=model)
-        title = args[0].strip() if args and args[0].strip() else draft.title
-        return f'Opened {await open_pull_request(directory, title=title, body=draft.body)}'
+        text = args[0].strip() if args else ''
+        if not text:
+            draft = await draft_pull_request(directory, model=model)
+            shown[:] = [draft]
+            return f'{draft.title}\n\n{draft.body}\n\n/pr confirm opens this pull request; /pr TITLE opens it with another title.'
+        if not shown:
+            raise ValueError('Run /pr first to see the drafted pull request.')
+        draft = shown[0] if text == 'confirm' else PullRequestDraft(title=text, body=shown[0].body)
+        url = await open_pull_request(directory, title=draft.title, body=draft.body)
+        shown.clear()
+        return f'Opened {url}'
 
     return (
         Command(
@@ -566,7 +580,7 @@ def git_commands(*, workspace: Callable[[], Path], model: ModelSource) -> tuple[
         ),
         Command(
             name='pr',
-            description='Push this branch and open a GitHub pull request with gh: /pr [TITLE]; the model drafts it',
+            description='Draft a GitHub pull request for this branch; /pr confirm (or /pr TITLE) pushes and opens it with gh',
             handler=pull_request_command,
             raw=True,
             live=True,

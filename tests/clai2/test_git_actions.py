@@ -346,6 +346,13 @@ async def test_pull_requests_need_github_and_a_signed_in_gh(
     )
     with pytest.raises(RuntimeError, match='not signed in'):
         await open_pull_request(repo, title='Feature', body='')
+    git(repo, 'remote', 'set-url', 'origin', 'https://gitlab.example.com/octo/repo.git')
+    status = await git_status(repo)
+    assert status is not None
+    assert status.pull_request == (
+        'The GitHub CLI is not signed in to gitlab.example.com; it opens pull requests on GitHub hosts only.'
+    )
+    git(repo, 'remote', 'set-url', 'origin', GITHUB)
 
     def locked(host: str) -> str | None:
         raise UserError('gh auth token did not answer within 10 seconds.')
@@ -536,10 +543,21 @@ async def test_commands(repo: Path, gh_state: Path) -> None:
     (repo / 'notes.txt').write_text('feature\n')
     await run('commit', 'Feature')
     assert await run('push') == 'Pushed feature to origin.\nfeature: 0 changed, 0 ahead'
-    assert await run('pr') == f'Opened {PR_URL}'
+    # Nothing is published unseen: bare `/pr` only shows the draft that `/pr confirm` then opens.
+    with pytest.raises(ValueError, match='Run /pr first'):
+        await run('pr', 'confirm')
+    assert await run('pr') == (
+        'Add a feature\n\nIt adds one.\n\n/pr confirm opens this pull request; /pr TITLE opens it with another title.'
+    )
+    assert not any(call.startswith('pr create') for call in calls(gh_state))
+    assert await run('pr', 'confirm') == f'Opened {PR_URL}'
     assert calls(gh_state)[-1] == 'pr create --head=feature --title=Add a feature --body-file=-'
+    with pytest.raises(ValueError, match='Run /pr first'):
+        await run('pr', 'confirm')
+    await run('pr')
     assert await run('pr', 'My title') == f'Opened {PR_URL}'
     assert calls(gh_state)[-1] == 'pr create --head=feature --title=My title --body-file=-'
+    assert (gh_state / 'body').read_text() == 'It adds one.'
 
 
 def test_a_plugins_own_git_command_takes_over() -> None:

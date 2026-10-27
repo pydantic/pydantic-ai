@@ -48,7 +48,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
-| `/pr [TITLE]` | Push the branch and open a GitHub pull request with `gh`; the model drafts its description |
+| `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update` | Install the newest CLAI from `updates.channel` and restart |
 | `/reload` | Reload CLAI's own code without restarting |
 | `/exit` | Quit |
@@ -576,8 +576,9 @@ control say so. Like `/fast`, `/effort` waits for the current turn to finish.
 `/commit [MESSAGE]` stages and commits every change in the session's directory;
 without MESSAGE the session's model drafts one from the changes. `/push` runs
 `git push -u origin BRANCH`; on the default branch it asks for `/push confirm`.
-`/pr [TITLE]` pushes the branch and opens a GitHub pull request with `gh`, the
-model drafting its description (and title, without TITLE). The web UI's git chip
+`/pr` shows a pull request title and description the model drafts from the
+branch; `/pr confirm` then pushes the branch and opens exactly that with `gh`,
+and `/pr TITLE` does so with your title instead. The web UI's git chip
 does the same, with a file list and the drafts to edit first. A plugin's own
 `/commit`, `/push`, or `/pr` replaces these; a skill of the same name is hidden
 by them, and CLAI says so.

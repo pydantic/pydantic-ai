@@ -123,7 +123,8 @@ description you can edit, pushes the branch, opens it with the GitHub CLI (`gh`)
 it is disabled, saying why, without a GitHub `origin` or a signed-in `gh`, or on the default branch.
 Everything runs in the session's own directory, never in one that no longer exists. The terminal
 has the same actions: `/commit [MESSAGE]` commits every change (the model drafts the message when
-you give none), `/push [confirm]`, and `/pr [TITLE]`.
+you give none), `/push [confirm]`, and `/pr`, which shows the drafted pull request until `/pr confirm` (or
+`/pr TITLE`) opens it.
 
 <!-- From #10461 -->
 **System prompt** in the Settings window (`#settings/system-prompt`, or `/system_prompt` in the
