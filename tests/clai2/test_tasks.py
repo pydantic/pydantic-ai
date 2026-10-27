@@ -344,6 +344,38 @@ async def test_task_ending_before_its_model_gets_its_start_row_without_one() -> 
     assert output.getvalue().splitlines() == lines
 
 
+async def test_resumed_task_ending_before_its_model_does_not_show_the_earlier_model() -> None:
+    output = io.StringIO()
+    ui = Tasks(console=Console(file=output), conversation_id=lambda: 'root', directory=None)
+    record = task()
+
+    def start() -> DelegationTaskEvent:
+        event = DelegationStartEvent(
+            agent_name='worker', task='inspect', truncated=False, inherits_tools=False, model=None
+        )
+        event.task_id = record.id
+        return DelegationTaskEvent(task=record, event=event)
+
+    end = DelegationEndEvent(
+        agent_name='worker',
+        outcome='failed',
+        output='failed',
+        truncated=False,
+        usage=None,
+        duration_seconds=1,
+        task_id=record.id,
+    )
+    await ui.observe(start())
+    await ui.observe(
+        DelegationTaskEvent(task=record, event=PartStartEvent(index=0, part=TextPart('ok')), model_name='old-model')
+    )
+    await ui.observe(DelegationTaskEvent(task=record, event=end))
+    await ui.observe(start())
+    await ui.observe(DelegationTaskEvent(task=record, event=end))
+    starts = [line for line in output.getvalue().splitlines() if line.startswith('●')]
+    assert starts == ['● worker [aaaaaaaa] · old-model inspect', '● worker [aaaaaaaa] inspect']
+
+
 async def test_presentation_classifies_capability_owned_tool() -> None:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:

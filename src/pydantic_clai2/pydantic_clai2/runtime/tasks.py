@@ -252,6 +252,9 @@ class Tasks:
         self.prompt_task = prompt_task
         self.show_task_models = show_task_models
         self._pending_rows: dict[str, DelegationStartEvent] = {}
+        """Start rows held until their child names its model, by task ID."""
+        self._row_models: dict[str, str | None] = {}
+        """The model that released each task's latest start row, so a resumed task never shows an earlier run's."""
         self._prompts: dict[str, asyncio.Task[Exception | None]] = {}
         """The runs `prompt` started, by task ID: nothing else waits for these tasks."""
         self._starting: dict[str, asyncio.Event] = {}
@@ -318,6 +321,7 @@ class Tasks:
         held = self._pending_rows.get(record.id)
         if held is not None and (update.model_name is not None or isinstance(event, DelegationEndEvent)):
             del self._pending_rows[record.id]
+            self._row_models[record.id] = update.model_name
             await self._show_row(held)
         if isinstance(event, (DelegationStartEvent, DelegationEndEvent)):
             await self._show_row(event)
@@ -331,9 +335,7 @@ class Tasks:
     def row(self, event: AgentStreamEvent) -> Text | None:
         """Render a lifecycle row with the child's observed model, when available."""
         model_name = (
-            self.progress[event.task_id].model
-            if isinstance(event, DelegationStartEvent) and event.task_id in self.progress
-            else None
+            self._row_models.get(event.task_id) if isinstance(event, DelegationStartEvent) and event.task_id else None
         )
         return task_row(event, model_name=model_name, show_model=self.show_task_models())
 
