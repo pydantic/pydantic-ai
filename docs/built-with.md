@@ -4,17 +4,7 @@ description: "Open source applications, libraries, agents and research projects 
 
 # Built with Pydantic AI
 
-Open source projects that use Pydantic AI, [Pydantic AI Harness](harness/index.md) or [Pydantic Evals](evals.md). Each entry links to the project's repository and says what it uses them for. Projects maintained by a well-known organization come first in each group, with the organization named in bold. Companies using Pydantic AI in production whose code isn't public are in [Case studies](#case-studies).
-
-## Adding your project
-
-Open a pull request adding it to [`docs/built-with.md`](https://github.com/pydantic/pydantic-ai/blob/main/docs/built-with.md): one line in the matching group, with a link to the repository. A project is listed when it meets all of these:
-
-- Its source is public and open source, and it has had a commit in the past year.
-- Pydantic AI, the Harness or Pydantic Evals runs a real part of the project itself, such as its agents, its assistant or its evals. Integrations that let others use Pydantic AI with a product, examples and tutorials don't count.
-- It is maintained by a well-known organization (a company, foundation, government or research institution), or it has at least 500 stars on GitHub.
-
-A reusable capability package for Pydantic AI agents belongs on [Third-Party Capabilities](capabilities/third-party.md) instead.
+Open source projects that use Pydantic AI, [Pydantic AI Harness](harness/index.md) or [Pydantic Evals](evals.md). Each entry links to the project's repository and says what it uses them for. Companies using Pydantic AI in production whose code isn't public are in [Case studies](#case-studies).
 
 ## Applications and platforms
 
@@ -102,3 +92,13 @@ Companies that told their story of using Pydantic AI, Pydantic Evals or [Pydanti
 - [Boosted.ai](https://pydantic.dev/case-studies/boostedai): monitors more than 50,000 AI investment research workflows with Logfire.
 - [Dosu](https://pydantic.dev/case-studies/dosu): debugs its agent runs from its coding agent with Logfire and its MCP server.
 - [AutonomyAI](https://pydantic.dev/case-studies/autonomyai): its agents query Logfire to catch their own regressions in production.
+
+## Adding your project
+
+Open a pull request adding it to [`docs/built-with.md`](https://github.com/pydantic/pydantic-ai/blob/main/docs/built-with.md): one line in the matching group, with a link to the repository. Projects maintained by a well-known organization go first in their group, with the organization in bold. A project is listed when it meets all of these:
+
+- Its source is public and open source, and it has had a commit in the past year.
+- Pydantic AI, the Harness or Pydantic Evals runs a real part of the project itself, such as its agents, its assistant or its evals. Integrations that let others use Pydantic AI with a product, examples and tutorials don't count.
+- It is maintained by a well-known organization (a company, foundation, government or research institution), or it has at least 500 stars on GitHub.
+
+A reusable capability package for Pydantic AI agents belongs on [Third-Party Capabilities](capabilities/third-party.md) instead.
