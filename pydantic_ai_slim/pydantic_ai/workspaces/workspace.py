@@ -492,7 +492,7 @@ class Workspace(WorkspaceBackend):
             raise ValueError(f'base must be an absolute path, got {base!r}')
         if posixpath.isabs(path):
             return posixpath.normpath(path)
-        return posixpath.normpath(posixpath.join(base or await self._backend.working_dir(), path))
+        return posixpath.normpath(posixpath.join(base or await self.working_dir(), path))
 
     async def _resolve_traced(self, path: str, span: Span) -> str:
         resolved = await self.resolve(path)
