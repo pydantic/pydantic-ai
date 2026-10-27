@@ -1140,7 +1140,6 @@ async def _run_task_and_evaluators(
         inputs=case.inputs,
         metadata=case.metadata,
         expected_output=case.expected_output,
-        **hash_attributes,
     ) as case_span:
         t0 = time.time()
 
@@ -1149,6 +1148,8 @@ async def _run_task_and_evaluators(
             trace_id = f'{context.trace_id:032x}'
             span_id = f'{context.span_id:016x}'
 
+        for key, digest in hash_attributes.items():
+            case_span.set_attribute(key, digest)
         if source_case_name is not None:
             case_span.set_attribute('logfire.experiment.source_case_name', source_case_name)
 
