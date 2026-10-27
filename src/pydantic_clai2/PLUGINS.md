@@ -1397,8 +1397,8 @@ each session plugin, so the coding tools, `repo_context`, skills, and MCP projec
 it. **New session** does the same in the folder the user picks (`POST /api/sessions/new`, which
 calls `host.live.new`), offering the sidebar's checkouts and every other worktree Git lists for
 their repositories (`GET /api/sessions?include_worktrees=true`), and the directories a typed path
-completes to (`GET /api/directories?path=…`, each repository with its worktrees). The page watches
-the session it
+completes to (`GET /api/directories?path=…`, the first 12, each repository with its worktrees).
+The page watches the session it
 shows (`LiveSession.watch`), so that one is never closed for being idle; any other live session
 closes after an idle hour, and clicking it again resumes it. The sidebar marks each live session
 that runs a turn, has input queued behind one, or waits for an answer, from the `live` message. Esc
