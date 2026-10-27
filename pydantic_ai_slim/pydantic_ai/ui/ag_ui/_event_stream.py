@@ -10,7 +10,7 @@ import re
 import warnings
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, Literal
+from typing import Literal
 from uuid import uuid4
 
 from pydantic_core import to_json
@@ -245,9 +245,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             yield agui_event
 
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
-        # The producer declares its own version, not the input version.
-        extra: dict[str, Any] = {'protocol_version': PROTOCOL_VERSION} if self._emit_1_0_fields else {}
-        yield RunStartedEvent(thread_id=self.thread_id, run_id=self.run_id, timestamp=self._get_timestamp(), **extra)
+        timestamp = self._get_timestamp()
+        if self._emit_1_0_fields:
+            # The producer declares its own version, not the input version.
+            yield RunStartedEvent(
+                thread_id=self.thread_id, run_id=self.run_id, timestamp=timestamp, protocol_version=PROTOCOL_VERSION
+            )
+        else:
+            yield RunStartedEvent(thread_id=self.thread_id, run_id=self.run_id, timestamp=timestamp)
 
     async def before_response(self) -> AsyncIterator[BaseEvent]:
         # Prevent parts from a subsequent response being tied to parts from an earlier response.
@@ -260,27 +265,30 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if self._error:
             return
 
-        # A key is passed only when the installed SDK defines it and, for the 1.0 keys, the client is on 1.0, so an
-        # older SDK never serializes a key it doesn't know.
-        extra: dict[str, Any] = {}
+        outcome: RunFinishedCancelledOutcome | RunFinishedInterruptOutcome | RunFinishedSuccessOutcome | None = None
         if self._cancelled_run:
             # Sent only to clients that declared 1.0; older client schemas reject it (ag-ui#880).
             if self._emit_1_0_outcomes:
-                extra['outcome'] = RunFinishedCancelledOutcome()
+                outcome = RunFinishedCancelledOutcome()
         elif HAS_INTERRUPTS:
-            # Omit `outcome` for SDKs that predate interrupts.
-            extra['outcome'] = self._build_outcome()
+            outcome = self._build_outcome()
+        usage = None
         # This run's own model calls, finished or cancelled; a stream with no agent run has none.
         run = self._result if self._result is not None else self.cancelled
         if self.include_usage and self._emit_1_0_fields and run is not None:
-            if usage := token_usage_from_messages(run.new_messages()):
-                extra['usage'] = usage
-        yield RunFinishedEvent(
-            thread_id=self.thread_id,
-            run_id=self.run_id,
-            timestamp=self._get_timestamp(),
-            **extra,
-        )
+            usage = token_usage_from_messages(run.new_messages()) or None
+
+        # Each SDK is given only the fields it defines, so an older one never serializes a key it doesn't know.
+        timestamp = self._get_timestamp()
+        if HAS_LIFECYCLE_1_0:
+            yield RunFinishedEvent(
+                thread_id=self.thread_id, run_id=self.run_id, timestamp=timestamp, outcome=outcome, usage=usage
+            )
+        elif HAS_INTERRUPTS:  # pragma: lax no cover
+            # Only 0.1.19 to 0.1.22, which no CI lane installs.
+            yield RunFinishedEvent(thread_id=self.thread_id, run_id=self.run_id, timestamp=timestamp, outcome=outcome)
+        else:
+            yield RunFinishedEvent(thread_id=self.thread_id, run_id=self.run_id, timestamp=timestamp)
 
     def _build_outcome(self) -> RunFinishedInterruptOutcome | RunFinishedSuccessOutcome | None:
         """Build the `RunFinishedEvent.outcome` from the final agent result.

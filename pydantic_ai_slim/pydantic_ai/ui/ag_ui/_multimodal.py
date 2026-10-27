@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import warnings
 from base64 import b64decode
-from typing import TYPE_CHECKING, Any, cast, get_args
+from typing import TYPE_CHECKING, Any, get_args
 
 from ag_ui.core import (
     AudioInputContent,
@@ -43,7 +43,10 @@ else:
             """Stub for SDKs without `FileSource`."""
 
 
-_UPLOADED_FILE_PROVIDERS: frozenset[str] = frozenset(get_args(UploadedFileProviderName))
+_UPLOADED_FILE_PROVIDERS: dict[str, UploadedFileProviderName] = {
+    name: name for name in get_args(UploadedFileProviderName)
+}
+"""Each provider name `UploadedFile` accepts, keyed by its string so a lookup narrows a client's value to the `Literal`."""
 
 AGUIContentTypes = ImageInputContent | AudioInputContent | VideoInputContent | DocumentInputContent
 PydanticAIUrlType = ImageUrl | AudioUrl | VideoUrl | DocumentUrl
@@ -136,7 +139,8 @@ def multimodal_input_to_content(
     if isinstance(source, InputContentDataSource):
         return BinaryContent(data=b64decode(source.value), media_type=source.mime_type, vendor_metadata=vendor_metadata)
     assert isinstance(source, FileSource)  # url, data and file are the only sources the SDK accepts
-    if source.provider not in _UPLOADED_FILE_PROVIDERS:
+    provider_name = _UPLOADED_FILE_PROVIDERS.get(source.provider) if source.provider is not None else None
+    if provider_name is None:
         got = 'no provider' if source.provider is None else f'provider {source.provider!r}'
         warnings.warn(
             f'AG-UI file reference {source.value!r} ({got}) was dropped: only file references from providers '
@@ -147,7 +151,7 @@ def multimodal_input_to_content(
         return None
     return UploadedFile(
         file_id=source.value,
-        provider_name=cast(UploadedFileProviderName, source.provider),  # checked against the literal's members above
+        provider_name=provider_name,
         media_type=source.mime_type,
         vendor_metadata=vendor_metadata,
     )

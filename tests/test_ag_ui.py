@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from dirty_equals import IsJson, IsPartialDict
@@ -137,6 +137,7 @@ with try_import() as imports_successful:
         DeveloperMessage,
         EventType,
         FunctionCall,
+        InputContent,
         Message,
         RunAgentInput,
         StateSnapshotEvent,
@@ -240,6 +241,11 @@ skip_if_ag_ui_1_0 = pytest.mark.skipif(_has_ag_ui('1.0.0'), reason='ag-ui-protoc
 def run_started_protocol_version() -> dict[str, Any]:
     """`RunStartedEvent.protocolVersion` as it appears when the adapter negotiates an installed 1.0 SDK."""
     return {'protocolVersion': '1.0'} if _has_ag_ui('1.0.0') else {}
+
+
+def activity_replace() -> dict[str, Any]:
+    """`ActivitySnapshotEvent.replace` as the adapter emits it: `True` below 1.0, left out on 1.0, where absent means replace."""
+    return {} if _has_ag_ui('1.0.0') else {'replace': True}
 
 
 def run_finished_outcome() -> dict[str, Any]:
@@ -4766,9 +4772,9 @@ async def test_callback_async() -> None:
     assert events[-1]['type'] == 'RUN_FINISHED'
 
 
-def legacy_binary(**fields: Any) -> Any:
-    """`BinaryInputContent`, typed as `Any` because on 1.0 the class sits outside `InputContent`."""
-    return BinaryInputContent(**fields)
+def legacy_binary(**fields: Any) -> InputContent:
+    """`BinaryInputContent`, cast as the adapter does because on 1.0 the class sits outside `InputContent`."""
+    return cast(InputContent, BinaryInputContent(**fields))
 
 
 @skip_if_ag_ui_1_0
@@ -10853,13 +10859,12 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
     ]
 
     activities = [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT']
-    # 1.0 leaves `replace` out, which the spec defines as replacing, like 0.x's default `True`.
-    assert activities[0].pop('replace', True) is True
     assert activities[0] == snapshot(
         {
             'type': 'ACTIVITY_SNAPSHOT',
             'timestamp': IsInt(),
             'messageId': IsStr(),
+            **activity_replace(),
             'activityType': 'pydantic_ai_enqueued_messages',
             'content': {
                 'messages': [
