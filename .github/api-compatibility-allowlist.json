@@ -377,6 +377,30 @@
       "fingerprint": "c2655ed50f60d9b53296c110ea2267134651aa29c6bfa49d4beb7ffcceede410",
       "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `forks=forks`.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11334"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "2018a1f6f9f174b7c4f2eaa1f0c7f1e8ed6452a63fda3ffee7095e81516c3afc",
+      "reason": "Harness 0.x: `Planning.cache_ttl` is deprecated and has no effect, because the plan reminder no longer places a cache breakpoint of its own, so its default is `None`. An explicit `'5m'` or `'1h'` warns that it's ignored; the loss of the default breakpoint is in the docs and release note, and caching on the model replaces it.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "9be216257b6cf2a0b4fb6c866822cd4230b68487f7423e74113ccd0e9ea1fb40",
+      "reason": "Harness 0.x: `Planning.cache_ttl` is deprecated and has no effect, because the plan reminder no longer places a cache breakpoint of its own, so its default is `None`. An explicit `'5m'` or `'1h'` warns that it's ignored; the loss of the default breakpoint is in the docs and release note, and caching on the model replaces it.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "51c9835f3d0b470684680c992c6a4df453c356ad85fe788921de808a6624054c",
+      "reason": "Harness 0.x: `Planning.from_spec`'s `cache_ttl` follows the deprecated `Planning.cache_ttl`, defaulting to `None`; an explicit `'5m'` or `'1h'` warns that it's ignored.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "4f48f3cbafd028241e3620a3564f13cde10fcf648b18bd76b1a881f743ec9241",
+      "reason": "False positive: `Planning` still inherits `wrap_model_request` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the plan reminder is now enqueued in `before_model_request`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
     }
   ],
   "model_name_literals": [

@@ -327,11 +327,12 @@ ALLOWED: dict[str, Allowed] = {
     # `keep_pairs`: one on the third request and one on the fifth.
     'TieredCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
     'Planning': Allowed(
-        f'Request-only plan reminder at the end of each request, behind a cache breakpoint ({_PULLS}10257)',
-        # Anthropic adds it to the last tool result message; the OpenAI APIs send it as a user message.
-        (('messages', 'tool-return'), ('messages', 'user-prompt')),
+        f'Request-scoped note on the plan reminder ({_PULLS}11521): sent for one request, then left out. Anthropic '
+        'clears it natively with `clear_at`; elsewhere it is a request-only tail. The plan itself is kept in history',
+        (('messages', 'system-prompt'),),
         tail=True,
-        records=('request-only user prompt',),
+        records=('request-scoped system prompt',),
+        providers=('openai-responses', 'openai-chat'),
     ),
     'WarnNearLimits': Allowed(
         f'Request-scoped system prompt ({_PULLS}10561): sent for one request, then left out. Anthropic clears it '

@@ -827,8 +827,8 @@ strategy re-injects it verbatim near the top of the surviving history. This is t
 invasive marking available today: pins use model-invisible `TextContent.metadata`, so their
 contents remain ordinary user context while compaction can distinguish them from user turns.
 
-`Planning` does **not** need pinning: its plan is re-injected ephemerally every request in
-`wrap_model_request`, so it already survives compaction by construction. Pinning is for durable
+`Planning` does **not** need pinning: when compaction removes its latest plan record, the next
+request records the plan again from its store. Pinning is for durable
 task state and scratchpads that live *in* the history.
 
 ## On-demand capabilities across compaction

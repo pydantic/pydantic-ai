@@ -1,0 +1,1902 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "3591"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: true
+        messages:
+        - role: system
+          content:
+          - type: text
+            text: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`."
+            prompt_cache_breakpoint:
+              mode: explicit
+        - role: user
+          content: >-
+            First call `write_plan` with the single step "read the report" in progress.
+            Then call `read_section` with n=1, then with n=2, then call `write_plan` again with
+            the step completed, one tool call per turn. After that, reply with just the word
+            done.
+        prompt_cache_options:
+          mode: implicit
+          ttl: 30m
+        reasoning_effort: none
+        stream_options:
+          include_usage: true
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: read_section
+            description: Read section `n` of the incident report.
+            parameters:
+              additionalProperties: false
+              properties:
+                "n":
+                  type: integer
+              required:
+              - "n"
+              type: object
+            strict: true
+        - type: function
+          function:
+            name: write_plan
+            description: >-
+              Create or replace the entire plan. Pass the whole ordered list every time --
+              including steps that are unchanged, completed, or cancelled -- so there are no
+              indices to track. Keep exactly one step `in_progress`. Call this first for multi-step
+              work, then again as you start and finish steps.
+            parameters:
+              additionalProperties: false
+              properties:
+                items:
+                  description: The complete ordered list of plan steps.
+                  items:
+                    $ref: "#/$defs/PlanItem"
+                  type: array
+              required:
+              - items
+              type: object
+              $defs:
+                PlanItem:
+                  description: |-
+                    One step in the plan.
+
+                    Used both as the `write_plan` input and as the stored item. `id` is
+                    auto-generated when omitted, so the model can create a plan without ids and
+                    reference existing steps by id when restructuring.
+
+                    Attributes:
+                        id: Stable identifier (auto-generated 8-char hex string).
+                        content: Imperative description of the step, e.g. `Add the database migration`.
+                        status: Current status of this step.
+                        active_form: Optional present-continuous label shown while the step runs,
+                            e.g. `Adding the database migration`.
+                        parent_id: Parent step id for subtask hierarchies (subtasks mode only).
+                        depends_on: Ids of steps that must complete before this one (subtasks mode only).
+                  properties:
+                    id:
+                      description: Step id. Auto-generated if omitted.
+                      type: string
+                    content:
+                      description: Imperative description of the step, e.g. "Add the database migration".
+                      type: string
+                    status:
+                      default: pending
+                      description: Current status of this step. "blocked" requires subtasks to be enabled.
+                      anyOf:
+                      - $ref: "#/$defs/TaskStatus"
+                    active_form:
+                      default: ""
+                      description: >-
+                        Present-continuous label shown while the step runs, e.g. "Adding the database
+                        migration".
+                      type: string
+                    parent_id:
+                      default: null
+                      description: Parent step id for a subtask hierarchy. Requires subtasks to be enabled.
+                      anyOf:
+                      - type: string
+                      - type: "null"
+                    depends_on:
+                      description: >-
+                        Ids of steps that must complete before this one. Requires subtasks to be
+                        enabled.
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - content
+                  type: object
+                  additionalProperties: false
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "904"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_t5U0pKgwXL6mL2s8rUhAY3C8","type":"function","function":{"name":"write_plan","arguments":""}}],"refusal":null},"finish_reason":null}],"usage":null,"obfuscation":"7OhWypZXJRv"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"ufL2"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"items"}}]},"finish_reason":null}],"usage":null,"obfuscation":"QY"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":["}}]},"finish_reason":null}],"usage":null,"obfuscation":"D3E"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"zdel"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"content"}}]},"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"tL"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"read"}}]},"finish_reason":null}],"usage":null,"obfuscation":"Zn5"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" the"}}]},"finish_reason":null}],"usage":null,"obfuscation":"ebU"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" report"}}]},"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\",\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"Qg"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"status"}}]},"finish_reason":null}],"usage":null,"obfuscation":"i"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"Dr"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"in"}}]},"finish_reason":null}],"usage":null,"obfuscation":"gwRDb"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"_progress"}}]},"finish_reason":null}],"usage":null,"obfuscation":"tr0Daal68SOciq"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\",\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"xH"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"active"}}]},"finish_reason":null}],"usage":null,"obfuscation":"A"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"_form"}}]},"finish_reason":null}],"usage":null,"obfuscation":"2x"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"De"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Reading"}}]},"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" the"}}]},"finish_reason":null}],"usage":null,"obfuscation":"OhQ"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" report"}}]},"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"}"}}]},"finish_reason":null}],"usage":null,"obfuscation":"q15j"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"]}"}}]},"finish_reason":null}],"usage":null,"obfuscation":"c4IpC"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":null,"obfuscation":"v7wuD"}
+
+        data: {"id":"chatcmpl-EddjldsOKjrxzrUG4ajGoEDGzUtHL","object":"chat.completion.chunk","created":1793116249,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[],"usage":{"prompt_tokens":697,"completion_tokens":35,"total_tokens":732,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"KusDv0p"}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-27T15:50:50.948932+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "4395"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: true
+        messages:
+        - role: system
+          content:
+          - type: text
+            text: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`."
+            prompt_cache_breakpoint:
+              mode: explicit
+        - role: user
+          content: >-
+            First call `write_plan` with the single step "read the report" in progress.
+            Then call `read_section` with n=1, then with n=2, then call `write_plan` again with
+            the step completed, one tool call per turn. After that, reply with just the word
+            done.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_t5U0pKgwXL6mL2s8rUhAY3C8
+            type: function
+            function:
+              name: write_plan
+              arguments: "{\"items\":[{\"content\":\"read the report\",\"status\":\"in_progress\",\"active_form\":\"Reading the report\"}]}"
+        - role: tool
+          tool_call_id: call_t5U0pKgwXL6mL2s8rUhAY3C8
+          content: |-
+            Plan updated: 1 step(s).
+
+            1. [~] read the report
+            (0/1 completed)
+        - role: user
+          content:
+          - text: |-
+              <plan-reminder>
+              1. [~] read the report
+              (0/1 completed)
+              </plan-reminder>
+            type: text
+        - role: system
+          content: "Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
+        prompt_cache_options:
+          mode: implicit
+          ttl: 30m
+        reasoning_effort: none
+        stream_options:
+          include_usage: true
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: read_section
+            description: Read section `n` of the incident report.
+            parameters:
+              additionalProperties: false
+              properties:
+                "n":
+                  type: integer
+              required:
+              - "n"
+              type: object
+            strict: true
+        - type: function
+          function:
+            name: write_plan
+            description: >-
+              Create or replace the entire plan. Pass the whole ordered list every time --
+              including steps that are unchanged, completed, or cancelled -- so there are no
+              indices to track. Keep exactly one step `in_progress`. Call this first for multi-step
+              work, then again as you start and finish steps.
+            parameters:
+              additionalProperties: false
+              properties:
+                items:
+                  description: The complete ordered list of plan steps.
+                  items:
+                    $ref: "#/$defs/PlanItem"
+                  type: array
+              required:
+              - items
+              type: object
+              $defs:
+                PlanItem:
+                  description: |-
+                    One step in the plan.
+
+                    Used both as the `write_plan` input and as the stored item. `id` is
+                    auto-generated when omitted, so the model can create a plan without ids and
+                    reference existing steps by id when restructuring.
+
+                    Attributes:
+                        id: Stable identifier (auto-generated 8-char hex string).
+                        content: Imperative description of the step, e.g. `Add the database migration`.
+                        status: Current status of this step.
+                        active_form: Optional present-continuous label shown while the step runs,
+                            e.g. `Adding the database migration`.
+                        parent_id: Parent step id for subtask hierarchies (subtasks mode only).
+                        depends_on: Ids of steps that must complete before this one (subtasks mode only).
+                  properties:
+                    id:
+                      description: Step id. Auto-generated if omitted.
+                      type: string
+                    content:
+                      description: Imperative description of the step, e.g. "Add the database migration".
+                      type: string
+                    status:
+                      default: pending
+                      description: Current status of this step. "blocked" requires subtasks to be enabled.
+                      anyOf:
+                      - $ref: "#/$defs/TaskStatus"
+                    active_form:
+                      default: ""
+                      description: >-
+                        Present-continuous label shown while the step runs, e.g. "Adding the database
+                        migration".
+                      type: string
+                    parent_id:
+                      default: null
+                      description: Parent step id for a subtask hierarchy. Requires subtasks to be enabled.
+                      anyOf:
+                      - type: string
+                      - type: "null"
+                    depends_on:
+                      description: >-
+                        Ids of steps that must complete before this one. Requires subtasks to be
+                        enabled.
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - content
+                  type: object
+                  additionalProperties: false
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "775"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"chatcmpl-Eddjn3cnaeedKEix9IrPT7xCRoh7Q","object":"chat.completion.chunk","created":1793116251,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_sikIRMCOzZ2U7srAYEmYbCAZ","type":"function","function":{"name":"read_section","arguments":""}}],"refusal":null},"finish_reason":null}],"usage":null,"obfuscation":"cPwdDsaQa"}
+
+        data: {"id":"chatcmpl-Eddjn3cnaeedKEix9IrPT7xCRoh7Q","object":"chat.completion.chunk","created":1793116251,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"X3sS"}
+
+        data: {"id":"chatcmpl-Eddjn3cnaeedKEix9IrPT7xCRoh7Q","object":"chat.completion.chunk","created":1793116251,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"n"}}]},"finish_reason":null}],"usage":null,"obfuscation":"ddxqCL"}
+
+        data: {"id":"chatcmpl-Eddjn3cnaeedKEix9IrPT7xCRoh7Q","object":"chat.completion.chunk","created":1793116251,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":"}}]},"finish_reason":null}],"usage":null,"obfuscation":"iLmn"}
+
+        data: {"id":"chatcmpl-Eddjn3cnaeedKEix9IrPT7xCRoh7Q","object":"chat.completion.chunk","created":1793116251,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1"}}]},"finish_reason":null}],"usage":null,"obfuscation":"omGctA"}
+
+        data: {"id":"chatcmpl-Eddjn3cnaeedKEix9IrPT7xCRoh7Q","object":"chat.completion.chunk","created":1793116251,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"finish_reason":null}],"usage":null,"obfuscation":"vnv29D"}
+
+        data: {"id":"chatcmpl-Eddjn3cnaeedKEix9IrPT7xCRoh7Q","object":"chat.completion.chunk","created":1793116251,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":null,"obfuscation":"h5wfn"}
+
+        data: {"id":"chatcmpl-Eddjn3cnaeedKEix9IrPT7xCRoh7Q","object":"chat.completion.chunk","created":1793116251,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[],"usage":{"prompt_tokens":848,"completion_tokens":17,"total_tokens":865,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"4SS8xyu"}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-27T15:50:51.979121+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "13526"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: true
+        messages:
+        - role: system
+          content:
+          - type: text
+            text: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`."
+            prompt_cache_breakpoint:
+              mode: explicit
+        - role: user
+          content: >-
+            First call `write_plan` with the single step "read the report" in progress.
+            Then call `read_section` with n=1, then with n=2, then call `write_plan` again with
+            the step completed, one tool call per turn. After that, reply with just the word
+            done.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_t5U0pKgwXL6mL2s8rUhAY3C8
+            type: function
+            function:
+              name: write_plan
+              arguments: "{\"items\":[{\"content\":\"read the report\",\"status\":\"in_progress\",\"active_form\":\"Reading the report\"}]}"
+        - role: tool
+          tool_call_id: call_t5U0pKgwXL6mL2s8rUhAY3C8
+          content: |-
+            Plan updated: 1 step(s).
+
+            1. [~] read the report
+            (0/1 completed)
+        - role: user
+          content:
+          - text: |-
+              <plan-reminder>
+              1. [~] read the report
+              (0/1 completed)
+              </plan-reminder>
+            type: text
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_sikIRMCOzZ2U7srAYEmYbCAZ
+            type: function
+            function:
+              name: read_section
+              arguments: "{\"n\":1}"
+        - role: tool
+          tool_call_id: call_sikIRMCOzZ2U7srAYEmYbCAZ
+          content: |-
+            Section 1, line 0: the service returned 503 for a while.
+            Section 1, line 1: the service returned 503 for a while.
+            Section 1, line 2: the service returned 503 for a while.
+            Section 1, line 3: the service returned 503 for a while.
+            Section 1, line 4: the service returned 503 for a while.
+            Section 1, line 5: the service returned 503 for a while.
+            Section 1, line 6: the service returned 503 for a while.
+            Section 1, line 7: the service returned 503 for a while.
+            Section 1, line 8: the service returned 503 for a while.
+            Section 1, line 9: the service returned 503 for a while.
+            Section 1, line 10: the service returned 503 for a while.
+            Section 1, line 11: the service returned 503 for a while.
+            Section 1, line 12: the service returned 503 for a while.
+            Section 1, line 13: the service returned 503 for a while.
+            Section 1, line 14: the service returned 503 for a while.
+            Section 1, line 15: the service returned 503 for a while.
+            Section 1, line 16: the service returned 503 for a while.
+            Section 1, line 17: the service returned 503 for a while.
+            Section 1, line 18: the service returned 503 for a while.
+            Section 1, line 19: the service returned 503 for a while.
+            Section 1, line 20: the service returned 503 for a while.
+            Section 1, line 21: the service returned 503 for a while.
+            Section 1, line 22: the service returned 503 for a while.
+            Section 1, line 23: the service returned 503 for a while.
+            Section 1, line 24: the service returned 503 for a while.
+            Section 1, line 25: the service returned 503 for a while.
+            Section 1, line 26: the service returned 503 for a while.
+            Section 1, line 27: the service returned 503 for a while.
+            Section 1, line 28: the service returned 503 for a while.
+            Section 1, line 29: the service returned 503 for a while.
+            Section 1, line 30: the service returned 503 for a while.
+            Section 1, line 31: the service returned 503 for a while.
+            Section 1, line 32: the service returned 503 for a while.
+            Section 1, line 33: the service returned 503 for a while.
+            Section 1, line 34: the service returned 503 for a while.
+            Section 1, line 35: the service returned 503 for a while.
+            Section 1, line 36: the service returned 503 for a while.
+            Section 1, line 37: the service returned 503 for a while.
+            Section 1, line 38: the service returned 503 for a while.
+            Section 1, line 39: the service returned 503 for a while.
+            Section 1, line 40: the service returned 503 for a while.
+            Section 1, line 41: the service returned 503 for a while.
+            Section 1, line 42: the service returned 503 for a while.
+            Section 1, line 43: the service returned 503 for a while.
+            Section 1, line 44: the service returned 503 for a while.
+            Section 1, line 45: the service returned 503 for a while.
+            Section 1, line 46: the service returned 503 for a while.
+            Section 1, line 47: the service returned 503 for a while.
+            Section 1, line 48: the service returned 503 for a while.
+            Section 1, line 49: the service returned 503 for a while.
+            Section 1, line 50: the service returned 503 for a while.
+            Section 1, line 51: the service returned 503 for a while.
+            Section 1, line 52: the service returned 503 for a while.
+            Section 1, line 53: the service returned 503 for a while.
+            Section 1, line 54: the service returned 503 for a while.
+            Section 1, line 55: the service returned 503 for a while.
+            Section 1, line 56: the service returned 503 for a while.
+            Section 1, line 57: the service returned 503 for a while.
+            Section 1, line 58: the service returned 503 for a while.
+            Section 1, line 59: the service returned 503 for a while.
+            Section 1, line 60: the service returned 503 for a while.
+            Section 1, line 61: the service returned 503 for a while.
+            Section 1, line 62: the service returned 503 for a while.
+            Section 1, line 63: the service returned 503 for a while.
+            Section 1, line 64: the service returned 503 for a while.
+            Section 1, line 65: the service returned 503 for a while.
+            Section 1, line 66: the service returned 503 for a while.
+            Section 1, line 67: the service returned 503 for a while.
+            Section 1, line 68: the service returned 503 for a while.
+            Section 1, line 69: the service returned 503 for a while.
+            Section 1, line 70: the service returned 503 for a while.
+            Section 1, line 71: the service returned 503 for a while.
+            Section 1, line 72: the service returned 503 for a while.
+            Section 1, line 73: the service returned 503 for a while.
+            Section 1, line 74: the service returned 503 for a while.
+            Section 1, line 75: the service returned 503 for a while.
+            Section 1, line 76: the service returned 503 for a while.
+            Section 1, line 77: the service returned 503 for a while.
+            Section 1, line 78: the service returned 503 for a while.
+            Section 1, line 79: the service returned 503 for a while.
+            Section 1, line 80: the service returned 503 for a while.
+            Section 1, line 81: the service returned 503 for a while.
+            Section 1, line 82: the service returned 503 for a while.
+            Section 1, line 83: the service returned 503 for a while.
+            Section 1, line 84: the service returned 503 for a while.
+            Section 1, line 85: the service returned 503 for a while.
+            Section 1, line 86: the service returned 503 for a while.
+            Section 1, line 87: the service returned 503 for a while.
+            Section 1, line 88: the service returned 503 for a while.
+            Section 1, line 89: the service returned 503 for a while.
+            Section 1, line 90: the service returned 503 for a while.
+            Section 1, line 91: the service returned 503 for a while.
+            Section 1, line 92: the service returned 503 for a while.
+            Section 1, line 93: the service returned 503 for a while.
+            Section 1, line 94: the service returned 503 for a while.
+            Section 1, line 95: the service returned 503 for a while.
+            Section 1, line 96: the service returned 503 for a while.
+            Section 1, line 97: the service returned 503 for a while.
+            Section 1, line 98: the service returned 503 for a while.
+            Section 1, line 99: the service returned 503 for a while.
+            Section 1, line 100: the service returned 503 for a while.
+            Section 1, line 101: the service returned 503 for a while.
+            Section 1, line 102: the service returned 503 for a while.
+            Section 1, line 103: the service returned 503 for a while.
+            Section 1, line 104: the service returned 503 for a while.
+            Section 1, line 105: the service returned 503 for a while.
+            Section 1, line 106: the service returned 503 for a while.
+            Section 1, line 107: the service returned 503 for a while.
+            Section 1, line 108: the service returned 503 for a while.
+            Section 1, line 109: the service returned 503 for a while.
+            Section 1, line 110: the service returned 503 for a while.
+            Section 1, line 111: the service returned 503 for a while.
+            Section 1, line 112: the service returned 503 for a while.
+            Section 1, line 113: the service returned 503 for a while.
+            Section 1, line 114: the service returned 503 for a while.
+            Section 1, line 115: the service returned 503 for a while.
+            Section 1, line 116: the service returned 503 for a while.
+            Section 1, line 117: the service returned 503 for a while.
+            Section 1, line 118: the service returned 503 for a while.
+            Section 1, line 119: the service returned 503 for a while.
+            Section 1, line 120: the service returned 503 for a while.
+            Section 1, line 121: the service returned 503 for a while.
+            Section 1, line 122: the service returned 503 for a while.
+            Section 1, line 123: the service returned 503 for a while.
+            Section 1, line 124: the service returned 503 for a while.
+            Section 1, line 125: the service returned 503 for a while.
+            Section 1, line 126: the service returned 503 for a while.
+            Section 1, line 127: the service returned 503 for a while.
+            Section 1, line 128: the service returned 503 for a while.
+            Section 1, line 129: the service returned 503 for a while.
+            Section 1, line 130: the service returned 503 for a while.
+            Section 1, line 131: the service returned 503 for a while.
+            Section 1, line 132: the service returned 503 for a while.
+            Section 1, line 133: the service returned 503 for a while.
+            Section 1, line 134: the service returned 503 for a while.
+            Section 1, line 135: the service returned 503 for a while.
+            Section 1, line 136: the service returned 503 for a while.
+            Section 1, line 137: the service returned 503 for a while.
+            Section 1, line 138: the service returned 503 for a while.
+            Section 1, line 139: the service returned 503 for a while.
+            Section 1, line 140: the service returned 503 for a while.
+            Section 1, line 141: the service returned 503 for a while.
+            Section 1, line 142: the service returned 503 for a while.
+            Section 1, line 143: the service returned 503 for a while.
+            Section 1, line 144: the service returned 503 for a while.
+            Section 1, line 145: the service returned 503 for a while.
+            Section 1, line 146: the service returned 503 for a while.
+            Section 1, line 147: the service returned 503 for a while.
+            Section 1, line 148: the service returned 503 for a while.
+            Section 1, line 149: the service returned 503 for a while.
+        - role: system
+          content: "Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
+        prompt_cache_options:
+          mode: implicit
+          ttl: 30m
+        reasoning_effort: none
+        stream_options:
+          include_usage: true
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: read_section
+            description: Read section `n` of the incident report.
+            parameters:
+              additionalProperties: false
+              properties:
+                "n":
+                  type: integer
+              required:
+              - "n"
+              type: object
+            strict: true
+        - type: function
+          function:
+            name: write_plan
+            description: >-
+              Create or replace the entire plan. Pass the whole ordered list every time --
+              including steps that are unchanged, completed, or cancelled -- so there are no
+              indices to track. Keep exactly one step `in_progress`. Call this first for multi-step
+              work, then again as you start and finish steps.
+            parameters:
+              additionalProperties: false
+              properties:
+                items:
+                  description: The complete ordered list of plan steps.
+                  items:
+                    $ref: "#/$defs/PlanItem"
+                  type: array
+              required:
+              - items
+              type: object
+              $defs:
+                PlanItem:
+                  description: |-
+                    One step in the plan.
+
+                    Used both as the `write_plan` input and as the stored item. `id` is
+                    auto-generated when omitted, so the model can create a plan without ids and
+                    reference existing steps by id when restructuring.
+
+                    Attributes:
+                        id: Stable identifier (auto-generated 8-char hex string).
+                        content: Imperative description of the step, e.g. `Add the database migration`.
+                        status: Current status of this step.
+                        active_form: Optional present-continuous label shown while the step runs,
+                            e.g. `Adding the database migration`.
+                        parent_id: Parent step id for subtask hierarchies (subtasks mode only).
+                        depends_on: Ids of steps that must complete before this one (subtasks mode only).
+                  properties:
+                    id:
+                      description: Step id. Auto-generated if omitted.
+                      type: string
+                    content:
+                      description: Imperative description of the step, e.g. "Add the database migration".
+                      type: string
+                    status:
+                      default: pending
+                      description: Current status of this step. "blocked" requires subtasks to be enabled.
+                      anyOf:
+                      - $ref: "#/$defs/TaskStatus"
+                    active_form:
+                      default: ""
+                      description: >-
+                        Present-continuous label shown while the step runs, e.g. "Adding the database
+                        migration".
+                      type: string
+                    parent_id:
+                      default: null
+                      description: Parent step id for a subtask hierarchy. Requires subtasks to be enabled.
+                      anyOf:
+                      - type: string
+                      - type: "null"
+                    depends_on:
+                      description: >-
+                        Ids of steps that must complete before this one. Requires subtasks to be
+                        enabled.
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - content
+                  type: object
+                  additionalProperties: false
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "791"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"chatcmpl-Eddjome7R08pxCCa4AUjkmWMRo9q5","object":"chat.completion.chunk","created":1793116252,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_5YzKkt4FjY4TzcsOpc5B1LA0","type":"function","function":{"name":"read_section","arguments":""}}],"refusal":null},"finish_reason":null}],"usage":null,"obfuscation":"6JhiNp7QV"}
+
+        data: {"id":"chatcmpl-Eddjome7R08pxCCa4AUjkmWMRo9q5","object":"chat.completion.chunk","created":1793116252,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"PrlA"}
+
+        data: {"id":"chatcmpl-Eddjome7R08pxCCa4AUjkmWMRo9q5","object":"chat.completion.chunk","created":1793116252,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"n"}}]},"finish_reason":null}],"usage":null,"obfuscation":"Gyvqps"}
+
+        data: {"id":"chatcmpl-Eddjome7R08pxCCa4AUjkmWMRo9q5","object":"chat.completion.chunk","created":1793116252,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":"}}]},"finish_reason":null}],"usage":null,"obfuscation":"KpzF"}
+
+        data: {"id":"chatcmpl-Eddjome7R08pxCCa4AUjkmWMRo9q5","object":"chat.completion.chunk","created":1793116252,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"2"}}]},"finish_reason":null}],"usage":null,"obfuscation":"43BifE"}
+
+        data: {"id":"chatcmpl-Eddjome7R08pxCCa4AUjkmWMRo9q5","object":"chat.completion.chunk","created":1793116252,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"finish_reason":null}],"usage":null,"obfuscation":"erILEE"}
+
+        data: {"id":"chatcmpl-Eddjome7R08pxCCa4AUjkmWMRo9q5","object":"chat.completion.chunk","created":1793116252,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":null,"obfuscation":"fmU0S"}
+
+        data: {"id":"chatcmpl-Eddjome7R08pxCCa4AUjkmWMRo9q5","object":"chat.completion.chunk","created":1793116252,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[],"usage":{"prompt_tokens":3426,"completion_tokens":17,"total_tokens":3443,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":3370,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"Sf"}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-27T15:50:53.120786+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "22657"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: true
+        messages:
+        - role: system
+          content:
+          - type: text
+            text: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`."
+            prompt_cache_breakpoint:
+              mode: explicit
+        - role: user
+          content: >-
+            First call `write_plan` with the single step "read the report" in progress.
+            Then call `read_section` with n=1, then with n=2, then call `write_plan` again with
+            the step completed, one tool call per turn. After that, reply with just the word
+            done.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_t5U0pKgwXL6mL2s8rUhAY3C8
+            type: function
+            function:
+              name: write_plan
+              arguments: "{\"items\":[{\"content\":\"read the report\",\"status\":\"in_progress\",\"active_form\":\"Reading the report\"}]}"
+        - role: tool
+          tool_call_id: call_t5U0pKgwXL6mL2s8rUhAY3C8
+          content: |-
+            Plan updated: 1 step(s).
+
+            1. [~] read the report
+            (0/1 completed)
+        - role: user
+          content:
+          - text: |-
+              <plan-reminder>
+              1. [~] read the report
+              (0/1 completed)
+              </plan-reminder>
+            type: text
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_sikIRMCOzZ2U7srAYEmYbCAZ
+            type: function
+            function:
+              name: read_section
+              arguments: "{\"n\":1}"
+        - role: tool
+          tool_call_id: call_sikIRMCOzZ2U7srAYEmYbCAZ
+          content: |-
+            Section 1, line 0: the service returned 503 for a while.
+            Section 1, line 1: the service returned 503 for a while.
+            Section 1, line 2: the service returned 503 for a while.
+            Section 1, line 3: the service returned 503 for a while.
+            Section 1, line 4: the service returned 503 for a while.
+            Section 1, line 5: the service returned 503 for a while.
+            Section 1, line 6: the service returned 503 for a while.
+            Section 1, line 7: the service returned 503 for a while.
+            Section 1, line 8: the service returned 503 for a while.
+            Section 1, line 9: the service returned 503 for a while.
+            Section 1, line 10: the service returned 503 for a while.
+            Section 1, line 11: the service returned 503 for a while.
+            Section 1, line 12: the service returned 503 for a while.
+            Section 1, line 13: the service returned 503 for a while.
+            Section 1, line 14: the service returned 503 for a while.
+            Section 1, line 15: the service returned 503 for a while.
+            Section 1, line 16: the service returned 503 for a while.
+            Section 1, line 17: the service returned 503 for a while.
+            Section 1, line 18: the service returned 503 for a while.
+            Section 1, line 19: the service returned 503 for a while.
+            Section 1, line 20: the service returned 503 for a while.
+            Section 1, line 21: the service returned 503 for a while.
+            Section 1, line 22: the service returned 503 for a while.
+            Section 1, line 23: the service returned 503 for a while.
+            Section 1, line 24: the service returned 503 for a while.
+            Section 1, line 25: the service returned 503 for a while.
+            Section 1, line 26: the service returned 503 for a while.
+            Section 1, line 27: the service returned 503 for a while.
+            Section 1, line 28: the service returned 503 for a while.
+            Section 1, line 29: the service returned 503 for a while.
+            Section 1, line 30: the service returned 503 for a while.
+            Section 1, line 31: the service returned 503 for a while.
+            Section 1, line 32: the service returned 503 for a while.
+            Section 1, line 33: the service returned 503 for a while.
+            Section 1, line 34: the service returned 503 for a while.
+            Section 1, line 35: the service returned 503 for a while.
+            Section 1, line 36: the service returned 503 for a while.
+            Section 1, line 37: the service returned 503 for a while.
+            Section 1, line 38: the service returned 503 for a while.
+            Section 1, line 39: the service returned 503 for a while.
+            Section 1, line 40: the service returned 503 for a while.
+            Section 1, line 41: the service returned 503 for a while.
+            Section 1, line 42: the service returned 503 for a while.
+            Section 1, line 43: the service returned 503 for a while.
+            Section 1, line 44: the service returned 503 for a while.
+            Section 1, line 45: the service returned 503 for a while.
+            Section 1, line 46: the service returned 503 for a while.
+            Section 1, line 47: the service returned 503 for a while.
+            Section 1, line 48: the service returned 503 for a while.
+            Section 1, line 49: the service returned 503 for a while.
+            Section 1, line 50: the service returned 503 for a while.
+            Section 1, line 51: the service returned 503 for a while.
+            Section 1, line 52: the service returned 503 for a while.
+            Section 1, line 53: the service returned 503 for a while.
+            Section 1, line 54: the service returned 503 for a while.
+            Section 1, line 55: the service returned 503 for a while.
+            Section 1, line 56: the service returned 503 for a while.
+            Section 1, line 57: the service returned 503 for a while.
+            Section 1, line 58: the service returned 503 for a while.
+            Section 1, line 59: the service returned 503 for a while.
+            Section 1, line 60: the service returned 503 for a while.
+            Section 1, line 61: the service returned 503 for a while.
+            Section 1, line 62: the service returned 503 for a while.
+            Section 1, line 63: the service returned 503 for a while.
+            Section 1, line 64: the service returned 503 for a while.
+            Section 1, line 65: the service returned 503 for a while.
+            Section 1, line 66: the service returned 503 for a while.
+            Section 1, line 67: the service returned 503 for a while.
+            Section 1, line 68: the service returned 503 for a while.
+            Section 1, line 69: the service returned 503 for a while.
+            Section 1, line 70: the service returned 503 for a while.
+            Section 1, line 71: the service returned 503 for a while.
+            Section 1, line 72: the service returned 503 for a while.
+            Section 1, line 73: the service returned 503 for a while.
+            Section 1, line 74: the service returned 503 for a while.
+            Section 1, line 75: the service returned 503 for a while.
+            Section 1, line 76: the service returned 503 for a while.
+            Section 1, line 77: the service returned 503 for a while.
+            Section 1, line 78: the service returned 503 for a while.
+            Section 1, line 79: the service returned 503 for a while.
+            Section 1, line 80: the service returned 503 for a while.
+            Section 1, line 81: the service returned 503 for a while.
+            Section 1, line 82: the service returned 503 for a while.
+            Section 1, line 83: the service returned 503 for a while.
+            Section 1, line 84: the service returned 503 for a while.
+            Section 1, line 85: the service returned 503 for a while.
+            Section 1, line 86: the service returned 503 for a while.
+            Section 1, line 87: the service returned 503 for a while.
+            Section 1, line 88: the service returned 503 for a while.
+            Section 1, line 89: the service returned 503 for a while.
+            Section 1, line 90: the service returned 503 for a while.
+            Section 1, line 91: the service returned 503 for a while.
+            Section 1, line 92: the service returned 503 for a while.
+            Section 1, line 93: the service returned 503 for a while.
+            Section 1, line 94: the service returned 503 for a while.
+            Section 1, line 95: the service returned 503 for a while.
+            Section 1, line 96: the service returned 503 for a while.
+            Section 1, line 97: the service returned 503 for a while.
+            Section 1, line 98: the service returned 503 for a while.
+            Section 1, line 99: the service returned 503 for a while.
+            Section 1, line 100: the service returned 503 for a while.
+            Section 1, line 101: the service returned 503 for a while.
+            Section 1, line 102: the service returned 503 for a while.
+            Section 1, line 103: the service returned 503 for a while.
+            Section 1, line 104: the service returned 503 for a while.
+            Section 1, line 105: the service returned 503 for a while.
+            Section 1, line 106: the service returned 503 for a while.
+            Section 1, line 107: the service returned 503 for a while.
+            Section 1, line 108: the service returned 503 for a while.
+            Section 1, line 109: the service returned 503 for a while.
+            Section 1, line 110: the service returned 503 for a while.
+            Section 1, line 111: the service returned 503 for a while.
+            Section 1, line 112: the service returned 503 for a while.
+            Section 1, line 113: the service returned 503 for a while.
+            Section 1, line 114: the service returned 503 for a while.
+            Section 1, line 115: the service returned 503 for a while.
+            Section 1, line 116: the service returned 503 for a while.
+            Section 1, line 117: the service returned 503 for a while.
+            Section 1, line 118: the service returned 503 for a while.
+            Section 1, line 119: the service returned 503 for a while.
+            Section 1, line 120: the service returned 503 for a while.
+            Section 1, line 121: the service returned 503 for a while.
+            Section 1, line 122: the service returned 503 for a while.
+            Section 1, line 123: the service returned 503 for a while.
+            Section 1, line 124: the service returned 503 for a while.
+            Section 1, line 125: the service returned 503 for a while.
+            Section 1, line 126: the service returned 503 for a while.
+            Section 1, line 127: the service returned 503 for a while.
+            Section 1, line 128: the service returned 503 for a while.
+            Section 1, line 129: the service returned 503 for a while.
+            Section 1, line 130: the service returned 503 for a while.
+            Section 1, line 131: the service returned 503 for a while.
+            Section 1, line 132: the service returned 503 for a while.
+            Section 1, line 133: the service returned 503 for a while.
+            Section 1, line 134: the service returned 503 for a while.
+            Section 1, line 135: the service returned 503 for a while.
+            Section 1, line 136: the service returned 503 for a while.
+            Section 1, line 137: the service returned 503 for a while.
+            Section 1, line 138: the service returned 503 for a while.
+            Section 1, line 139: the service returned 503 for a while.
+            Section 1, line 140: the service returned 503 for a while.
+            Section 1, line 141: the service returned 503 for a while.
+            Section 1, line 142: the service returned 503 for a while.
+            Section 1, line 143: the service returned 503 for a while.
+            Section 1, line 144: the service returned 503 for a while.
+            Section 1, line 145: the service returned 503 for a while.
+            Section 1, line 146: the service returned 503 for a while.
+            Section 1, line 147: the service returned 503 for a while.
+            Section 1, line 148: the service returned 503 for a while.
+            Section 1, line 149: the service returned 503 for a while.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_5YzKkt4FjY4TzcsOpc5B1LA0
+            type: function
+            function:
+              name: read_section
+              arguments: "{\"n\":2}"
+        - role: tool
+          tool_call_id: call_5YzKkt4FjY4TzcsOpc5B1LA0
+          content: |-
+            Section 2, line 0: the service returned 503 for a while.
+            Section 2, line 1: the service returned 503 for a while.
+            Section 2, line 2: the service returned 503 for a while.
+            Section 2, line 3: the service returned 503 for a while.
+            Section 2, line 4: the service returned 503 for a while.
+            Section 2, line 5: the service returned 503 for a while.
+            Section 2, line 6: the service returned 503 for a while.
+            Section 2, line 7: the service returned 503 for a while.
+            Section 2, line 8: the service returned 503 for a while.
+            Section 2, line 9: the service returned 503 for a while.
+            Section 2, line 10: the service returned 503 for a while.
+            Section 2, line 11: the service returned 503 for a while.
+            Section 2, line 12: the service returned 503 for a while.
+            Section 2, line 13: the service returned 503 for a while.
+            Section 2, line 14: the service returned 503 for a while.
+            Section 2, line 15: the service returned 503 for a while.
+            Section 2, line 16: the service returned 503 for a while.
+            Section 2, line 17: the service returned 503 for a while.
+            Section 2, line 18: the service returned 503 for a while.
+            Section 2, line 19: the service returned 503 for a while.
+            Section 2, line 20: the service returned 503 for a while.
+            Section 2, line 21: the service returned 503 for a while.
+            Section 2, line 22: the service returned 503 for a while.
+            Section 2, line 23: the service returned 503 for a while.
+            Section 2, line 24: the service returned 503 for a while.
+            Section 2, line 25: the service returned 503 for a while.
+            Section 2, line 26: the service returned 503 for a while.
+            Section 2, line 27: the service returned 503 for a while.
+            Section 2, line 28: the service returned 503 for a while.
+            Section 2, line 29: the service returned 503 for a while.
+            Section 2, line 30: the service returned 503 for a while.
+            Section 2, line 31: the service returned 503 for a while.
+            Section 2, line 32: the service returned 503 for a while.
+            Section 2, line 33: the service returned 503 for a while.
+            Section 2, line 34: the service returned 503 for a while.
+            Section 2, line 35: the service returned 503 for a while.
+            Section 2, line 36: the service returned 503 for a while.
+            Section 2, line 37: the service returned 503 for a while.
+            Section 2, line 38: the service returned 503 for a while.
+            Section 2, line 39: the service returned 503 for a while.
+            Section 2, line 40: the service returned 503 for a while.
+            Section 2, line 41: the service returned 503 for a while.
+            Section 2, line 42: the service returned 503 for a while.
+            Section 2, line 43: the service returned 503 for a while.
+            Section 2, line 44: the service returned 503 for a while.
+            Section 2, line 45: the service returned 503 for a while.
+            Section 2, line 46: the service returned 503 for a while.
+            Section 2, line 47: the service returned 503 for a while.
+            Section 2, line 48: the service returned 503 for a while.
+            Section 2, line 49: the service returned 503 for a while.
+            Section 2, line 50: the service returned 503 for a while.
+            Section 2, line 51: the service returned 503 for a while.
+            Section 2, line 52: the service returned 503 for a while.
+            Section 2, line 53: the service returned 503 for a while.
+            Section 2, line 54: the service returned 503 for a while.
+            Section 2, line 55: the service returned 503 for a while.
+            Section 2, line 56: the service returned 503 for a while.
+            Section 2, line 57: the service returned 503 for a while.
+            Section 2, line 58: the service returned 503 for a while.
+            Section 2, line 59: the service returned 503 for a while.
+            Section 2, line 60: the service returned 503 for a while.
+            Section 2, line 61: the service returned 503 for a while.
+            Section 2, line 62: the service returned 503 for a while.
+            Section 2, line 63: the service returned 503 for a while.
+            Section 2, line 64: the service returned 503 for a while.
+            Section 2, line 65: the service returned 503 for a while.
+            Section 2, line 66: the service returned 503 for a while.
+            Section 2, line 67: the service returned 503 for a while.
+            Section 2, line 68: the service returned 503 for a while.
+            Section 2, line 69: the service returned 503 for a while.
+            Section 2, line 70: the service returned 503 for a while.
+            Section 2, line 71: the service returned 503 for a while.
+            Section 2, line 72: the service returned 503 for a while.
+            Section 2, line 73: the service returned 503 for a while.
+            Section 2, line 74: the service returned 503 for a while.
+            Section 2, line 75: the service returned 503 for a while.
+            Section 2, line 76: the service returned 503 for a while.
+            Section 2, line 77: the service returned 503 for a while.
+            Section 2, line 78: the service returned 503 for a while.
+            Section 2, line 79: the service returned 503 for a while.
+            Section 2, line 80: the service returned 503 for a while.
+            Section 2, line 81: the service returned 503 for a while.
+            Section 2, line 82: the service returned 503 for a while.
+            Section 2, line 83: the service returned 503 for a while.
+            Section 2, line 84: the service returned 503 for a while.
+            Section 2, line 85: the service returned 503 for a while.
+            Section 2, line 86: the service returned 503 for a while.
+            Section 2, line 87: the service returned 503 for a while.
+            Section 2, line 88: the service returned 503 for a while.
+            Section 2, line 89: the service returned 503 for a while.
+            Section 2, line 90: the service returned 503 for a while.
+            Section 2, line 91: the service returned 503 for a while.
+            Section 2, line 92: the service returned 503 for a while.
+            Section 2, line 93: the service returned 503 for a while.
+            Section 2, line 94: the service returned 503 for a while.
+            Section 2, line 95: the service returned 503 for a while.
+            Section 2, line 96: the service returned 503 for a while.
+            Section 2, line 97: the service returned 503 for a while.
+            Section 2, line 98: the service returned 503 for a while.
+            Section 2, line 99: the service returned 503 for a while.
+            Section 2, line 100: the service returned 503 for a while.
+            Section 2, line 101: the service returned 503 for a while.
+            Section 2, line 102: the service returned 503 for a while.
+            Section 2, line 103: the service returned 503 for a while.
+            Section 2, line 104: the service returned 503 for a while.
+            Section 2, line 105: the service returned 503 for a while.
+            Section 2, line 106: the service returned 503 for a while.
+            Section 2, line 107: the service returned 503 for a while.
+            Section 2, line 108: the service returned 503 for a while.
+            Section 2, line 109: the service returned 503 for a while.
+            Section 2, line 110: the service returned 503 for a while.
+            Section 2, line 111: the service returned 503 for a while.
+            Section 2, line 112: the service returned 503 for a while.
+            Section 2, line 113: the service returned 503 for a while.
+            Section 2, line 114: the service returned 503 for a while.
+            Section 2, line 115: the service returned 503 for a while.
+            Section 2, line 116: the service returned 503 for a while.
+            Section 2, line 117: the service returned 503 for a while.
+            Section 2, line 118: the service returned 503 for a while.
+            Section 2, line 119: the service returned 503 for a while.
+            Section 2, line 120: the service returned 503 for a while.
+            Section 2, line 121: the service returned 503 for a while.
+            Section 2, line 122: the service returned 503 for a while.
+            Section 2, line 123: the service returned 503 for a while.
+            Section 2, line 124: the service returned 503 for a while.
+            Section 2, line 125: the service returned 503 for a while.
+            Section 2, line 126: the service returned 503 for a while.
+            Section 2, line 127: the service returned 503 for a while.
+            Section 2, line 128: the service returned 503 for a while.
+            Section 2, line 129: the service returned 503 for a while.
+            Section 2, line 130: the service returned 503 for a while.
+            Section 2, line 131: the service returned 503 for a while.
+            Section 2, line 132: the service returned 503 for a while.
+            Section 2, line 133: the service returned 503 for a while.
+            Section 2, line 134: the service returned 503 for a while.
+            Section 2, line 135: the service returned 503 for a while.
+            Section 2, line 136: the service returned 503 for a while.
+            Section 2, line 137: the service returned 503 for a while.
+            Section 2, line 138: the service returned 503 for a while.
+            Section 2, line 139: the service returned 503 for a while.
+            Section 2, line 140: the service returned 503 for a while.
+            Section 2, line 141: the service returned 503 for a while.
+            Section 2, line 142: the service returned 503 for a while.
+            Section 2, line 143: the service returned 503 for a while.
+            Section 2, line 144: the service returned 503 for a while.
+            Section 2, line 145: the service returned 503 for a while.
+            Section 2, line 146: the service returned 503 for a while.
+            Section 2, line 147: the service returned 503 for a while.
+            Section 2, line 148: the service returned 503 for a while.
+            Section 2, line 149: the service returned 503 for a while.
+        - role: system
+          content: "Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
+        prompt_cache_options:
+          mode: implicit
+          ttl: 30m
+        reasoning_effort: none
+        stream_options:
+          include_usage: true
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: read_section
+            description: Read section `n` of the incident report.
+            parameters:
+              additionalProperties: false
+              properties:
+                "n":
+                  type: integer
+              required:
+              - "n"
+              type: object
+            strict: true
+        - type: function
+          function:
+            name: write_plan
+            description: >-
+              Create or replace the entire plan. Pass the whole ordered list every time --
+              including steps that are unchanged, completed, or cancelled -- so there are no
+              indices to track. Keep exactly one step `in_progress`. Call this first for multi-step
+              work, then again as you start and finish steps.
+            parameters:
+              additionalProperties: false
+              properties:
+                items:
+                  description: The complete ordered list of plan steps.
+                  items:
+                    $ref: "#/$defs/PlanItem"
+                  type: array
+              required:
+              - items
+              type: object
+              $defs:
+                PlanItem:
+                  description: |-
+                    One step in the plan.
+
+                    Used both as the `write_plan` input and as the stored item. `id` is
+                    auto-generated when omitted, so the model can create a plan without ids and
+                    reference existing steps by id when restructuring.
+
+                    Attributes:
+                        id: Stable identifier (auto-generated 8-char hex string).
+                        content: Imperative description of the step, e.g. `Add the database migration`.
+                        status: Current status of this step.
+                        active_form: Optional present-continuous label shown while the step runs,
+                            e.g. `Adding the database migration`.
+                        parent_id: Parent step id for subtask hierarchies (subtasks mode only).
+                        depends_on: Ids of steps that must complete before this one (subtasks mode only).
+                  properties:
+                    id:
+                      description: Step id. Auto-generated if omitted.
+                      type: string
+                    content:
+                      description: Imperative description of the step, e.g. "Add the database migration".
+                      type: string
+                    status:
+                      default: pending
+                      description: Current status of this step. "blocked" requires subtasks to be enabled.
+                      anyOf:
+                      - $ref: "#/$defs/TaskStatus"
+                    active_form:
+                      default: ""
+                      description: >-
+                        Present-continuous label shown while the step runs, e.g. "Adding the database
+                        migration".
+                      type: string
+                    parent_id:
+                      default: null
+                      description: Parent step id for a subtask hierarchy. Requires subtasks to be enabled.
+                      anyOf:
+                      - type: string
+                      - type: "null"
+                    depends_on:
+                      description: >-
+                        Ids of steps that must complete before this one. Requires subtasks to be
+                        enabled.
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - content
+                  type: object
+                  additionalProperties: false
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "1715"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_kOXRsJbciuFC7jD83HUZ0bFw","type":"function","function":{"name":"write_plan","arguments":""}}],"refusal":null},"finish_reason":null}],"usage":null,"obfuscation":"yASQDYPCnwo"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"rMuu"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"items"}}]},"finish_reason":null}],"usage":null,"obfuscation":"PO"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":["}}]},"finish_reason":null}],"usage":null,"obfuscation":"8pn"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"8PT7"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"content"}}]},"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"rV"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"read"}}]},"finish_reason":null}],"usage":null,"obfuscation":"pca"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" the"}}]},"finish_reason":null}],"usage":null,"obfuscation":"Sev"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" report"}}]},"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\",\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"cY"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"status"}}]},"finish_reason":null}],"usage":null,"obfuscation":"O"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"hM"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"completed"}}]},"finish_reason":null}],"usage":null,"obfuscation":"xSEAZJvcFnpQ9w"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\",\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"7R"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"active"}}]},"finish_reason":null}],"usage":null,"obfuscation":"o"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"_form"}}]},"finish_reason":null}],"usage":null,"obfuscation":"Xq"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"finish_reason":null}],"usage":null,"obfuscation":"jU"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Reading"}}]},"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" the"}}]},"finish_reason":null}],"usage":null,"obfuscation":"qE6"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" report"}}]},"finish_reason":null}],"usage":null,"obfuscation":""}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"}"}}]},"finish_reason":null}],"usage":null,"obfuscation":"W49a"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"]}"}}]},"finish_reason":null}],"usage":null,"obfuscation":"LRY1p"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":null,"obfuscation":"gfWZF"}
+
+        data: {"id":"chatcmpl-EddjpAzPYTMS4zXKsbmJqnJEnM5Zh","object":"chat.completion.chunk","created":1793116253,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[],"usage":{"prompt_tokens":6004,"completion_tokens":34,"total_tokens":6038,"prompt_tokens_details":{"cached_tokens":3370,"cache_write_tokens":2578,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"OS5x1mdlNZ2JsXE"}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-27T15:50:55.492727+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "23195"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: true
+        messages:
+        - role: system
+          content:
+          - type: text
+            text: "You have a planning tool, `write_plan`. For multi-step work, call it first to lay out the steps, then keep it current: mark exactly one step `in_progress`, and mark a step `completed` as soon as it is fully done. Pass the full plan every time you call `write_plan`."
+            prompt_cache_breakpoint:
+              mode: explicit
+        - role: user
+          content: >-
+            First call `write_plan` with the single step "read the report" in progress.
+            Then call `read_section` with n=1, then with n=2, then call `write_plan` again with
+            the step completed, one tool call per turn. After that, reply with just the word
+            done.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_t5U0pKgwXL6mL2s8rUhAY3C8
+            type: function
+            function:
+              name: write_plan
+              arguments: "{\"items\":[{\"content\":\"read the report\",\"status\":\"in_progress\",\"active_form\":\"Reading the report\"}]}"
+        - role: tool
+          tool_call_id: call_t5U0pKgwXL6mL2s8rUhAY3C8
+          content: |-
+            Plan updated: 1 step(s).
+
+            1. [~] read the report
+            (0/1 completed)
+        - role: user
+          content:
+          - text: |-
+              <plan-reminder>
+              1. [~] read the report
+              (0/1 completed)
+              </plan-reminder>
+            type: text
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_sikIRMCOzZ2U7srAYEmYbCAZ
+            type: function
+            function:
+              name: read_section
+              arguments: "{\"n\":1}"
+        - role: tool
+          tool_call_id: call_sikIRMCOzZ2U7srAYEmYbCAZ
+          content: |-
+            Section 1, line 0: the service returned 503 for a while.
+            Section 1, line 1: the service returned 503 for a while.
+            Section 1, line 2: the service returned 503 for a while.
+            Section 1, line 3: the service returned 503 for a while.
+            Section 1, line 4: the service returned 503 for a while.
+            Section 1, line 5: the service returned 503 for a while.
+            Section 1, line 6: the service returned 503 for a while.
+            Section 1, line 7: the service returned 503 for a while.
+            Section 1, line 8: the service returned 503 for a while.
+            Section 1, line 9: the service returned 503 for a while.
+            Section 1, line 10: the service returned 503 for a while.
+            Section 1, line 11: the service returned 503 for a while.
+            Section 1, line 12: the service returned 503 for a while.
+            Section 1, line 13: the service returned 503 for a while.
+            Section 1, line 14: the service returned 503 for a while.
+            Section 1, line 15: the service returned 503 for a while.
+            Section 1, line 16: the service returned 503 for a while.
+            Section 1, line 17: the service returned 503 for a while.
+            Section 1, line 18: the service returned 503 for a while.
+            Section 1, line 19: the service returned 503 for a while.
+            Section 1, line 20: the service returned 503 for a while.
+            Section 1, line 21: the service returned 503 for a while.
+            Section 1, line 22: the service returned 503 for a while.
+            Section 1, line 23: the service returned 503 for a while.
+            Section 1, line 24: the service returned 503 for a while.
+            Section 1, line 25: the service returned 503 for a while.
+            Section 1, line 26: the service returned 503 for a while.
+            Section 1, line 27: the service returned 503 for a while.
+            Section 1, line 28: the service returned 503 for a while.
+            Section 1, line 29: the service returned 503 for a while.
+            Section 1, line 30: the service returned 503 for a while.
+            Section 1, line 31: the service returned 503 for a while.
+            Section 1, line 32: the service returned 503 for a while.
+            Section 1, line 33: the service returned 503 for a while.
+            Section 1, line 34: the service returned 503 for a while.
+            Section 1, line 35: the service returned 503 for a while.
+            Section 1, line 36: the service returned 503 for a while.
+            Section 1, line 37: the service returned 503 for a while.
+            Section 1, line 38: the service returned 503 for a while.
+            Section 1, line 39: the service returned 503 for a while.
+            Section 1, line 40: the service returned 503 for a while.
+            Section 1, line 41: the service returned 503 for a while.
+            Section 1, line 42: the service returned 503 for a while.
+            Section 1, line 43: the service returned 503 for a while.
+            Section 1, line 44: the service returned 503 for a while.
+            Section 1, line 45: the service returned 503 for a while.
+            Section 1, line 46: the service returned 503 for a while.
+            Section 1, line 47: the service returned 503 for a while.
+            Section 1, line 48: the service returned 503 for a while.
+            Section 1, line 49: the service returned 503 for a while.
+            Section 1, line 50: the service returned 503 for a while.
+            Section 1, line 51: the service returned 503 for a while.
+            Section 1, line 52: the service returned 503 for a while.
+            Section 1, line 53: the service returned 503 for a while.
+            Section 1, line 54: the service returned 503 for a while.
+            Section 1, line 55: the service returned 503 for a while.
+            Section 1, line 56: the service returned 503 for a while.
+            Section 1, line 57: the service returned 503 for a while.
+            Section 1, line 58: the service returned 503 for a while.
+            Section 1, line 59: the service returned 503 for a while.
+            Section 1, line 60: the service returned 503 for a while.
+            Section 1, line 61: the service returned 503 for a while.
+            Section 1, line 62: the service returned 503 for a while.
+            Section 1, line 63: the service returned 503 for a while.
+            Section 1, line 64: the service returned 503 for a while.
+            Section 1, line 65: the service returned 503 for a while.
+            Section 1, line 66: the service returned 503 for a while.
+            Section 1, line 67: the service returned 503 for a while.
+            Section 1, line 68: the service returned 503 for a while.
+            Section 1, line 69: the service returned 503 for a while.
+            Section 1, line 70: the service returned 503 for a while.
+            Section 1, line 71: the service returned 503 for a while.
+            Section 1, line 72: the service returned 503 for a while.
+            Section 1, line 73: the service returned 503 for a while.
+            Section 1, line 74: the service returned 503 for a while.
+            Section 1, line 75: the service returned 503 for a while.
+            Section 1, line 76: the service returned 503 for a while.
+            Section 1, line 77: the service returned 503 for a while.
+            Section 1, line 78: the service returned 503 for a while.
+            Section 1, line 79: the service returned 503 for a while.
+            Section 1, line 80: the service returned 503 for a while.
+            Section 1, line 81: the service returned 503 for a while.
+            Section 1, line 82: the service returned 503 for a while.
+            Section 1, line 83: the service returned 503 for a while.
+            Section 1, line 84: the service returned 503 for a while.
+            Section 1, line 85: the service returned 503 for a while.
+            Section 1, line 86: the service returned 503 for a while.
+            Section 1, line 87: the service returned 503 for a while.
+            Section 1, line 88: the service returned 503 for a while.
+            Section 1, line 89: the service returned 503 for a while.
+            Section 1, line 90: the service returned 503 for a while.
+            Section 1, line 91: the service returned 503 for a while.
+            Section 1, line 92: the service returned 503 for a while.
+            Section 1, line 93: the service returned 503 for a while.
+            Section 1, line 94: the service returned 503 for a while.
+            Section 1, line 95: the service returned 503 for a while.
+            Section 1, line 96: the service returned 503 for a while.
+            Section 1, line 97: the service returned 503 for a while.
+            Section 1, line 98: the service returned 503 for a while.
+            Section 1, line 99: the service returned 503 for a while.
+            Section 1, line 100: the service returned 503 for a while.
+            Section 1, line 101: the service returned 503 for a while.
+            Section 1, line 102: the service returned 503 for a while.
+            Section 1, line 103: the service returned 503 for a while.
+            Section 1, line 104: the service returned 503 for a while.
+            Section 1, line 105: the service returned 503 for a while.
+            Section 1, line 106: the service returned 503 for a while.
+            Section 1, line 107: the service returned 503 for a while.
+            Section 1, line 108: the service returned 503 for a while.
+            Section 1, line 109: the service returned 503 for a while.
+            Section 1, line 110: the service returned 503 for a while.
+            Section 1, line 111: the service returned 503 for a while.
+            Section 1, line 112: the service returned 503 for a while.
+            Section 1, line 113: the service returned 503 for a while.
+            Section 1, line 114: the service returned 503 for a while.
+            Section 1, line 115: the service returned 503 for a while.
+            Section 1, line 116: the service returned 503 for a while.
+            Section 1, line 117: the service returned 503 for a while.
+            Section 1, line 118: the service returned 503 for a while.
+            Section 1, line 119: the service returned 503 for a while.
+            Section 1, line 120: the service returned 503 for a while.
+            Section 1, line 121: the service returned 503 for a while.
+            Section 1, line 122: the service returned 503 for a while.
+            Section 1, line 123: the service returned 503 for a while.
+            Section 1, line 124: the service returned 503 for a while.
+            Section 1, line 125: the service returned 503 for a while.
+            Section 1, line 126: the service returned 503 for a while.
+            Section 1, line 127: the service returned 503 for a while.
+            Section 1, line 128: the service returned 503 for a while.
+            Section 1, line 129: the service returned 503 for a while.
+            Section 1, line 130: the service returned 503 for a while.
+            Section 1, line 131: the service returned 503 for a while.
+            Section 1, line 132: the service returned 503 for a while.
+            Section 1, line 133: the service returned 503 for a while.
+            Section 1, line 134: the service returned 503 for a while.
+            Section 1, line 135: the service returned 503 for a while.
+            Section 1, line 136: the service returned 503 for a while.
+            Section 1, line 137: the service returned 503 for a while.
+            Section 1, line 138: the service returned 503 for a while.
+            Section 1, line 139: the service returned 503 for a while.
+            Section 1, line 140: the service returned 503 for a while.
+            Section 1, line 141: the service returned 503 for a while.
+            Section 1, line 142: the service returned 503 for a while.
+            Section 1, line 143: the service returned 503 for a while.
+            Section 1, line 144: the service returned 503 for a while.
+            Section 1, line 145: the service returned 503 for a while.
+            Section 1, line 146: the service returned 503 for a while.
+            Section 1, line 147: the service returned 503 for a while.
+            Section 1, line 148: the service returned 503 for a while.
+            Section 1, line 149: the service returned 503 for a while.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_5YzKkt4FjY4TzcsOpc5B1LA0
+            type: function
+            function:
+              name: read_section
+              arguments: "{\"n\":2}"
+        - role: tool
+          tool_call_id: call_5YzKkt4FjY4TzcsOpc5B1LA0
+          content: |-
+            Section 2, line 0: the service returned 503 for a while.
+            Section 2, line 1: the service returned 503 for a while.
+            Section 2, line 2: the service returned 503 for a while.
+            Section 2, line 3: the service returned 503 for a while.
+            Section 2, line 4: the service returned 503 for a while.
+            Section 2, line 5: the service returned 503 for a while.
+            Section 2, line 6: the service returned 503 for a while.
+            Section 2, line 7: the service returned 503 for a while.
+            Section 2, line 8: the service returned 503 for a while.
+            Section 2, line 9: the service returned 503 for a while.
+            Section 2, line 10: the service returned 503 for a while.
+            Section 2, line 11: the service returned 503 for a while.
+            Section 2, line 12: the service returned 503 for a while.
+            Section 2, line 13: the service returned 503 for a while.
+            Section 2, line 14: the service returned 503 for a while.
+            Section 2, line 15: the service returned 503 for a while.
+            Section 2, line 16: the service returned 503 for a while.
+            Section 2, line 17: the service returned 503 for a while.
+            Section 2, line 18: the service returned 503 for a while.
+            Section 2, line 19: the service returned 503 for a while.
+            Section 2, line 20: the service returned 503 for a while.
+            Section 2, line 21: the service returned 503 for a while.
+            Section 2, line 22: the service returned 503 for a while.
+            Section 2, line 23: the service returned 503 for a while.
+            Section 2, line 24: the service returned 503 for a while.
+            Section 2, line 25: the service returned 503 for a while.
+            Section 2, line 26: the service returned 503 for a while.
+            Section 2, line 27: the service returned 503 for a while.
+            Section 2, line 28: the service returned 503 for a while.
+            Section 2, line 29: the service returned 503 for a while.
+            Section 2, line 30: the service returned 503 for a while.
+            Section 2, line 31: the service returned 503 for a while.
+            Section 2, line 32: the service returned 503 for a while.
+            Section 2, line 33: the service returned 503 for a while.
+            Section 2, line 34: the service returned 503 for a while.
+            Section 2, line 35: the service returned 503 for a while.
+            Section 2, line 36: the service returned 503 for a while.
+            Section 2, line 37: the service returned 503 for a while.
+            Section 2, line 38: the service returned 503 for a while.
+            Section 2, line 39: the service returned 503 for a while.
+            Section 2, line 40: the service returned 503 for a while.
+            Section 2, line 41: the service returned 503 for a while.
+            Section 2, line 42: the service returned 503 for a while.
+            Section 2, line 43: the service returned 503 for a while.
+            Section 2, line 44: the service returned 503 for a while.
+            Section 2, line 45: the service returned 503 for a while.
+            Section 2, line 46: the service returned 503 for a while.
+            Section 2, line 47: the service returned 503 for a while.
+            Section 2, line 48: the service returned 503 for a while.
+            Section 2, line 49: the service returned 503 for a while.
+            Section 2, line 50: the service returned 503 for a while.
+            Section 2, line 51: the service returned 503 for a while.
+            Section 2, line 52: the service returned 503 for a while.
+            Section 2, line 53: the service returned 503 for a while.
+            Section 2, line 54: the service returned 503 for a while.
+            Section 2, line 55: the service returned 503 for a while.
+            Section 2, line 56: the service returned 503 for a while.
+            Section 2, line 57: the service returned 503 for a while.
+            Section 2, line 58: the service returned 503 for a while.
+            Section 2, line 59: the service returned 503 for a while.
+            Section 2, line 60: the service returned 503 for a while.
+            Section 2, line 61: the service returned 503 for a while.
+            Section 2, line 62: the service returned 503 for a while.
+            Section 2, line 63: the service returned 503 for a while.
+            Section 2, line 64: the service returned 503 for a while.
+            Section 2, line 65: the service returned 503 for a while.
+            Section 2, line 66: the service returned 503 for a while.
+            Section 2, line 67: the service returned 503 for a while.
+            Section 2, line 68: the service returned 503 for a while.
+            Section 2, line 69: the service returned 503 for a while.
+            Section 2, line 70: the service returned 503 for a while.
+            Section 2, line 71: the service returned 503 for a while.
+            Section 2, line 72: the service returned 503 for a while.
+            Section 2, line 73: the service returned 503 for a while.
+            Section 2, line 74: the service returned 503 for a while.
+            Section 2, line 75: the service returned 503 for a while.
+            Section 2, line 76: the service returned 503 for a while.
+            Section 2, line 77: the service returned 503 for a while.
+            Section 2, line 78: the service returned 503 for a while.
+            Section 2, line 79: the service returned 503 for a while.
+            Section 2, line 80: the service returned 503 for a while.
+            Section 2, line 81: the service returned 503 for a while.
+            Section 2, line 82: the service returned 503 for a while.
+            Section 2, line 83: the service returned 503 for a while.
+            Section 2, line 84: the service returned 503 for a while.
+            Section 2, line 85: the service returned 503 for a while.
+            Section 2, line 86: the service returned 503 for a while.
+            Section 2, line 87: the service returned 503 for a while.
+            Section 2, line 88: the service returned 503 for a while.
+            Section 2, line 89: the service returned 503 for a while.
+            Section 2, line 90: the service returned 503 for a while.
+            Section 2, line 91: the service returned 503 for a while.
+            Section 2, line 92: the service returned 503 for a while.
+            Section 2, line 93: the service returned 503 for a while.
+            Section 2, line 94: the service returned 503 for a while.
+            Section 2, line 95: the service returned 503 for a while.
+            Section 2, line 96: the service returned 503 for a while.
+            Section 2, line 97: the service returned 503 for a while.
+            Section 2, line 98: the service returned 503 for a while.
+            Section 2, line 99: the service returned 503 for a while.
+            Section 2, line 100: the service returned 503 for a while.
+            Section 2, line 101: the service returned 503 for a while.
+            Section 2, line 102: the service returned 503 for a while.
+            Section 2, line 103: the service returned 503 for a while.
+            Section 2, line 104: the service returned 503 for a while.
+            Section 2, line 105: the service returned 503 for a while.
+            Section 2, line 106: the service returned 503 for a while.
+            Section 2, line 107: the service returned 503 for a while.
+            Section 2, line 108: the service returned 503 for a while.
+            Section 2, line 109: the service returned 503 for a while.
+            Section 2, line 110: the service returned 503 for a while.
+            Section 2, line 111: the service returned 503 for a while.
+            Section 2, line 112: the service returned 503 for a while.
+            Section 2, line 113: the service returned 503 for a while.
+            Section 2, line 114: the service returned 503 for a while.
+            Section 2, line 115: the service returned 503 for a while.
+            Section 2, line 116: the service returned 503 for a while.
+            Section 2, line 117: the service returned 503 for a while.
+            Section 2, line 118: the service returned 503 for a while.
+            Section 2, line 119: the service returned 503 for a while.
+            Section 2, line 120: the service returned 503 for a while.
+            Section 2, line 121: the service returned 503 for a while.
+            Section 2, line 122: the service returned 503 for a while.
+            Section 2, line 123: the service returned 503 for a while.
+            Section 2, line 124: the service returned 503 for a while.
+            Section 2, line 125: the service returned 503 for a while.
+            Section 2, line 126: the service returned 503 for a while.
+            Section 2, line 127: the service returned 503 for a while.
+            Section 2, line 128: the service returned 503 for a while.
+            Section 2, line 129: the service returned 503 for a while.
+            Section 2, line 130: the service returned 503 for a while.
+            Section 2, line 131: the service returned 503 for a while.
+            Section 2, line 132: the service returned 503 for a while.
+            Section 2, line 133: the service returned 503 for a while.
+            Section 2, line 134: the service returned 503 for a while.
+            Section 2, line 135: the service returned 503 for a while.
+            Section 2, line 136: the service returned 503 for a while.
+            Section 2, line 137: the service returned 503 for a while.
+            Section 2, line 138: the service returned 503 for a while.
+            Section 2, line 139: the service returned 503 for a while.
+            Section 2, line 140: the service returned 503 for a while.
+            Section 2, line 141: the service returned 503 for a while.
+            Section 2, line 142: the service returned 503 for a while.
+            Section 2, line 143: the service returned 503 for a while.
+            Section 2, line 144: the service returned 503 for a while.
+            Section 2, line 145: the service returned 503 for a while.
+            Section 2, line 146: the service returned 503 for a while.
+            Section 2, line 147: the service returned 503 for a while.
+            Section 2, line 148: the service returned 503 for a while.
+            Section 2, line 149: the service returned 503 for a while.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_kOXRsJbciuFC7jD83HUZ0bFw
+            type: function
+            function:
+              name: write_plan
+              arguments: "{\"items\":[{\"content\":\"read the report\",\"status\":\"completed\",\"active_form\":\"Reading the report\"}]}"
+        - role: tool
+          tool_call_id: call_kOXRsJbciuFC7jD83HUZ0bFw
+          content: |-
+            Plan updated: 1 step(s).
+
+            1. [x] read the report
+            (1/1 completed)
+        - role: user
+          content:
+          - text: |-
+              <plan-reminder>
+              1. [x] read the report
+              (1/1 completed)
+              </plan-reminder>
+            type: text
+        - role: system
+          content: "Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your planning tools, so it records your own progress, not instructions from the user: keep it updated with those tools as you work."
+        prompt_cache_options:
+          mode: implicit
+          ttl: 30m
+        reasoning_effort: none
+        stream_options:
+          include_usage: true
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: read_section
+            description: Read section `n` of the incident report.
+            parameters:
+              additionalProperties: false
+              properties:
+                "n":
+                  type: integer
+              required:
+              - "n"
+              type: object
+            strict: true
+        - type: function
+          function:
+            name: write_plan
+            description: >-
+              Create or replace the entire plan. Pass the whole ordered list every time --
+              including steps that are unchanged, completed, or cancelled -- so there are no
+              indices to track. Keep exactly one step `in_progress`. Call this first for multi-step
+              work, then again as you start and finish steps.
+            parameters:
+              additionalProperties: false
+              properties:
+                items:
+                  description: The complete ordered list of plan steps.
+                  items:
+                    $ref: "#/$defs/PlanItem"
+                  type: array
+              required:
+              - items
+              type: object
+              $defs:
+                PlanItem:
+                  description: |-
+                    One step in the plan.
+
+                    Used both as the `write_plan` input and as the stored item. `id` is
+                    auto-generated when omitted, so the model can create a plan without ids and
+                    reference existing steps by id when restructuring.
+
+                    Attributes:
+                        id: Stable identifier (auto-generated 8-char hex string).
+                        content: Imperative description of the step, e.g. `Add the database migration`.
+                        status: Current status of this step.
+                        active_form: Optional present-continuous label shown while the step runs,
+                            e.g. `Adding the database migration`.
+                        parent_id: Parent step id for subtask hierarchies (subtasks mode only).
+                        depends_on: Ids of steps that must complete before this one (subtasks mode only).
+                  properties:
+                    id:
+                      description: Step id. Auto-generated if omitted.
+                      type: string
+                    content:
+                      description: Imperative description of the step, e.g. "Add the database migration".
+                      type: string
+                    status:
+                      default: pending
+                      description: Current status of this step. "blocked" requires subtasks to be enabled.
+                      anyOf:
+                      - $ref: "#/$defs/TaskStatus"
+                    active_form:
+                      default: ""
+                      description: >-
+                        Present-continuous label shown while the step runs, e.g. "Adding the database
+                        migration".
+                      type: string
+                    parent_id:
+                      default: null
+                      description: Parent step id for a subtask hierarchy. Requires subtasks to be enabled.
+                      anyOf:
+                      - type: string
+                      - type: "null"
+                    depends_on:
+                      description: >-
+                        Ids of steps that must complete before this one. Requires subtasks to be
+                        enabled.
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - content
+                  type: object
+                  additionalProperties: false
+                TaskStatus:
+                  description: |-
+                    Lifecycle status of a single plan step.
+
+                    `blocked` is only reachable when the capability runs with
+                    `enable_subtasks=True`; otherwise the toolset rejects it.
+                  enum:
+                  - pending
+                  - in_progress
+                  - completed
+                  - cancelled
+                  - blocked
+                  type: string
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "835"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"chatcmpl-Eddjrn3ivGL8cBOICKkds3lkzT2Kb","object":"chat.completion.chunk","created":1793116255,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"finish_reason":null}],"usage":null,"obfuscation":"TjjClVeI2eRIszR"}
+
+        data: {"id":"chatcmpl-Eddjrn3ivGL8cBOICKkds3lkzT2Kb","object":"chat.completion.chunk","created":1793116255,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"done"},"finish_reason":null}],"usage":null,"obfuscation":"5Vs896zeME3MV"}
+
+        data: {"id":"chatcmpl-Eddjrn3ivGL8cBOICKkds3lkzT2Kb","object":"chat.completion.chunk","created":1793116255,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null,"obfuscation":"pZDAkfsX4sv"}
+
+        data: {"id":"chatcmpl-Eddjrn3ivGL8cBOICKkds3lkzT2Kb","object":"chat.completion.chunk","created":1793116255,"model":"gpt-5.6-sol","service_tier":"default","system_fingerprint":null,"choices":[],"usage":{"prompt_tokens":6101,"completion_tokens":4,"total_tokens":6105,"prompt_tokens_details":{"cached_tokens":5948,"cache_write_tokens":97,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"JU"}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-27T15:50:56.582795+00:00

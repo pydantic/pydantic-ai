@@ -15,10 +15,10 @@ from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
-    CachePoint,
     CompactionPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     SystemPromptPart,
     TextContent,
@@ -1554,21 +1554,27 @@ class TestEndToEnd:
         agent: Agent[None, str] = Agent(FunctionModel(model_fn), deps_type=type(None), capabilities=capabilities)
         result = await agent.run('go')
         assert result.output == 'done'
-        sent = _all_text(captured['messages'])
-        assert '<plan-reminder>' in sent
-        assert '<system>stay focused</system>' in sent
-        # `wrap_model_request` hooks run around the `before_model_request` chain, so `Planning` adds its
-        # reminder to the tool-result request before this reminder is enqueued after it: the plan reminder
-        # keeps its breakpoint on the tool result, and this reminder comes last.
+        # Both enqueue from `before_model_request`, after the tool result. The request's user content is sent ahead of
+        # its system prompts, which keep their listing order.
         last = captured['messages'][-1]
         assert isinstance(last, ModelRequest)
-        assert [type(part).__name__ for part in last.parts] == ['ToolReturnPart', 'UserPromptPart', 'UserPromptPart']
-        plan_reminder, reminder = last.parts[1], last.parts[2]
-        assert isinstance(plan_reminder, UserPromptPart) and isinstance(plan_reminder.content, list)
-        assert isinstance(plan_reminder.content[0], CachePoint)
-        assert plan_reminder.content[1] == '<plan-reminder>\n'
-        assert isinstance(reminder, UserPromptPart) and reminder.content == '<system>stay focused</system>'
-        # Planning's reminder is request-only; this one is kept in history as a request-scoped prompt.
-        durable = _all_text(result.all_messages())
-        assert '<plan-reminder>' not in durable
-        assert _request_scoped_texts(result.all_messages()) == ['stay focused', 'stay focused']
+
+        def kind(part: ModelRequestPart) -> str:
+            assert isinstance(part, UserPromptPart | SystemPromptPart)
+            content = part.content
+            text = content if isinstance(content, str) else ''.join(str(getattr(c, 'content', c)) for c in content)
+            if text.startswith('<plan-reminder>'):
+                return 'plan'
+            return 'plan note' if '`<plan-reminder>`' in text else text
+
+        reminder = '<system>stay focused</system>'
+        expected = ['plan', reminder, 'plan note'] if reminders_first else ['plan', 'plan note', reminder]
+        assert [kind(part) for part in last.parts[1:]] == expected
+        # Both are kept in history: the plan as user-channel data, the two notes as request-scoped prompts.
+        history = result.all_messages()
+        user_parts = [kind(part) for message in history for part in message.parts if isinstance(part, UserPromptPart)]
+        assert user_parts[1:] == ['plan']
+        assert [text for text in _request_scoped_texts(history) if 'plan' not in text] == [
+            'stay focused',
+            'stay focused',
+        ]

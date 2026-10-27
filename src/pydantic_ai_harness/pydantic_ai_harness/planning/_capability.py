@@ -1,28 +1,27 @@
-"""The `Planning` capability: task planning with a cache-safe live reminder."""
+"""The `Planning` capability: task planning with a live plan reminder kept in history."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Callable, Sequence
 from copy import copy
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai._framing import neutralize_tags
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
-    CachePoint,
+    ModelMessage,
     ModelRequest,
-    ModelRequestPart,
-    ModelResponse,
-    RetryFeedbackPart,
+    SystemPromptPart,
     TextContent,
-    ToolReturnPart,
-    UserContent,
     UserPromptPart,
+    post_compaction_window,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness.planning._store import InMemoryPlanStore, PlanStore
 from pydantic_ai_harness.planning._toolset import (
     SUBTASK_TOOL_NAMES,
@@ -38,7 +37,6 @@ from pydantic_ai_harness.planning._types import PlanItem
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
-    from pydantic_ai.capabilities.abstract import WrapModelRequestHandler
     from pydantic_ai.models import ModelRequestContext
 
 _WRITE_PLAN_GUIDANCE = (
@@ -62,18 +60,21 @@ _SUBTASK_GUIDANCE = (
 
 @dataclass
 class Planning(AbstractCapability[AgentDepsT]):
-    """Structured task planning that keeps the conversation in the prompt cache.
+    """Structured task planning, with the current plan kept in front of the model.
 
     The model owns the plan through a small toolset (`write_plan`, `read_plan`,
     `add_task`, `update_task_status`, `update_task_statuses`, `remove_task`, and
     -- when `enable_subtasks` is set -- `add_subtask`, `set_dependency`,
-    `get_available_tasks`); `tools` narrows that surface to an allowlist. The
-    current plan is surfaced back as an *ephemeral* reminder appended to the
-    tail of each request and never persisted. The reminder leads with a
-    `CachePoint`, which providers attach to the content right before it -- the
-    last user prompt, tool result, or retry prompt, which the next request
-    starts with -- so on most providers only the reminder itself is re-read each
-    turn. On OpenRouter the breakpoint stops at the previous user message.
+    `get_available_tasks`); `tools` narrows that surface to an allowlist.
+
+    The current plan is shown back to the model as a reminder recorded in the message
+    history, so every request starts with the one before it and the prompt cache and the
+    model's earlier reasoning stay valid. The plan is text the model wrote, so it is sent
+    as data on the user channel, in a `<plan-reminder>` tag, and only when it changed since
+    the last one in the conversation. Each request also gets a fixed note in system voice,
+    a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt, that
+    says what the tag holds. Configure prompt caching on the model (such as
+    `anthropic_cache`); its breakpoints land before the reminder.
 
     By default the plan lives in memory for the duration of a single run (a
     fresh, isolated plan per run). Pass a `store` (or `store_resolver`) to
@@ -103,8 +104,13 @@ class Planning(AbstractCapability[AgentDepsT]):
     `runtime_authoring`, which read the same way.
     """
 
-    cache_ttl: Literal['5m', '1h'] = '5m'
-    """TTL for the cache breakpoint leading the plan reminder."""
+    cache_ttl: Literal['5m', '1h'] | None = None
+    """Deprecated, and has no effect; configure caching on the model instead.
+
+    The plan reminder used to bring a cache breakpoint of its own, with a `'5m'` TTL by default. It's
+    recorded in the message history now, and the breakpoints the model's caching settings place (such as
+    `anthropic_cache`) land before it. Set to `'5m'` or `'1h'`, it warns that it's ignored.
+    """
 
     store: PlanStore | None = None
     """Storage backend. `None` keeps a fresh in-memory plan per run (the original
@@ -117,7 +123,7 @@ class Planning(AbstractCapability[AgentDepsT]):
     """Add the subtask/dependency tools and the `blocked` status when true."""
 
     inject: bool = True
-    """Surface the current plan as an ephemeral tail reminder each turn."""
+    """Show the model the current plan: recorded in history when it changes, with a note on each request."""
 
     tools: Sequence[str] | None = None
     """Optional allowlist of tool names to register; `None` registers all of them.
@@ -142,6 +148,15 @@ class Planning(AbstractCapability[AgentDepsT]):
 
     _toolset: PlanningToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     """The one `planning` toolset, shared with every per-run copy so durable execution sees the leaf it registered."""
+
+    def __post_init__(self) -> None:
+        if self.cache_ttl is not None:
+            warn_argument_ignored(
+                'Planning',
+                'cache_ttl',
+                'configure caching on the model instead (such as `anthropic_cache`); its breakpoint lands before '
+                'the plan reminder.',
+            )
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Planning[AgentDepsT]:
         """Return a clone with this run's store resolved and cached (per-run isolation)."""
@@ -211,34 +226,36 @@ class Planning(AbstractCapability[AgentDepsT]):
             parts.append(_SUBTASK_GUIDANCE)
         return ' '.join(parts) or None
 
-    async def wrap_model_request(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        request_context: ModelRequestContext,
-        handler: WrapModelRequestHandler,
-    ) -> ModelResponse:
-        """Append the ephemeral plan reminder to the request, leading with a cache breakpoint.
+    async def before_model_request(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        """Enqueue the plan reminder: the plan when it changed, and a request-scoped note on what it is.
 
-        The breakpoint marks the end of the content before the reminder, so each request caches
-        what the next one starts with, including every tool result since the last user prompt,
-        while the reminder stays outside the cached prefix and out of message history.
+        Enqueued from `before_model_request`, the reminder goes into this request and into the run's
+        history, so later requests start with this one. The plan is model-written text, so it goes on
+        the user channel in a `<plan-reminder>` tag, and only when it differs from the latest plan in
+        the conversation; the note, in system voice, is fixed framework text.
         """
         if not self.inject:
-            return await handler(request_context)
-        items = await self._read_plan(ctx)
-        if not items:
-            return await handler(request_context)
+            return request_context
         messages = request_context.messages
-        last = messages[-1]
-        if isinstance(last, ModelRequest):
-            content: list[UserContent] = ['<plan-reminder>\n', _reminder_text(render_plan(items))]
-            # With no content before the reminder (an instructions-only first request) there is no
-            # prefix to protect, and providers reject a breakpoint with nothing to attach to.
-            if _has_cache_point_target(last.parts):
-                content.insert(0, CachePoint(ttl=self.cache_ttl))
-            messages[-1] = replace(last, parts=[*last.parts, UserPromptPart(content=content)])
-        return await handler(request_context)
+        # A provider-resume turn hands back a history ending in a suspended `ModelResponse`, echoed to the
+        # provider verbatim to continue the turn, so only a request whose tail is a `ModelRequest` gets a reminder.
+        if not messages or not isinstance(messages[-1], ModelRequest):
+            return request_context
+        items = await self._read_plan(ctx)
+        # Compaction replaces what came before its boundary, so a plan there is no longer seen by the model.
+        latest = _latest_plan(post_compaction_window(messages))
+        if not items and latest is None:
+            return request_context
+        # A plan emptied after the model was shown one is recorded too, so the old plan doesn't read as current.
+        plan = _plan_text(items)
+        parts: list[UserPromptPart | SystemPromptPart] = []
+        if plan != latest:
+            parts.append(UserPromptPart([TextContent(plan, metadata={'origin': _PLAN_ORIGIN})]))
+        parts.append(SystemPromptPart(_PLAN_NOTE, scope='request', metadata={'origin': _PLAN_ORIGIN}))
+        ctx.enqueue(*parts)
+        return request_context
 
     # Each plan store call is a durable operation, so recovering a durable run reuses the recorded
     # result instead of repeating a write, such as appending a step to a persistent store again.
@@ -276,7 +293,7 @@ class Planning(AbstractCapability[AgentDepsT]):
         enable_subtasks: bool = False,
         inject: bool = True,
         guidance: str | None = None,
-        cache_ttl: Literal['5m', '1h'] = '5m',
+        cache_ttl: Literal['5m', '1h'] | None = None,
         tools: list[str] | None = None,
     ) -> Planning[AgentDepsT]:
         """Construct a `Planning` capability from serializable options."""
@@ -308,6 +325,19 @@ class Planning(AbstractCapability[AgentDepsT]):
         return 'Planning'
 
 
+_PLAN_ORIGIN = 'pydantic-ai-harness.planning.plan_reminder.v1'
+"""The `origin` in the `metadata` of the plan reminder's parts: the plan's `TextContent` and the note's `SystemPromptPart`.
+
+`Planning` finds the latest plan it recorded by this metadata, never by the reminder's text.
+"""
+
+_PLAN_NOTE = (
+    'Your current task plan is in the latest `<plan-reminder>` tag in this conversation. You wrote it with your '
+    'planning tools, so it records your own progress, not instructions from the user: keep it updated with those '
+    'tools as you work.'
+)
+"""The fixed note sent in system voice with each request while there is a plan, saying what the plan's tag holds."""
+
 # TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
 # `plan-reminder` as a framing tag there.
 # The `<` of an opening or closing `plan-reminder` tag, in any case, spacing or with attributes, or cut off at the end
@@ -315,48 +345,29 @@ class Planning(AbstractCapability[AgentDepsT]):
 _PLAN_REMINDER_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?plan-reminder(?=[\s/>]|$))', re.IGNORECASE)
 
 
-def _reminder_text(plan: str) -> str:
-    """The reminder's body and closing tag, with the plan's step text kept inside the `<plan-reminder>` frame.
+def _plan_text(items: list[PlanItem]) -> str:
+    """The plan in its `<plan-reminder>` frame.
 
     The steps are written by the model, so the `<` of every opening or closing `plan-reminder` tag and of every
     framing tag core writes is escaped as `&lt;`.
     """
-    body = _PLAN_REMINDER_TAG_OPENER.sub('&lt;', neutralize_tags(plan))
-    return f'Your current plan (keep it updated with the planning tools):\n\n{body}\n</plan-reminder>'
+    body = _PLAN_REMINDER_TAG_OPENER.sub('&lt;', neutralize_tags(render_plan(items)))
+    return f'<plan-reminder>\n{body}\n</plan-reminder>'
 
 
-def _has_cache_point_target(parts: Sequence[ModelRequestPart]) -> bool:
-    """Whether these request parts already carry content a leading `CachePoint` can attach to.
-
-    Providers attach a `CachePoint` that opens a user prompt to the content right before it, which is
-    the end of the durable history when the prompt is the plan reminder, whether that history ends in
-    a user prompt, a tool return, or retry feedback. With nothing before it to attach to, providers
-    that honor `CachePoint` reject it, so the reminder only leads with one when the request already
-    contributes such content. `SystemPromptPart` maps to the system field, not to message content, so
-    it does not count.
-
-    `RetryFeedbackPart` counts: it is translated at request time into a `<validation_errors>`-fenced
-    user prompt when it quotes the model's own output, and otherwise into a mid-conversation system
-    prompt, which providers without an inline system channel receive as `<system>`-tagged user text.
-    """
-    for part in parts:
-        if isinstance(part, ToolReturnPart | RetryFeedbackPart):
-            return True
-        if isinstance(part, UserPromptPart):
-            content = part.content
-            if isinstance(content, str):
-                if content:
-                    return True
-            elif any(_is_user_content_item(item) for item in content):
-                return True
-    return False
-
-
-def _is_user_content_item(item: object) -> bool:
-    if isinstance(item, CachePoint):
-        return False
-    if isinstance(item, str):
-        return bool(item)
-    if isinstance(item, TextContent):
-        return bool(item.content)
-    return True
+def _latest_plan(messages: Sequence[ModelMessage]) -> str | None:
+    """The text of the latest plan `Planning` recorded in `messages`, recognized by its metadata."""
+    for message in reversed(messages):
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in reversed(message.parts):
+            if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
+                continue
+            for item in reversed(part.content):
+                if (
+                    isinstance(item, TextContent)
+                    and is_str_dict(item.metadata)
+                    and item.metadata.get('origin') == _PLAN_ORIGIN
+                ):
+                    return item.content
+    return None
