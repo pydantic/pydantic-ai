@@ -6,12 +6,7 @@
 
 `scripts/check_complexity.py` scores functions with [complexipy](https://github.com/rohaquinlop/complexipy) and compares each one with its version before the change. The limit is `max-complexity-allowed` in `[tool.complexipy]` in `pyproject.toml`, and the check covers the packages listed in `paths` there. A change fails when it adds a function over the limit, takes a function over the limit, or makes a function that is already over the limit more complex. Functions already over the limit pass until a change makes them worse. A function moved under the same name is compared with the function it replaces. A renamed function passes when its score is unchanged, and counts as new when it also grew. So does a function moved in from outside the checked packages.
 
-Pre-commit runs the check on the staged changes, and CI runs it on the pull request. To check what your uncommitted edits add, or what the whole branch adds:
-
-```bash
-uv run scripts/check_complexity.py --base HEAD
-uv run scripts/check_complexity.py --base "$(git merge-base HEAD main)"
-```
+Pre-commit runs the check on the staged changes, and CI runs it on the pull request.
 
 ## Reading a report
 
