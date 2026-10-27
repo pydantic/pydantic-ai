@@ -199,8 +199,9 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     - the "available functions" catalog (TypedDict definitions + signatures) goes into the agent's
       instructions as an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with the id
       `toolset:code_mode:catalog` and `on_change='append'`, so a discovery appends the updated catalog to the
-      message history instead of rewriting the instructions. Like other appending blocks, it sits with the
-      static instructions, inside the instruction cache point;
+      message history instead of rewriting the instructions. Like other appending blocks, it's sent right after
+      the static instructions, ahead of dynamic instructions that rewrite the prefix, and on Anthropic, Bedrock
+      and OpenRouter's Anthropic routes it gets a cache point of its own, so new conversations reuse it;
     - deferred tools that `run_code` will take over stay off the wire until they're found through the local
       `search_tools` tool or by loading their capability, and are callable only from `run_code` after that, so
       no tool declaration changes. With the `'bm25'` and `'regex'` `ToolSearch` strategies, or a `tools` selector
