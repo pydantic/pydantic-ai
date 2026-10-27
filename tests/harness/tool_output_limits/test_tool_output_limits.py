@@ -1350,3 +1350,17 @@ class TestAgentIntegration:
         assert [type(p) for p in returns] == [ToolSearchReturnPart, ToolReturnPart]
         assert returns[0].content == {'discovered_tools': [{'name': 'refund_status'}]}
         assert returns[1].content == 'Order A1: refunded'
+
+
+class TestMediaReturnValues:
+    async def test_an_image_in_the_return_value_reaches_the_model_unchanged(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=100, action=Truncate())])
+        image = BinaryContent(data=b'\x89PNG' + b'\x00' * 100_000, media_type='image/png')
+        for original in (image, ['Screenshot attached.', image], ToolReturn(return_value=['done', image])):
+            assert await _run(cap, original) is original
+
+    async def test_large_text_beside_an_image_warns_and_passes_through(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate())])
+        original = ['x' * 5000, BinaryContent(data=b'\x00', media_type='image/png')]
+        with pytest.warns(UserWarning, match='non-text content'):
+            assert await _run(cap, original) is original

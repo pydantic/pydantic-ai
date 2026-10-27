@@ -8,7 +8,7 @@ import posixpath
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, TypeGuard
+from typing import Any, TypeGuard, cast
 
 from pydantic_ai import FunctionToolset, Tool, ToolKind
 from pydantic_ai._utils import replace_no_init
@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     ToolReturnContent,
     ToolSearchReturnPart,
     UserContent,
+    is_multi_modal_content,
 )
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
@@ -94,6 +95,12 @@ def _spills(action: Action | None) -> bool:
 def _default_bands() -> list[Band]:
     """Lossless spill with a bounded truncation fallback: zero LLM cost, no silent drop."""
     return [Band(over=_DEFAULT_THRESHOLD, action=Spill(then=Truncate()))]
+
+
+def _media_parts(value: object) -> list[UserContent] | None:
+    """A return value with an image or file in it, as the content parts it holds; otherwise `None`."""
+    parts: list[Any] = cast(list[Any], value) if isinstance(value, list) else [value]
+    return parts if any(is_multi_modal_content(part) for part in parts) else None
 
 
 @dataclass
@@ -346,8 +353,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return original
 
         bands = self._per_tool.get(call.tool_name, self._bands)
-        value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
-        value_text, value_handle = await self._reduce(ctx, call, bands, value_unit)
+        if media := _media_parts(return_value):
+            # Images and files reach the model as they are, like those in `content`.
+            value_unit = _Unit(binary=True, text=None, data=b'', value=return_value, suffix='')
+            value_text, value_handle = await self._reduce_content(ctx, call, bands, media)
+        else:
+            value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
+            value_text, value_handle = await self._reduce(ctx, call, bands, value_unit)
         content_text, content_handle = await self._reduce_content(ctx, call, bands, content)
 
         if value_text is None and content_text is None:
