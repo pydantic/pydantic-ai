@@ -9,9 +9,11 @@ import anyio
 import pytest
 from pydantic import ValidationError
 
+from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_naming import NamingClient, NamingResult, SessionName, SessionNamer, generate_name
 
 
@@ -44,7 +46,8 @@ async def test_naming_uses_revision_and_bounded_tail(tmp_path: Path) -> None:
 
     namer, client = SessionNamer(store=store), NamingClient(generate=generate)
     assert await namer.name(conversation_id=summary.id, client=client)
-    assert len(prompts[0]) < 2600
+    # The tail, plus the start of a conversation still under its fallback title.
+    assert len(prompts[0]) < 2900
     assert 'fix renderer' in prompts[0]
     named = (await store.get(conversation_id=summary.id)).summary
     assert named.title == 'Fix renderer'
@@ -304,3 +307,38 @@ async def test_naming_keeps_where_an_imported_session_came_from(tmp_path: Path) 
     # A source the model named as a topic would pass for an import, so it is left out.
     assert await namer.name(conversation_id=native.id, client=client)
     assert (await store.get(conversation_id=native.id)).summary.tags == ('tests',)
+
+
+async def test_templated_sessions_get_their_own_titles_not_the_prompt_prefix(tmp_path: Path) -> None:
+    """The prompt-prefix fallback is a placeholder, not a previous title to keep."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    # Long enough that the issue number, past the fallback's cut, also leaves the naming tail.
+    template = (
+        'You are fixing GitHub issue https://github.com/pydantic/pydantic-ai/issues/{} ' + 'Follow the steps. ' * 200
+    )
+    sessions = [Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path) for _ in range(2)]
+    for number, session in zip(('11281', '11282'), sessions):
+        await session.prompt(template.format(number))
+    fallbacks = {(await store.get(conversation_id=s.conversation_id)).summary.title for s in sessions}
+    assert fallbacks == {'You are fixing GitHub issue https://github.com/pydantic/pydantic'}
+    prompts: list[str] = []
+
+    async def generate(prompt: str) -> NamingResult:
+        """Keeps any previous title it is given, as the namer is instructed to; else names the issue."""
+        prompts.append(prompt)
+        if prompt.startswith('Previous title: '):
+            return NamingResult(name=SessionName(title=prompt.splitlines()[0].removeprefix('Previous title: ')))
+        number = prompt.split('/issues/')[1].split()[0]
+        return NamingResult(name=SessionName(title=f'Fix issue {number}'))
+
+    namer, client = SessionNamer(store=store), NamingClient(generate=generate)
+    for session in sessions:
+        assert await namer.name(conversation_id=session.conversation_id, client=client)
+    titles = [(await store.get(conversation_id=s.conversation_id)).summary.title for s in sessions]
+    assert titles == ['Fix issue 11281', 'Fix issue 11282']
+    # Once a title is the model's own, later renames are told it, to keep it stable.
+    named = await store.get(conversation_id=sessions[0].conversation_id)
+    for _ in range(16):
+        named = await store.get(conversation_id=(await store.save(summary=named.summary, messages=named.messages)).id)
+    assert await namer.name(conversation_id=named.summary.id, client=client)
+    assert prompts[-1].startswith('Previous title: Fix issue 11281\n')
