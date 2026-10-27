@@ -23,7 +23,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteSessionStore
-from pydantic_clai2._app import DEFAULT_PLUGINS
+from pydantic_clai2.app import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins import aoe
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -38,7 +38,7 @@ from pydantic_clai2.plugins import (
     TurnStart,
     load_plugin,
 )
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
 
 # AoE only starts CLAI in a tmux pane on a POSIX system; the fakes and hook-file checks assume one too.

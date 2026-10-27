@@ -331,6 +331,10 @@ Key facts for building realtime agents:
   (which Live may still mention), Live only speaks while audio is flowing (set `openai_live_idle_audio=True` for a
   session with no microphone), and `respond=False` text over 500 tokens raises `UserError` (a longer typed turn still runs the backend, but Live isn't told what was typed). Gemini speech models reject text output before connect, except the Vertex
   `gemini-live-2.5-flash` half-cascade, which answers in text.
+- **Application notes mid-session are `session.send(SystemPromptPart(...), respond=False)`**: not a string,
+  which the model takes as the user's words. It goes out on the provider's operator channel (a `system` message on
+  OpenAI/Azure, a contextual update on ElevenLabs Agents, a note to GPT-Live's voice model, `<system>`-tagged
+  user text elsewhere), is recorded as a `SystemPromptPart`, and with the default `respond=True` gets a reply.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`, or with
   `conversation=result.conversation` to carry the running usage and `conversation_id` too. Transcripts

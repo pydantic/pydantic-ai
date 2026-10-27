@@ -32,7 +32,7 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart, TurnEnd, TurnStart
-from pydantic_clai2.runtime._session import Session, current_session_id
+from pydantic_clai2.runtime.session import Session, current_session_id
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser

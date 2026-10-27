@@ -184,12 +184,16 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', '
   transparently for both `agent.run` and `agent.run_stream`, merging every segment into a single
   completed [`ModelResponse`][pydantic_ai.messages.ModelResponse], so a finished turn in the message
   history is never left in this state.
-- `'interrupted'`: generation was explicitly stopped before the model finished. Set when a streamed
-  response is cancelled via [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel],
+- `'interrupted'`: the response was cut off before the model finished, or the agent run stopped before
+  acting on it.
+  Set when a streamed response is cancelled via
+  [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel],
   and when a realtime turn is cut off by a barge-in or
   [`RealtimeSession.interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] — in which case the
   cut-off point is recorded on the last
-  [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms].
+  [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms]; and on a
+  response that arrived complete but crossed a token or cost usage limit, so the run stopped before
+  acting on it.
 """
 
 ModelRequestState: TypeAlias = Literal['complete', 'interrupted']
@@ -3024,8 +3028,10 @@ class InstructionPart:
     `'rewrite'` replaces the instruction prefix on each request. `'append'` preserves the initial
     prefix and appends full replacements to trusted message history when this block changes,
     including withdrawal when it stops contributing content. Requires an addressable `id`;
-    otherwise a warning is emitted and the part uses `'rewrite'`. Evaluation frequency and
-    `dynamic` cache placement are unchanged. Compaction starts a new baseline.
+    otherwise a warning is emitted and the part uses `'rewrite'`. Evaluation frequency is unchanged.
+    Since an appending block doesn't change the prefix, it's placed after the static parts but ahead of the
+    `dynamic` parts that rewrite it, and providers that take several cache points get one after the appending
+    blocks as well as the one after the static parts. Compaction starts a new baseline.
     """
 
     name: str | None = None
@@ -3071,8 +3077,13 @@ class InstructionPart:
 
     @staticmethod
     def sorted(parts: Sequence[InstructionPart]) -> list[InstructionPart]:
-        """Sort instruction parts with static (`dynamic=False`) before dynamic, preserving relative order."""
-        return sorted(parts, key=lambda p: p.dynamic)
+        """Sort the parts by how much they can change the prefix, preserving relative order.
+
+        Literal (`dynamic=False`) parts never change, so they come first. An `on_change='append'` block comes next:
+        it keeps its first value in the prefix and delivers changes later in the conversation, but that first value
+        can differ between conversations. A dynamic part that rewrites the prefix when it changes comes last.
+        """
+        return sorted(parts, key=_prefix_rank)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -3198,6 +3209,27 @@ def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPa
             content = f'{content}\n{_SUPERSESSION_SENTENCE}'
         rendered[index] = replace(part, content=content)
     return rendered
+
+
+def _varies_in_prefix(part: InstructionPart) -> bool:
+    """Whether `part` can change the instruction prefix between requests, so it belongs after the cache point.
+
+    A literal never changes, and an addressable `on_change='append'` block keeps its first value in the prefix and
+    delivers its changes later in the conversation, so only a dynamic part that rewrites the prefix varies.
+    """
+    return part.dynamic and (part.on_change == 'rewrite' or part.id is None)
+
+
+def _prefix_rank(part: InstructionPart) -> int:
+    """Where `part` sorts in the instruction prefix: literal parts, then appending blocks, then varying parts.
+
+    Model adapters place the instruction cache point after the literal parts, which every conversation of the agent
+    shares, and where the provider allows a second one, after the appending blocks, which a conversation shares
+    with others only when its blocks' first values are the same.
+    """
+    if not part.dynamic:
+        return 0
+    return 2 if _varies_in_prefix(part) else 1
 
 
 @dataclass(repr=False, kw_only=True)
@@ -4567,10 +4599,13 @@ class ModelResponse:
       The agent graph will automatically send a continuation request.
       Set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
       or return background/async responses (e.g. OpenAI background mode).
-    - `'interrupted'` — Generation was explicitly stopped before the model finished.
+    - `'interrupted'` — The response was cut off before the model finished, or the agent run stopped
+      before acting on it.
       Set when a streaming response is cancelled via `StreamedResponse.cancel()`, and when a realtime
       turn is cut off by a barge-in or `RealtimeSession.interrupt()` — in which case the cut-off point
-      is recorded on the last [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms].
+      is recorded on the last [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms];
+      and on a response that arrived complete but crossed a token or cost usage limit, so the run stopped
+      before acting on it.
     """
 
     def __post_init__(self) -> None:

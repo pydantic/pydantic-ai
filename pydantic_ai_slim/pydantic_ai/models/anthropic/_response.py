@@ -244,7 +244,15 @@ def map_usage(
     return request_usage
 
 
-def compaction_provider_details(encrypted_content: str | None) -> dict[str, Any] | None:
-    if encrypted_content is not None:
-        return {'encrypted_content': encrypted_content}
-    return None
+def compaction_provider_details(encrypted_content: str | None, signature: str | None = None) -> dict[str, Any] | None:
+    """The `CompactionPart.provider_details` a compaction block is sent back with.
+
+    A block from threshold compaction can carry `encrypted_content`; one from an on-demand compaction request carries
+    a `signature`, which Anthropic checks against the summary when the block is sent back.
+    """
+    details = {
+        key: value
+        for key, value in (('encrypted_content', encrypted_content), ('signature', signature))
+        if value is not None
+    }
+    return details or None

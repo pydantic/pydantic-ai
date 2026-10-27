@@ -38,7 +38,7 @@ from pydantic_clai2.config.api_keys import delete_key, prompt_api_key, rename_ke
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins.keys import choose_key
 from pydantic_clai2.plugins.loader import PluginError, PluginSettingsError
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow, Runners, run_flow
 from pydantic_clai2.ui.menus.menu_worker import run_worker, worker_stopping
@@ -315,7 +315,7 @@ async def test_unexpected_command_errors_are_recorded_under_the_command(content_
     with pytest.raises(httpx.HTTPStatusError, match='403'):
         await commands.execute_async('/update')
     with pytest.raises(ValueError, match='Usage'):
-        await commands.execute_async('/update now')
+        await commands.execute_async('/update later')
     with pytest.raises(UserError):
         await commands.execute_async('/login')
     # Usage errors keep only their type on the command's span; the unexpected failure is logged with its traceback.
@@ -598,3 +598,12 @@ async def test_plugin_key_prompts_record_the_kind_of_answer_not_the_key(exporter
         ('key prompt', {'label': 'Demo token', 'answer': 'no key'}),
     ]
     assert 'secret' not in json.dumps([own for _, own in recorded(exporter)])
+
+
+def test_ui_span_is_a_deprecated_alias_of_ui_span_class() -> None:
+    from pydantic_ai.exceptions import PydanticAIDeprecationWarning
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='`UiSpan` has been renamed to `UISpan`'):
+        from pydantic_clai2.ui.telemetry import UiSpan
+    assert UiSpan is telemetry.UISpan
+    assert not hasattr(telemetry, 'UiSpans')

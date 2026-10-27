@@ -7,25 +7,27 @@ import os
 import shlex
 import sys
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from importlib import metadata
 from importlib.abc import MetaPathFinder
 from importlib.machinery import ModuleSpec
 from io import StringIO
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
 from packaging.requirements import Requirement
 from rich.console import Console
+from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
-from pydantic_clai2 import _app, chat, cli
-from pydantic_clai2.cli import _cli, self_update
-from pydantic_clai2.cli._cli import relaunch_argv
+from pydantic_clai2 import app, chat, cli
+from pydantic_clai2.cli import cli as cli_module, self_update
+from pydantic_clai2.cli.cli import relaunch_argv
 from pydantic_clai2.cli.self_update import (
     BLEEDING_URL,
     PACKAGES,
@@ -34,6 +36,7 @@ from pydantic_clai2.cli.self_update import (
     Output,
     Relaunch,
     Update,
+    UpdateCheck,
     Updates,
     WebHandoff,
     _in_thread,  # pyright: ignore[reportPrivateUsage]
@@ -50,14 +53,17 @@ from pydantic_clai2.cli.self_update import (
 )
 from pydantic_clai2.commands import set_completions
 from pydantic_clai2.config import Settings, UpdateChannel
+from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import UpdateProgress
+from pydantic_clai2.plugins import InstallProgress
+from pydantic_clai2.plugins.menus import CloseMenu
 from pydantic_clai2.runtime import session_runtime
+from pydantic_clai2.ui.menus import dialogs, update_menu as update_menu_module
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.set_menu import SettingsSource
-from pydantic_clai2.ui.menus.update_menu import VERSION, update_menu
+from pydantic_clai2.ui.menus.update_menu import VERSION, AboutSource, update_menu
 from tests.clai2.dialog_script import Back, Confirm, ScriptedDialogs
-from tests.clai2.menu_script import make_context
+from tests.clai2.menu_script import Script, make_context, pick
 from tests.clai2.test_app_edges import inputs
 
 SHA = '4bd401a5539aa96b9b67753092fd7f8b90e4dc8a'
@@ -385,8 +391,10 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
     assert 'pydantic-graph @ ' in overrides.read_text(encoding='utf-8')
     overrides.unlink()
     assert ran == []
-    with pytest.raises(ValueError, match='Usage: /update'):
-        await current.command(['now'])
+    assert (current.failed, failed.failed, no_uv.failed, manual.failed, lost.failed) == (False, True, True, True, False)
+    assert await current.command(['now']) == 'CLAI 4bd401a55 is the newest on the main channel.'
+    with pytest.raises(ValueError, match='Usage: /update opens the update menu; /update now installs'):
+        await current.command(['later'])
 
 
 @pytest.mark.subprocess(
@@ -417,9 +425,9 @@ async def test_run_uv_returns_the_exit_status(
 
 async def test_command_reports_its_progress() -> None:
     """While a plugin listens, it hears the install start, each line uv prints, and how the install ended."""
-    heard: list[UpdateProgress] = []
+    heard: list[InstallProgress] = []
 
-    async def report(event: UpdateProgress) -> None:
+    async def report(event: InstallProgress) -> None:
         heard.append(event)
 
     restarted, _ = _updates(['stable'], lines=['Resolved 3 packages', 'Installed 3 packages'])
@@ -430,10 +438,10 @@ async def test_command_reports_its_progress() -> None:
     assert await restarted.command([]) == 'Updated CLAI to 0.53.0 (stable). Restarting...'
     assert restarted.web == served, 'the new build serves the page again'
     assert heard == [
-        UpdateProgress(stage='installing', target='0.53.0'),
-        UpdateProgress(stage='output', target='0.53.0', text='Resolved 3 packages'),
-        UpdateProgress(stage='output', target='0.53.0', text='Installed 3 packages'),
-        UpdateProgress(stage='restarting', target='0.53.0'),
+        InstallProgress(stage='installing', target='0.53.0'),
+        InstallProgress(stage='output', target='0.53.0', text='Resolved 3 packages'),
+        InstallProgress(stage='output', target='0.53.0', text='Installed 3 packages'),
+        InstallProgress(stage='restarting', target='0.53.0'),
     ]
     heard.clear()
     # Without a page to show them, uv's lines stay on the terminal, where uv draws its progress itself.
@@ -603,7 +611,7 @@ async def _relaunch_after(
         return updates
 
     monkeypatch.setattr(session_runtime, 'Updates', build)
-    inputs(monkeypatch, [*prompts, '/update', '/exit'])
+    inputs(monkeypatch, [*prompts, '/update now', '/exit'])
     with pytest.raises(Relaunch) as raised:
         await chat(
             Agent(TestModel()),
@@ -628,7 +636,7 @@ async def test_shell_relaunches_after_an_install(tmp_path: Path, monkeypatch: py
         return factory()
 
     # `/reload` rebuilds the shell, which keeps the conversation the launch options chose.
-    monkeypatch.setattr(_app, 'reload_clai', rebuild)
+    monkeypatch.setattr(app, 'reload_clai', rebuild)
     reloaded = await _relaunch_after(
         monkeypatch, tmp_path, ['/reload'], session_id='0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f'
     )
@@ -730,13 +738,13 @@ def test_cli_execs_the_new_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         raise Relaunch(executable='/b/clai2', session_id='new')
 
     execs: list[tuple[str, list[str]]] = []
-    monkeypatch.setattr(_app, 'chat', chat)
+    monkeypatch.setattr(app, 'chat', chat)
 
     def execv(path: str, argv: list[str]) -> None:
         execs.append((path, argv))
 
     monkeypatch.setattr(os, 'execv', execv)
-    _cli.run()
+    cli_module.run()
     assert execs == [
         ('/b/clai2', ['/b/clai2', '--model', 'test', '--database', str(tmp_path / 'config.db'), '--resume', 'new'])
     ]
@@ -767,7 +775,7 @@ def test_cli_hands_the_web_ui_to_the_new_build(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setattr('pydantic_clai2.cli.web.run_web', run_web)
     monkeypatch.setattr(os, 'execv', execv)
     monkeypatch.setenv('CLAI_RELAUNCH_WEB', f'4321 {WEB_TOKEN}')
-    _cli.run()
+    cli_module.run()
     [call] = calls
     assert (call['port'], call['token'], call['restart']) == (0, WEB_TOKEN, WebHandoff(port=4321, token=WEB_TOKEN))
     [argv] = execs
@@ -810,8 +818,8 @@ def test_a_terminal_session_serves_the_handed_over_web_ui(
         calls.append(kwargs)
         assert 'CLAI_RELAUNCH_WEB' not in os.environ
 
-    monkeypatch.setattr(_app, 'chat', chat)
-    _cli.run()
+    monkeypatch.setattr(app, 'chat', chat)
+    cli_module.run()
     assert calls[0]['web'] == handoff
 
 
@@ -824,7 +832,7 @@ async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.
         return updates
 
     monkeypatch.setattr(session_runtime, 'Updates', build)
-    inputs(monkeypatch, ['/update', '/exit'])
+    inputs(monkeypatch, ['/update now', '/exit'])
     output = StringIO()
     await chat(
         Agent(TestModel()),
@@ -841,12 +849,10 @@ async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.
 
 
 async def test_the_about_menu_keeps_the_version_read_only_and_updates_only_when_confirmed(tmp_path: Path) -> None:
-    """`/update`'s declared menu, which the web UI shows as Settings > About."""
+    """`/update`'s menu, which bare `/update` opens, in the terminal and in the web UI as Settings > About."""
     context, _ = make_context(tmp_path)
     entered: list[str] = []
-    updates = Updates(
-        channel=lambda: context.settings.update_channel, current=Installed(version='1.2.3', commit='a' * 40)
-    )
+    updates, _ = _updates(['stable'], current=Installed(version='1.2.3', commit='a' * 40))
     menu = update_menu(context, updates, run=entered.append)
     source = menu.source
     version, channel = source.rows()
@@ -863,18 +869,245 @@ async def test_the_about_menu_keeps_the_version_read_only_and_updates_only_when_
     assert source.apply(channel, 'main').startswith('Saved updates.channel')
     assert source.current(channel) == 'main'
     assert source.reset(channel).startswith('Reset updates.channel')
-    plain = update_menu(
-        context, Updates(channel=lambda: 'stable', current=Installed(version='1.2.3')), run=entered.append
-    )
-    assert plain.source.current(plain.source.rows()[0]) == '1.2.3'
+    plain, _ = _updates(['stable'], current=Installed(version='1.2.3'))
+    plain_menu = update_menu(context, plain, run=entered.append)
+    assert plain_menu.source.current(plain_menu.source.rows()[0]) == '1.2.3'
 
     update = menu.actions[VERSION]
     assert await update(ScriptedDialogs([Back()])) == [] and entered == []
     asked = ScriptedDialogs([Confirm(yes=True)])
-    assert await update(asked) == ['Running /update on the stable channel.']
-    assert entered == ['/update'], 'entered as typing it would, so it queues behind a running turn'
+    closing = await update(asked)
+    assert isinstance(closing, CloseMenu) and closing == ('Running /update now on the stable channel.',)
+    assert entered == ['/update now'], 'entered as typing it would, so it queues behind a running turn'
     assert 'stable channel' in asked.asked[0].description
     refusals = iter([None, 'A session started a turn.'])
     racing = update_menu(context, updates, run=entered.append, refusal=lambda: next(refusals))
     assert await racing.actions[VERSION](ScriptedDialogs([Confirm(yes=True)])) == ['A session started a turn.']
-    assert entered == ['/update'], 'refused after the dialog: nothing entered'
+    assert entered == ['/update now'], 'refused after the dialog: nothing entered'
+
+
+def test_the_about_menu_says_whether_a_newer_clai_is_out(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The version row's note answers the update check, which the menu starts even for a source checkout."""
+    context, _ = make_context(tmp_path)
+
+    def note(updates: Updates) -> str:
+        return AboutSource(context, updates).rows()[0].note
+
+    def offline(channel: UpdateChannel) -> str:
+        raise httpx.ConnectError('offline')
+
+    newest, _ = _updates(['stable'], current=Installed(version='0.53.0', tool=True))
+    assert note(newest) == 'clai2 is already on the latest version 0.53.0 on the stable channel.'
+    newer, _ = _updates(['main'])
+    assert note(newer) == 'a new version 9e08a34ee of clai2 is available on the main channel.'
+    source, _ = _updates(['stable'], current=Installed(version='0.52.0'))
+    assert note(source) == 'a new version 0.53.0 of clai2 is available on the stable channel.'
+    assert source.segment() == '', 'the footer still checks only `uv tool` installs'
+    failing, _ = _updates(['stable'], fetch=offline)
+    assert note(failing) == 'Could not check for a newer CLAI: offline'
+    assert failing.segment() == ''
+    # The menu cannot redraw when the answer comes, so it waits a moment for it before it shows.
+    monkeypatch.setattr(update_menu_module, 'CHECK_WAIT', 0.0)
+    checks: list[Callable[[], None]] = []
+    pending = Updates(channel=lambda: 'stable', current=TOOL, fetch=lambda channel: '0.53.0', spawn=checks.append)
+    assert note(pending) == 'Checking for a newer CLAI…'
+    assert note(pending) == 'Checking for a newer CLAI…' and len(checks) == 1, 'one check per channel'
+    checks[0]()
+    assert note(pending) == 'a new version 0.53.0 of clai2 is available on the stable channel.'
+
+
+def test_check_waits_for_the_answer_until_its_deadline() -> None:
+    answer = threading.Event()
+
+    def fetch(channel: UpdateChannel) -> str:
+        answer.wait(10)
+        return '0.53.0'
+
+    updates = Updates(channel=lambda: 'stable', current=TOOL, fetch=fetch)
+    assert updates.check(wait=0.01) is None, 'the deadline passed while the check runs'
+    answer.set()
+    assert updates.check(wait=10) == UpdateCheck(channel='stable', update=Update(channel='stable', target='0.53.0'))
+
+
+async def test_bare_update_without_a_terminal_points_to_the_web_menu(tmp_path: Path) -> None:
+    """A session with no terminal cannot open a terminal menu; its web UI handles bare `/update` separately."""
+    shell = session_runtime.create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    with pytest.raises(ValueError, match='update menu needs a terminal; open About in the web UI'):
+        await shell.commands.execute_async('/update')
+    await shell.close('exit')
+
+
+@pytest.mark.parametrize('confirm', [True, False])
+async def test_bare_update_opens_the_menu_and_installs_once_it_closes(
+    confirm: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In the terminal, bare `/update` shows the menu; its Update action closes it and installs at once."""
+    updates, ran = _updates(['stable'], executable=None)
+
+    def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
+        return updates
+
+    monkeypatch.setattr(session_runtime, 'Updates', build)
+    shown = Script(lists=[pick(VERSION), MenuResult(cancelled=True)], choices=[pick(confirm)], texts=[])
+    monkeypatch.setattr(dialogs, 'RUNNERS', shown.runners)
+    inputs(monkeypatch, ['/update', '/exit'])
+    output = StringIO()
+    await chat(
+        Agent(TestModel()),
+        deps=None,
+        settings=Settings(model='test', update_channel='stable'),
+        console=Console(file=output, width=200),
+        store=SettingsStore(tmp_path / 'config.db'),
+    )
+    text = output.getvalue()
+    if confirm:
+        # No second list: the action closed the menu, and the install followed without `/update now` typed.
+        assert shown.opened == ['list', 'choice']
+        assert text.index('Running /update now on the stable channel.') < text.index('Updated CLAI to 0.53.0')
+        assert len(ran) == 1
+    else:
+        assert shown.opened == ['list', 'choice', 'list'], 'Cancel returns to the menu'
+        assert 'Updated CLAI' not in text
+        assert ran == []
+
+
+@pytest.mark.parametrize(
+    ('code', 'exit_code', 'printed'),
+    [
+        (0, 0, 'Updated CLAI to 9e08a34ee (main). Exiting; start clai2 again to use it.'),
+        (2, 1, 'uv exited with status 2; see its output above.'),
+    ],
+)
+def test_update_flag_installs_and_exits_without_restarting(
+    code: int,
+    exit_code: int,
+    printed: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`clai2 --update` installs from the saved channel, prints how it went, and exits: no shell, no relaunch."""
+    context, _ = make_context(tmp_path)
+    context.set_setting(['updates.channel', 'main'])
+    ran: list[list[Sequence[str]]] = []
+
+    def build(*, channel: Callable[[], UpdateChannel], locate: Callable[[str], Awaitable[str | None]]) -> Updates:
+        updates, installs = _updates([channel()], codes=[code])
+        updates.locate = locate
+        ran.append(installs)
+        return updates
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(self_update, 'Updates', build)
+
+    monkeypatch.setattr(app, 'chat', Mock(side_effect=AssertionError('--update starts no shell')))
+    monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(context.store.path)])
+    with pytest.raises(SystemExit) as exited:
+        cli_module.run()
+    assert exited.value.code == exit_code
+    assert capsys.readouterr().out == f'{printed}\n'
+    [installs] = ran
+    assert len(installs) == 1
+
+
+def test_update_flag_refuses_windows_before_scheduling_an_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A detached PowerShell install has no result when the CLI exits; never report success before uv runs."""
+    fetch = Mock(side_effect=AssertionError('the Windows flag must not check for updates'))
+
+    def build(*, channel: Callable[[], UpdateChannel], locate: Callable[[str], Awaitable[str | None]]) -> Updates:
+        updates, installs = _updates([channel()], fetch=fetch)
+        updates.windows = True
+        updates.locate = locate
+        updates.hand_off = lambda script: pytest.fail('the install must not be scheduled')
+        assert installs == []
+        return updates
+
+    monkeypatch.setattr(self_update, 'Updates', build)
+    monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(tmp_path / 'c.db')])
+    with pytest.raises(SystemExit) as exited:
+        cli_module.run()
+    assert exited.value.code == 1
+    output = capsys.readouterr()
+    assert output.out == ''
+    assert (
+        output.err == '`clai2 --update` cannot install on Windows. Use `/update now` in an interactive clai2 session.\n'
+    )
+    fetch.assert_not_called()
+
+
+def test_update_flag_reports_a_failed_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def offline(channel: UpdateChannel) -> str:
+        raise httpx.ConnectError('offline')
+
+    def build(*, channel: Callable[[], UpdateChannel], locate: Callable[[str], Awaitable[str | None]]) -> Updates:
+        return _updates([channel()], fetch=offline)[0]
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(self_update, 'Updates', build)
+    monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(tmp_path / 'c.db')])
+    with pytest.raises(SystemExit) as exited:
+        cli_module.run()
+    assert exited.value.code == 1
+    assert capsys.readouterr().err == 'Could not check for a newer CLAI: offline\n'
+
+
+@pytest.mark.parametrize(
+    ('argv', 'error'),
+    [
+        (['--model', 'test'], '--update cannot be combined'),
+        (['-m', 'test'], '--update cannot be combined'),
+        (['--request-limit', '7'], '--update cannot be combined'),
+        (['--fork-session'], '`fork_session` (`--fork-session`) requires `resume` (`--resume`)'),
+    ],
+)
+def test_update_flag_rejects_session_options_before_installing(
+    argv: list[str], error: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    install = AsyncMock(return_value=0)
+    monkeypatch.setattr(cli_module, '_update', install)
+    monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(tmp_path / 'c.db'), *argv])
+    with pytest.raises(SystemExit) as exited:
+        cli_module.run()
+    assert exited.value.code == 2
+    assert error in capsys.readouterr().err
+    install.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    'argv',
+    [
+        ['-p', 'hi'],
+        ['--web'],
+        ['--resume', 'abc'],
+        ['--resume-codex'],
+        ['--continue'],
+        ['--session-id', '0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f'],
+        ['--agent', 'a:b'],
+        ['--worktree'],
+        ['config'],
+        ['plugins'],
+    ],
+)
+def test_update_flag_rejects_other_modes(
+    argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr('sys.argv', ['clai2', '--update', *argv])
+    with pytest.raises(SystemExit) as exited:
+        cli_module.run()
+    assert exited.value.code == 2
+    assert '--update cannot be combined with config, plugins, --prompt, --web, --resume' in capsys.readouterr().err

@@ -6,7 +6,7 @@ import io
 import random
 import wave
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Literal, assert_never, overload
 
 import anyio
@@ -48,7 +48,7 @@ from ..models import (
 from ..models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from ..settings import ToolChoice
 from ..tools import ToolDefinition
-from .codec import RealtimeSessionInput
+from .codec import TextContext
 from .settings import ReconnectPolicy
 
 
@@ -89,6 +89,30 @@ def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMe
     return _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
 
 
+def replay_recorded_system_prompts_in_place(messages: Sequence[ModelMessage]) -> Sequence[ModelMessage]:
+    """Turn the system prompts the first request of a session's own history opens with into `<system>`-tagged user text.
+
+    For a session that opened with no request of its own: whatever it then recorded first was sent mid-session, such
+    as `send(SystemPromptPart(...))` before anything else, not the standing system prompt the connection was configured
+    with. Its replay keeps the instructions it opened with and leaves the standing prompt to them, so a prompt taken
+    for it would be lost; as `<system>`-tagged text it is replayed where it was sent, as a later one is.
+    """
+    index = next((i for i, message in enumerate(messages) if isinstance(message, ModelRequest)), None)
+    if index is None:
+        return messages
+    first_request = messages[index]
+    assert isinstance(first_request, ModelRequest)
+    if not (standing_count := _standing_system_prompt_count(first_request)):
+        return messages
+    parts = [
+        UserPromptPart(content=wrap(SYSTEM_TAG, part.content), timestamp=part.timestamp)
+        if position < standing_count and isinstance(part, SystemPromptPart)
+        else part
+        for position, part in enumerate(first_request.parts)
+    ]
+    return [*messages[:index], replace(first_request, parts=parts), *messages[index + 1 :]]
+
+
 def resolve_advertised_tools(
     tools: list[ToolDefinition] | None, tool_choice: ToolChoice
 ) -> tuple[list[ToolDefinition], ResolvedToolChoice | None]:
@@ -119,13 +143,31 @@ def reject_forced_tool_choice(tool_choice: ResolvedToolChoice | None, message: s
 
 
 class SystemPromptText(str):
-    """`<system>`-tagged text a session delivers for system-prompt parts alone (`enqueue(SystemPromptPart(...))`).
+    """A mid-session system prompt sent as a text turn: `send(SystemPromptPart(...))`, or `enqueue()` of system prompts alone.
 
-    It goes out as a `str` text turn like any other, so a connection that doesn't look for it delivers it as one; one
-    whose protocol says who wrote what can deliver it as the operator's rather than the user's.
+    Its value is the prompt `<system>`-tagged, so a connection that doesn't look for it delivers it as user text that
+    says where it came from; one whose protocol has a channel for the operator's own text delivers `system_prompt`
+    there instead.
     """
 
-    __slots__ = ()
+    system_prompt: str
+    """The prompt as written, without the tags."""
+
+    def __new__(cls, system_prompt: str) -> SystemPromptText:
+        text = super().__new__(cls, wrap(SYSTEM_TAG, system_prompt))
+        text.system_prompt = system_prompt
+        return text
+
+
+@dataclass
+class SystemPromptContext(TextContext):
+    """A mid-session system prompt added as context, without asking for a response: `send(SystemPromptPart(...), respond=False)`.
+
+    Like `SystemPromptText`, `text` is the prompt `<system>`-tagged, for a connection that delivers it as any other
+    context, and `system_prompt` the prompt as written, for one with a channel for the operator's own text.
+    """
+
+    system_prompt: str
 
 
 DEFAULT_MAX_RECONNECTS = 50
@@ -157,10 +199,10 @@ def inject_trace_context(headers: MutableMapping[str, str]) -> None:
 
 async def seed_user_content(
     *, part: UserPromptPart, provider_name: str, supports_images: bool
-) -> list[RealtimeSessionInput]:
+) -> list[str | BinaryContent]:
     """Normalize a user prompt to replayable text and image content."""
     content: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
-    result: list[RealtimeSessionInput] = []
+    result: list[str | BinaryContent] = []
     for item in content:
         if isinstance(item, str):
             result.append(item)
@@ -223,10 +265,10 @@ def seed_speech_content(*, part: SpeechPart, provider_name: str, supports_audio:
 
 
 @overload
-def seed_speech_content(*, part: SpeechPart, provider_name: str, supports_audio: bool) -> RealtimeSessionInput: ...
+def seed_speech_content(*, part: SpeechPart, provider_name: str, supports_audio: bool) -> str | BinaryContent: ...
 
 
-def seed_speech_content(*, part: SpeechPart, provider_name: str, supports_audio: bool) -> RealtimeSessionInput:
+def seed_speech_content(*, part: SpeechPart, provider_name: str, supports_audio: bool) -> str | BinaryContent:
     """Return replayable speech content, preferring its transcript."""
     if part.transcript is not None:
         return part.transcript

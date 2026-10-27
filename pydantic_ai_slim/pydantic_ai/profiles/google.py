@@ -191,6 +191,16 @@ class GoogleModelProfile(ModelProfile, total=False):
     See <https://ai.google.dev/gemini-api/docs/google-search#pricing>.
     """
 
+    google_supports_batch_api: bool
+    """Whether the endpoint serves the Gemini API's [Batch Mode](https://ai.google.dev/gemini-api/docs/batch-api).
+    Default: `False`.
+
+    [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] and
+    [`model_request_batch`][pydantic_ai.direct.model_request_batch] use it. `GoogleModel` sets it when its client
+    talks to the Gemini API, and not on Google Cloud (Vertex AI), whose batch prediction jobs read from Cloud Storage
+    or BigQuery rather than the uploaded files `GoogleModel` submits.
+    """
+
 
 _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
@@ -292,6 +302,7 @@ _REALTIME_MODELS_MISSING_VIDEO_IN_TEXT_TURNS = (
     'gemini-3.1-flash-live',
     'gemini-3.8-live',  # and `gemini-3.8-live-extended-thinking`
     'gemini-live-2.5-flash',  # Vertex AI
+    'gemini-robotics-er',
 )
 """Live model families whose typed turns don't see an image sent just before them as a video frame."""
 
@@ -432,7 +443,9 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     )
     # Verified live 2026-09-25 by sending an image and then a typed question about it, 3/3 each: the 3.x
     # models answered that they couldn't see an image, and the 2.5 models misread it. A typed turn only
-    # sees images in its own content, so these get the recent image sent again there.
+    # sees images in its own content, so these get the recent image sent again there. Verified live
+    # 2026-10-27 the same way on `gemini-robotics-er-2-streaming-preview`: without the second send it
+    # described a different object 3/3, and with it the image it was sent 3/3.
     # Verified live 2026-09-28 by seeding a tool call and its result and asking about the result, before
     # and after a session-resumption re-dial: the 3.8 models, extended thinking included, recall it
     # both times. `gemini-3.1-flash-live-preview` recalls it until the re-dial and then has lost it (it

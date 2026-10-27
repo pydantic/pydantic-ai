@@ -49,7 +49,7 @@ from ._openai_protocol import (
     CONVERSATION_ITEM_ADDED_EVENTS,
     ProtocolResponse,
     client_item_input,
-    is_user_message_item,
+    is_client_message_item,
     rejected_inputs,
     response_metadata_answers,
 )
@@ -484,7 +484,7 @@ class OpenAILifecycle:
             # A spoken turn joins the conversation when its item is added. That can be before the user has
             # stopped speaking: xAI adds it at speech start, and starts responding before the commit.
             return self._place(item.id, still_speaking=True)
-        elif not is_user_message_item(item):
+        elif not is_client_message_item(item):
             # The model's output, or a spoken turn already committed.
             return []
         elif (input_id := client_item_input(item.id)) is not None:

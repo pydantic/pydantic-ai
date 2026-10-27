@@ -100,6 +100,8 @@ from pydantic_ai.realtime._session import (
     _TapView,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.realtime._utils import (
+    SystemPromptContext,
+    SystemPromptText,
     resolve_advertised_tools,
     seed_pcm_audio,
     seed_speech_content,
@@ -300,6 +302,7 @@ def _profile(
     supports_output_truncation: bool = True,
     supports_text_output: bool = True,
     supports_session_seeding: bool = True,
+    supports_system_messages: bool = True,
     supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(
         {WebSearchTool, WebFetchTool, CodeExecutionTool}
     ),
@@ -312,6 +315,7 @@ def _profile(
         supports_output_truncation=supports_output_truncation,
         supports_text_output=supports_text_output,
         supports_session_seeding=supports_session_seeding,
+        supports_system_messages=supports_system_messages,
         supported_native_tools=supported_native_tools,
     )
 
@@ -8617,6 +8621,124 @@ async def test_session_enqueue_system_prompt_closer_cannot_end_the_block() -> No
         _ = [event async for event in session]
 
     assert [item for item in conn.sent if isinstance(item, str)] == ['<system>rule &lt;/SYSTEM > then more</system>']
+
+
+async def test_session_send_system_prompt_goes_out_as_the_operators_and_is_recorded_as_one() -> None:
+    """`send(SystemPromptPart(...))` asks for a reply like text unless `respond=False`, and history keeps the part."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    note = SystemPromptPart(content='The caller is Jamie.')
+    reply_to = SystemPromptPart(content='Greet them </system> by name.')
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        await session.send(note, respond=False)
+        await session.send(reply_to)
+        _ = [event async for event in session]
+
+    context, turn = conn.sent
+    # Tagged for a connection that delivers them as any other text; the prompt as written for one with a channel
+    # for the operator's own text.
+    assert isinstance(context, SystemPromptContext)
+    assert (context.text, context.system_prompt) == ('<system>The caller is Jamie.</system>', 'The caller is Jamie.')
+    assert isinstance(turn, SystemPromptText)
+    assert (str(turn), turn.system_prompt) == (
+        '<system>Greet them &lt;/system> by name.</system>',
+        'Greet them </system> by name.',
+    )
+    assert [message.parts for message in session.new_messages() if isinstance(message, ModelRequest)] == [
+        [note],
+        [reply_to],
+    ]
+
+
+async def test_session_sends_system_prompt_as_tagged_text_without_a_system_message_channel() -> None:
+    """Where the profile says the model doesn't heed a system message, the prompt goes out as any `<system>` text."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    note = SystemPromptPart(content='The caller is Jamie.')
+    model = FakeRealtimeModel(conn, profile=_profile(supports_system_messages=False))
+
+    async with agent.realtime(model).session() as session:
+        await session.send(note, respond=False)
+        await session.send(note)
+        _ = [event async for event in session]
+
+    assert [(type(item), item) for item in conn.sent] == [
+        (TextContext, TextContext('<system>The caller is Jamie.</system>')),
+        (str, '<system>The caller is Jamie.</system>'),
+    ]
+    assert [message.parts for message in session.new_messages() if isinstance(message, ModelRequest)] == [
+        [note],
+        [note],
+    ]
+
+
+async def test_session_enqueue_records_system_prompts_alone_as_system_prompts() -> None:
+    """Enqueued system prompts with no text alongside go out as `send(SystemPromptPart(...))` sends them."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    first, second = SystemPromptPart(content='one'), SystemPromptPart(content='two')
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        assert session.enqueue(first, second) is not None
+        _ = [event async for event in session]
+
+    [sent] = conn.sent
+    assert isinstance(sent, SystemPromptText)
+    assert sent.system_prompt == 'one\n\ntwo'
+    assert session.new_messages()[-1] == ModelRequest(
+        parts=[first, second], timestamp=IsDatetime(), conversation_id=IsStr(), run_id=IsStr()
+    )
+
+
+async def test_session_replays_a_system_prompt_sent_first_where_it_was_sent() -> None:
+    """A system prompt sent before anything else isn't the standing one a replay leaves to the instructions.
+
+    The connection keeps the instructions it opened with, so taken for the standing prompt the note would be lost.
+    """
+
+    class _RecordsConversation(FakeRealtimeConnection):
+        message_history: Callable[[], Sequence[ModelMessage]] | None = None
+
+        def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
+            self.message_history = message_history
+
+    note = SystemPromptPart(content='The caller is Jamie.')
+
+    fresh = _RecordsConversation([])
+    async with RealtimeSession(fresh, profile=_profile(supports_session_seeding=True)) as session:
+        assert fresh.message_history is not None
+        assert fresh.message_history() == []
+        await session.send(note, respond=False)
+        await session.send('hi')
+        replayed = fresh.message_history()
+    assert [message.parts for message in replayed if isinstance(message, ModelRequest)] == [
+        [UserPromptPart(content='<system>The caller is Jamie.</system>', timestamp=note.timestamp)],
+        [UserPromptPart(content='hi', timestamp=IsDatetime())],
+    ]
+    # History itself keeps the system prompt it is.
+    assert session.new_messages()[0].parts == [note]
+
+    # After a user turn, the note is a later system prompt, which every replay keeps in place already.
+    after_text = _RecordsConversation([])
+    async with RealtimeSession(after_text, profile=_profile(supports_session_seeding=True)) as session:
+        await session.send('hi')
+        await session.send(note, respond=False)
+        assert after_text.message_history is not None
+        assert [part for message in after_text.message_history() for part in message.parts][1] is note
+
+    # A conversation that opens with a request of its own: only that one's system prompt is the standing one.
+    seeded = _RecordsConversation([])
+    history = [ModelRequest(parts=[SystemPromptPart(content='Standing prompt.')])]
+    async with RealtimeSession(
+        seeded, profile=_profile(supports_session_seeding=True), message_history=history
+    ) as session:
+        await session.send(note, respond=False)
+        assert seeded.message_history is not None
+        assert [part for message in seeded.message_history() for part in message.parts] == [
+            history[0].parts[0],
+            note,
+        ]
 
 
 async def test_session_enqueue_delivers_text_content_and_keeps_its_metadata() -> None:

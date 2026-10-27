@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
 from starlette.datastructures import Headers
 
 from pydantic_ai_harness.ask_user import AskUserAnswer
+from pydantic_clai2.builtin_plugins.web.changes import Changes, ChangeScope, session_changes
 from pydantic_clai2.builtin_plugins.web.channel import SessionChannel, Switch
 from pydantic_clai2.builtin_plugins.web.framing import FRAME_SOURCES
 from pydantic_clai2.builtin_plugins.web.live import RESYNC
@@ -46,8 +47,10 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Transcript,
     Watch,
     dump,
+    legacy_tags,
 )
 from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
+from pydantic_clai2.builtin_plugins.web.sidebar import completions
 from pydantic_clai2.builtin_plugins.web.workspaces import open_workspace
 from pydantic_clai2.runtime.image_codec import decode_images
 
@@ -150,6 +153,12 @@ class Rename(BaseModel):
     title: str = Field(max_length=200)
 
 
+class Archive(BaseModel):
+    """The sessions to archive at once, such as every one of a worktree."""
+
+    ids: list[str] = Field(max_length=1000)
+
+
 class ModelChoice(BaseModel):
     """A saved model or chain to select, as `/model NAME` does."""
 
@@ -236,6 +245,7 @@ def create_app(*, service: WebService, token: str, hosts: frozenset[str], static
     _prompt(app, service)
     _queue(app, service)
     _images(app, service)
+    _changes(app, service)
     _sessions(app, service)
     _plugins(app, service)
     _commands(app, service)
@@ -459,6 +469,22 @@ def _images(app: FastAPI, service: WebService) -> None:
         app.get(f'{prefix}/images/{{image_id}}')(image)
 
 
+def _changes(app: FastAPI, service: WebService) -> None:
+    """The Changes panel: the files a session changed in a scope, each with its diff, or without for `diffs=false`.
+
+    Each route is there twice, as the composer's are.
+    """
+
+    async def changes(
+        scope: ChangeScope = 'session', diffs: bool = True, conversation_id: str | None = None
+    ) -> Changes:
+        session = _run(service.default if conversation_id is None else lambda: service.session(conversation_id)).session
+        return await session_changes(session.conversation.messages, session.workspace, scope=scope, diffs=diffs)
+
+    for prefix in ('/api', '/api/sessions/{conversation_id}'):
+        app.get(f'{prefix}/changes')(changes)
+
+
 def _answer(answer: Answer) -> AskUserAnswer:
     if answer.custom is not None:
         return AskUserAnswer(header=answer.header, custom_answer=answer.custom)
@@ -471,6 +497,11 @@ def _sessions(app: FastAPI, service: WebService) -> None:
     @app.get('/api/sessions')
     async def sessions(q: str = '', include_archived: bool = False, include_worktrees: bool = False) -> list[Project]:
         return await _wait(service.projects(q, include_archived=include_archived, include_worktrees=include_worktrees))
+
+    @app.get('/api/directories')
+    async def directories(path: str = '') -> list[Project]:
+        """New session's completions of a typed path, so it reaches repositories and worktrees without sessions."""
+        return await to_thread.run_sync(completions, path)
 
     @app.post('/api/sessions/new')
     async def new(body: NewSession | None = None) -> Opened:
@@ -491,6 +522,10 @@ def _sessions(app: FastAPI, service: WebService) -> None:
     @app.post('/api/sessions/{conversation_id}/fork')
     async def fork(conversation_id: str) -> Forked:
         return Forked(id=await _wait(service.fork(conversation_id)))
+
+    @app.post('/api/sessions/archive', status_code=204)
+    async def archive_all(body: Archive) -> None:
+        await _wait(service.archive_all(body.ids))
 
     @app.post('/api/sessions/{conversation_id}/archive', status_code=204)
     async def archive(conversation_id: str) -> None:
@@ -638,6 +673,8 @@ def _events(app: FastAPI, service: WebService) -> None:
     @app.websocket('/ws')
     async def events(socket: WebSocket) -> None:
         await socket.accept()
+        # A page open across the `/update` that renamed the item and turn tags sends no `protocol`.
+        legacy = 'protocol' not in socket.query_params
         # Subscribe first, so nothing published between the snapshot and the subscription is lost.
         with service.hub.subscribe() as client:
             try:
@@ -659,7 +696,7 @@ def _events(app: FastAPI, service: WebService) -> None:
                     async def forward() -> None:
                         try:
                             while (text := await client.queue.get()) != RESYNC:
-                                await socket.send_text(text)
+                                await socket.send_text(legacy_tags(text) if legacy else text)
                             # The browser fell too far behind; it reconnects and starts from a fresh snapshot.
                             await socket.close(code=1013)
                         except (WebSocketDisconnect, RuntimeError):  # pragma: no cover -- races the receive loop.
@@ -700,15 +737,15 @@ def _run(action: Callable[[], ResultT]) -> ResultT:
     """Run an action, turning the errors it raises for the user into HTTP errors carrying their message."""
     try:
         return action()
-    except (ValueError, LookupError, RuntimeError) as error:
-        raise _http(error) from error
+    except (ValueError, LookupError, RuntimeError) as exc:
+        raise _http(exc) from exc
 
 
 async def _wait(action: Awaitable[ResultT]) -> ResultT:
     try:
         return await action
-    except (ValueError, LookupError, RuntimeError) as error:
-        raise _http(error) from error
+    except (ValueError, LookupError, RuntimeError) as exc:
+        raise _http(exc) from exc
 
 
 def _http(error: ValueError | LookupError | RuntimeError) -> HTTPException:

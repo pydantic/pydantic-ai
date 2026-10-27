@@ -144,6 +144,7 @@ async def run_persistent_command(
     command: str,
     *,
     base: str,
+    job_id: str | None,
     cwd: str,
     env: Mapping[str, str] | None,
     mode: CommandMode,
@@ -159,7 +160,9 @@ async def run_persistent_command(
         raise ModelRetry(f'timeout must be greater than zero and at most {MAX_FOREGROUND_WAIT:g} seconds.')
     # Before launching: a toolset used outside its capability fails here, and must not leave a job running.
     events = event_ctx(ctx, 'Shell')
-    job = await Job.launch(ctx.workspace, command, base=base, cwd=cwd, env=env, combined=True, log_limit=log_limit)
+    job = await Job.launch(
+        ctx.workspace, command, base=base, cwd=cwd, env=env, combined=True, log_limit=log_limit, job_id=job_id
+    )
     output = _CommandOutput(job, events, log_limited=log_limit is not None)
 
     try:

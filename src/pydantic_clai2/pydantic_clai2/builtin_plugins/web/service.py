@@ -53,7 +53,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     dump,
     history_items,
 )
-from pydantic_clai2.builtin_plugins.web.sidebar import busy_elsewhere, session_entry, worktrees
+from pydantic_clai2.builtin_plugins.web.sidebar import session_entry, worktrees
 from pydantic_clai2.builtin_plugins.web.workers import task_entry
 from pydantic_clai2.builtin_plugins.web.workspaces import checkouts
 from pydantic_clai2.cli.self_update import installed
@@ -61,6 +61,8 @@ from pydantic_clai2.config.theme_names import names as theme_names
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    ForkEnd,
+    InstallProgress,
     LiveSession,
     LiveSessions,
     PanelView,
@@ -70,8 +72,7 @@ from pydantic_clai2.plugins import (
     SessionCatalog,
     SidePanel,
     TaskCatalog,
-    TaskEvent,
-    UpdateProgress,
+    TaskProgress,
 )
 from pydantic_clai2.plugins.loader import PluginError
 from pydantic_clai2.plugins.menus import SettingsMenu
@@ -83,6 +84,7 @@ from pydantic_clai2.runtime.project_identity import (
     project_identity,
     worktree_roots,
 )
+from pydantic_clai2.runtime.session import busy_elsewhere
 from pydantic_clai2.runtime.session_workspace import workspace_directory
 from pydantic_clai2.runtime.task_prompts import is_task_prompt
 
@@ -362,10 +364,13 @@ class WebService:
         # `/plugins`, or a plugin's own command such as `/grain`, may have changed a plugin or its settings.
         self.hub.publish(PluginsChanged())
 
-    def task_event(self, event: TaskEvent) -> None:
+    def task_progress(self, event: TaskProgress) -> None:
         self.current().workers.observe(event)
 
-    def update_progress(self, event: UpdateProgress) -> None:
+    def fork_ended(self, event: ForkEnd) -> None:
+        self.current().fork_ended(event)
+
+    def install_progress(self, event: InstallProgress) -> None:
         """Show `/update` going: uv's last line while it installs, then all it printed, as the terminal shows it."""
         if event.stage == 'installing':
             self._uv_output = []
@@ -428,8 +433,8 @@ class WebService:
         run = {'enable': catalog.enable, 'disable': catalog.disable, 'reload': catalog.reload}[action]
         try:
             await run(name)
-        except PluginError as error:
-            raise ValueError(str(error)) from error
+        except PluginError as exc:
+            raise ValueError(str(exc)) from exc
         finally:
             self.hub.publish(PluginsChanged())
 
@@ -452,11 +457,11 @@ class WebService:
         settings = info.settings_model.model_validate({**values, **changes})
         try:
             await self.plugin_catalog.save_settings(name, settings)
-        except PluginError as error:
-            raise ValueError(str(error)) from error
-        except TypeError as error:
+        except PluginError as exc:
+            raise ValueError(str(exc)) from exc
+        except TypeError as exc:
             # Its model changed since the listing above, as a reload that re-imports it does.
-            raise ValueError(f'{name} changed; reload the panel and try again.') from error
+            raise ValueError(f'{name} changed; reload the panel and try again.') from exc
         finally:
             self.hub.publish(PluginsChanged())
 
@@ -492,8 +497,8 @@ class WebService:
         catalog = self.plugin_catalog
         try:
             messages = await catalog.edit_settings(name, edit)
-        except PluginError as error:
-            raise ValueError(str(error)) from error
+        except PluginError as exc:
+            raise ValueError(str(exc)) from exc
         finally:
             self.hub.publish(PluginsChanged())
         menu = catalog.settings_menu(name)
@@ -585,7 +590,7 @@ class WebService:
         # Backgrounding changes the row without an event from the task, which may be waiting on its model.
         for task in catalog.listing():
             if task.id == task_id:
-                channel.workers.observe(TaskEvent(task=task))
+                channel.workers.observe(TaskProgress(task=task))
 
     async def prompt_task(self, task_id: str, text: str) -> None:
         """Run a finished task again with `text`, on its own: its session's conversation never sees it."""
@@ -676,12 +681,24 @@ class WebService:
         places = placements(entries, identities=self._identities)
         here = places[workspace]
         default = self.default().id
+        saved_in = {entry.workspace for entry in entries}
+        follows = self.catalog.follows_workspace
+        # Whether each opens may check its folder, off the event loop; what is live here is read before, on it.
+        openable = await to_thread.run_sync(
+            lambda: {folder: continuable(folder, here=workspace, follows=follows) for folder in saved_in}
+        )
         grouped: dict[str, dict[str, tuple[ProjectIdentity, list[SessionEntry]]]] = {}
         for entry in entries:
             identity = places[entry.workspace]
             _, sessions = grouped.setdefault(identity.key, {}).setdefault(identity.root, (identity, []))
             sessions.append(
-                session_entry(entry, live=live.get(entry.id), busy=entry.id in busy, current=entry.id == default)
+                session_entry(
+                    entry,
+                    live=live.get(entry.id),
+                    busy=entry.id in busy,
+                    current=entry.id == default,
+                    openable=openable[entry.workspace],
+                )
             )
         for folder in empty:
             if not (identity := places[folder]).missing:
@@ -698,28 +715,25 @@ class WebService:
         return sorted(projects, key=lambda project: (not project.current, project.key == MISSING))
 
     async def transcript(self, conversation_id: str) -> Transcript:
+        """A saved session to show; one another CLAI runs is only shown, so opening it is the user's choice to fork it."""
         saved = await self.catalog.saved(conversation_id)
-        openable = self._continuable(saved.summary.workspace)
+        continuable = self._continuable(saved.summary.workspace)
+        busy = continuable and await to_thread.run_sync(busy_elsewhere, saved.summary)
         return Transcript(
             id=saved.summary.id,
             title=saved.summary.title,
             workspace=saved.summary.workspace,
             items=history_items(saved.messages),
-            openable=openable,
-            missing=self.catalog.follows_workspace and not openable,
+            openable=continuable and not busy,
+            missing=self.catalog.follows_workspace and not continuable,
+            owner_pid=saved.summary.owner_pid if busy else None,
         )
 
     def _continuable(self, workspace: str) -> bool:
         """Whether a session saved in `workspace` can be opened: here, or there while CLAI follows sessions."""
-        if workspace == str(self.default().session.workspace):
-            return True
-        if not self.catalog.follows_workspace:
-            return False
-        try:
-            workspace_directory(workspace)
-        except ValueError:
-            return False
-        return True
+        return continuable(
+            workspace, here=str(self.default().session.workspace), follows=self.catalog.follows_workspace
+        )
 
     async def rename(self, conversation_id: str, title: str) -> None:
         await self.catalog.rename(conversation_id, title)
@@ -743,6 +757,34 @@ class WebService:
         await (catalog.archive(conversation_id) if archived else catalog.unarchive(conversation_id))
         self.hub.publish(SessionsChanged())
 
+    async def archive_all(self, ids: Sequence[str]) -> None:
+        """Archive several sessions, such as a worktree's; any refused are named once the others are archived."""
+        catalog = self.catalog
+        unique = list(dict.fromkeys(ids))
+        refused: list[str] = []
+        for conversation_id in unique:
+            try:
+                await catalog.archive(conversation_id)
+            except (LookupError, ValueError) as exc:
+                refused.append(f'{conversation_id!r}: {exc}')
+        if len(refused) < len(unique):
+            self.hub.publish(SessionsChanged())
+        if refused:
+            raise ValueError(f'Archived {len(unique) - len(refused)} of {len(unique)} sessions. ' + ' '.join(refused))
+
+
+def continuable(workspace: str, *, here: str, follows: bool) -> bool:
+    """Whether a session saved in `workspace` can be opened from a session in `here`, which may stat its folder."""
+    if workspace == here:
+        return True
+    if not follows:
+        return False
+    try:
+        workspace_directory(workspace)
+    except ValueError:
+        return False
+    return True
+
 
 async def _view(panel: SidePanel) -> PanelView:
     """What `panel` shows now; a failing view, or a page that is not on the web, shows why instead."""
@@ -752,8 +794,8 @@ async def _view(panel: SidePanel) -> PanelView:
     except TimeoutError:
         return PanelView(note=f'{panel.title} did not answer in time.')
     # Any plugin's bug: one broken panel must not take the others, or the page, down.
-    except Exception as error:  # noqa: BLE001
-        return PanelView(note=f'{panel.title} failed: {str(error) or type(error).__name__}')
+    except Exception as exc:  # noqa: BLE001
+        return PanelView(note=f'{panel.title} failed: {str(exc) or type(exc).__name__}')
     if view.url is not None and not _web_page(view.url):
         return PanelView(note=f'{panel.title} offered a page that is not on the web; only http and https open here.')
     return view
@@ -801,8 +843,8 @@ class Observer(AbstractCapability[None]):
         except get_cancelled_exc_class():
             channel.run_ended('cancelled')
             raise
-        except Exception as error:
-            channel.run_ended('failed', error=error)
+        except Exception as exc:
+            channel.run_ended('failed', error=exc)
             raise
         channel.run_ended('completed', usage=result.usage)
         return result

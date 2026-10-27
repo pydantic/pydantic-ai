@@ -1284,10 +1284,11 @@ async def test_a_stop_reaches_a_command_whose_name_holds_a_newline(fake_e2b: Fak
     # Linux names a process after its executable, and a file name may hold a newline, which a
     # line-wise read of `/proc/PID/stat` would cut short.
     fake_e2b.host_root = tmp_path
-    sleep = shutil.which('sleep')
-    assert sleep is not None
+    # A script rather than a link to `sleep`: a multicall `sleep`, such as uutils coreutils on
+    # Ubuntu 26.04, refuses to run under another name. The kernel names a script after its file.
     odd = tmp_path / 'odd\nname'
-    odd.symlink_to(sleep)
+    odd.write_text('#!/bin/sh\nsleep 30 & wait\n')
+    odd.chmod(0o755)
     pid_file = tmp_path / 'pid'
     backend = await started()
     try:
@@ -1296,7 +1297,7 @@ async def test_a_stop_reaches_a_command_whose_name_holds_a_newline(fake_e2b: Fak
                 group.start_soon(
                     partial(
                         backend.run,
-                        f'echo $$ > {shlex.quote(str(pid_file))}; exec {shlex.quote(str(odd))} 30',
+                        f'echo $$ > {shlex.quote(str(pid_file))}; exec {shlex.quote(str(odd))}',
                         shell=True,
                     )
                 )
