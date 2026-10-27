@@ -1279,21 +1279,22 @@ async def _get_instructions(
 async def _get_loaded_instructions(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     run_context: RunContext[DepsT],
-) -> list[_messages.InstructionPart]:
-    """Resolve the instructions of the deferred capabilities the model has loaded, in the order it loaded them.
+    capability_ids: Iterable[str],
+) -> dict[str, list[_messages.InstructionPart]]:
+    """Resolve the instructions of the deferred capabilities in `capability_ids`, the ones the model has loaded.
 
     They reach the model through history, stated after the `load_capability` return, rather than in the
     prefix: they go into `instruction_parts` so `before_model_request` hooks see them, marked `'via_history'`
     in `instruction_visibility`, and `update_loaded_instruction_history` records their changes.
     """
-    parts: list[_messages.InstructionPart] = []
-    for capability_id in LoadedInstructionValues.of(ctx.state.message_history).values:
+    resolved: dict[str, list[_messages.InstructionPart]] = {}
+    for capability_id in capability_ids:
         capability = run_context.capabilities.get(capability_id)
         if capability is not None and capability.defer_loading is True:
-            parts.extend(
-                await resolve_loaded_capability_instructions(capability_id, ctx.deps.tool_manager.toolset, run_context)
+            resolved[capability_id] = await resolve_loaded_capability_instructions(
+                capability_id, ctx.deps.tool_manager.toolset, run_context
             )
-    return parts
+    return resolved
 
 
 def _split_loaded_instruction_parts(
@@ -2056,10 +2057,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     _step_model_settings: StepModelSettings = field(
         repr=False, init=False, default=StepModelSettings(merged=None, layered=None)
     )
-    _resolved_loaded_parts: list[_messages.InstructionPart] = field(
-        repr=False, init=False, default_factory=list[_messages.InstructionPart]
+    _resolved_loaded_parts: dict[str, list[_messages.InstructionPart]] = field(
+        repr=False, init=False, default_factory=dict[str, list[_messages.InstructionPart]]
     )
-    """The loaded capabilities' instruction parts this request resolved, before the hooks ran."""
+    """The loaded capabilities' instruction parts this request resolved, before the hooks ran, by capability id."""
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -2679,9 +2680,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
-        loaded_instruction_parts = await _get_loaded_instructions(ctx, run_context)
-        self._resolved_loaded_parts = loaded_instruction_parts
-        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts, loaded_instruction_parts)
+        self._resolved_loaded_parts = await _get_loaded_instructions(
+            ctx, run_context, LoadedInstructionValues.of(ctx.state.message_history).values
+        )
+        model_request_parameters = await _prepare_request_parameters(
+            ctx, instruction_parts, [part for parts in self._resolved_loaded_parts.values() for part in parts]
+        )
         model_settings = self._resolve_step_model_settings(ctx, run_context)
 
         request_context = ModelRequestContext(
@@ -2847,10 +2851,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # prefix.
             # Loaded capabilities' instructions reach the model through history: changes to them are appended
             # after the prefix's, and they leave the parts the model is sent.
+            loaded_capability_ids = LoadedInstructionValues.of(messages).values
+            # A hook that added a `load_capability` exchange loaded a capability after the instructions were
+            # resolved. Its instructions are resolved now, so they're stated on the request that reveals its tools.
+            self._resolved_loaded_parts |= await _get_loaded_instructions(
+                ctx,
+                run_context,
+                [
+                    capability_id
+                    for capability_id in loaded_capability_ids
+                    if capability_id not in self._resolved_loaded_parts
+                ],
+            )
             prefix_parts, loaded_parts = _split_loaded_instruction_parts(
                 request_context.model_request_parameters,
-                self._resolved_loaded_parts,
-                LoadedInstructionValues.of(messages).values,
+                [part for parts in self._resolved_loaded_parts.values() for part in parts],
+                loaded_capability_ids,
             )
             recording_targets = _history_recording_targets(ctx, messages)
             request_context.model_request_parameters = replace(
@@ -2868,7 +2884,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     if capability.defer_loading is not True
                 },
             )
-            _apply_instruction_parts(self.request, request_context.model_request_parameters.instruction_parts)
+            # A hook that rewrote the history (`ctx.messages[:] = ...`) with a copy of this request left
+            # `self.request` out of it, so the instructions sent are recorded where the history now holds them.
+            for target in (
+                [self.request]
+                if any(message is self.request for message in ctx.state.message_history)
+                else recording_targets
+            ):
+                _apply_instruction_parts(target, request_context.model_request_parameters.instruction_parts)
             _record_model_settings_changes(
                 ctx,
                 request_context.model,
@@ -4262,45 +4285,34 @@ def _record_model_settings_changes(
     names a level.
 
     Reading history makes this idempotent, like `_record_tool_population_changes`: a retried request finds the
-    part it already recorded. A part on this step's own request is replaced rather than followed by another,
-    since no response has answered it yet.
+    part it already recorded. A part no response has answered yet (on this step's own request, when the run continues
+    a history that ends in one) stays, and the change this request makes follows it: a UI client that rebuilt the
+    history from the event stream keeps that part too, and learns of a change only from its event. A model with a
+    channel collapses the parts no response separates into the last one.
     """
     # Resolved by the model, with its own `settings` (each candidate's, for a `FallbackModel`) and provider-specific
     # overrides taken into account, so a request never records an effort it doesn't send.
     wanted = model._unified_effort(model_settings)  # pyright: ignore[reportPrivateUsage]
-    targets = list(requests)
     # A compaction replaces what came before it, including the changes recorded there, so the effort in
     # effect is read from the window after it, and the next request that names a level opens a new one.
-    recorded = [
-        (message, part)
-        for message in _messages.post_compaction_window(messages)
-        if isinstance(message, _messages.ModelRequest)
-        for part in message.parts
-        if isinstance(part, _messages.ModelSettingsDeltaPart) and 'thinking' in part.settings
-    ]
-    # A part on this step's own request hasn't been answered yet, so this step changed its mind (a hook, or a
-    # retry with different settings): it's replaced, and the request records only what it ends up sending.
-    unanswered: _messages.ModelSettingsDeltaPart | None = None
-    if recorded and any(recorded[-1][0] is target for target in targets):
-        unanswered = recorded.pop()[1]
-    current = recorded[-1][1] if recorded else None
+    current = next(
+        (
+            part
+            for message in reversed(_messages.post_compaction_window(messages))
+            if isinstance(message, _messages.ModelRequest)
+            for part in reversed(message.parts)
+            if isinstance(part, _messages.ModelSettingsDeltaPart) and 'thinking' in part.settings
+        ),
+        None,
+    )
     current_effort = current.settings.get('thinking') if current is not None else None
     if current_effort == wanted:
-        delta = None
-    else:
-        top_level = current is None or current_effort is None or wanted is None
-        delta = _messages.ModelSettingsDeltaPart(settings={'thinking': wanted}, top_level=top_level)
-    if unanswered is not None:
-        if delta == unanswered:
-            return
-        replacement = [] if delta is None else [delta]
-        for request in targets:
-            request.parts = [new for part in request.parts for new in (replacement if part is unanswered else [part])]
-    elif delta is not None:
-        for request in targets:
-            request.parts = [*request.parts, delta]
-    if delta is not None:
-        ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
+        return
+    top_level = current is None or current_effort is None or wanted is None
+    delta = _messages.ModelSettingsDeltaPart(settings={'thinking': wanted}, top_level=top_level)
+    for request in requests:
+        request.parts = [*request.parts, delta]
+    ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
 
 
 def _with_outgoing_reveal_state(

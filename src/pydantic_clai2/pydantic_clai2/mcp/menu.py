@@ -10,9 +10,9 @@ from typing import Literal
 
 from anyio import to_thread
 
-from pydantic_clai2.mcp._command import MCPCommand
-from pydantic_clai2.mcp._runtime import ServerEntry, not_owned, sign_in
-from pydantic_clai2.mcp._settings import target
+from pydantic_clai2.mcp.command import MCPCommand
+from pydantic_clai2.mcp.runtime import ServerEntry, not_owned, sign_in
+from pydantic_clai2.mcp.settings import target
 from pydantic_clai2.plugins.menus import Action, Dialogs, FieldRow, Option, SettingsMenu
 
 ADD = 'add'
@@ -171,8 +171,8 @@ class ServersSource:
         else:
             try:
                 text = await self._command.run(['tools', name], dialogs=dialogs, editor=None)
-            except Exception as error:  # noqa: BLE001 -- a server that cannot connect says why, as `/mcp tools` would.
-                text = f'Could not list its tools: {str(error) or type(error).__name__}'
+            except Exception as exc:  # noqa: BLE001 -- a server that cannot connect says why, as `/mcp tools` would.
+                text = f'Could not list its tools: {str(exc) or type(exc).__name__}'
         await dialogs.choose(title=f'{name} {kind}', options=[Option(value='back', label='Back')], description=text)
 
     async def trust(self, dialogs: Dialogs) -> list[str]:

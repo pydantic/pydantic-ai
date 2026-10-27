@@ -36,7 +36,7 @@ from pydantic_clai2.commands import Command
 from pydantic_clai2.config.project_settings import repository_directories
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
-from pydantic_clai2.runtime._session import supports_local_workspace
+from pydantic_clai2.runtime.session import supports_local_workspace
 from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.tool_output import terminal_text

@@ -7,7 +7,7 @@ import sys
 import threading
 from typing import TextIO
 
-from pydantic_clai2.ui.rendering._splash_art import LABEL, PYRAMID
+from pydantic_clai2.ui.rendering.splash_art import LABEL, PYRAMID
 from pydantic_clai2.ui.rendering.theme import LIGHT_PURPLE, LITHIUM, PURPLE, SUGAR, sgr
 
 

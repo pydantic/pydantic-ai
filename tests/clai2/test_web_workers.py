@@ -15,7 +15,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.subagents import DelegationStartEvent, DelegationTask, TaskQuestionEvent
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.builtin_plugins.web.protocol import (
     PROTOCOL,
     ItemAdded,
