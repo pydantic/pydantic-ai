@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 
 from anyio import Lock
 from pydantic import JsonValue
@@ -24,19 +24,23 @@ from termflow.tui.completion import Completion
 
 from pydantic_ai.messages import BinaryContent
 from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config.hooks import HOOKS_FACTORY
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_declarations, canonical_plugin_id
 from pydantic_clai2.plugins import (
     Conversation,
     DepsT,
+    ForkInfo,
     LiveSession,
     LoadedPlugin,
     PluginHost,
+    QueuedInput,
     SessionCatalog,
     SessionEndReason,
     TaskCatalog,
 )
 from pydantic_clai2.plugins._factories import import_file
 from pydantic_clai2.plugins.menus import SettingsMenu
+from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status
 
@@ -84,6 +88,13 @@ RETIRED_BUILTINS: dict[str, PluginSettings] = {
     'grain': PluginSettings(id='grain', factory='pydantic_ai_harness.grain:Grain', enabled=False),
 }
 """Former built-in declarations. A stored copy of one loads the built-in now declared under its id."""
+APPROVED_AS_WRITTEN = frozenset({HOOKS_FACTORY})
+"""Factories whose project declaration is itself what runs, so an approval covers that declaration exactly.
+
+A saved approval (same id and factory) that differs from the project's current declaration is stale: the
+project's, switched off, takes its place until `/plugins enable` approves it again. Other project plugins keep a changed approval,
+since their settings are the user's to edit.
+"""
 
 
 def same_plugin(declaration: PluginSettings, shipped: PluginSettings | None) -> bool:
@@ -91,6 +102,19 @@ def same_plugin(declaration: PluginSettings, shipped: PluginSettings | None) -> 
     if shipped is None:
         return False
     return declaration.model_copy(update={'enabled': True}) == shipped.model_copy(update={'enabled': True})
+
+
+class PromptInputs(Protocol):
+    """A session's prompt as `LiveRuntime` reaches it: the inputs waiting for its turn, and the turn to steer."""
+
+    @property
+    def queue(self) -> list[QueuedInput]: ...
+
+    def edit_queued(self, input_id: str, text: str) -> None: ...
+
+    def remove_queued(self, input_id: str) -> None: ...
+
+    def steer(self, text: str) -> bool: ...
 
 
 class LiveRuntime:
@@ -104,15 +128,22 @@ class LiveRuntime:
         running: Callable[[], bool],
         queued: Callable[[], int] = lambda: 0,
         changed: Callable[[], None] = lambda: None,
+        inputs: Callable[[], PromptInputs | None] = lambda: None,
+        forks: Callable[[], tuple[ForkInfo, ...]] = tuple,
     ) -> None:
-        """`host` carries the session's context; `running` says whether a turn runs in it.
+        """`host` carries the session's context; `running` says whether a turn runs in it, and `forks` lists its forks.
 
-        `queued` says how much input waits, and `changed` tells the process's `LiveSessions` that its state may have changed.
+        `changed` tells the process's `LiveSessions` that its state may have changed. `inputs` is the session's
+        prompt, which holds the input waiting for its turn and steers that turn; `None` holds none and steers nothing.
+        `queued` counts the waiting input when `inputs` returns `None`; otherwise the count is the prompt's own
+        queue length.
         """
         self._id = live_id
         self._host = host
         self._running = running
         self._queued = queued
+        self._inputs = inputs
+        self._forks = forks
         self._changed = changed
         self._watchers = 0
 
@@ -152,6 +183,11 @@ class LiveRuntime:
         return self._host.tasks
 
     @property
+    def forks(self) -> tuple[ForkInfo, ...]:
+        """The session's background `/fork` runs, oldest first."""
+        return self._forks()
+
+    @property
     def running(self) -> bool:
         """Whether a turn runs in the session now."""
         return self._running()
@@ -167,7 +203,31 @@ class LiveRuntime:
     @property
     def queued(self) -> int:
         """How many inputs wait for the session's running turn or command to end."""
-        return self._queued()
+        inputs = self._inputs()
+        return self._queued() if inputs is None else len(inputs.queue)
+
+    @property
+    def queue(self) -> list[QueuedInput]:
+        """The inputs waiting for the session's running turn or command to end, oldest first."""
+        inputs = self._inputs()
+        return [] if inputs is None else inputs.queue
+
+    def edit_queued(self, input_id: str, text: str, /) -> None:
+        """Replace a waiting input's text, keeping its place."""
+        if (inputs := self._inputs()) is None:
+            raise LookupError(NOT_QUEUED)
+        inputs.edit_queued(input_id, text)
+
+    def remove_queued(self, input_id: str, /) -> None:
+        """Drop a waiting input."""
+        if (inputs := self._inputs()) is None:
+            raise LookupError(NOT_QUEUED)
+        inputs.remove_queued(input_id)
+
+    def steer(self, text: str, /) -> bool:
+        """Send `text` to the running turn now; `False` when nothing takes it."""
+        inputs = self._inputs()
+        return inputs is not None and inputs.steer(text)
 
     @property
     def watchers(self) -> int:
@@ -312,6 +372,12 @@ class ProcessPlugins(Generic[DepsT]):
         declared.update(self.staged)
         for name in folder.keys() - declared.keys():
             declared[name] = PluginSettings(id=name, factory=name, path=str(folder[name]))
+        for name, pinned in project.items():
+            # Only an approval of this factory goes stale; a drop-in or the user's own plugin under the id stays.
+            approval = declared.get(name)
+            stale = approval is not None and approval.factory == pinned.factory and not same_plugin(approval, pinned)
+            if pinned.factory in APPROVED_AS_WRITTEN and stale and name not in self.staged:
+                declared[name] = pinned
         for shipped in (project, self.builtin):
             for name in shipped.keys() - declared.keys():
                 declared[name] = shipped[name]

@@ -129,6 +129,30 @@ For dynamic descriptions, return a callable from
 having the method itself take `RunContext`.
 """
 
+_REALTIME_UNCALLED_HOOKS: tuple[str, ...] = (
+    'before_node_run',
+    'after_node_run',
+    'wrap_node_run',
+    'on_node_run_error',
+    'before_model_request',
+    'after_model_request',
+    'wrap_model_request',
+    'on_model_request_error',
+    'get_wrapper_model',
+    'before_output_validate',
+    'after_output_validate',
+    'wrap_output_validate',
+    'on_output_validate_error',
+    'before_output_process',
+    'after_output_process',
+    'wrap_output_process',
+    'on_output_process_error',
+)
+"""Hooks a realtime session never calls: it has no graph nodes, no per-request boundary, and no output stage.
+
+KEEP IN SYNC with the hook table in `docs/realtime/capabilities.md`.
+"""
+
 
 @dataclass
 class CapabilityOrdering:
@@ -188,7 +212,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     returns a replacement instance, that configuration is re-extracted from the replacement at run
     setup. The exception is
     [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
-    which is always called per-run during toolset assembly. On each model request,
+    which is always called per-run during toolset assembly, and
+    [`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model], called for every
+    model request. On each model request,
     [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]
     encloses the complete dynamic lifecycle: `before_model_request`, the model call with
     `on_model_request_error` recovery, and `after_model_request`.
@@ -402,6 +428,19 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return type(self).on_event is not AbstractCapability.on_event or marked_listens_to(type(self), event)
 
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        """The hooks this capability itself implements that a realtime session never calls.
+
+        A realtime session warns about every capability in its tree that reports any. Containers and
+        wrappers report only their own overrides: the session asks each capability in the tree for
+        itself. A built-in whose behavior a session provides another way reports none.
+        """
+        return self._realtime_uncalled_hooks_overriding(AbstractCapability)
+
+    def _realtime_uncalled_hooks_overriding(self, base: type[AbstractCapability[Any]]) -> tuple[str, ...]:
+        """The realtime-uncalled hooks this capability's class overrides relative to `base`."""
+        return tuple(hook for hook in _REALTIME_UNCALLED_HOOKS if getattr(type(self), hook) is not getattr(base, hook))
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         """Return the name used for spec serialization (CamelCase class name by default).
@@ -458,6 +497,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         therefore cannot be implemented as a `before_run` hook itself. It stays private pending the
         capability surface decisions tracked in #5477.
         """
+
+    def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        """Prepare an emitted event synchronously before immediate listeners or stream delivery."""
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
@@ -585,20 +627,33 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    def _default_run_id(self) -> str | None:
-        """A replay-stable `run_id` for a run started without one, or `None` to generate a UUID7."""
+    def get_default_run_id(self) -> str | None:
+        """Return a replay-stable `run_id` for a run started without one, or `None` to generate a UUID7.
+
+        Durable execution capabilities override this so a replayed or recovered run gets the same
+        `run_id` it had the first time. When several capabilities return one, the one listed last wins.
+        """
         return None
 
-    def _default_conversation_id(self, run_id: str) -> str | None:
-        """A replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7."""
+    def get_default_conversation_id(self, run_id: str) -> str | None:
+        """Return a replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7.
+
+        Durable execution capabilities whose `run_id` is replay-stable can derive it with
+        [`conversation_id_from_run_id()`][pydantic_ai.durable_exec.conversation_id_from_run_id],
+        as the Temporal, DBOS and Prefect capabilities do.
+        """
         return None
 
-    def _run_clock(self) -> Callable[[], datetime] | None:
-        """A replay-safe clock to measure a run's deadline against, or `None` for the system clock."""
+    def get_run_clock(self) -> Callable[[], datetime] | None:
+        """Return a replay-safe clock to measure the run's deadline against, or `None` for the system clock.
+
+        Durable execution capabilities return the engine's deterministic clock, such as
+        `workflow.now()` on Temporal.
+        """
         return None
 
-    async def _run_start_time(self, run_id: str) -> datetime | None:
-        """A replay-stable start time to count the `timeout=` of the run `run_id` from, or `None` to read the run's clock."""
+    async def get_run_start_time(self, run_id: str) -> datetime | None:
+        """Return a replay-stable start time to count the `timeout=` of run `run_id` from, or `None` to read the run's clock."""
         return None
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:
@@ -687,6 +742,39 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],
         [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset],
         or custom [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] subclasses.
+        """
+        return None
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        """Wrap the model that serves a model request, or return None to leave it unchanged.
+
+        Called for every model request, with the model that will send it: the one
+        [`get_model`][pydantic_ai.capabilities.AbstractCapability.get_model], the run's `model=` or a
+        [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook selected,
+        after every `before_model_request` hook has run, so the wrapper also applies when a hook swaps the model. It's
+        meant to wrap the model each attempt is sent to, so falling back between models would wrap each of them; a
+        [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is wrapped as a whole for now.
+        Return a [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel] around `model` to change how requests
+        are sent, as [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] does. The returned model is
+        entered (`async with`) around each request it serves and exited after it, also when the request fails, so set
+        up per-request resources in its `__aenter__`; keep long-lived ones on the capability.
+
+        When multiple capabilities provide wrappers, they follow middleware semantics: the first capability in the
+        list wraps outermost, as with
+        [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset].
+        A wrapper that doesn't call its wrapped model's `request()`, such as `BatchModelRequests`, which sends requests
+        through the batch API, skips the wrappers inside it: put behavior that should run once per model request in
+        [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] instead.
+
+        Under [durable execution](../durable_execution/overview.md), requests are sent from a durable unit (an
+        activity, step or task), so this is called there too, with the model the unit rebuilds; in a Temporal
+        activity, on the agent's own capabilities rather than ones
+        [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returned. Return a wrapper that doesn't do
+        I/O when it's created. The wrapper that's applied outside the unit answers questions like
+        [`continuation_delay`][pydantic_ai.models.Model.continuation_delay] without sending anything.
+
+        Not called for a capability with
+        [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] set.
         """
         return None
 

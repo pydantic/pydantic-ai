@@ -1,3 +1,4 @@
+# description: Fails a pull request until it carries exactly one pkg: label.
 name: Package Label
 
 # The release announcement groups PRs by package, so every PR needs exactly one of the six

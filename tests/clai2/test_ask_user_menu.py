@@ -41,6 +41,7 @@ from pydantic_clai2.runtime.sandbox_calls import SandboxCallStartedEvent
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, PromptSurface
 from pydantic_clai2.ui.prompt.question_input import Paste
+from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
 
 
@@ -90,6 +91,42 @@ def test_single_select_and_number_shortcuts() -> None:
     assert menu.choose('tab') is None
     assert menu.choose('tab') is None
     assert menu.choose('enter') == ('Refactor',)
+
+
+@pytest.mark.parametrize('question', [APPROACH, TARGETS])
+def test_shift_tab_cycles_back_through_the_choices(question: Question) -> None:
+    menu = QuestionMenu(question=question, position=1, total=1)
+    forward: list[int] = []
+    for _ in range(menu.other + 1):
+        menu.choose('tab')
+        forward.append(menu.cursor)
+    backward: list[int] = []
+    for _ in range(menu.other + 1):
+        backward.append(menu.cursor)
+        menu.choose('backtab')
+    assert backward == forward[::-1]
+    assert menu.cursor == 0
+    menu.choose('backtab')
+    assert menu.cursor == menu.other, 'Shift+Tab from the first choice wraps to the last'
+    assert 'Tab/Shift+Tab move' in menu.hint
+
+
+async def test_shift_tab_through_the_terminal(question_pipe: PipeInput) -> None:
+    # Shift+Tab wraps from `Refactor` to `Other`, then moves up to `Patch`.
+    question_pipe.send_text('\x1b[Z\x1b[Z\r')
+    response = await TerminalAnswerer(full_screen=ScreenLog(), console=Console(file=io.StringIO()))(
+        AskUserRequest(questions=(APPROACH,))
+    )
+    assert response.answers == (AskUserAnswer(header='Approach', selected=('Patch',)),)
+
+
+def test_unhighlighted_choices_use_the_terminal_foreground(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bright cyan choices were nearly invisible on a light background."""
+    monkeypatch.setenv('COLORTERM', 'truecolor')
+    rows = QuestionMenu(question=APPROACH, position=1, total=1).frame(width=80, height=24)
+    highlighted, *others = rows[2:5]
+    assert highlighted.startswith(theme.sgr(theme.ACCENT))
+    assert others == ['  2. Patch', '  3. Other (type answer)']
 
 
 def test_multi_select_enter_toggles_and_done_submits() -> None:
@@ -734,7 +771,7 @@ def test_output_streamed_while_answering_stays_above_the_pinned_question() -> No
         '> 1. Refactor - Rewrite the module',
         '  2. Patch',
         '  3. Other (type answer)',
-        'Up/Down move - number/Enter select - Esc decline',
+        'Up/Down or Tab/Shift+Tab move - number/Enter select - Esc decline',
     ]
     assert screen.index('streamed 39') < screen.index('Approach')
     assert screen.count('How should we do it?') == 1

@@ -62,7 +62,7 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
 
     It doesn't compact itself: it emits a
     [`CompactionRequestedEvent`][pydantic_ai.capabilities.CompactionRequestedEvent], and
-    the agent's compaction capabilities -- `SummarizingCompaction`, `TieredCompaction`,
+    the agent's compaction capabilities -- `SummarizingCompaction`, `RelevanceCompaction`, `TieredCompaction`,
     `ClearToolResults`, `SlidingWindowCompaction`, `FallbackCompaction`, and `OpenAICompaction` --
     compact the history their own way. The first of them in the capabilities list to change the
     history handles the request. When none does, `fallback` runs.

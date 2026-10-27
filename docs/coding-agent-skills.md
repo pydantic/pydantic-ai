@@ -13,7 +13,7 @@ When your coding agent creates a new Pydantic AI application, the skill has it s
 For the rest of Logfire, such as instrumenting the rest of your application, querying traces, or running evals, the [`pydantic/skills`](https://github.com/pydantic/skills) repository has Logfire skills too: install the `logfire` plugin, or point your agent at [pydantic.dev/ai-setup.md](https://pydantic.dev/ai-setup.md) for the guided setup.
 
 !!! note
-    If you want to build agent skills for your Pydantic AI agent, see the [Agent Skills](capabilities/third-party.md#agent-skills) entry in the Third-party capabilities section on the Capabilities page.
+    If you want to give your Pydantic AI agent its own skills, see the Pydantic AI Harness [`Skills`](harness/skills.md) capability.
 
 ## Installation
 

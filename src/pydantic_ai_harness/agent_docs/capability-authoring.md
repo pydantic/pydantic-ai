@@ -174,6 +174,9 @@ dependency's operational policy.
 Before treating a capability as done, check how it composes with:
 
 - other capabilities in the same `Agent(..., capabilities=[...])`
+- another instance with the same `id`, and other capabilities that set the
+  same thing: [capabilities/AGENTS.md](../../../pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md)
+  says when to merge, raise, or stay silent
 - toolsets and wrapper toolsets
 - `ToolSearch`
 - deferred tools and approval flows

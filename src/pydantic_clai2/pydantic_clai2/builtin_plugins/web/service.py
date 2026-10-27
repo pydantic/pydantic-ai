@@ -4,7 +4,8 @@ The browser names a session by the conversation it holds. Sessions open and clos
 and each one's channel is made when it is first seen and dropped once it is gone.
 """
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections import defaultdict
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -54,11 +55,14 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.builtin_plugins.web.sidebar import busy_elsewhere, session_entry, worktrees
 from pydantic_clai2.builtin_plugins.web.workers import task_entry
+from pydantic_clai2.builtin_plugins.web.workspaces import checkouts
 from pydantic_clai2.cli.self_update import installed
 from pydantic_clai2.config.theme_names import names as theme_names
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    ForkEnd,
+    InstallProgress,
     LiveSession,
     LiveSessions,
     PanelView,
@@ -68,14 +72,20 @@ from pydantic_clai2.plugins import (
     SessionCatalog,
     SidePanel,
     TaskCatalog,
-    TaskEvent,
-    UpdateProgress,
+    TaskProgress,
 )
 from pydantic_clai2.plugins.loader import PluginError
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.runtime.monty_cells import is_monty_cell
-from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
+from pydantic_clai2.runtime.project_identity import (
+    MISSING,
+    ProjectIdentity,
+    placements,
+    project_identity,
+    worktree_roots,
+)
 from pydantic_clai2.runtime.session_workspace import workspace_directory
+from pydantic_clai2.runtime.task_prompts import is_task_prompt
 
 THEME = 'display.theme'
 PluginAction = Literal['enable', 'disable', 'reload']
@@ -103,8 +113,10 @@ class WebService:
         """Asks the model's questions in the browsers watching the session asking."""
         self.dialogs = BrowserDialogs(publish=self.hub.publish)
         """Where the settings menus opened in this page ask their questions."""
-        self.orchestrator = Orchestrator(host=host, publish=self.hub.publish)
+        self.orchestrator = Orchestrator(service=self)
         """The orchestrator chat, a separate agent with its own conversation, beside the sessions."""
+        self.workspace_locks: defaultdict[str, Lock] = defaultdict(Lock)
+        """One per workspace, so the page and the orchestrator opening its session at once start one, not two."""
         self.frames = FrameCheck()
         """Which side panel pages this page can frame; each page's headers are read once."""
         self.version = installed().label
@@ -193,7 +205,7 @@ class WebService:
         return 'running' if session.running else 'idle'
 
     def live_changed(self) -> None:
-        """A session opened, closed, changed state, or switched conversation: tell every browser what changed.
+        """A session opened, closed, changed state or queued input, or switched conversation: tell browsers what changed.
 
         Called synchronously by the live sessions, so it never waits and never raises.
         """
@@ -204,14 +216,17 @@ class WebService:
         if message != self._live_sent:
             self._live_sent = message
             self.hub.publish(message)
+        for channel in self.channels():
+            channel.publish_queue()
         for client in self.hub.connected():
             self.follow(client)
 
     def watch(self, client: Client, conversation_ids: Sequence[str]) -> None:
-        """Replace what `client` watches; it gets a snapshot of each live session it did not watch before."""
-        if client.watching is None:
-            # It showed the default session until now; each session it watches gets a snapshot.
-            self.unwatch(client)
+        """Replace what `client` watches; it gets a snapshot of each live session it did not watch before.
+
+        Until its first `watch` it followed the default session, whose snapshot it already has: watching
+        that one sends no second snapshot.
+        """
         client.watching = set(conversation_ids)
         self.follow(client)
 
@@ -270,7 +285,7 @@ class WebService:
             default = self.default()
             default.session.send_input(f'/resume {conversation_id}')
             return default.id
-        return self._choose(session)
+        return self.choose(session)
 
     async def new(self, workspace: str | None = None) -> str:
         """Start a new live session in `workspace`, by default the default session's directory; its conversation ID.
@@ -293,9 +308,10 @@ class WebService:
             else:
                 default.session.send_input('/new')
             return default.id
-        return self._choose(session)
+        return self.choose(session)
 
-    def _choose(self, session: LiveSession) -> str:
+    def choose(self, session: LiveSession) -> str:
+        """Make `session` the default the legacy routes follow, and tell the browsers; its conversation ID."""
         self._chosen = session.id
         self.live_changed()
         self.hub.publish(SessionsChanged())
@@ -347,10 +363,13 @@ class WebService:
         # `/plugins`, or a plugin's own command such as `/grain`, may have changed a plugin or its settings.
         self.hub.publish(PluginsChanged())
 
-    def task_event(self, event: TaskEvent) -> None:
+    def task_progress(self, event: TaskProgress) -> None:
         self.current().workers.observe(event)
 
-    def update_progress(self, event: UpdateProgress) -> None:
+    def fork_ended(self, event: ForkEnd) -> None:
+        self.current().fork_ended(event)
+
+    def install_progress(self, event: InstallProgress) -> None:
         """Show `/update` going: uv's last line while it installs, then all it printed, as the terminal shows it."""
         if event.stage == 'installing':
             self._uv_output = []
@@ -570,7 +589,12 @@ class WebService:
         # Backgrounding changes the row without an event from the task, which may be waiting on its model.
         for task in catalog.listing():
             if task.id == task_id:
-                channel.workers.observe(TaskEvent(task=task))
+                channel.workers.observe(TaskProgress(task=task))
+
+    async def prompt_task(self, task_id: str, text: str) -> None:
+        """Run a finished task again with `text`, on its own: its session's conversation never sees it."""
+        _, catalog = self._task(task_id)
+        await catalog.prompt(task_id, text)
 
     def steer(self, task_id: str, text: str) -> bool:
         """Send a running task a message, shown in its transcript; `False` once it has finished."""
@@ -612,22 +636,38 @@ class WebService:
             raise LookupError('This CLAI does not save sessions.')
         return self.host.sessions
 
-    async def projects(self, query: str = '', *, include_archived: bool = False) -> list[Project]:
-        """Saved sessions grouped by repository, then checkout, the current ones first and removed folders last."""
+    async def projects(
+        self, query: str = '', *, include_archived: bool = False, include_worktrees: bool = False
+    ) -> list[Project]:
+        """Saved sessions grouped by repository, then checkout, the current ones first and removed folders last.
+
+        Without a search, each workspace's checkout is listed under its repository too, before any session runs
+        there; with `include_worktrees`, so is every worktree Git lists for a listed repository, for New session.
+        """
         entries = await self.catalog.listing(query=query, archived=None if include_archived else False)
         workspace = str(self.default().session.workspace)
-        workspaces = {entry.workspace for entry in entries} | {workspace}
+        empty = [] if query else await checkouts(self.host.plugins)
+        workspaces = {entry.workspace for entry in entries} | {workspace} | set(empty)
         known = dict(self._identities)
 
-        def resolve() -> dict[str, ProjectIdentity]:
+        def resolve(folders: Iterable[str], known: Mapping[str, ProjectIdentity]) -> dict[str, ProjectIdentity]:
             # A folder removed or recreated since it was last listed resolves again: one stat each, Git only for those.
             return {
-                workspace: project_identity(workspace)
-                for workspace in workspaces
-                if (identity := known.get(workspace)) is None or Path(workspace).exists() == identity.missing
+                folder: project_identity(folder)
+                for folder in folders
+                if (identity := known.get(folder)) is None or Path(folder).exists() == identity.missing
             }
 
-        self._identities.update(await to_thread.run_sync(resolve))
+        def resolve_all() -> tuple[list[str], dict[str, ProjectIdentity]]:
+            found = {**known, **resolve(workspaces, known)}
+            listed = include_worktrees and not query
+            repositories = {found[folder].key: found[folder] for folder in workspaces} if listed else {}
+            linked = [root for identity in repositories.values() for root in worktree_roots(identity)]
+            return linked, {**found, **resolve(linked, found)}
+
+        linked, resolved = await to_thread.run_sync(resolve_all)
+        self._identities.update(resolved)
+        empty += linked
         live = {channel.id: channel.session for channel in self.channels()}
         # Checking whether another process runs a session can spawn a program (`tasklist` on Windows).
         running = [entry for entry in entries if entry.outcome == 'running' and entry.id not in live]
@@ -640,13 +680,16 @@ class WebService:
         places = placements(entries, identities=self._identities)
         here = places[workspace]
         default = self.default().id
-        checkouts: dict[str, dict[str, tuple[ProjectIdentity, list[SessionEntry]]]] = {}
+        grouped: dict[str, dict[str, tuple[ProjectIdentity, list[SessionEntry]]]] = {}
         for entry in entries:
             identity = places[entry.workspace]
-            _, sessions = checkouts.setdefault(identity.key, {}).setdefault(identity.root, (identity, []))
+            _, sessions = grouped.setdefault(identity.key, {}).setdefault(identity.root, (identity, []))
             sessions.append(
                 session_entry(entry, live=live.get(entry.id), busy=entry.id in busy, current=entry.id == default)
             )
+        for folder in empty:
+            if not (identity := places[folder]).missing:
+                grouped.setdefault(identity.key, {}).setdefault(identity.root, (identity, []))
         projects = [
             Project(
                 key=key,
@@ -654,7 +697,7 @@ class WebService:
                 current=key == here.key,
                 worktrees=worktrees(found, here=here),
             )
-            for key, found in checkouts.items()
+            for key, found in grouped.items()
         ]
         return sorted(projects, key=lambda project: (not project.current, project.key == MISSING))
 
@@ -739,8 +782,11 @@ class Observer(AbstractCapability[None]):
     service: WebService
 
     def _channel(self, ctx: RunContext[None]) -> SessionChannel | None:
-        """The channel of the session whose held conversation this run continues; `None` for a fork or a task."""
-        if DelegationTasks.child_id() is not None:
+        """The channel of the session whose held conversation this run continues; `None` for a fork or a task.
+
+        A run that prompts a task for the user is the task's, which the Workers tree shows.
+        """
+        if DelegationTasks.child_id() is not None or is_task_prompt(ctx):
             return None
         try:
             channel = self.service.current()

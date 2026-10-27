@@ -16,6 +16,8 @@ from pydantic_ai_harness._workspace_provider import check_integer, check_working
 from pydantic_ai_harness.modal_sandbox._backend import (
     DEFAULT_APP_NAME,
     DEFAULT_SANDBOX_TIMEOUT,
+    MAX_SANDBOX_TIMEOUT,
+    MIN_SANDBOX_TIMEOUT,
     ModalSandboxBackend,
     terminate_sandbox,
 )
@@ -236,9 +238,10 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             )
         # Checked here rather than when the backend first creates a sandbox, so a bad value fails
         # where it is written instead of at the first workspace operation of some later run.
-        if type(sandbox_timeout) is not int or not 10 <= sandbox_timeout <= 86_400:
+        if type(sandbox_timeout) is not int or not MIN_SANDBOX_TIMEOUT <= sandbox_timeout <= MAX_SANDBOX_TIMEOUT:
             raise UserError(
-                f'sandbox_timeout must be an integer between 10 and 86400 seconds, got {sandbox_timeout!r}.'
+                f'sandbox_timeout must be an integer between {MIN_SANDBOX_TIMEOUT} and {MAX_SANDBOX_TIMEOUT} '
+                f'seconds, got {sandbox_timeout!r}.'
             )
         check_integer('idle_timeout', idle_timeout, optional=True)
         check_working_dir(working_dir)

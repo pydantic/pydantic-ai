@@ -18,6 +18,7 @@
 - For every permitted compatibility impact, add the `compatibility impact` label and a release note.
 - Add a `[!WARNING]` PR section that names affected code, the policy exception, and the migration.
 - Add an exact API-check waiver when the deterministic compatibility gate reports the permitted change.
+- Treat model-name `Literal` aliases (listed under `model_name_literals` in `.github/api-compatibility-allowlist.json`; add one there when the gate reports a change to it) as autocompletion aids. The gate passes changes to their `Literal` string members; any other change to them still needs a waiver. Removing a name from an alias without a `str |` arm is a permitted compatibility impact: add the `compatibility impact` label and a release note. Code that passes the removed name stops type-checking.
 
 <!-- rule:146 -->
 - Prefix implementation details with underscore (`_`) and exclude from `__all__` — prevents accidental API surface expansion and signals internal-only usage — Keeps the public API surface minimal and clearly separates internal implementation from stable public interfaces, preventing backward compatibility obligations for internal code.

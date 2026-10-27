@@ -1,6 +1,6 @@
 # Capabilities on Demand
 
-Read this file when designing progressive disclosure of any kind, when an agent has information it does not need on most turns, or when the user asks about deferred capabilities, capabilities on demand, `defer_loading=True` on capabilities, or the `load_capability` tool.
+Read this file when designing progressive disclosure of any kind, when an agent has information it does not need on most turns, or when the user asks about deferred capabilities, capabilities on demand, `defer_loading=True` on capabilities, the `load_capability` tool, or how to keep a skill's tools hidden until the skill is loaded.
 
 ## Mental Model
 
@@ -11,7 +11,7 @@ Loaded function tools are recorded in durable message history with `ToolAvailabi
 The unified rule is: an unrevealed deferred tool stays outside the model's usable context, and each provider's history-item reveal mechanism determines its wire representation. Provider adapters project the recorded control state without changing history:
 
 - `tool_addition_mode='by_reference'`: Anthropic emits `tool_addition` with a `tool_reference`. Capability-only runs pre-advertise the definition with `defer_loading=True`; mixed runs with a search surface withhold it until reveal, then append the deferred definition and reference it in the same request.
-- `tool_addition_mode='with_definitions'`: first-party OpenAI Responses emits an appended `additional_tools` item containing the complete definition and does not add it to `tools`.
+- `tool_addition_mode='with_definitions'`: first-party OpenAI Responses emits an appended `additional_tools` item containing the complete definition and does not add it to `tools`, except that on models before GPT-5.6 a request whose `tool_choice` names the tool declares it in `tools` instead and misses the prompt cache, unless `openai_previous_response_id` or `openai_conversation_id` is set (that request keeps the tool in the `additional_tools` item alone and gets a 400).
 - `tool_addition_mode=None`: announce the change when the schema is visible, or synthesize a complete local `search_tools` exchange only when its result must reveal a schema that is still withheld.
 
 Do not copy tool definitions into `ToolAvailabilityDeltaPart`.
@@ -100,6 +100,8 @@ agent = Agent(
 
 `Capability` is a convenience helper for simple bundles of instructions, descriptions, function tools, and toolsets. It accepts callable descriptions, dynamic instruction functions, and dynamic toolset functions. Use a custom `AbstractCapability` for model settings, hooks, native tools, wrapper toolsets, reusable public behavior, or custom per-run logic. Wrapper toolsets are applied during per-run toolset assembly; if wrapper behavior should wait for a deferred capability to load, gate that behavior inside the wrapper.
 
+To keep a skill's tools hidden until the skill loads, wrap the skill's Markdown body in `Capability(id=..., description=..., instructions=body, toolsets=[...], defer_loading=True)`; no subclass is needed. The Pydantic AI Harness `Skills` capability delivers instructions only. A capability like this sits alongside `Skills` in the same catalog, but its `id` must differ from every skill name `Skills` exposes, or the run fails.
+
 ## Runtime Semantics
 
 Initial request:
@@ -118,11 +120,13 @@ Initial request:
 When `load_capability` succeeds:
 
 - the call is typed as a capability-load message part
-- the return may include resolved capability instructions and owned toolset instructions
+- the return confirms the load; the capability's resolved instructions and its owned toolsets' instructions follow it as an `InstructionDeltaPart` in system voice
 - the capability id appears in `ctx.active_capability_ids` from the *next* step onwards, not within the step that loaded it — both sets are derived from message history before each model request
 - only the first `load_capability` call for an id in a response loads it; later calls for that id in the same response get a retry prompt, the same way a load of an already-active capability does
 - tools owned by the loaded capability become visible, and callable, on later steps
 - `load_capability` remains visible so the tool set stays stable
+
+The `load_capability` return only confirms the load: `{"message": "Capability '<id>' loaded. Its instructions, if any, follow."}`, whether or not it has instructions, so loading doesn't resolve them a second time. The request after it states the capability's instructions as an `InstructionDeltaPart(id='capability:<id>')` right after the return, which models receive in the system voice: a native mid-conversation system message where the provider has one, `<system>` text in the tool result's turn elsewhere. Don't put a capability's instructions in its tool result as well: models then treat them as tool output, which a user or a later tool result can talk them out of. Before every model request the instructions are resolved again. They never enter the prefix: `before_model_request` hooks see them in `ModelRequestParameters.instruction_parts`, addressed beneath the block `capability:<id>`, with `instruction_visibility_of(part) == 'via_history'`, and the framework removes them before calling the model. When the joined text differs from what the model last received, the change is appended as another `InstructionDeltaPart`, whatever the parts' `on_change` policy; empty instructions, or a capability no longer configured, withdraw the block. A compaction ends the load, so the model loads the capability again; Pydantic AI Harness's strategies that summarize or drop history (`SummarizingCompaction`, `SlidingWindowCompaction`, `RelevanceCompaction`) record the load again after what they removed instead, unless `preserve_loaded_capabilities=False`. Histories from earlier versions carry the instructions in the load return, which still seeds the block without being sent again. Realtime sessions have no delta channel, so there the load return still carries the instructions.
 
 Use `ctx.is_tool_available(tool_def)` when a wrapping toolset needs to decide whether a definition it holds is currently visible. The definition form remains reliable inside `get_tools`; the name form looks in the current resolved `ctx.tools` snapshot and is intended for model-request hooks and tool execution.
 
@@ -132,7 +136,7 @@ A `CompactionPart` resets both forms of prospective derived state at its exact p
 
 ## Dynamic Descriptions and Instructions
 
-Use `get_description()` when the catalog text depends on run context. Return a callable (with or without `RunContext`) that produces the description string. Use dynamic instructions when load-time instructions need deps or current run state.
+Use `get_description()` when the catalog text depends on run context. Return a callable (with or without `RunContext`) that produces the description string. Use dynamic instructions when a loaded capability's instructions need deps or current run state; each change is appended to history, so avoid text that changes on every request, such as a timestamp.
 
 ```python
 from dataclasses import dataclass

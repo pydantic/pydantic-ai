@@ -135,13 +135,19 @@ class NotionPlugin(Plugin[NotionSettings, DepsT]):
                 raise UserError(f'No Notion key is selected. {SETUP}')
             token = await anyio.to_thread.run_sync(partial(resolve_key, token=reference), abandon_on_cancel=True)
             return Notion[DepsT](
-                auth=token, read_only=settings.read_only, include_instructions=settings.include_instructions
+                defer_loading=True,
+                auth=token,
+                read_only=settings.read_only,
+                include_instructions=settings.include_instructions,
             )
         # Checked per run, so signing in from the menu or `/notion login` applies to the next prompt.
         if not await anyio.to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
             return None
         return Notion[DepsT](
-            client=SIGN_IN.client(), read_only=settings.read_only, include_instructions=settings.include_instructions
+            defer_loading=True,
+            client=SIGN_IN.client(),
+            read_only=settings.read_only,
+            include_instructions=settings.include_instructions,
         )
 
     async def _command(self, args: list[str]) -> str:

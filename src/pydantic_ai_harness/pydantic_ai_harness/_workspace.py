@@ -164,6 +164,15 @@ def secondary_workspace(value: WorkspaceBackend | None, owner: str) -> Workspace
     return value if isinstance(value, Workspace) else Workspace(value)
 
 
+def in_working_dir(path: str) -> bool:
+    """Whether a configured workspace path stays inside the working directory.
+
+    `FileSystem`'s root contains the working directory, so the run's file tools can reach such a path.
+    """
+    normalized = posixpath.normpath(path)
+    return not posixpath.isabs(normalized) and normalized.split('/', 1)[0] != '..'
+
+
 METADATA_DIR = '.pydantic-ai-harness'
 """The directory, below a workspace's working directory, that holds files harness capabilities keep for themselves."""
 

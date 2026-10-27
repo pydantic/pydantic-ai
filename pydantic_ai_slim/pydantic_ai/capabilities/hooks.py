@@ -947,6 +947,16 @@ class Hooks(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         return None
 
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # `Hooks` dispatches every hook, so measured against the base class this lists them all;
+        # only those with a registered function or a subclass override do anything.
+        overridden = self._realtime_uncalled_hooks_overriding(Hooks)
+        return tuple(
+            hook
+            for hook in self._realtime_uncalled_hooks_overriding(AbstractCapability)
+            if hook in overridden or self._get(hook)
+        )
+
     def __repr__(self) -> str:
         registered = {k: len(v) for k, v in self._registry.items() if v}
         return f'Hooks({registered})'

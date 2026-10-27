@@ -8,6 +8,7 @@ from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.compaction._clamp_oversized_messages import ClampOversizedMessages
 from pydantic_ai_harness.compaction._clear_tool_results import ClearToolResults
 from pydantic_ai_harness.compaction._compact_on_cache_expiry import CompactOnCacheExpiry
+from pydantic_ai_harness.compaction._compact_on_request import CompactOnRequest
 from pydantic_ai_harness.compaction._context_usage_events import REPORT_CONTEXT_USAGE_EVENTS, ContextUsageEvent
 from pydantic_ai_harness.compaction._context_window import (
     DEFAULT_CONTEXT_WINDOW,
@@ -18,6 +19,7 @@ from pydantic_ai_harness.compaction._fallback_compaction import FallbackCompacti
 from pydantic_ai_harness.compaction._manual import compact_now
 from pydantic_ai_harness.compaction._pinning import is_pinned, pin, reinject_pinned
 from pydantic_ai_harness.compaction._receipts import TranscriptHandleProvider
+from pydantic_ai_harness.compaction._relevance_compaction import RelevanceCompaction
 from pydantic_ai_harness.compaction._report_context_usage import ContextUsage, ReportContextUsage
 from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
@@ -36,10 +38,12 @@ __all__ = [
     'ClampOversizedMessages',
     'ClearToolResults',
     'CompactOnCacheExpiry',
+    'CompactOnRequest',
     'CompactionStrategy',
     'ContextUsage',
     'ContextUsageEvent',
     'REPORT_CONTEXT_USAGE_EVENTS',
+    'RelevanceCompaction',
     'ReportContextUsage',
     'DeduplicateFileReads',
     'FallbackCompaction',

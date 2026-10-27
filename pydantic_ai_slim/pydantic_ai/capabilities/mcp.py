@@ -3,9 +3,10 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 from urllib.parse import urlparse
 
+from pydantic_ai import _utils
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
@@ -16,10 +17,13 @@ from .native_or_local import NativeOrLocalTool
 if TYPE_CHECKING:
     # Imported lazily at runtime: `pydantic_ai.mcp` pulls in `fastmcp` and `mcp`, which would
     # otherwise dominate the time it takes to `import pydantic_ai`.
-    from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
+    from pydantic_ai.mcp import MCPHeadersFunc, MCPToolset, MCPToolsetClient
 
 
 _DEFAULT_PORTS = {'http': 80, 'https': 443}
+
+MCPAuthorizationTokenFunc: TypeAlias = Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]]
+"""A sync/async function that takes the run context and returns the `authorization_token` for that run."""
 
 
 @dataclass(init=False)
@@ -42,14 +46,33 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
     Required when using native MCP. Optional when using a local-only client via `local=`."""
 
-    authorization_token: str | None
-    """Authorization header value for MCP server requests. Passed to both native and local."""
+    authorization_token: str | MCPAuthorizationTokenFunc[AgentDepsT] | None
+    """Authorization header value for MCP server requests. Passed to both native and local.
 
-    headers: dict[str, str] | None
-    """HTTP headers for MCP server requests. Passed to both native and local."""
+    Pass a function of the run context instead to connect each agent run as its own user, for
+    example with a token from the run's [`deps`][pydantic_ai.tools.RunContext.deps]: it's called at
+    the start of each run, and the token it returns is used for that run on both the native and the
+    local side. Returning `None` sends no `Authorization` header."""
+
+    headers: dict[str, str] | MCPHeadersFunc[AgentDepsT] | None
+    """HTTP headers for MCP server requests. Passed to both native and local.
+
+    Like `authorization_token`, this can be a function of the run context, called at the start of
+    each run."""
 
     allowed_tools: list[str] | None
     """Filter to only these tools. Applied to both native and local."""
+
+    tool_prefix: str | bool | None
+    """Prepended with `_` to the names of the server's tools, as in `<prefix>_<tool>`, so they don't collide with other tools.
+
+    - `None` (default) or `False`: keep the names the server gives its tools.
+    - `True`: use the explicit `id` as the prefix. Requires `id=`; an `id` derived from the URL is never used.
+    - A string: use that string as the prefix.
+
+    Applies to the local tools. `allowed_tools` keeps matching the server's own names, and the toolset's
+    `id` doesn't change. Native MCP tools are named by the model provider and aren't prefixed.
+    """
 
     description: str | None = None
     """Description of the MCP server. Native-only; ignored by local tools."""
@@ -66,12 +89,22 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         | bool = False,
         local: MCPToolsetClient | MCPToolset[AgentDepsT] | Callable[..., Any] | bool | None = None,
         id: str | None = None,
-        authorization_token: str | None = None,
-        headers: dict[str, str] | None = None,
+        authorization_token: str | MCPAuthorizationTokenFunc[AgentDepsT] | None = None,
+        headers: dict[str, str] | MCPHeadersFunc[AgentDepsT] | None = None,
         allowed_tools: list[str] | None = None,
+        tool_prefix: str | bool | None = None,
         description: str | None = None,
         defer_loading: bool = False,
     ) -> None:
+        if tool_prefix == '':
+            raise UserError(
+                "MCP(tool_prefix='') would prefix nothing. Pass `tool_prefix=None` to keep the server's tool names."
+            )
+        if tool_prefix is True and id is None:
+            raise UserError(
+                'MCP(tool_prefix=True) uses the explicit `id` as the prefix, but no `id=` was passed. '
+                "Pass `id='…'`, or pass the prefix itself as `tool_prefix='…'`."
+            )
         # Native MCP requires a URL only when the capability auto-constructs an `MCPServerTool`
         # (i.e. `native=True`). Explicit `MCPServerTool(...)` instances and per-run callables
         # carry their own URL, so the capability's `url=` isn't needed in those cases.
@@ -121,11 +154,15 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             # usually `None` here (the input carries its own connection), so the id comes from an
             # explicit `id=` or a native `MCPServerTool`, matching the `_build_local` URL path.
             local = MCPToolset(local, include_instructions=True, id=self._derive_id(self.url))
-            local._telemetry_url_derived_id = self._telemetry_url_derived_id  # pyright: ignore[reportPrivateUsage]
+            # Without a URL of its own the capability has no marker to give, so a client or transport the
+            # toolset derived its `id` from keeps the toolset's own.
+            if self._telemetry_url_derived_id is not None:
+                local._telemetry_url_derived_id = self._telemetry_url_derived_id  # pyright: ignore[reportPrivateUsage]
         self.local = local
         self.authorization_token = authorization_token
         self.headers = headers
         self.allowed_tools = allowed_tools
+        self.tool_prefix = tool_prefix
         self.description = description
         self.defer_loading = defer_loading
         self.__post_init__()
@@ -183,14 +220,36 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             )
         return resolved
 
-    def _default_native(self) -> MCPServerTool:
+    async def _resolve_credentials(self, ctx: RunContext[AgentDepsT]) -> tuple[str | None, dict[str, str] | None]:
+        """Call whichever of `authorization_token` and `headers` is a function, for this run."""
+        token = self.authorization_token
+        if callable(token):
+            token = await _utils.await_maybe(token(ctx))
+        headers = self.headers
+        if callable(headers):
+            headers = await _utils.await_maybe(headers(ctx))
+        return token, headers
+
+    def _default_native(self) -> MCPServerTool | Callable[[RunContext[AgentDepsT]], Awaitable[MCPServerTool]]:
         # `native is True` requires `url is not None` (enforced in `__init__`).
-        assert self.url is not None
+        url = self.url
+        assert url is not None
+        token, headers = self.authorization_token, self.headers
+        if not callable(token) and not callable(headers):
+            return self._native_tool(url, token, headers)
+
+        async def native_for_run(ctx: RunContext[AgentDepsT]) -> MCPServerTool:
+            token, headers = await self._resolve_credentials(ctx)
+            return self._native_tool(url, token, headers)
+
+        return native_for_run
+
+    def _native_tool(self, url: str, authorization_token: str | None, headers: dict[str, str] | None) -> MCPServerTool:
         tool = MCPServerTool(
             id=self._resolved_id,
-            url=self.url,
-            authorization_token=self.authorization_token,
-            headers=self.headers,
+            url=url,
+            authorization_token=authorization_token,
+            headers=headers,
             allowed_tools=self.allowed_tools,
             description=self.description,
         )
@@ -223,10 +282,16 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         return self._build_local(self.url)
 
     def _build_local(self, url: str) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
-        # Merge authorization_token into headers for local connection.
-        local_headers = dict(self.headers or {})
-        if self.authorization_token:
-            local_headers['Authorization'] = self.authorization_token
+        local_headers: dict[str, str] | Callable[[RunContext[AgentDepsT]], Awaitable[dict[str, str] | None]] | None
+        token, headers = self.authorization_token, self.headers
+        if not callable(token) and not callable(headers):
+            local_headers = _local_headers(token, headers)
+        else:
+            # The toolset resolves these for each run, so each run connects with its own session.
+            async def local_headers_for_run(ctx: RunContext[AgentDepsT]) -> dict[str, str] | None:
+                return _local_headers(*await self._resolve_credentials(ctx))
+
+            local_headers = local_headers_for_run
 
         try:
             # `MCPToolset` infers SSE vs Streamable HTTP from the URL.
@@ -235,7 +300,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             # Stamp the derived id onto the local toolset so it can be used with durable execution
             # (which wraps leaf toolsets by `id`). `url` is always concrete here, so derivation from
             # it succeeds even when `self.url` is `None` (the `local='https://…'` override path).
-            toolset = MCPToolset(url, headers=local_headers or None, include_instructions=True, id=self._derive_id(url))
+            toolset = MCPToolset(url, headers=local_headers, include_instructions=True, id=self._derive_id(url))
             if self.id is None and not isinstance(self.native, MCPServerTool):
                 toolset._telemetry_url_derived_id = toolset.id  # pyright: ignore[reportPrivateUsage]
             else:
@@ -251,9 +316,16 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
         toolset = super().get_toolset()
-        if toolset is not None and self.allowed_tools is not None:
+        if toolset is None:
+            return None
+        if self.allowed_tools is not None:
             allowed = set(self.allowed_tools)
-            return toolset.filtered(lambda _ctx, tool_def: tool_def.name in allowed)
+            toolset = toolset.filtered(lambda _ctx, tool_def: tool_def.name in allowed)
+        # Prefixed last, so `allowed_tools` matches the server's own names. `__init__` only accepts
+        # `True` beside an explicit `id`, never one derived from the URL.
+        prefix = self.id if self.tool_prefix is True else self.tool_prefix
+        if prefix:
+            toolset = toolset.prefixed(prefix)
         return toolset
 
     @classmethod
@@ -267,6 +339,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         authorization_token: str | None = None,
         headers: dict[str, str] | None = None,
         allowed_tools: list[str] | None = None,
+        tool_prefix: str | bool | None = None,
         description: str | None = None,
         defer_loading: bool = False,
     ) -> MCP[AgentDepsT]:
@@ -287,9 +360,18 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             authorization_token=authorization_token,
             headers=headers,
             allowed_tools=allowed_tools,
+            tool_prefix=tool_prefix,
             description=description,
             defer_loading=defer_loading,
         )
+
+
+def _local_headers(authorization_token: str | None, headers: dict[str, str] | None) -> dict[str, str] | None:
+    """Merge `authorization_token` into the headers for the local connection."""
+    local_headers = dict(headers or {})
+    if authorization_token:
+        local_headers['Authorization'] = authorization_token
+    return local_headers or None
 
 
 def _require_url(value: str) -> None:

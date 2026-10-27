@@ -18,6 +18,8 @@ from pydantic_ai.agent import AbstractAgent, AgentRunResult
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     AbstractCapability,
+    BatchModelRequests,
+    FileUnderstanding,
     Instrumentation,
     ProcessEventStream,
     ResolveModelId,
@@ -42,18 +44,30 @@ from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import ToolConfig
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import CapabilityEvent, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    CapabilityEvent,
+    DocumentUrl,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import (
+    Model,
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
     StreamedResponse,
 )
+from pydantic_ai.models._batch_model import BatchedModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from ..batch_utils import FAST_BATCH_SETTINGS
 from ..conftest import try_import
 from ..model_lifecycle_utils import LifecycleTrackingModel
 
@@ -1523,6 +1537,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     [
         'get_toolset',
         'get_wrapper_toolset',
+        'get_wrapper_model',
         'wrap_run',
         'wrap_node_run',
         'wrap_model_request',
@@ -1534,7 +1549,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     ],
 )
 def test_never_durable_hooks_fail_at_bind(hook: str) -> None:
-    if hook in ('get_toolset', 'get_wrapper_toolset'):
+    if hook in ('get_toolset', 'get_wrapper_toolset', 'get_wrapper_model'):
 
         def sync_invalid(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> None:
             return None
@@ -1653,6 +1668,35 @@ async def test_decorated_model_request_hook_round_trips_request_only_mutation() 
     assert isinstance(sent_request, ModelRequest)
     assert isinstance(sent_request.parts[0], UserPromptPart)
     assert sent_request.parts[0].content == 'replaced'
+
+
+class RecordModelInBeforeModelRequest(AbstractCapability[Any]):
+    id = 'record_model'
+
+    def __init__(self) -> None:
+        self.models: list[Model] = []
+
+    @durable_operation('before_model_request')
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        self.models.append(request_context.model)
+        return request_context
+
+
+async def test_decorated_model_request_hook_sees_the_model_before_capabilities_wrap_it() -> None:
+    """Model wrappers apply after the `before_model_request` hooks, in the durable unit too."""
+    recorder = RecordModelInBeforeModelRequest()
+    batching = BatchModelRequests(**FAST_BATCH_SETTINGS)
+    agent = Agent(
+        TestModel(call_tools=[]), name='record_model', capabilities=[recorder, batching, RecordingDurability()]
+    )
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'success (no tool calls)'
+    assert recorder.models
+    assert not any(isinstance(model, BatchedModel) for model in recorder.models)
 
 
 async def test_custom_model_request_operation_round_trips_request_only_projection() -> None:
@@ -2294,3 +2338,67 @@ async def test_prefect_capability_operation_cache_identity_includes_context_and_
         ('tenant-b', 'test'),
         ('tenant-b', 'alternative'),
     ]
+
+
+async def test_file_understanding_describes_through_the_engine() -> None:
+    """`FileUnderstanding` asks another model to describe a file, so that call is a durable operation."""
+    seen: list[list[ModelMessage]] = []
+
+    def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    def describe(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('A field guide.')])
+
+    text_only = FunctionModel(capture, profile=ModelProfile(supports_document_input=False))
+    agent = Agent(
+        text_only,
+        name='file_understanding_run',
+        capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe)), RecordingDurability()],
+    )
+
+    result = await agent.run([DocumentUrl('https://example.com/guide.pdf')])
+    # The describing request crossed the durable boundary and still counts toward the run's usage.
+    assert result.usage.requests == 2
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot(
+        ['file_understanding_run__capability__file_understanding.describe']
+    )
+    part = seen[-1][-1].parts[-1]
+    assert isinstance(part, UserPromptPart)
+    [content] = part.content
+    assert isinstance(content, str) and 'A field guide.' in content
+
+
+async def test_file_understanding_reads_a_recorded_description_instead_of_describing_again() -> None:
+    """The description is in the history, so a run that continues it schedules no `describe` operation.
+
+    This is what keeps a recovered or replayed workflow's operations in line with its recorded ones: whether a file
+    is described depends on the history the run is given, not on what other runs in the process did before.
+    """
+
+    def describe(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('A field guide.')])
+
+    def agent() -> Agent[None, str]:
+        text_only = FunctionModel(
+            lambda messages, info: ModelResponse(parts=[TextPart('ok')]),
+            profile=ModelProfile(supports_document_input=False),
+        )
+        return Agent(
+            text_only,
+            name='file_understanding_run',
+            capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe)), RecordingDurability()],
+        )
+
+    first = await agent().run([DocumentUrl('https://example.com/guide.pdf')])
+    # A fresh agent and engine, as a restarted worker would have.
+    continued = agent()
+    await continued.run('And again?', message_history=first.all_messages())
+
+    durability = RecordingDurability.from_agent(continued)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == []

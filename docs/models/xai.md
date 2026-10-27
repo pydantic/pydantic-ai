@@ -81,7 +81,7 @@ agent = Agent(model)
 ...
 ```
 
-`api_host` is the hostname of the xAI API server (the SDK connects over gRPC), and `timeout` is the default timeout in seconds applied to every request the client makes. Unlike other providers, the xAI SDK does not support per-request timeouts, so [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] is not supported and has no effect. Both options are omitted when left unset, so the SDK's own defaults apply.
+`api_host` is the hostname of the xAI API server (the SDK connects over gRPC), and `timeout` is the default timeout in seconds applied to every request the client makes; a request that exceeds it raises [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]. Unlike other providers, the xAI SDK does not support per-request timeouts, so [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] is not supported and has no effect. Both options are omitted when left unset, so the SDK's own defaults apply.
 
 Or with a custom `xai_sdk.AsyncClient`:
 
@@ -244,7 +244,9 @@ agent = Agent(
 
 Set `xai_reasoning_effort='none'` or `thinking=False` to disable reasoning on Grok 4.3. xAI redirects several retired text model slugs to `grok-4.3`; choose `grok-4.3` and an explicit reasoning effort when you need predictable behavior and cost. See the [xAI May 15 retirement guide](https://docs.x.ai/developers/migration/may-15-retirement) for details.
 
-Grok 4.5 supports `'low'`, `'medium'`, and `'high'` but not `'none'`, so it always reasons: `thinking=False` is silently ignored and `thinking=True` maps to `'medium'`. Grok 4.7 supports the same values but not `'none'`; `thinking=False` is also ignored, while `thinking=True` omits `reasoning_effort` so xAI applies its documented `'high'` default. xAI accepts `'xhigh'`, but Pydantic AI currently maps it to `'high'`; see [issue #9744](https://github.com/pydantic/pydantic-ai/issues/9744) for dedicated support.
+Grok 3 Mini (`grok-3-mini` and `grok-3-mini-fast`) also accepts `'none'`, so `thinking=False` disables reasoning there too; `thinking=True` and the other levels map onto its `'low'` and `'high'`.
+
+Grok 4.5 and 4.6 support `'low'`, `'medium'`, and `'high'` but not `'none'`, so they always reason: `thinking=False` sends the lowest effort, `'low'`, and `thinking=True` maps to `'medium'`. Grok 4.7 supports the same values but not `'none'`; `thinking=False` also sends `'low'`, while `thinking=True` omits `reasoning_effort` so xAI applies its documented `'high'` default. xAI accepts `'xhigh'`, but Pydantic AI currently maps it (and unified `'max'`) to `'high'`; see [issue #9744](https://github.com/pydantic/pydantic-ai/issues/9744) for dedicated support.
 
 ## Agentic turns
 

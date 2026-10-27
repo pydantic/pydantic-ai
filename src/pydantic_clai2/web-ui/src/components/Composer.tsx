@@ -1,8 +1,10 @@
 import { forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { SessionContext, api, interrupt } from '../api'
 import { type Attachment, base64, imageFiles, readImages } from '../attachments'
-import type { CompletionInfo } from '../protocol'
-import { ArrowUpIcon, ChevronIcon, CheckIcon, CloseIcon, StopIcon } from './icons'
+import type { CompletionInfo, QueuedItem } from '../protocol'
+import { ArrowUpIcon, BoltIcon, ChevronIcon, CheckIcon, CloseIcon, StopIcon } from './icons'
+import { STEER_KEY } from '../platform'
+import { QueuePanel } from './QueuePanel'
 
 export interface ComposerHandle {
   focus: () => void
@@ -31,11 +33,22 @@ interface Props {
   chat?: { send: (text: string) => Promise<void>; interrupt: () => Promise<unknown> }
   /** Whether `/` completes commands and the model picker changes the model; the orchestrator chat has neither. */
   commands?: boolean
+  /**
+   * The shown session's queued input, listed above the box. With it, Alt+Enter steers the running turn, as in the
+   * terminal; the orchestrator chat has no queue to show or turn to steer.
+   */
+  queue?: QueuedItem[]
+  /** The shown session's sent prompts, oldest first, which Up and Down recall as in the terminal. */
+  history?: readonly string[]
   label?: string
   onError: (message: string) => void
 }
 
-/** The prompt box: Enter sends, Shift+Enter adds a line, `/` completes commands from CLAI's own registry, and pasted or dropped images go with the prompt. */
+/**
+ * The prompt box: Enter sends, or queues while a turn runs; Alt+Enter steers the running turn; Shift+Enter adds a line;
+ * `/` completes commands from CLAI's own registry; Up on the first line and Down on the last recall sent prompts;
+ * pasted or dropped images go with the prompt.
+ */
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   {
     running,
@@ -52,6 +65,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     onAttachments,
     chat,
     commands = true,
+    queue,
+    history = [],
     label = 'Message CLAI',
     onError,
   },
@@ -62,11 +77,14 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const [models, setModels] = useState<string[] | null>(null)
   const area = useRef<HTMLTextAreaElement>(null)
   const request = useRef(0)
+  // A recall walk: the prompts it steps through, where it is, and the draft it returns to past the newest.
+  const recall = useRef<{ entries: string[]; index: number; draft: string } | null>(null)
   const session = useContext(SessionContext)
 
-  // Another session shown: the last one's completions and model list are not this one's.
+  // Another session shown: the last one's completions, model list, and recall walk are not this one's.
   useEffect(() => {
     request.current++
+    recall.current = null
     setSuggestions([])
     setModels(null)
   }, [session])
@@ -124,12 +142,21 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     area.current?.focus()
   }
 
+  const report = (error: unknown) => onError(error instanceof Error ? error.message : String(error))
+  const steers = queue !== undefined && !chat
   const empty = !text.trim() && attachments.length === 0
 
-  const send = async () => {
+  const send = async (steer = false) => {
     const value = text.trim()
-    if (empty || disabled) return
+    if (disabled) return
+    if (empty) {
+      // As in the terminal: Alt+Enter with nothing typed steers the oldest queued follow-up, which stays if it cannot.
+      const head = steer ? queue?.[0] : undefined
+      if (head?.kind === 'prompt') await session.steerQueued(head.id).catch(report)
+      return
+    }
     const images = attachments
+    recall.current = null
     setText('')
     onAttachments?.(() => [])
     setSuggestions([])
@@ -142,13 +169,17 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     try {
       if (chat) await chat.send(value)
       else {
-        const entered = await session.send(value, images.map(base64))
+        // A prompt Alt+Enter cannot steer, such as any while no turn runs, is entered as Enter enters it.
+        // Steering takes text alone, so a prompt with images is entered as Enter enters it too.
+        const entered = await (steer && images.length === 0
+          ? session.steer(value)
+          : session.send(value, images.map(base64)))
         if (entered.menu !== null) onMenu?.(entered.menu)
       }
     } catch (error) {
       setText(value)
       onAttachments?.((current) => [...images, ...current])
-      onError(error instanceof Error ? error.message : String(error))
+      report(error)
     }
   }
 
@@ -211,8 +242,40 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault()
-      void send()
+      void send(steers && event.altKey)
+      return
     }
+    // Only bare arrows recall, as in the terminal; with a modifier they keep selecting or jumping as the browser does.
+    const bare = !(event.shiftKey || event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing)
+    if (bare && (event.key === 'ArrowUp' || event.key === 'ArrowDown') && recallPrompt(event.key === 'ArrowUp')) {
+      event.preventDefault()
+    }
+  }
+
+  /**
+   * As in the terminal: Up on the first line steps back through sent prompts, newest first, and Down on the last line
+   * steps forward to the draft; elsewhere the caret moves between lines. Queued prompts are edited in their own panel.
+   * Returns whether it recalled.
+   */
+  const recallPrompt = (backwards: boolean): boolean => {
+    const element = area.current
+    if (!element || element.selectionStart !== element.selectionEnd) return false
+    const caret = element.selectionStart
+    if ((backwards ? text.slice(0, caret) : text.slice(caret)).includes('\n')) return false
+    if (!recall.current) {
+      if (!backwards) return false
+      const entries = history.filter(Boolean)
+      if (entries.length === 0) return false
+      recall.current = { entries, index: entries.length, draft: text }
+    }
+    const walk = recall.current
+    walk.index = Math.min(walk.entries.length, Math.max(0, walk.index + (backwards ? -1 : 1)))
+    if (walk.index === walk.entries.length) recall.current = null
+    // Completions still on their way are for the text this replaces; Tab or Enter must not apply them to a recalled one.
+    request.current++
+    setSuggestions([])
+    setText(walk.entries[walk.index] ?? walk.draft)
+    return true
   }
 
   const openModels = async () => {
@@ -238,6 +301,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
 
   return (
     <div className="composer-wrap">
+      {steers && <QueuePanel queue={queue} running={running} onError={onError} />}
       {suggestions.length > 0 && (
         <div className="suggestions" role="listbox" id="suggestions">
           {suggestions.map((suggestion, index) => (
@@ -284,6 +348,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           placeholder={placeholder}
           disabled={disabled}
           onChange={(event) => {
+            // Typing ends a recall walk; the edited prompt is the draft from now on.
+            recall.current = null
             setText(event.target.value)
             void complete(event.target.value)
           }}
@@ -329,6 +395,17 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           )}
           {controls}
           {running ? meter : <span className="hint">{commands ? '/ for commands' : 'Enter to send'}</span>}
+          {steers && running && text.trim() && attachments.length === 0 && (
+            <button
+              className="send steer"
+              onClick={() => void send(true)}
+              disabled={disabled}
+              title={`Steer now: send it to the running turn (${STEER_KEY})`}
+              aria-label="Steer now"
+            >
+              <BoltIcon size={15} />
+            </button>
+          )}
           {running && empty ? (
             <button
               className="send stop"
@@ -339,7 +416,12 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               <StopIcon size={14} />
             </button>
           ) : (
-            <button className="send" onClick={() => void send()} disabled={empty || disabled} title="Send (Enter)">
+            <button
+              className="send"
+              onClick={() => void send()}
+              disabled={empty || disabled}
+              title={running ? 'Queue for after this turn (Enter)' : 'Send (Enter)'}
+            >
               <ArrowUpIcon size={16} />
             </button>
           )}
