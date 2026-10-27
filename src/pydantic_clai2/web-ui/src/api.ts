@@ -1,5 +1,6 @@
 import { createContext } from 'react'
 import type { Snapshot } from './state'
+import { PROTOCOL } from './protocol'
 import type {
   AnswerBody,
   CompletionInfo,
@@ -157,6 +158,8 @@ export const api = {
   state: () => call<Snapshot>('GET', '/api/state'),
   sessions: (query: string, archived = false) =>
     call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}${archived ? '&include_archived=true' : ''}`),
+  /** The sidebar's projects, with every worktree Git lists for each, for New session to offer. */
+  checkouts: () => call<Project[]>('GET', '/api/sessions?include_worktrees=true'),
   transcript: (id: string) => call<Transcript>('GET', `/api/sessions/${id}`),
   /** Start a live session, in `workspace` when given; it answers the new session's conversation ID. */
   newSession: (workspace?: string) =>
@@ -167,6 +170,8 @@ export const api = {
   fork: (id: string) => call<{ id: string }>('POST', `/api/sessions/${id}/fork`),
   archive: (id: string) => call<void>('POST', `/api/sessions/${id}/archive`),
   unarchive: (id: string) => call<void>('POST', `/api/sessions/${id}/unarchive`),
+  /** Archive several sessions at once, such as every one of a worktree. */
+  archiveAll: (ids: string[]) => call<void>('POST', '/api/sessions/archive', { ids }),
   remove: (id: string) => call<void>('DELETE', `/api/sessions/${id}`),
   /** Answer a settings menu's dialog, which belongs to the page rather than to one session. */
   answerDialog: (id: string, value: string | null) => call<void>('POST', `/api/dialogs/${id}`, { value }),
@@ -261,7 +266,7 @@ export function connect(
   const open = () => {
     onState('connecting')
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
-    socket = new WebSocket(`${scheme}://${location.host}/ws?token=${encodeURIComponent(token)}`)
+    socket = new WebSocket(`${scheme}://${location.host}/ws?token=${encodeURIComponent(token)}&protocol=${PROTOCOL}`)
     socket.onopen = () => {
       delay = 500
       failures = 0

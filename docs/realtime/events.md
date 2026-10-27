@@ -29,6 +29,7 @@ never discarded.
 | [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | A tool call was deferred (e.g. needs approval); emitted before any inline capability handler runs. |
 | [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | An inline capability handler resolved the deferred requests; the results go through normal tool processing. |
 | [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] | Enqueued content was delivered into session history. |
+| [`CustomEvent`][pydantic_ai.messages.CustomEvent] / [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] | A tool or capability hook [emitted](capabilities.md#the-event-stream) an application or capability event. |
 | [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] | The provider detected that the user started speaking, when the profile declares [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]. |
 | [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent] | The provider detected the end of user speech, when the profile declares [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]. |
 | [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] | The provider reported an interrupted model response. |
@@ -46,7 +47,7 @@ streams that part again under the same `index`, and the new
 
 ## Shared and realtime-only events
 
-The first eight rows are [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members from
+The first nine rows are [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members from
 [`pydantic_ai.messages`][pydantic_ai.messages] — the same events a
 [standard streamed run](../agent.md#streaming-all-events) yields, so event-handling code written for
 a text agent (rendering parts, logging tool calls) works on a session unchanged. The `Realtime*`

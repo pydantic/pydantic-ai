@@ -297,6 +297,17 @@ export function App() {
     setOpening((current) => (current?.id === sessionId ? null : current))
   }, [sessionId])
 
+  // So does focus: the picked session showing puts the cursor in its composer, unless the reader has moved it off what
+  // the pick left focused (the row clicked, or the page itself) while the session loaded.
+  const focusing = useRef<{ id: string; from: Element | null } | null>(null)
+  useEffect(() => {
+    const pick = focusing.current
+    if (!pick || pick.id !== sessionId) return
+    focusing.current = null
+    const active = document.activeElement
+    if (!active || active === document.body || active === pick.from || !active.isConnected) composer.current?.focus()
+  }, [sessionId])
+
   // The session may not show at all (it closed meanwhile), so stop waiting eventually.
   useEffect(() => {
     if (!opening) return
@@ -326,6 +337,7 @@ export function App() {
   const show = useCallback((id: string) => {
     // A session picked earlier and still opening loses to this one.
     picked.current++
+    if (focusing.current?.id !== id) focusing.current = null
     // Its own spinner stays until it shows; one for a session picked before goes.
     setOpening((current) => (current?.id === id ? current : null))
     setPane('session')
@@ -416,6 +428,7 @@ export function App() {
         setOpening(null)
         return
       }
+      focusing.current = { id: session.id, from: document.activeElement }
       // A watched session's chat is current: it shows at once, and opening it only makes it the default again.
       if (session.id in chats && session.id in live) {
         show(session.id)
@@ -433,6 +446,7 @@ export function App() {
           const saved = await api.transcript(session.id)
           if (request !== picked.current) return
           if (!saved.openable) {
+            focusing.current = null
             setPreview(saved)
             setOpening(null)
             return
@@ -440,11 +454,17 @@ export function App() {
         }
         const { id } = await api.open(session.id)
         if (request !== picked.current) return
-        // With `/web` from a terminal, the shown session itself switches to it, and its new snapshot follows.
         if (id !== shown) show(id)
-        else setPreview(null)
+        else {
+          // The answer is the shown session: a busy session's fork shown already, which nothing follows, or, with
+          // `/web` from a terminal, the shown session switching to it, whose snapshot follows and takes the focus.
+          // Either way the wait ends here, as `showNew`'s does.
+          setPreview(null)
+          setOpening(null)
+        }
       } catch (error) {
         if (request !== picked.current) return
+        focusing.current = null
         setOpening(null)
         showError(error instanceof Error ? error.message : String(error))
       }
@@ -515,6 +535,7 @@ export function App() {
       : (chat.session?.title ?? 'New session')
   const workspace = preview ? preview.workspace : (chat.session?.workspace ?? '')
   const entries = preview ? preview.items : chat.entries
+  const prompts = useMemo(() => entries.flatMap((entry) => (entry.kind === 'user' ? [entry.text] : [])), [entries])
   const project = (chat.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''
   const fresh = !preview && !workerTask && entries.length === 0 && chat.session !== null
   // The watched session whose kept transcript shows; `null` while the main pane shows anything else.
@@ -533,6 +554,7 @@ export function App() {
       draft={draft}
       onDraft={setDraft}
       queue={chat.queue}
+      history={prompts}
       attachments={attachments}
       onAttachments={setAttachments}
       onError={showError}

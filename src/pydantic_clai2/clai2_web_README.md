@@ -16,31 +16,35 @@ the address, opens it, and logs the session it started with to the terminal unti
 ends every session. There, each session you open is live in its own directory, with that
 directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
 there; CLAI's own working directory never changes. **New session** asks where the session runs: a
-project or worktree from the sidebar, by default the current one, or any directory by its absolute
-path. The header shows where the session works. `/workspace DIRECTORY` or `/resume ID` typed in a
-session moves that session instead, never while a turn, a background `/fork`, or a delegated task
-runs in it. `clai2 --web --resume ID` starts in that session's directory. A session left idle for
-an hour, with nothing running or queued and no browser watching it (a page watches the last five
-sessions it showed), closes, except the one CLAI
-started with; it stays saved, and clicking it resumes it. The launch directory's `.env` stays loaded.
+project or worktree from the sidebar or any other worktree Git lists for its repository, by default
+the current one, or any directory by its absolute path. The header shows where the session works.
+`/workspace DIRECTORY` or `/resume ID` typed in a session moves that session instead, never while a
+turn, a background `/fork`, or a delegated task runs in it. `clai2 --web --resume ID` starts in that
+session's directory. A session left idle for an hour, with nothing running or queued and no browser
+watching it (a page watches the last five sessions it showed), closes, except the one CLAI started
+with; it stays saved, and clicking it resumes it. The launch directory's `.env` stays loaded.
 
 The sidebar lists the sessions `/resume` shows, grouped by project (the Git repository, named
 after its main checkout's folder), then by worktree (each checkout, labelled with its branch), with
 the current ones first and search across all of them. A folder outside Git is a project of its own.
 A session remembers its checkout when it is saved, so one from a worktree you have since removed
-stays under its project, marked removed; an older session from a removed folder is placed by
-where it was, or listed under Removed folders. Click one to switch to it, even while other sessions
-run turns: each session you open stays live and keeps working while you look at another. A dot by
-a live session shows that it runs a turn, pulsing; runs one with input queued behind it, ringed; or
-waits for your answer to a question, amber. Use a session's menu to rename, fork, archive, or delete
-it. Archiving hides a session from the sidebar and `/resume` without deleting anything; the archive
-button beside the search lists archived sessions too, muted, and searches them, each with
-**Unarchive** in its menu. The shown session and running ones cannot be archived, and resuming an
-archived one, or a new turn in it, unarchives it. A session open in CLAI cannot be deleted. A
-session whose directory is gone, such as a removed worktree, opens read-only; so does, with `/web`
-from a terminal, a session saved in another directory, since the terminal works where it started.
-Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and no
-other, Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
+stays under its project, marked removed, in one **Removed worktrees** group after the live ones,
+closed until you open it; an older session from a removed folder is placed by where it was, or
+listed under Removed folders. A worktree's `…` menu archives its sessions at once, except the open
+and running ones, and not during a search. Click a session to switch to it, even while other
+sessions run turns: each session you open stays live and keeps working while you look at another.
+A dot by a live session shows that it runs a turn, pulsing; runs one with input queued behind it,
+ringed; or waits for your answer to a question, amber. Use a session's menu to rename, fork,
+archive, or delete it. Archiving hides a session from the sidebar and `/resume` without deleting
+anything; the archive button beside the search lists archived sessions too, muted, and searches
+them, each with **Unarchive** in its menu. The shown session and running ones cannot be archived,
+and resuming an archived one, or a new turn in it, unarchives it. A session open in CLAI cannot be
+deleted. A session whose directory is gone, such as a removed worktree, opens read-only; so does,
+with `/web` from a terminal, a session saved in another directory, since the terminal works where it
+started. Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and
+no other, Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the
+sidebar. As in the terminal, Up on the composer's first line recalls the session's sent prompts,
+newest first, and Down on its last line steps back toward your unsent draft.
 
 While a turn runs, the composer works as the terminal's prompt does. Enter queues your message for
 after the turn. Alt+Enter (Option+Enter on a Mac), or the bolt button beside Send, steers the running
@@ -116,7 +120,8 @@ composer) is the menu `/system_prompt` shows in the terminal: **Edit…** opens 
 a multi-line dialog (Cmd/Ctrl+Enter saves; an empty text removes them), **Reset** removes them,
 **Append…** adds a paragraph, and **View…** shows the full system prompt the model last received,
 read-only. **About** (`#settings/about`, or `/update` in the composer) shows the running CLAI's
-version and the `updates.channel` setting; its **Update…** button asks before it runs `/update`.
+version, whether a newer one is out, and the `updates.channel` setting; its **Update…** button asks
+before it runs `/update now`.
 `/usage` and `/cost` show their figures as a card in the chat: the retained history's cost,
 tokens, and requests, and for `/usage` a row per turn. Cmd/Ctrl+Shift+P, or `/help` in the
 composer, opens the command palette: every command this CLAI offers, plugins' and skills'
@@ -306,8 +311,8 @@ so switching back to one shows it at once.
 
 Sessions are named by their conversation ID, the `id` the sidebar lists.
 
-- **Per-session messages** (`item`, `delta`, and the other item messages, `turn_start`, `turn_end`,
-  `status`, `question`, `question_closed`, `notice`, `title`, `task`, `task_event`, `queue`) carry `"session": "<conversation id>"` and go only to the
+- **Per-session messages** (`item`, `text_delta`, and the other item messages, `turn_started`, `turn_ended`,
+  `status`, `question`, `question_closed`, `notice`, `title`, `task`, `task_items`, `queue`) carry `"session": "<conversation id>"` and go only to the
   connections watching that session. A `snapshot` names its session in `session.id`.
 - **Global messages** (`sessions`, `plugins`, `settings`, `theme`, `update`, `orchestrator`, `live`,
   and the settings menus' `dialog`, `dialog_shown`, and `dialog_closed`) go to every connection and
@@ -358,7 +363,9 @@ optional body as before (`{"workspace": "/abs/path"}`), starts a new live sessio
 the same `{"id": "<conversation id>"}`. Opening a session whose folder is gone answers 400. Where CLAI
 opens no other sessions (a host built outside CLAI's shell), both switch the one session instead,
 with `/resume` or `/new`, and answer its ID. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
-delete) and `/api/tasks/{task_id}/…` are unchanged.
+delete) and `/api/tasks/{task_id}/…` are unchanged. `POST /api/sessions/archive` with
+`{"ids": [...]}` archives several sessions at once, and answers 400 naming any it refused once it
+has archived the rest.
 
 A command menu (`/model`, `/effort`, `/set`, `/keys`, …) reads and changes the session it is built from:
 choosing a model in session B's `/model` menu switches B alone, and B's `/effort` shows B's model. Settings

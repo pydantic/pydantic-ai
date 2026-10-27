@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from itertools import count
+from itertools import chain, count
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, assert_never, cast, overload
 from urllib.parse import parse_qs, urlparse
@@ -73,6 +73,7 @@ from pydantic_ai import (
     _utils,
     usage,
 )
+from pydantic_ai._gateway_cost import fill_gateway_header_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._thinking_part import render_replayed_thinking
@@ -104,9 +105,11 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models._prompt_cache import (
     excess_cache_points,
+    instruction_cache_boundaries,
     previous_tail_needing_breakpoint,
     raise_earlier_cache_ttls,
     split_cache_setting,
+    split_instruction_cache_points,
 )
 from pydantic_ai.models._tool_choice import (
     FORCING_UNSUPPORTED_REASON,
@@ -1364,7 +1367,7 @@ class BedrockConverseModel(Model[BaseClient]):
             provider_details['trace'] = response['trace']
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
-        return ModelResponse(
+        model_response = ModelResponse(
             parts=items,
             usage=u,
             model_name=self.model_name,
@@ -1374,6 +1377,9 @@ class BedrockConverseModel(Model[BaseClient]):
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
+        # boto3 drops the Pydantic AI Gateway's cost from `usage`, but keeps its response header.
+        fill_gateway_header_cost(model_response, response.get('ResponseMetadata', {}).get('HTTPHeaders'))
+        return model_response
 
     def _build_additional_model_request_fields(
         self,
@@ -1937,17 +1943,22 @@ class BedrockConverseModel(Model[BaseClient]):
             and (cache_instructions := settings.get('bedrock_cache_instructions'))
             and profile.get('bedrock_supports_prompt_caching', False)
         ):
-            cache_point = cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
-            if instruction_parts and any(p.dynamic for p in instruction_parts):
-                # Insert cache point after the last static instruction (static parts are sorted first)
-                num_pre_instruction_blocks = len(system_prompt) - len(instruction_parts)
-                num_static = sum(1 for p in instruction_parts if not p.dynamic)
-                cache_idx = num_pre_instruction_blocks + num_static
-                if cache_idx > 0:
-                    system_prompt.insert(cache_idx, cache_point)
-            else:
-                # All static or no instruction_parts: cache point at end.
-                system_prompt.append(cache_point)
+            # After the literal instructions (or the system prompt when there are none), and after the append
+            # blocks; see `instruction_cache_boundaries`. `_limit_cache_points` drops the second first.
+            parts = instruction_parts or []
+            num_pre_instruction_blocks = len(system_prompt) - len(parts)
+            static_parts, stable_parts = instruction_cache_boundaries(parts)
+            static_idx = num_pre_instruction_blocks + static_parts
+            stable_idx = num_pre_instruction_blocks + stable_parts
+            # Inserted back to front, so the earlier index still points at the same block.
+            if stable_idx > static_idx:
+                system_prompt.insert(
+                    stable_idx, cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
+                )
+            if static_idx > 0:
+                system_prompt.insert(
+                    static_idx, cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
+                )
 
         if processed_messages and (cache_messages := settings.get('bedrock_cache_messages')):
             if profile.get('bedrock_supports_prompt_caching', False):
@@ -2219,22 +2230,25 @@ class BedrockConverseModel(Model[BaseClient]):
     ) -> None:
         """Limit the number of cache points in the request to Bedrock's maximum.
 
-        System prompt and tool definition cache points always take priority; excess message
-        cache points are removed oldest-first. A Bedrock cache point is a standalone
-        `cachePoint` content block, so excess blocks are dropped from their content lists.
+        Tool definition cache points and the first instruction cache point always take priority; excess
+        message cache points are removed oldest-first, after the instruction cache point behind the
+        `on_change='append'` blocks (see `split_instruction_cache_points`). A Bedrock cache point is a
+        standalone `cachePoint` content block, so excess blocks are dropped from their content lists.
 
         Raises:
             UserError: If system_prompt and tools combined already exceed the budget.
                       This indicates a configuration error that cannot be auto-fixed.
         """
-        reserved = sum(1 for block in system_prompt if 'cachePoint' in block)
+        reserved, optional_points = split_instruction_cache_points(
+            [block for block in system_prompt if 'cachePoint' in block]
+        )
         reserved += sum(1 for tool in tools if 'cachePoint' in tool)
 
         message_contents = [
             content for message in reversed(bedrock_messages) if isinstance(content := message.get('content'), list)
         ]
         excess = excess_cache_points(
-            (block for content in message_contents for block in reversed(content)),
+            chain((block for content in message_contents for block in reversed(content)), optional_points),
             # Bedrock enforces a maximum of 4 cache points per request.
             max_points=4,
             reserved=reserved,
@@ -2243,7 +2257,7 @@ class BedrockConverseModel(Model[BaseClient]):
         )
         if excess:
             excess_ids = {id(block) for block in excess}
-            for content in message_contents:
+            for content in [*message_contents, system_prompt]:
                 content[:] = [block for block in cast('list[Any]', content) if id(block) not in excess_ids]
 
 

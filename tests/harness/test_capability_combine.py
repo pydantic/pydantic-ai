@@ -59,9 +59,11 @@ from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
     Coder,
+    CompactOnRequest,
     Planning,
     RelevanceCompaction,
     Researcher,
+    SlidingWindowCompaction,
     SpendLimits,
     SSHWorkspace,
     StepPersistence,
@@ -188,6 +190,10 @@ def _check_system_reminders(merged: Any) -> None:
     assert [r.content for r in merged.reminders] == ['first', 'second']
 
 
+def _check_compact_on_request(merged: Any) -> None:
+    assert merged.max_per_run == 2
+
+
 def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
@@ -254,10 +260,18 @@ COMBINE_POLICY: dict[str, Policy] = {
     'SystemReminders': Combines(
         'reminders are additive, so both sides keep firing',
         lambda: (
-            SystemReminders[Any](reminders=[Reminder('first')]),
-            SystemReminders[Any](reminders=[Reminder('second')]),
+            SystemReminders[Any](reminders=[Reminder('first', tag=None)]),
+            SystemReminders[Any](reminders=[Reminder('second', tag=None)]),
         ),
         _check_system_reminders,
+    ),
+    'CompactOnRequest': Combines(
+        'one `compact_context` tool per agent, and two strategies for one request would compact twice',
+        lambda: (
+            CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=1),
+            CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=2),
+        ),
+        _check_compact_on_request,
     ),
     'ToolOutputLimits': Combines(
         'one output-limit policy; `tool_filter`/`per_tool` are how one instance varies by tool',
@@ -292,6 +306,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
+    'ServingModelRecorder': Anonymous('one per sub-agent run, added by the delegating toolset'),
     '_Skill': Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name'),
     'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
@@ -310,6 +325,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     'DelegationReports': Anonymous(
         'one per task owner and conversation; each delivers only its own reports, so several coexist'
     ),
+    'TaskLink': Anonymous('the abstract base of the links below; never attached itself'),
+    'LocalTaskLink': Anonymous('`SubAgents(task_control=TaskControl())` attaches one to each task run it starts'),
+    '_WorkerLink': Anonymous('`SubAgentWorker` attaches one to each task run it serves'),
+    '_ForwardingWorkerLink': Anonymous('`SubAgentWorker` attaches one to each task run that forwards its events'),
     'ClearToolResults': Anonymous('several form an escalation ladder, like `TieredCompaction` tiers'),
     'DeduplicateFileReads': Anonymous('file-read identification is agent-specific; one per `file_key`'),
     'DynamicWorkflow': Anonymous('one per workflow definition'),
@@ -717,7 +736,10 @@ def test_system_reminders_keep_two_llm_reminders_whose_models_differ_only_in_set
     second = LLMReminder[Any](model=TestModel(settings={'temperature': 1.0}))
 
     merged = SystemReminders.combine(
-        [SystemReminders[Any](dynamic_reminders=[first]), SystemReminders[Any](dynamic_reminders=[second])]
+        [
+            SystemReminders[Any](dynamic_reminders=[first]),
+            SystemReminders[Any](dynamic_reminders=[second]),
+        ]
     )
 
     assert isinstance(merged, SystemReminders)
