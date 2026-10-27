@@ -747,18 +747,20 @@ class WebService:
         await (catalog.archive(conversation_id) if archived else catalog.unarchive(conversation_id))
         self.hub.publish(SessionsChanged())
 
-    async def archive_many(self, conversation_ids: Sequence[str]) -> list[str]:
-        """Archive these sessions, skipping the open one and running ones, and answer the IDs archived."""
+    async def archive_all(self, ids: Sequence[str]) -> None:
+        """Archive several sessions, such as a worktree's; any refused are named once the others are archived."""
         catalog = self.catalog
-        archived: list[str] = []
-        for conversation_id in conversation_ids:
+        unique = list(dict.fromkeys(ids))
+        refused: list[str] = []
+        for conversation_id in unique:
             try:
                 await catalog.archive(conversation_id)
-            except (ValueError, LookupError):
-                continue
-            archived.append(conversation_id)
-        self.hub.publish(SessionsChanged())
-        return archived
+            except (LookupError, ValueError) as exc:
+                refused.append(f'{conversation_id!r}: {exc}')
+        if len(refused) < len(unique):
+            self.hub.publish(SessionsChanged())
+        if refused:
+            raise ValueError(f'Archived {len(unique) - len(refused)} of {len(unique)} sessions. ' + ' '.join(refused))
 
 
 async def _view(panel: SidePanel) -> PanelView:

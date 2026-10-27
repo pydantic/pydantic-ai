@@ -151,6 +151,12 @@ class Rename(BaseModel):
     title: str = Field(max_length=200)
 
 
+class Archive(BaseModel):
+    """The sessions to archive at once, such as every one of a worktree."""
+
+    ids: list[str] = Field(max_length=1000)
+
+
 class ModelChoice(BaseModel):
     """A saved model or chain to select, as `/model NAME` does."""
 
@@ -211,18 +217,6 @@ class Forked(BaseModel):
     """The copy a fork saved."""
 
     id: str
-
-
-class ArchiveMany(BaseModel):
-    """Sessions to archive together, such as every one of a project or a branch."""
-
-    ids: list[str] = Field(max_length=1000)
-
-
-class ArchivedMany(BaseModel):
-    """Which of the sessions asked for were archived; the open session and running ones are left as they were."""
-
-    archived: list[str]
 
 
 class Steered(BaseModel):
@@ -489,10 +483,6 @@ def _sessions(app: FastAPI, service: WebService) -> None:
     async def new(body: NewSession | None = None) -> Opened:
         return Opened(id=await _wait(service.new(None if body is None else body.workspace)))
 
-    @app.post('/api/sessions/archive')
-    async def archive_many(body: ArchiveMany) -> ArchivedMany:
-        return ArchivedMany(archived=await _wait(service.archive_many(body.ids)))
-
     @app.get('/api/sessions/{conversation_id}')
     async def transcript(conversation_id: str) -> Transcript:
         return await _wait(service.transcript(conversation_id))
@@ -508,6 +498,10 @@ def _sessions(app: FastAPI, service: WebService) -> None:
     @app.post('/api/sessions/{conversation_id}/fork')
     async def fork(conversation_id: str) -> Forked:
         return Forked(id=await _wait(service.fork(conversation_id)))
+
+    @app.post('/api/sessions/archive', status_code=204)
+    async def archive_all(body: Archive) -> None:
+        await _wait(service.archive_all(body.ids))
 
     @app.post('/api/sessions/{conversation_id}/archive', status_code=204)
     async def archive(conversation_id: str) -> None:

@@ -309,8 +309,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
 
   /** Whether a row can be archived: not the open session, nor one running here or elsewhere. */
   const archivable = (row: Row) => row.id !== shown && !(row.id in live) && !WORKING.includes(states[row.id] ?? null)
+  // A search lists only a group's matching sessions, so it cannot archive all of them.
   const archiveAll = (found: Row[]) =>
-    act(() => api.archiveMany(found.filter((row) => !row.archived && archivable(row)).map((row) => row.id)))
+    act(() => api.archiveAll(found.filter((row) => !row.archived && archivable(row)).map((row) => row.id)))
   const markRead = (found: Row[]) => {
     setMenu(null)
     setSeen((current) => markSeen(current, found))
@@ -416,7 +417,11 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                   Archive
                 </button>
                 {section.branches && siblings.length > 1 && (
-                  <button onClick={() => void archiveAll(siblings)} title="Archive every session of this branch you can">
+                  <button
+                    disabled={query !== ''}
+                    onClick={() => void archiveAll(siblings)}
+                    title={query ? 'Clear the search to archive the whole branch' : 'Archive every session of this branch you can'}
+                  >
                     Archive all in {session.branch}
                   </button>
                 )}
@@ -473,7 +478,11 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         )}
         {menu === key && (
           <div className={`menu session-menu ${menuUp ? 'up' : ''}`} role="menu">
-            <button onClick={() => void archiveAll(section.rows)} title="Archive every session here you can">
+            <button
+              disabled={query !== ''}
+              onClick={() => void archiveAll(section.rows)}
+              title={query ? 'Clear the search to archive them all' : 'Archive every session here you can'}
+            >
               Archive chats
             </button>
             {unread.length > 0 && <button onClick={() => markRead(unread)}>Mark all as read</button>}

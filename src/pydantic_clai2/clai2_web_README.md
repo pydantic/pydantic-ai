@@ -29,8 +29,9 @@ repository, named after its main checkout's folder), each row showing its branch
 has sessions on more than one; **Recent** lists every project's sessions in one list. A folder
 outside Git is a project of its own. Projects are listed by name and sessions newest created
 first, so a row never moves when you select it, a turn ends, a session is renamed, or the list
-refreshes; a new session appears at the top. Sessions whose folder is gone, such as a removed
-worktree, fold into **Removed worktrees** at the bottom. When two rows share a title, each shows a
+refreshes; a new session appears at the top. A session remembers its checkout when it is
+saved, so one from a worktree you have since removed stays with its project; sessions whose folder
+is gone fold into **Removed worktrees** at the bottom, closed until you open it. When two rows share a title, each shows a
 short ID. Click one to switch to it, even while other sessions run turns: the row is selected at
 once, and each session you open stays live and keeps working while you look at another.
 
@@ -39,8 +40,9 @@ Each row has one status mark. A spinner, with how long the turn has run, means a
 ID in the tooltip; **Needs input** means it waits for your answer; a bold title with a dot means it
 changed since you last looked (open it, or use **Mark as read**); a red or amber dot means its last
 turn failed or was interrupted. **Attention** (Cmd/Ctrl+Alt+U) lists only the sessions running,
-waiting for you, or unread. Use a session's menu to rename, fork, archive, or delete it, and a
-project's menu to archive all its chats. Archiving hides a session from the sidebar and `/resume`
+waiting for you, or unread. Use a session's menu to rename, fork, archive, or delete it, or to
+archive every session of its branch, and a project's menu to archive all its chats; these skip the
+open and running sessions, and are off during a search, which lists only some of them. Archiving hides a session from the sidebar and `/resume`
 without deleting anything; **Archived** lists archived sessions, each with **Unarchive** in its
 menu. The shown session and running ones cannot be archived, and resuming an archived one, or a new
 turn in it, unarchives it. A session open in CLAI cannot be deleted. A
@@ -127,7 +129,8 @@ composer) is the menu `/system_prompt` shows in the terminal: **Edit…** opens 
 a multi-line dialog (Cmd/Ctrl+Enter saves; an empty text removes them), **Reset** removes them,
 **Append…** adds a paragraph, and **View…** shows the full system prompt the model last received,
 read-only. **About** (`#settings/about`, or `/update` in the composer) shows the running CLAI's
-version and the `updates.channel` setting; its **Update…** button asks before it runs `/update`.
+version, whether a newer one is out, and the `updates.channel` setting; its **Update…** button asks
+before it runs `/update now`.
 `/usage` and `/cost` show their figures as a card in the chat: the retained history's cost,
 tokens, and requests, and for `/usage` a row per turn. Cmd/Ctrl+Shift+P, or `/help` in the
 composer, opens the command palette: every command this CLAI offers, plugins' and skills'
@@ -369,7 +372,9 @@ optional body as before (`{"workspace": "/abs/path"}`), starts a new live sessio
 the same `{"id": "<conversation id>"}`. Opening a session whose folder is gone answers 400. Where CLAI
 opens no other sessions (a host built outside CLAI's shell), both switch the one session instead,
 with `/resume` or `/new`, and answer its ID. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
-delete) and `/api/tasks/{task_id}/…` are unchanged.
+delete) and `/api/tasks/{task_id}/…` are unchanged. `POST /api/sessions/archive` with
+`{"ids": [...]}` archives several sessions at once, and answers 400 naming any it refused once it
+has archived the rest.
 
 A command menu (`/model`, `/effort`, `/set`, `/keys`, …) reads and changes the session it is built from:
 choosing a model in session B's `/model` menu switches B alone, and B's `/effort` shows B's model. Settings
