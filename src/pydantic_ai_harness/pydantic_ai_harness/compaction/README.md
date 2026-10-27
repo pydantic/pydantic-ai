@@ -663,6 +663,14 @@ must contain a `{messages}` placeholder and no other replacement field; any othe
 which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer
 endpoint requires a fixed leading instruction.
 
+The default `summary_prompt` asks for the summary under fixed headings: Intent, Requirements, Key
+decisions, Artifacts, Current state, Next steps and Open questions. Requirements holds the rules,
+preferences and constraints the user stated anywhere in the conversation, such as "never ..." and
+"always ..." rules, quoted verbatim where short, because the summary is the only place older user
+instructions survive unless `keep_user_messages` keeps them. Key decisions holds the current decision
+on each topic; one the user overrode is recorded as the new choice followed by "(replaces: ...)", so
+the earlier option isn't carried forward as live.
+
 The messages served into that template are rendered as a transcript with one `<message>` element per part
 (each user prompt, system prompt, response text, tool call and tool return), tagged with its role and,
 for a tool call or return, its tool name. Retry feedback, the correction a rejected tool call or output
@@ -896,7 +904,9 @@ dispatch. `keep_user_messages` therefore needs no provider-specific handling.
 With `incremental=True` (the default), a prior summary is not re-summarized (which decays over
 successive compactions). It is fed back as an anchored `<previous-summary>` block with an
 *update* instruction -- preserve still-true details, remove stale ones, merge in new facts --
-so the summary is a living document updated in place under a fixed structure.
+so the summary is a living document updated in place under a fixed structure. The newer
+conversation takes precedence where it disagrees with the previous summary, requirements the user
+hasn't lifted are kept, and a changed decision is recorded with "(replaces: ...)".
 
 > **Behavior change: `incremental=True` is the default.** Every existing `SummarizingCompaction`
 > user gets a different summary-call prompt from this release on: once a prior summary exists, the

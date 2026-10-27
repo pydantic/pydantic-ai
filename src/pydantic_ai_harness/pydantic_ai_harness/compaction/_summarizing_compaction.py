@@ -89,10 +89,17 @@ Write the summary under these exact section headings, omitting a section only if
 no content:
 
 ## Intent
-The user's overall goal and any standing constraints or preferences.
+The user's overall goal.
+
+## Requirements
+The rules, preferences and constraints the user stated, wherever in the conversation they \
+appeared: "never ..." and "always ..." rules, who owns what, what to use or avoid. Quote short \
+ones verbatim. Keep each one until the user lifts it.
 
 ## Key decisions
-Choices made and the reasoning, so they are not relitigated.
+The current decision on each topic and the reasoning, so it is not relitigated. When the user \
+overrode an earlier choice, write the current one followed by "(replaces: <earlier choice>)", \
+and don't list the earlier choice as an option.
 
 ## Artifacts
 Files, paths, identifiers, commands, and APIs touched -- quote exact names.
@@ -130,7 +137,9 @@ Summaries are now a `CompactionPart`; this only recognizes ones in histories sav
 _INCREMENTAL_UPDATE_INSTRUCTION = (
     'An anchored summary from earlier compaction is provided below in <previous-summary>. '
     'Update it using the conversation above: preserve still-true details, remove stale '
-    'details, and merge in new facts.  Keep the same section structure.'
+    'details, and merge in new facts.  The conversation above is newer than the previous summary, so '
+    'where they disagree it takes precedence.  Keep every requirement the user has not lifted, and when '
+    'a decision changed, record the new one with "(replaces: ...)".  Keep the same section structure.'
 )
 
 _HARNESS_DATA_INSTRUCTION = (
@@ -725,7 +734,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     incremental: bool = True
     """When `True`, feed any existing summary from a prior compaction back as an anchored
     `<previous-summary>` block with an update instruction (preserve still-true, remove stale,
-    merge new) so it is updated in place rather than re-summarized -- avoiding
+    merge new, and let the newer conversation win where they disagree) so it is updated in place rather than re-summarized -- avoiding
     summary-of-summary decay.
     """
 

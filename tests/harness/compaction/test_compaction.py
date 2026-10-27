@@ -2881,6 +2881,7 @@ class TestSummarizingCompactionModel:
 
         for heading in (
             '## Intent',
+            '## Requirements',
             '## Key decisions',
             '## Artifacts',
             '## Current state',
@@ -5144,6 +5145,32 @@ class TestStructuralFeaturesThroughAgent:
         assert len(prompts) == 2
         assert '<previous-summary>\nTHE SUMMARY\n</previous-summary>' in prompts[1]
         assert _UPDATE_ANCHOR in prompts[1]
+
+    async def test_default_prompt_asks_for_requirements_and_current_decisions(self):
+        """User rules get their own section and overridden decisions aren't carried as live, fresh or updated (#11438)."""
+        prompts: list[str] = []
+        agent = Agent(
+            _recording_model([]),
+            capabilities=[SummarizingCompaction(model=_recording_summarizer(prompts), max_messages=2, keep_messages=1)],
+        )
+        reply = 'Use Postgres, not SQLite, as agreed. ' * 10
+        history = [_user('Never push to main.'), _assistant(reply), _user('c'), _assistant('d')]
+        first = await agent.run('one', message_history=history)
+        await agent.run('two', message_history=[*first.all_messages(), _assistant(reply)])
+
+        assert len(prompts) == 2
+        requirements = 'Quote short ones verbatim. Keep each one until the user lifts it.'
+        replaces = 'write the current one followed by "(replaces: <earlier choice>)"'
+        precedence = (
+            'The conversation above is newer than the previous summary, so where they disagree it takes precedence.'
+        )
+        for prompt in prompts:
+            assert '## Requirements\n' in prompt
+            assert requirements in prompt
+            assert replaces in prompt
+        assert precedence not in prompts[0]
+        assert precedence in prompts[1]
+        assert 'Keep every requirement the user has not lifted' in prompts[1]
 
     async def test_tool_output_cannot_forge_transcript_messages(self):
         """Tool output that mimics the transcript's own markup stays inside its tool message."""
