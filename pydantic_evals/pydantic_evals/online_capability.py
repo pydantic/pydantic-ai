@@ -49,12 +49,16 @@ def _parse_traceparent(traceparent: str | None) -> SpanReference | None:
     return SpanReference(trace_id=trace_id, span_id=span_id)
 
 
+_Dispatch = Callable[[dict[str, Any]], None]
+"""Dispatches one capability's evaluators for a run, given the run's measured evaluation context."""
+
+
 @dataclass
 class _RunEvaluation:
     """The agent run an `OnlineEvaluation` is capturing, and the dispatches waiting on its result."""
 
     run_id: str | None
-    dispatchers: list[Callable[..., None]]
+    dispatchers: list[_Dispatch] = field(default_factory=list[_Dispatch])
 
 
 _CURRENT_RUN_EVALUATION: ContextVar[_RunEvaluation | None] = ContextVar('_CURRENT_RUN_EVALUATION', default=None)
@@ -159,28 +163,39 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         target = agent_name or 'agent'
         span_reference = _parse_traceparent(logfire_api.get_context().get('traceparent'))
 
-        def dispatch(output: Any, eval_context_kwargs: dict[str, Any], *, failed: bool) -> None:
-            evaluators = [ev for ev in sampled if ev.run_on_errors] if failed else sampled
-            if not evaluators:
-                return
-            context = EvaluatorContext(
-                name=ctx.run_id,
-                inputs=inputs,
-                output=output,
-                expected_output=None,
-                metadata=metadata,
-                **eval_context_kwargs,
-            )
-            _online_internal.dispatch_async(
-                _online_internal.dispatch_evaluators(evaluators, context, span_reference, target, config)
-            )
+        def dispatch(output: Any, *, failed: bool) -> _Dispatch:
+            """Bind this capability's own outcome of the run; the capturing capability supplies the measurements."""
+
+            def dispatch_with(eval_context_kwargs: dict[str, Any]) -> None:
+                evaluators = [ev for ev in sampled if ev.run_on_errors] if failed else sampled
+                if not evaluators:
+                    return
+                context = EvaluatorContext(
+                    name=ctx.run_id,
+                    inputs=inputs,
+                    output=output,
+                    expected_output=None,
+                    metadata=metadata,
+                    **eval_context_kwargs,
+                )
+                _online_internal.dispatch_async(
+                    _online_internal.dispatch_evaluators(evaluators, context, span_reference, target, config)
+                )
+
+            return dispatch_with
 
         if run_evaluation is not None and joining:
-            # The capturing capability dispatches for every capability that joined it.
-            run_evaluation.dispatchers.append(dispatch)
-            return await handler()
+            # The capturing capability dispatches for every capability that joined it, each with the
+            # outcome its own handler saw: a capability between the two may have changed it.
+            try:
+                result = await handler()
+            except Exception as e:
+                run_evaluation.dispatchers.append(dispatch(e, failed=True))
+                raise
+            run_evaluation.dispatchers.append(dispatch(result.output, failed=False))
+            return result
 
-        run_evaluation = _RunEvaluation(run_id=ctx.run_id, dispatchers=[dispatch])
+        run_evaluation = _RunEvaluation(run_id=ctx.run_id)
         token = _CURRENT_RUN_EVALUATION.set(run_evaluation)
         # Run the agent with span tree capture and attribute/metric tracking.
         # `get_eval_context_kwargs` is bound by the `with` once `run_task` enters, which can't fail;
@@ -191,15 +206,15 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
                 result = await handler()
         except Exception as e:
             assert get_eval_context_kwargs is not None
-            eval_context_kwargs = get_eval_context_kwargs()
-            for run_dispatch in run_evaluation.dispatchers:
-                run_dispatch(e, eval_context_kwargs, failed=True)
+            _dispatch_all([dispatch(e, failed=True), *run_evaluation.dispatchers], get_eval_context_kwargs())
             raise
         finally:
             _CURRENT_RUN_EVALUATION.reset(token)
 
-        eval_context_kwargs = get_eval_context_kwargs()
-        for run_dispatch in run_evaluation.dispatchers:
-            run_dispatch(result.output, eval_context_kwargs, failed=False)
-
+        _dispatch_all([dispatch(result.output, failed=False), *run_evaluation.dispatchers], get_eval_context_kwargs())
         return result
+
+
+def _dispatch_all(dispatchers: list[_Dispatch], eval_context_kwargs: dict[str, Any]) -> None:
+    for run_dispatch in dispatchers:
+        run_dispatch(eval_context_kwargs)

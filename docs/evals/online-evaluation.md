@@ -1016,7 +1016,7 @@ To attach additional sinks or override sampling defaults, pass an [`OnlineEvalCo
 
 The capability supports all the same features as the [`@evaluate()`][pydantic_evals.online.evaluate] decorator: sampling, per-evaluator sinks, concurrency control, and error handling. The `config` parameter is optional and defaults to the global [`DEFAULT_CONFIG`][pydantic_evals.online.DEFAULT_CONFIG].
 
-An agent can have several `OnlineEvaluation` capabilities, for example with different configs or sinks. Each samples and dispatches its own evaluators for every run, against the same evaluation context. A run of another agent made during an evaluated run, such as from one of its tools, isn't evaluated, just like a run inside [`Dataset.evaluate()`][pydantic_evals.dataset.Dataset.evaluate].
+An agent can have several `OnlineEvaluation` capabilities, for example with different configs or sinks. Each samples and dispatches its own evaluators for every run, and they share the run's measured duration, span tree, attributes and metrics.
 
 !!! note
     [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] wraps [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent.iter()`][pydantic_ai.agent.Agent.iter] when the run reaches a final result. For streaming runs, evaluators are dispatched only after the final result is available and the surrounding context manager exits. The same delayed-dispatch behavior applies when driving an [`agent.iter()`][pydantic_ai.agent.Agent.iter] run to completion, which is generally the preferred streaming API.
