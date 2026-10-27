@@ -703,15 +703,15 @@ def _run(action: Callable[[], ResultT]) -> ResultT:
     """Run an action, turning the errors it raises for the user into HTTP errors carrying their message."""
     try:
         return action()
-    except (ValueError, LookupError, RuntimeError) as error:
-        raise _http(error) from error
+    except (ValueError, LookupError, RuntimeError) as exc:
+        raise _http(exc) from exc
 
 
 async def _wait(action: Awaitable[ResultT]) -> ResultT:
     try:
         return await action
-    except (ValueError, LookupError, RuntimeError) as error:
-        raise _http(error) from error
+    except (ValueError, LookupError, RuntimeError) as exc:
+        raise _http(exc) from exc
 
 
 def _http(error: ValueError | LookupError | RuntimeError) -> HTTPException:

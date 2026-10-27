@@ -152,7 +152,7 @@ Key restrictions:
 
 - No third-party imports
 - No `import *`
-- Only a small stdlib subset is allowed, and each must be imported before use: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`
+- Only a small stdlib subset is allowed, and each must be imported before use: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `hashlib`, `os.path`, `tomllib`
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation and wait APIs are unavailable
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` require an `os_access` handler; `time.sleep` and `asyncio.sleep` really wait, within the sleep allowance
 - Filesystem I/O requires an `os_access` handler or a `mount`; `os.getenv` and `os.environ` require an `os_access` handler
@@ -201,11 +201,11 @@ CodeMode(
     speculate: Sequence[str] | Literal['declared'] | None = None,  # start read-only calls while streaming
     monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = None,  # a ws(s):// URL, or a function returning the pool
     repl_store: CodeModeReplStore | None = None,  # keep the REPL across agent runs
-    dynamic_catalog: bool = False,         # move the tool catalog into dynamic instructions
+    dynamic_catalog: bool = True,          # keep the tool catalog in an appending instruction block
 )
 ```
 
-- `dynamic_catalog=True`: moves sandboxed-tool signatures out of `run_code`'s description into an instruction block (`toolset:code_mode:catalog`, `on_change='append'`), keeps deferred tools that `run_code` will take over off the wire until they're found, and appends the updated catalog when one is found (plus a short announcement when Tool Search found it), so discoveries don't rewrite the cached prompt. Discovery then goes through the local `search_tools` or `load_capability`; with the `'bm25'`/`'regex'` strategies, or a selector that keeps another deferred tool native, such tools are still declared for the native search. The catalog takes the toolset id `code_mode`, so another instruction-contributing toolset with that id raises a duplicate-id `UserError`; rename it. A callable selector must give the same answer for a tool before and after it's revealed, or the cache moves. Worth it only with `ToolSearch` or deferred capabilities; with a fixed toolset the default is better.
+- `dynamic_catalog=True` (default): moves sandboxed-tool signatures out of `run_code`'s description into an instruction block (`toolset:code_mode:catalog`, `on_change='append'`), keeps deferred tools that `run_code` will take over off the wire until they're found, and appends the updated catalog when one is found (plus a short announcement when Tool Search found it), so discoveries don't rewrite the cached prompt. Discovery then goes through the local `search_tools` or `load_capability`; with the `'bm25'`/`'regex'` strategies, or a selector that keeps another deferred tool native, such tools are still declared for the native search. The catalog takes the toolset id `code_mode`, so another instruction-contributing toolset with that id raises a duplicate-id `UserError`; rename it. A callable selector must give the same answer for a tool before and after it's revealed, or the cache moves. `dynamic_catalog=False` keeps the catalog in `run_code`'s description instead (the default in earlier releases), so a reveal rewrites the description and the cached prompt.
 - `eager=True`: side effects from early statements cannot be rolled back, and hooks/approval on `run_code` run only after the call finishes streaming. Only applies when `run_code` is the first tool call in the response.
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).

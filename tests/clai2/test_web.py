@@ -66,6 +66,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     DialogClosed,
     DialogOpened,
     DialogShown,
+    ForkEntry,
     ItemAdded,
     Notice,
     PluginsChanged,
@@ -289,6 +290,41 @@ def test_a_background_fork_is_not_a_turn(make_web: 'MakeWeb') -> None:
         started = [message for message in [*forked, *messages] if isinstance(message, TurnStarted)]
         assert [message.item.text for message in started if message.item] == ['here']
         assert end.outcome == 'completed'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_fork_results_and_the_forks_table_reach_the_browser(make_web: 'MakeWeb') -> None:
+    """What the terminal prints for `/fork` and `/forks`, the answer and the table, reaches the page as notices."""
+    web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='the fork answer'), deps_type=type(None)))
+    shell = web_.shell
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': '/forks'})
+        _, empty = receive_until(socket, Notice)
+        assert (empty.text, empty.forks) == ('No forks yet. Start one with /fork [@model] PROMPT.', None)
+        web_.post('/api/input', {'text': '/fork look elsewhere'})
+        # The fork may finish before its command's notice is sent.
+        notices = [receive_until(socket, Notice)[1], receive_until(socket, Notice)[1]]
+        [started] = [notice for notice in notices if notice.fork is None]
+        [ended] = [notice for notice in notices if notice.fork is not None]
+        assert started.text.startswith('fork #1 (agent default) started in the background.')
+        [record] = shell.forks.records
+        assert record.session_id is not None
+        assert (ended.text, ended.level, ended.command) == ('the fork answer', 'info', None)
+        fork = ended.fork
+        assert fork == ForkEntry(
+            id=1,
+            model='agent default',
+            prompt='look elsewhere',
+            status='done',
+            elapsed=record.elapsed or 0,
+            session_id=record.session_id,
+        )
+        web_.post('/api/input', {'text': '/forks'})
+        _, table = receive_until(socket, Notice)
+        assert (table.command, table.text, table.forks) == ('/forks', '1 done', [fork])
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)
 

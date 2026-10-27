@@ -125,10 +125,11 @@ and paths reach the model as a user message, not as instructions. The
 `<system>`-tagged user text otherwise), followed by the file's path as a
 user-message `<context-file path="..." />` tag.
 
-Each file is wrapped in `<context-file path="...">` tags. A closing
-`</context-file>` tag inside a file is escaped as `&lt;/context-file>`, and the
-path is HTML-escaped, so a file cannot end its block early and continue as
-something else.
+Each file is wrapped in `<context-file path="...">` tags. The `<` of every
+opening or closing `<context-file>` tag inside a file, and of every framing tag
+Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest), is
+escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own
+block.
 
 ## Cache cost
 

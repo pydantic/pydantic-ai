@@ -12,7 +12,7 @@ from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta,
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import LinkOutput
+from pydantic_clai2.ui.rendering.rendering import LinkOutput
 
 URL = 'https://github.com/pydantic/pydantic-ai-harness/pull/1006'
 OPEN = f'\x1b]8;;{URL}\x1b\\'
@@ -217,7 +217,7 @@ def test_oversized_url_does_not_amplify_slow_label_chunks() -> None:
 @pytest.mark.parametrize('length', [2048, 2049, 24000])
 @pytest.mark.parametrize('width', [40, 120])
 def test_markdown_replay_caps_hyperlink_metadata(length: int, width: int) -> None:
-    from pydantic_clai2.ui.rendering._rendering import render_markdown
+    from pydantic_clai2.ui.rendering.rendering import render_markdown
 
     url = 'https://example.com/' + 'x' * (length - len('https://example.com/'))
     label = 'label ' * 40
