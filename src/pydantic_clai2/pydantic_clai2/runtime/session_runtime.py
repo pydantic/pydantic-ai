@@ -137,7 +137,10 @@ _RESTART_ELSEWHERE = (
 
 
 def _raised(refusal: Callable[[], str | None]) -> Callable[[], None]:
-    """`refusal`, raised: the web UI, which alone opens `Command.menu`, shows it as an error, not a saved row."""
+    """`refusal`, raised, for every caller of `Command.menu` (`host.command_menu`), such as the web UI's About.
+
+    A remote UI then shows a refused Update as an error, not as a saved row; the terminal's own menu returns it.
+    """
 
     def refuse() -> None:
         if (refused := refusal()) is not None:
