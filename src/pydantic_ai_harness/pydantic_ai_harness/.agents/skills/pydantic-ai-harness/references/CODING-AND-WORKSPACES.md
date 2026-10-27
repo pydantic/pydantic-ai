@@ -517,8 +517,9 @@ RepoContext(home_dir='..', nested_traversal=True)  # walk up one level; follow t
 
 `home_dir=None` (default) scans only the working directory; set it to walk up to that ancestor. It is
 a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserError`.
-`nested_traversal=True` surfaces a directory's instruction file when `FileSystem` reads or lists it
-(`nested_inject='pointer'` or `'contents'`), in the message tail so the cached prefix stays stable.
+`nested_traversal=True` surfaces the instruction files between the working directory and whatever
+`FileSystem` reads or lists, shallowest first and each directory once per run (`nested_inject='pointer'`
+or `'contents'`), in the message tail so the cached prefix stays stable.
 
 ## Macroscope
 

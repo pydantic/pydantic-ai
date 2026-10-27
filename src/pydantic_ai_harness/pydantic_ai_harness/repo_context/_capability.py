@@ -76,8 +76,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        the instructions then point at the roots instead.
 
     3. Nested-on-traversal (`nested_traversal`, off by default): when the model
-       lists or reads a directory through a filesystem capability event,
-       surface that directory's `CLAUDE.md`/`AGENTS.md`. The note is enqueued in
+       lists a directory or reads a file through a filesystem capability event,
+       surface the `CLAUDE.md`/`AGENTS.md` of that directory and of every
+       directory between it and the working directory, shallowest first. The
+       working directory's own files are not repeated when Strategy 1 loaded
+       them. The note is enqueued in
        the message tail, not added to system instructions, so it does not
        invalidate the cached prefix. `nested_inject='pointer'` (default)
        enqueues a one-line pointer; `'contents'` inlines the file body.
@@ -127,8 +130,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     """Name of the inventory tool exposed to the model."""
 
     nested_traversal: bool = False
-    """Strategy 3: surface a directory's instruction file when the model lists or
-    reads that directory. Off by default -- it couples to the list/read tools."""
+    """Strategy 3: surface the instruction files between the working directory and
+    a directory the model lists or reads a file in. Off by default -- it couples to the list/read tools."""
 
     nested_inject: Literal['pointer', 'contents'] = 'pointer'
     """For Strategy 3: append a one-line `pointer`, or inline the file `contents`."""
@@ -184,6 +187,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return
         workspace = ctx.workspace
         working_dir = await self._working_dir(workspace)
+        # The walk-up loads every instruction file in the working directory: nested traversal has nothing to add there.
+        self._seen_dirs.add(str(working_dir))
         home = None
         if self.home_dir is not None:
             home = Path(await workspace.resolve(workspace_path(Path(self.home_dir))))
@@ -286,6 +291,15 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         await self._enqueue_context(ctx, directory)
 
     async def _enqueue_context(self, ctx: RunContext[AgentDepsT], directory: Path) -> None:
+        """Surface the instruction file of `directory` and of each directory between it and the working directory.
+
+        Files are enqueued shallowest first, so the most specific file is the latest one the model reads.
+        """
+        working_dir = await self._working_dir(ctx.workspace)
+        for current in _directories_down_to(working_dir, directory):
+            await self._enqueue_directory(ctx, current)
+
+    async def _enqueue_directory(self, ctx: RunContext[AgentDepsT], directory: Path) -> None:
         key = str(directory)
         if key in self._seen_dirs:
             return
@@ -333,3 +347,15 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Serialization name for agent-spec support."""
         return 'RepoContext'
+
+
+def _directories_down_to(working_dir: Path, directory: Path) -> list[Path]:
+    """The working directory and each directory below it down to `directory`, or just `directory` outside it."""
+    try:
+        relative = directory.relative_to(working_dir)
+    except ValueError:
+        return [directory]
+    chain = [working_dir]
+    for part in relative.parts:
+        chain.append(chain[-1] / part)
+    return chain
