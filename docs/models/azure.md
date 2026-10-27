@@ -121,7 +121,7 @@ Or initialise the model and provider directly, for example to process a document
 
 ## Prompt caching
 
-On GPT-5.6 and later deployments, Azure's v1 API honors OpenAI's explicit [prompt caching](openai.md#prompt-caching) settings with both the Chat Completions and Responses APIs: [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_options], [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_cache_instructions] and [`CachePoint`][pydantic_ai.messages.CachePoint] markers. Cache writes and reads are reported as `cache_write_tokens` and `cache_read_tokens` in the response's [usage](../capabilities/caching.md#monitoring-cache-efficiency), as on OpenAI.
+On GPT-5.6 and later deployments, Azure's v1 API honors OpenAI's explicit [prompt caching](openai.md#prompt-caching) settings with both the Chat Completions and Responses APIs: [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_options], [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_cache_instructions] and [`CachePoint`][pydantic_ai.messages.CachePoint] markers. Cache writes and reads are reported as [`cache_write_tokens`][pydantic_ai.usage.RequestUsage.cache_write_tokens] and [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens] in the response's usage, as on OpenAI. See [Monitoring cache efficiency](../capabilities/caching.md#monitoring-cache-efficiency).
 
 The unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting and the [`Caching`][pydantic_ai.capabilities.Caching] capability don't turn these on with `AzureProvider`, so set them yourself:
 
