@@ -70,6 +70,43 @@ An `Answerer` is one async callable: it takes an `AskUserRequest` and returns an
 - The model writes the questions, and a prompt injection can make it ask for a password or a
   token. Present the questions as coming from the model, not as a system or sign-in prompt.
 
+## Adding notes to an answer
+
+Set `AskUserAnswer.note` to a tuple of `UserContent` items to accompany selected labels or a
+custom answer. Text and images keep their order; notes do not replace the required answer.
+
+```python
+from pydantic_ai.messages import ImageUrl
+from pydantic_ai_harness.ask_user import AskUserAnswer
+
+answer = AskUserAnswer(
+    header='Database',
+    selected=('Postgres',),
+    note=('Keep version 16. Match this layout:', ImageUrl('https://example.com/schema.png')),
+)
+```
+
+Text, including `TextContent`, follows the custom-answer character rules. A nonempty note must
+contain nonblank text or an attachment, not only whitespace or cache markers. Run
+`check_response(request, response)` before submitting client input. The harness sets no note size
+limit; the answerer should bound text and attachments from clients.
+
+With notes, `ask_user_result` returns a `ToolReturn`: `return_value` is the unchanged answer
+dictionary, and `content` sends the notes as `UserPromptPart` content rather than tool data.
+Each note is framed by `<answer_note header="...">` and `</answer_note>` text items. Headers and
+framing tags inside text are escaped; images remain multimodal items between those boundaries.
+The boundary items are `TextContent` with `metadata` containing `origin='ask_user'`, `request_id`
+and `header`, so applications can identify the record without matching visible text.
+`AskUserAnsweredEvent.response` retains the original notes, including attachments.
+Without notes, the result remains the existing dictionary or decline text.
+
+**Compatibility impact:** `ask_user_result` now returns
+`ToolReturn[dict[str, list[str]]] | dict[str, list[str]] | str`. Code that assigned its result to
+an explicitly annotated `dict[str, list[str]] | str` must widen that annotation or narrow with
+`isinstance(result, ToolReturn)` and read `result.return_value`. Deferred hosts can continue to
+pass the result directly to `DeferredToolResults.calls`.
+This API change follows the [Harness 0.x version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
+
 ## Bounding the wait
 
 The run waits inside the tool call for the answerer to return. Set `timeout`, in seconds, to

@@ -161,6 +161,12 @@ print(asked[0].questions[0].header)
 - Schema violations (fewer than 2 options, duplicate headers, more than 10 questions, control characters) are retries to the model, and the answerer is never called.
 - An answerer response that does not fit its request (unknown header, label not offered, several picks on single-select) fails the whole run with `ValueError`, as `check_response` would; decline with `cancelled=True` instead.
 - `AskUserRequestedEvent`/`AskUserAnsweredEvent` let an observer capability (`@on_event`) assert on the exchange without being the answerer.
+- Add `note=('User explanation', image)` to `AskUserAnswer` alongside `selected` or `custom_answer`.
+  Assert that the answer dictionary stays in `ToolReturnPart.content` and notes reach a separate `UserPromptPart`.
+  Notes use `answer_note` frames; boundary `TextContent.metadata` carries `origin='ask_user'`, `request_id` and `header`.
+  Keep image items multimodal when asserting note order. Blank-only notes and control characters fail validation.
+- Handle `ask_user_result` as `ToolReturn[dict[str, list[str]]] | dict[str, list[str]] | str`.
+  Pass the result directly to `DeferredToolResults.calls` for deferred answers, including notes.
 
 ## Memory with an In-Memory Store
 

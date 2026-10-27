@@ -31,6 +31,7 @@ FramingTag = Literal[
     'validation_errors',
     'retry_feedback',
     'conversation_summary',
+    'answer_note',
 ]
 """Every tag the framework writes into prompt text."""
 

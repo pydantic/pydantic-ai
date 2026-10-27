@@ -10,7 +10,7 @@ from uuid import uuid4
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 from typing_extensions import TypedDict
 
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import CachePoint, TextContent, ToolCallPart, UserContent, UserPromptPart
 
 TOOL_NAME = 'ask_user_question'
 
@@ -154,11 +154,17 @@ class AskUserRequest:
 
 @dataclass(frozen=True, kw_only=True)
 class AskUserAnswer:
-    """Picked labels, or a custom answer instead of those labels, for one question."""
+    """Picked labels, or a custom answer instead, with optional user notes for one question."""
 
     header: str
     selected: tuple[str, ...] = ()
     custom_answer: str | None = None
+    note: tuple[UserContent, ...] = ()
+    """User text and attachments, in order, accompanying either selected labels or a custom answer.
+
+    Text follows the custom-answer character rules. A nonempty note must contain nonblank text
+    or an attachment, not only whitespace or cache markers. Notes do not replace the answer.
+    """
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -181,6 +187,25 @@ class Answerer(Protocol):
         ...  # pragma: no cover
 
 
+def _check_note(note: tuple[UserContent, ...]) -> None:
+    if not isinstance(note, tuple):
+        raise ValueError('an answer note must be a tuple of UserContent items')
+    if not note:
+        return
+    # Reuse core's content-type guard before notes reach a model adapter.
+    UserPromptPart(content=note)
+    has_content = False
+    for item in note:
+        if isinstance(item, str | TextContent):
+            text = item if isinstance(item, str) else item.content
+            _printable(text, newlines=True)
+            has_content |= bool(text.strip())
+        elif not isinstance(item, CachePoint):
+            has_content = True
+    if not has_content:
+        raise ValueError('an answer note must not be blank')
+
+
 def check_response(request: AskUserRequest, response: AskUserResponse) -> None:
     """Raise `ValueError` when a response does not fit its request.
 
@@ -196,6 +221,7 @@ def check_response(request: AskUserRequest, response: AskUserResponse) -> None:
         question = questions.pop(answer.header, None)
         if question is None:
             raise ValueError(f'answer for unknown or repeated question {answer.header!r}')
+        _check_note(answer.note)
         if answer.custom_answer is not None:
             if answer.selected:
                 raise ValueError('a custom answer cannot also select options')
