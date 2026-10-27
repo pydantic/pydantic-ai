@@ -508,6 +508,21 @@ Question keys, route labels, and the option names a question key carries for one
 
 Usage is recorded under `pydantic_ai.decision.usage.*` rather than `gen_ai.usage.*`, and no metrics are recorded for `decide` spans: the model request span above them already reports the total of its `decide` spans' usage, and a backend that adds up usage across spans would count it twice.
 
+### Workspace spans
+
+An instrumented run traces each call it makes on its [workspace](workspace.md): a `workspace {operation}` span for `run`, `read_bytes`, `write_bytes`, `stat`, `list_dir`, `make_dir`, `remove`, `exists` and `realpath`, under the tool or hook that made the call. On a backend without native file access, such as Docker or SSH, file operations run as shell commands, and each command gets a `workspace run` span of its own under the file operation's span. A call outside an instrumented run, such as one on `result.workspace` after the run, is not traced.
+
+| Attribute | Value |
+|-----------|-------|
+| `pydantic_ai.workspace.provider`, `pydantic_ai.workspace.id` | The workspace the call reached, once it exists, as on the agent run span |
+| `process.exit.code` | On `workspace run`: the command's exit code. A non-zero exit is a result, not an error, so the span's status stays unset |
+| `process.command_args` or `process.command_line` | On `workspace run`: the command as an argument list, or as the shell string it was given. Only with `include_content=True`; the command's `env` is never recorded |
+| `pydantic_ai.workspace.command.step` | On a shell-filesystem `workspace run`: what the command does, such as `stat`, `read_chunk` or `write_chunk`. These commands carry file contents, so their text is never recorded |
+| `file.path` | On file operations: the absolute path. Only with `include_content=True` |
+| `file.size` | On `read_bytes` and `write_bytes`: the bytes read or written |
+
+A call that raises records the exception and an error status, except a missing file, which is often the answer the caller asked for and leaves the status unset. Under [durable execution](durable_execution/overview.md), calls from a tool or step are traced where they run. With Temporal, that takes the [`LogfirePlugin`](durable_execution/temporal.md#observability-with-logfire) to carry the trace into the activity, and the agent's own instrumentation (`Agent.instrument_all()`, or an `Instrumentation` capability on the agent) to say how to record it.
+
 ### Adding Custom Metadata
 
 Use the agent's `metadata` parameter to attach additional data to the agent's span.

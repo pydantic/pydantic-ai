@@ -6785,6 +6785,39 @@ async def test_temporal_workspace_restores_ref_and_replays_without_side_effects(
     assert before_replay == after_replay
 
 
+async def test_temporal_workspace_calls_are_traced_inside_their_activity(
+    client_with_logfire: Client, capfire: CaptureLogfire
+):
+    """The run's tracer can't cross into an activity, so the activity traces its workspace calls with the agent's own.
+
+    They nest under the activity's span, and the workflow side, whose calls are activities, adds no workspace span.
+    """
+    _workspace_probe_backends.clear()
+
+    async with Worker(
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkspaceProbeWorkflow],
+        plugins=[AgentPlugin(_workspace_probe_agent)],
+    ):
+        await client_with_logfire.execute_workflow(
+            WorkspaceProbeWorkflow.run, id=f'{WorkspaceProbeWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    names = {span['context']['span_id']: span['name'] for span in spans}
+    assert [
+        (names[span['parent']['span_id']], span['attributes'].get('process.command_args'))
+        for span in spans
+        if span['name'].startswith('workspace ')
+    ] == snapshot(
+        [
+            ('RunActivity:agent__workspace_probe_agent__toolset__<agent>__call_tool', ('first',)),
+            ('RunActivity:agent__workspace_probe_agent__toolset__<agent>__call_tool', ('second',)),
+        ]
+    )
+
+
 @workflow.defn
 class DecideDurableAgentWorkflow:
     @workflow.run

@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, overload
 
+from opentelemetry.trace import get_current_span
 from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import CapabilityEventT, CustomEventT
+from pydantic_ai.durable_exec._base import agent_instrumentation_settings
 from pydantic_ai.durable_exec._run_context import DurableRunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.tools import RunContext
+from pydantic_ai.workspaces._telemetry import publish_workspace_telemetry
 
 from ._spec import TEMPORAL_ENGINE_SPEC
 
@@ -77,4 +80,22 @@ def deserialize_run_context(
 
     See [`DurableRunContext.restore`][pydantic_ai.durable_exec.DurableRunContext.restore].
     """
-    return run_context_type.restore(serialized, deps=deps, agent=agent, engine_spec=TEMPORAL_ENGINE_SPEC)
+    ctx = run_context_type.restore(serialized, deps=deps, agent=agent, engine_spec=TEMPORAL_ENGINE_SPEC)
+    if agent is not None:
+        _publish_workspace_telemetry(ctx, agent)
+    return ctx
+
+
+def _publish_workspace_telemetry(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> None:
+    """Trace the activity's workspace calls under the activity's span, as the run traces its own.
+
+    The run's tracer can't cross into the activity, so it is rebuilt from the worker's agent, as
+    `decide` spans are. Content is captured only if the run asked for it too. Nothing is traced when
+    the activity has no recording span to attach to. Every activity runs in a context of its own, so
+    this lasts as long as the activity.
+    """
+    settings = agent_instrumentation_settings(agent)
+    if settings is not None and get_current_span().is_recording():
+        publish_workspace_telemetry(
+            settings.tracer, include_content=settings.include_content and ctx.trace_include_content
+        )

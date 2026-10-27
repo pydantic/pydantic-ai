@@ -7,13 +7,16 @@ import posixpath
 import shlex
 import uuid
 from collections.abc import Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from typing import cast
 
 import anyio
+from opentelemetry.trace import INVALID_SPAN, Span
 from typing_extensions import get_protocol_members
 
 from pydantic_ai.exceptions import UserError
 
+from ._telemetry import command_span, operation_span, set_command, set_content
 from .protocol import (
     CommandResult,
     FileEntry,
@@ -119,6 +122,12 @@ class _ShellFilesystem(SupportsFilesystem):
     def __init__(self, backend: SupportsCommands):
         self._backend = backend
 
+    async def _run(self, command: str, step: str) -> CommandResult:
+        with command_span(step) as span:
+            result = await self._backend.run(command, shell=True)
+            span.set_attribute('process.exit.code', result.exit_code)
+            return result
+
     async def read_bytes(self, path: str) -> bytes:
         # The size bounds the read, so a file growing meanwhile can't make it run on.
         size: int | None = None
@@ -141,8 +150,8 @@ class _ShellFilesystem(SupportsFilesystem):
     async def _damaged_or_missing_tools(self, path: str) -> WorkspaceError:
         # A missing `dd` or `base64` looks like damaged output: a pipe reports only its last command's status.
         tools = ' '.join(_SHELL_TOOLS)
-        probe = await self._backend.run(
-            f'for tool in {tools}; do command -v "$tool" >/dev/null 2>&1 || printf "%s " "$tool"; done', shell=True
+        probe = await self._run(
+            f'for tool in {tools}; do command -v "$tool" >/dev/null 2>&1 || printf "%s " "$tool"; done', 'probe'
         )
         missing = probe.stdout.split()
         if not missing:
@@ -158,9 +167,9 @@ class _ShellFilesystem(SupportsFilesystem):
         # One command per chunk keeps each command's output under the backend's output limit.
         for index in range((size + _SHELL_READ_CHUNK_BYTES - 1) // _SHELL_READ_CHUNK_BYTES):
             try:
-                result = await self._backend.run(
+                result = await self._run(
                     f'dd if={source} bs={_SHELL_READ_CHUNK_BYTES} skip={index} count=1 2>/dev/null | base64',
-                    shell=True,
+                    'read_chunk',
                 )
             except WorkspaceOutputLimitError as error:
                 raise WorkspaceError(f'shell filesystem {what} exceeded command output limit for {path!r}') from error
@@ -192,15 +201,15 @@ class _ShellFilesystem(SupportsFilesystem):
                     else ''
                 )
                 redirect = '>' if index == 0 else '>>'
-                result = await self._backend.run(
-                    f"{start}printf '%s' {shlex.quote(chunk)} {redirect} {quoted_temporary}", shell=True
+                result = await self._run(
+                    f"{start}printf '%s' {shlex.quote(chunk)} {redirect} {quoted_temporary}", 'write_chunk'
                 )
                 await self._raise_for_error(result, path)
 
             quoted_destination = shlex.quote(destination)
             # Copy first to preserve mode bits, and stop if that fails (an unreadable file, say) rather
             # than replace the file with a default mode; commit only after decoding succeeds.
-            result = await self._backend.run(
+            result = await self._run(
                 f'if test -d {quoted_destination}; then status={_SHELL_EXIT_IS_DIRECTORY}; '
                 # `mv` would replace a FIFO or device with a regular file; refuse as the local backend does.
                 f'elif test -e {quoted_destination} && ! test -f {quoted_destination}; '
@@ -211,7 +220,7 @@ class _ShellFilesystem(SupportsFilesystem):
                 f'base64 -d < {quoted_temporary} > {quoted_decoded} '
                 f'&& mv -f {quoted_decoded} {quoted_destination}; '
                 f'status=$?; fi; rm -f {quoted_temporary} {quoted_decoded}; exit $status',
-                shell=True,
+                'commit',
             )
             await self._raise_for_error(result, path)
         except BaseException:
@@ -220,7 +229,7 @@ class _ShellFilesystem(SupportsFilesystem):
             # best-effort removal; the interrupted operation still propagates unchanged.
             with anyio.move_on_after(_SHELL_CLEANUP_TIMEOUT, shield=True):
                 try:
-                    await self._backend.run(f'rm -f {quoted_temporary} {quoted_decoded}', shell=True)
+                    await self._run(f'rm -f {quoted_temporary} {quoted_decoded}', 'cleanup')
                 except Exception:
                     pass
             raise
@@ -228,13 +237,13 @@ class _ShellFilesystem(SupportsFilesystem):
     async def stat(self, path: str) -> FileEntry:
         quoted_path = shlex.quote(path)
         # Follows a symlink to its target, like the other operations.
-        result = await self._backend.run(
+        result = await self._run(
             f"if test -d {quoted_path}; then printf 'directory\\n'; "
             f'elif test -f {quoted_path}; then '
             f'test -r {quoted_path} || exit {_SHELL_EXIT_PERMISSION}; wc -c < {quoted_path}; '
             f'elif test -e {quoted_path}; then exit {_SHELL_EXIT_NOT_REGULAR}; '
             f'else exit {_SHELL_EXIT_NOT_FOUND}; fi',
-            shell=True,
+            'stat',
         )
         await self._raise_for_error(result, path, missing=True)
         output = result.stdout.strip()
@@ -265,7 +274,7 @@ class _ShellFilesystem(SupportsFilesystem):
         paged = False
         completed = False
         try:
-            result = await self._backend.run(
+            result = await self._run(
                 f'file={temporary_path}; trap \'rm -f "$file"\' EXIT HUP INT TERM; '
                 f'if ! test -d {quoted_path}; then '
                 f'test -e {quoted_path} && exit {_SHELL_EXIT_NOT_DIRECTORY}; exit {_SHELL_EXIT_NOT_FOUND}; fi; '
@@ -273,7 +282,7 @@ class _ShellFilesystem(SupportsFilesystem):
                 f'&& size=$(wc -c < "$file") && printf "%s\\n" "$size" && '
                 f'if [ "$size" -le {_SHELL_READ_CHUNK_BYTES} ]; then base64 < "$file"; '
                 'else printf "PAGED\\n"; trap - EXIT HUP INT TERM; fi',
-                shell=True,
+                'list',
             )
             completed = True
             size, separator, encoded = result.stdout.partition('\n')
@@ -288,18 +297,18 @@ class _ShellFilesystem(SupportsFilesystem):
             with anyio.move_on_after(_SHELL_CLEANUP_TIMEOUT, shield=True):
                 try:
                     if paged or not completed:
-                        await self._backend.run(f'rm -f {temporary_path}', shell=True)
+                        await self._run(f'rm -f {temporary_path}', 'cleanup')
                 except Exception:
                     pass
 
     async def make_dir(self, path: str) -> None:
         quoted_path = shlex.quote(path)
         # `mkdir -p` fails generically over an existing file; classify it like a native `mkdir`.
-        result = await self._backend.run(
+        result = await self._run(
             f'if test -e {quoted_path} && ! test -d {quoted_path}; then exit {_SHELL_EXIT_EXISTS}; fi; '
             f'parent={shlex.quote(posixpath.dirname(path))}; {_SHELL_CHECK_PARENTS}'
             f'mkdir -p {quoted_path}',
-            shell=True,
+            'make_dir',
         )
         await self._raise_for_error(result, path)
 
@@ -310,13 +319,11 @@ class _ShellFilesystem(SupportsFilesystem):
         if root == target or root.startswith(target.rstrip('/') + '/'):
             raise ValueError('cannot remove the workspace root or its ancestor')
         quoted_path = shlex.quote(path)
-        result = await self._backend.run(
-            f'(test -e {quoted_path} || test -L {quoted_path}) && rm -rf {quoted_path}', shell=True
-        )
+        result = await self._run(f'(test -e {quoted_path} || test -L {quoted_path}) && rm -rf {quoted_path}', 'remove')
         await self._raise_for_error(result, path, missing=True)
 
     async def exists(self, path: str) -> bool:
-        result = await self._backend.run(f'test -e {shlex.quote(path)}', shell=True)
+        result = await self._run(f'test -e {shlex.quote(path)}', 'exists')
         # `test` exits 1 for "no"; anything else (a missing shell, a dropped SSH link) is a failure, not absence.
         if result.exit_code in (0, 1):
             return result.exit_code == 0
@@ -333,7 +340,7 @@ class _ShellFilesystem(SupportsFilesystem):
         # `readlink` cannot read fails the call instead: kept as written, it would pass a root check
         # for a path that leads outside. The result is base64-encoded because command substitution
         # would drop a trailing newline from a name.
-        result = await self._backend.run(
+        result = await self._run(
             f'rest={shlex.quote(path.lstrip("/"))}; resolved=; links=0; '
             'while [ -n "$rest" ]; do '
             'case "$rest" in */*) part="${rest%%/*}"; rest="${rest#*/}";; *) part="$rest"; rest=;; esac; '
@@ -344,7 +351,7 @@ class _ShellFilesystem(SupportsFilesystem):
             'case "$target" in /*) resolved=;; esac; rest="$target/$rest"; '
             'else resolved="$resolved/$part"; fi;; esac; done; '
             'value="${resolved:-/}"; printf %s "$value" | wc -c; printf %s "$value" | base64',
-            shell=True,
+            'realpath',
         )
         await self._raise_for_error(result, path)
         # Keep undecodable POSIX name bytes, as `list_dir` does, so its paths resolve too.
@@ -435,6 +442,13 @@ class Workspace(WorkspaceBackend):
             '`SupportsFilesystem` or `SupportsCommands`.'
         )
 
+    def _operation(self, operation: str) -> AbstractContextManager[Span]:
+        """Trace `operation` on the layer that calls the backend; the layers around it delegate to that one."""
+        backend = self._backend
+        if isinstance(backend, (Workspace, UnavailableWorkspace)):
+            return nullcontext(INVALID_SPAN)
+        return operation_span(operation, backend)
+
     async def run(
         self,
         command: WorkspaceCommand,
@@ -455,7 +469,11 @@ class Workspace(WorkspaceBackend):
         backend = self._backend
         if not isinstance(backend, SupportsCommands):
             raise UserError('This workspace does not support command execution.')
-        return await backend.run(command, shell=shell, env=env, timeout=timeout)
+        with self._operation('run') as span:
+            set_command(span, command)
+            result = await backend.run(command, shell=shell, env=env, timeout=timeout)
+            span.set_attribute('process.exit.code', result.exit_code)
+            return result
 
     async def working_dir(self) -> str:
         """The default working directory, which relative paths resolve against."""
@@ -475,33 +493,48 @@ class Workspace(WorkspaceBackend):
             return posixpath.normpath(path)
         return posixpath.normpath(posixpath.join(base or await self.working_dir(), path))
 
+    async def _resolve_traced(self, path: str, span: Span) -> str:
+        resolved = await self.resolve(path)
+        set_content(span, 'file.path', resolved)
+        return resolved
+
     async def read_bytes(self, path: str) -> bytes:
         """Read a file's contents as bytes."""
-        return await self._filesystem.read_bytes(await self.resolve(path))
+        with self._operation('read_bytes') as span:
+            data = await self._filesystem.read_bytes(await self._resolve_traced(path, span))
+            span.set_attribute('file.size', len(data))
+            return data
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         """Write bytes to a file, creating missing parents and replacing existing contents."""
-        await self._filesystem.write_bytes(await self.resolve(path), data)
+        with self._operation('write_bytes') as span:
+            span.set_attribute('file.size', len(data))
+            await self._filesystem.write_bytes(await self._resolve_traced(path, span), data)
 
     async def stat(self, path: str) -> FileEntry:
         """Return metadata for a file or directory."""
-        return await self._filesystem.stat(await self.resolve(path))
+        with self._operation('stat') as span:
+            return await self._filesystem.stat(await self._resolve_traced(path, span))
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
         """List the entries of a directory (non-recursive)."""
-        return await self._filesystem.list_dir(await self.resolve(path))
+        with self._operation('list_dir') as span:
+            return await self._filesystem.list_dir(await self._resolve_traced(path, span))
 
     async def make_dir(self, path: str) -> None:
         """Create a directory, including missing parents."""
-        await self._filesystem.make_dir(await self.resolve(path))
+        with self._operation('make_dir') as span:
+            await self._filesystem.make_dir(await self._resolve_traced(path, span))
 
     async def remove(self, path: str) -> None:
         """Remove a file, or a directory and its contents."""
-        await self._filesystem.remove(await self.resolve(path))
+        with self._operation('remove') as span:
+            await self._filesystem.remove(await self._resolve_traced(path, span))
 
     async def exists(self, path: str) -> bool:
         """Whether a file or directory exists at the path."""
-        return await self._filesystem.exists(await self.resolve(path))
+        with self._operation('exists') as span:
+            return await self._filesystem.exists(await self._resolve_traced(path, span))
 
     async def realpath(self, path: str) -> str:
         """Follow every symlink in `path` in the environment, like `os.path.realpath(path, strict=False)`.
@@ -515,15 +548,17 @@ class Workspace(WorkspaceBackend):
         [`resolve(path)`][pydantic_ai.workspaces.Workspace.resolve], which collapses `..` as text, so
         `realpath(await ws.resolve(path))` names the file they open.
         """
-        if not posixpath.isabs(path):
-            # Joined, not normalized: `link/..` must climb from the link's target, not cancel out.
-            path = posixpath.join(await self.working_dir(), path)
-        backend = self._backend
-        if isinstance(backend, SupportsRealpath):
-            return await backend.realpath(path)
-        if isinstance(backend, SupportsCommands):
-            return await _ShellFilesystem(backend).realpath(path)
-        return posixpath.normpath(path)
+        with self._operation('realpath') as span:
+            if not posixpath.isabs(path):
+                # Joined, not normalized: `link/..` must climb from the link's target, not cancel out.
+                path = posixpath.join(await self.working_dir(), path)
+            set_content(span, 'file.path', path)
+            backend = self._backend
+            if isinstance(backend, SupportsRealpath):
+                return await backend.realpath(path)
+            if isinstance(backend, SupportsCommands):
+                return await _ShellFilesystem(backend).realpath(path)
+            return posixpath.normpath(path)
 
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
         """Read a file as text; undecodable bytes raise `UnicodeDecodeError`."""

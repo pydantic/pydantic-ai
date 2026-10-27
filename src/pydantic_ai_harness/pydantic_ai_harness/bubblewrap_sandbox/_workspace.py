@@ -19,6 +19,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
     WrapperWorkspace,
 )
+from pydantic_ai.workspaces._telemetry import operation_span, set_command
 from pydantic_ai_harness._workspace_provider import check_timeout
 from pydantic_ai_harness.bubblewrap_sandbox._seccomp import NETWORK_FILTER_BASE64
 
@@ -304,6 +305,17 @@ class BubblewrapWorkspace(WrapperWorkspace):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+    ) -> CommandResult:
+        # Traced here, with the caller's command: the wrapped workspace sees only the launcher, whose
+        # arguments carry the `env` values.
+        with operation_span('run', self) as span:
+            set_command(span, command)
+            result = await self._run_sandboxed(command, shell=shell, env=env, timeout=timeout)
+            span.set_attribute('process.exit.code', result.exit_code)
+            return result
+
+    async def _run_sandboxed(
+        self, command: WorkspaceCommand, *, shell: bool, env: Mapping[str, str] | None, timeout: float | None
     ) -> CommandResult:
         check_timeout(timeout)
         if isinstance(command, str):
