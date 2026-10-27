@@ -13,7 +13,7 @@ from rich.console import Console
 
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.plugins import SessionEndReason
-from pydantic_clai2.ui.prompt._completion_adapter import COMPLETION_STYLE, PromptCompleter
+from pydantic_clai2.ui.prompt.completion_adapter import COMPLETION_STYLE, PromptCompleter
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer

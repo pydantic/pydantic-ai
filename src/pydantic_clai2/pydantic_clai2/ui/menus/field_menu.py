@@ -17,7 +17,7 @@ from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.text_editor import TextEditor, edit_text
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 CUSTOM = 'Type a value...'
 KEEP = 'Keep current'

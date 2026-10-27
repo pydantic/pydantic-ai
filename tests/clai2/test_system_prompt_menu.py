@@ -19,11 +19,11 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners, save_and_close_item
 from pydantic_clai2.ui.menus.system_prompt_menu import (

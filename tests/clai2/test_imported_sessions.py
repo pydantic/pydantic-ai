@@ -39,14 +39,13 @@ from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, is_task_report
 from pydantic_clai2 import chat
-from pydantic_clai2._app import create_stock_agent
-from pydantic_clai2.cli import _cli, headless
+from pydantic_clai2.app import create_stock_agent
+from pydantic_clai2.cli import cli, headless
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.runtime import claude_code_sessions, codex_sessions
-from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.imported_history import (
     Header,
     HistoryBuilder,
@@ -65,6 +64,7 @@ from pydantic_clai2.runtime.imported_sessions import (
     merge,
     save_import,
 )
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -1369,8 +1369,8 @@ def test_cli_resume_flags(
     async def fake_chat(*args: object, resume: str | None, resume_from: str | None, **kwargs: object) -> None:
         seen.append((resume, resume_from))
 
-    monkeypatch.setattr('pydantic_clai2._app.chat', fake_chat)
-    _cli.run()
+    monkeypatch.setattr('pydantic_clai2.app.chat', fake_chat)
+    cli.run()
     assert seen == [(resume, source)]
 
 
@@ -1385,7 +1385,7 @@ def test_cli_prompt_with_imported_session(tmp_path: Path, monkeypatch: pytest.Mo
 
     monkeypatch.setattr(headless, 'run_headless', run_headless)
     with pytest.raises(SystemExit) as error:
-        _cli.run()
+        cli.run()
     assert error.value.code == 0
     assert seen == [(CODEX_ID, 'codex')]
 
@@ -1399,7 +1399,7 @@ def test_cli_rejects_conflicting_resume_flags(
 ) -> None:
     monkeypatch.setattr('sys.argv', ['clai2', '--database', str(tmp_path / 'config.db'), *flags])
     with pytest.raises(SystemExit) as error:
-        _cli.run()
+        cli.run()
     assert error.value.code == 2
 
 

@@ -33,12 +33,16 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import MCP, WebSearch
 from pydantic_ai.messages import (
+    InstructionBaselinePart,
+    InstructionId,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolsetInstructionSource,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -254,6 +258,33 @@ _FINAL_SYNTHESIS = (
 )
 
 
+# With `dynamic_catalog` (the default), `CodeMode` sends the sandbox's function catalog as an
+# instruction block, not in `run_code`'s description.
+_CATALOG = '''\
+The following functions are available inside the sandbox. These functions are already defined in the sandbox; call them by name without redefining or importing them. All parameters are keyword-only. All tool functions are async: invoke them with `await`, e.g. `await tool_name(arg=value)`. Calling without `await` returns an unresolved future, not the value.
+
+To run calls concurrently, first `import asyncio`, then use `await asyncio.gather(...)` with positional awaitables. Monty does not support `asyncio.gather` keyword arguments or other task creation and wait APIs.
+
+```python
+async def hn_get_stories(*, feed: str, count: int = 50) -> dict[str, Any]:
+    """Fetch a Hacker News feed (top, best, or show)."""
+    ...
+
+async def hn_get_thread(*, itemId: int, depth: int = 2, maxComments: int = 60) -> dict[str, Any]:
+    """Fetch the comment thread for a story id."""
+    ...
+
+async def hn_get_user(*, username: str, includeSubmissions: bool = False, submissionCount: int = 5) -> dict[str, Any]:
+    """Fetch a Hacker News user's profile."""
+    ...
+
+async def web_search(*, query: str) -> dict[str, Any]:
+    """Stand-in for the WebSearch capability's local DDG fallback."""
+    ...
+```\
+'''
+
+
 def _model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     completed_run_codes = [
         p
@@ -322,9 +353,21 @@ class TestReadmeQuickStart:
                         UserPromptPart(
                             content="Across the top, best, and 'show HN' Hacker News feeds, find the most-discussed story with at least 100 points. Pull its comment thread, its submitter profile, and any web coverage. Summarize what you find in one paragraph.",
                             timestamp=IsDatetime(),
-                        )
+                        ),
+                        InstructionBaselinePart(
+                            instructions=[
+                                InstructionPart(
+                                    content=_CATALOG,
+                                    dynamic=True,
+                                    on_change='append',
+                                    name='catalog',
+                                    id=InstructionId(source=ToolsetInstructionSource(id='code_mode'), name='catalog'),
+                                )
+                            ]
+                        ),
                     ],
                     timestamp=IsDatetime(),
+                    instructions=_CATALOG,
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -419,6 +462,7 @@ ranked[:5]\
                         )
                     ],
                     timestamp=IsDatetime(),
+                    instructions=_CATALOG,
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -484,6 +528,7 @@ thread, user, coverage = await asyncio.gather(
                         )
                     ],
                     timestamp=IsDatetime(),
+                    instructions=_CATALOG,
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),

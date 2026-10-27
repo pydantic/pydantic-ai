@@ -25,9 +25,9 @@ from termflow.tui.menu import MenuResult
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2 import _app, chat, cli
-from pydantic_clai2.cli import _cli, self_update
-from pydantic_clai2.cli._cli import relaunch_argv
+from pydantic_clai2 import app, chat, cli
+from pydantic_clai2.cli import cli as cli_module, self_update
+from pydantic_clai2.cli.cli import relaunch_argv
 from pydantic_clai2.cli.self_update import (
     BLEEDING_URL,
     PACKAGES,
@@ -636,7 +636,7 @@ async def test_shell_relaunches_after_an_install(tmp_path: Path, monkeypatch: py
         return factory()
 
     # `/reload` rebuilds the shell, which keeps the conversation the launch options chose.
-    monkeypatch.setattr(_app, 'reload_clai', rebuild)
+    monkeypatch.setattr(app, 'reload_clai', rebuild)
     reloaded = await _relaunch_after(
         monkeypatch, tmp_path, ['/reload'], session_id='0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f'
     )
@@ -738,13 +738,13 @@ def test_cli_execs_the_new_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         raise Relaunch(executable='/b/clai2', session_id='new')
 
     execs: list[tuple[str, list[str]]] = []
-    monkeypatch.setattr(_app, 'chat', chat)
+    monkeypatch.setattr(app, 'chat', chat)
 
     def execv(path: str, argv: list[str]) -> None:
         execs.append((path, argv))
 
     monkeypatch.setattr(os, 'execv', execv)
-    _cli.run()
+    cli_module.run()
     assert execs == [
         ('/b/clai2', ['/b/clai2', '--model', 'test', '--database', str(tmp_path / 'config.db'), '--resume', 'new'])
     ]
@@ -775,7 +775,7 @@ def test_cli_hands_the_web_ui_to_the_new_build(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setattr('pydantic_clai2.cli.web.run_web', run_web)
     monkeypatch.setattr(os, 'execv', execv)
     monkeypatch.setenv('CLAI_RELAUNCH_WEB', f'4321 {WEB_TOKEN}')
-    _cli.run()
+    cli_module.run()
     [call] = calls
     assert (call['port'], call['token'], call['restart']) == (0, WEB_TOKEN, WebHandoff(port=4321, token=WEB_TOKEN))
     [argv] = execs
@@ -818,8 +818,8 @@ def test_a_terminal_session_serves_the_handed_over_web_ui(
         calls.append(kwargs)
         assert 'CLAI_RELAUNCH_WEB' not in os.environ
 
-    monkeypatch.setattr(_app, 'chat', chat)
-    _cli.run()
+    monkeypatch.setattr(app, 'chat', chat)
+    cli_module.run()
     assert calls[0]['web'] == handoff
 
 
@@ -1011,10 +1011,10 @@ def test_update_flag_installs_and_exits_without_restarting(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(self_update, 'Updates', build)
 
-    monkeypatch.setattr(_app, 'chat', Mock(side_effect=AssertionError('--update starts no shell')))
+    monkeypatch.setattr(app, 'chat', Mock(side_effect=AssertionError('--update starts no shell')))
     monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(context.store.path)])
     with pytest.raises(SystemExit) as exited:
-        _cli.run()
+        cli_module.run()
     assert exited.value.code == exit_code
     assert capsys.readouterr().out == f'{printed}\n'
     [installs] = ran
@@ -1038,7 +1038,7 @@ def test_update_flag_refuses_windows_before_scheduling_an_install(
     monkeypatch.setattr(self_update, 'Updates', build)
     monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(tmp_path / 'c.db')])
     with pytest.raises(SystemExit) as exited:
-        _cli.run()
+        cli_module.run()
     assert exited.value.code == 1
     output = capsys.readouterr()
     assert output.out == ''
@@ -1061,7 +1061,7 @@ def test_update_flag_reports_a_failed_check(
     monkeypatch.setattr(self_update, 'Updates', build)
     monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(tmp_path / 'c.db')])
     with pytest.raises(SystemExit) as exited:
-        _cli.run()
+        cli_module.run()
     assert exited.value.code == 1
     assert capsys.readouterr().err == 'Could not check for a newer CLAI: offline\n'
 
@@ -1086,6 +1086,6 @@ def test_update_flag_rejects_other_modes(
 ) -> None:
     monkeypatch.setattr('sys.argv', ['clai2', '--update', *argv])
     with pytest.raises(SystemExit) as exited:
-        _cli.run()
+        cli_module.run()
     assert exited.value.code == 2
     assert '--update cannot be combined with config, plugins, --prompt, --web, --resume' in capsys.readouterr().err
