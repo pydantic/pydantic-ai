@@ -2740,7 +2740,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         state: _HandlerState,
         failed: _FailedAttempts,
         compaction: _AttemptCompaction,
-        retry_overflow: Callable[[], Awaitable[bool]] | None,
+        retry_overflow: Callable[[exceptions.ModelContextWindowExceededError], Awaitable[bool]] | None,
     ) -> _messages.ModelResponse:
         """Make one attempt: call the model, then run the error or after hooks on the outcome.
 
@@ -2795,7 +2795,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     and state.response is None
                 ):
                     retry, retry_overflow = retry_overflow, None
-                    if await retry():
+                    if await retry(e):
                         continue
                 outcome = e
                 recovered = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
@@ -3457,15 +3457,19 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         request_context: ModelRequestContext,
         prepared: _PreparedAttempt,
         compaction: _AttemptCompaction,
+        overflow: exceptions.ModelContextWindowExceededError,
     ) -> bool:
         """Compact an attempt the model rejected for exceeding its context window, to send it to the same model again.
 
         The attempt's own compaction, if any, is discarded for the new one. Returns whether there's a compacted
-        request to send; when no capability compacted, the attempt is left as it was, to fail with the overflow.
+        request to send; when no capability compacted, the attempt is left as it was, to fail with the overflow. When
+        compacting failed, that's noted on the overflow, which is still what the attempt failed with.
         """
         retry = _AttemptCompaction()
         await self._compact_attempt(ctx, run_context, request_context, prepared, retry, overflow=True)
         if retry.result is None:
+            if retry.error is not None:
+                overflow.add_note(f'Compacting the request to retry it failed: {retry.error!r}')
             return False
         compaction.discard(request_context)
         compaction.take(retry)
@@ -3500,7 +3504,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Set for each attempt once it's prepared, before it's sent.
         attempt_model = request_context.model
         compaction = _AttemptCompaction()
-        retry_overflow: Callable[[], Awaitable[bool]] | None = None
+        retry_overflow: Callable[[exceptions.ModelContextWindowExceededError], Awaitable[bool]] | None = None
         while True:
             if resend:
                 resend = False
@@ -3583,7 +3587,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 ):
                     # Before the error hooks see it, as for a request that isn't streamed.
                     retry, retry_overflow = retry_overflow, None
-                    if await retry():
+                    if await retry(e):
                         resend = True
                         continue
                 try:

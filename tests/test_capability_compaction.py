@@ -777,6 +777,17 @@ async def test_context_overflow_without_a_compaction_raises_the_overflow():
     assert events.events == []
 
 
+async def test_failed_context_overflow_compaction_raises_the_overflow_with_a_note():
+    calls: list[str] = []
+    agent = Agent(always_overflows(calls), capabilities=[FailFor('primary')])
+    with pytest.raises(ModelContextWindowExceededError) as exc_info:
+        await agent.run('hi')
+    assert calls == ['primary']
+    assert exc_info.value.__notes__ == [
+        "Compacting the request to retry it failed: ModelAPIError('compaction rate limited')"
+    ]
+
+
 async def test_cancelled_context_overflow_compaction_raises_the_overflow():
     calls: list[str] = []
     summarize = Summarize()
