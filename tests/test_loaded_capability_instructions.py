@@ -31,6 +31,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolReturnPart,
     ToolsetInstructionSource,
     UserPromptPart,
     sanitize_messages,
@@ -819,6 +820,9 @@ async def test_hook_that_adds_a_load_states_the_instructions_with_the_tools():
             if isinstance(part, SystemPromptPart) and '<context' in part.content
         ]
         sent.append((sorted(info.model_request_parameters.revealed_tool_names or ()), statements))
+        if len(sent) == 1:
+            # The tool the hook's load revealed can be called on that same request.
+            return ModelResponse(parts=[ToolCallPart('tally', {}, tool_call_id='tally')])
         return ModelResponse(parts=[TextPart('Done.')])
 
     agent = Agent(
@@ -828,7 +832,12 @@ async def test_hook_that_adds_a_load_states_the_instructions_with_the_tools():
     )
     first = await agent.run('Count.', deps=Counter())
     statement = f'<context id="capability:counter">\n{RULES}\n\nThe count is 0.\n</context>'
-    assert sent == [(['tally'], [statement])]
+    assert sent == [(['tally'], [statement]), (['tally'], [statement])]
+    assert any(
+        isinstance(part, ToolReturnPart) and part.content == 'tallied'
+        for message in first.all_messages()
+        for part in message.parts
+    )
 
     # Stated once: the next run finds the statement in history.
     second = await agent.run('Again.', deps=Counter(), message_history=first.all_messages())
