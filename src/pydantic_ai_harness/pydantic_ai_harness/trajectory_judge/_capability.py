@@ -9,7 +9,7 @@ import re
 import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Annotated, Any, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Any, TypeAlias
 
 from pydantic import Field, TypeAdapter
 
@@ -37,6 +37,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._durable import in_durable_context
 
 if TYPE_CHECKING:
     from pydantic_ai.agent import AgentRunResult
@@ -253,7 +254,7 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         durable-capable agent run outside its workflow or flow is unaffected, matching how
         core's durability capabilities scope their own `before_run` rejections.
         """
-        if _in_durable_context(ctx):
+        if in_durable_context(ctx):
             raise UserError(
                 '`TrajectoryJudge` cannot be used inside a durable workflow or flow: the judge '
                 'evaluation runs in orchestration context, so its model calls are not checkpointed '
@@ -561,25 +562,6 @@ def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str
             elif isinstance(part, SpeechPart) and part.transcript:
                 (user_lines if part.speaker == 'user' else lines).append(f'{part.speaker}: {part.transcript}')
     return request, lines
-
-
-@runtime_checkable
-class _Durability(Protocol):
-    """The part of the durable-execution capabilities' shared base this check needs."""
-
-    in_durable_context: bool
-
-
-# `_monty_exec.in_temporal_workflow` asks Temporal directly, because only Temporal replays
-# `run_code`. This one covers every engine because the judge launch is unsafe under all of them.
-def _in_durable_context(ctx: RunContext[AgentDepsT]) -> bool:
-    """Whether this run executes inside a durable workflow or flow, without importing the optional extras."""
-    return any(
-        any(base.__module__.startswith('pydantic_ai.durable_exec') for base in type(capability).__mro__)
-        and isinstance(capability, _Durability)
-        and capability.in_durable_context
-        for capability in ctx.capabilities.values()
-    )
 
 
 def _prompt_text(content: str | Sequence[object]) -> str:
