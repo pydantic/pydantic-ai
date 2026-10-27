@@ -7,6 +7,7 @@ import hashlib
 import html
 import io
 import json
+import os
 import re
 import shutil
 import sys
@@ -17,7 +18,7 @@ from contextlib import AbstractContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TypeVar
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import anyio
 import httpx
@@ -1053,6 +1054,44 @@ def test_new_session_offers_every_worktree_of_a_known_repository(
     assert shown('q=Main&include_worktrees=true') == [main]
     monkeypatch.setenv('PATH', '')
     assert shown('include_worktrees=true') == [main]
+
+
+def test_new_session_completes_a_typed_path_with_its_repository_worktrees(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """New session completes a typed path to directories, listing each repository's worktrees before any session.
+
+    A subfolder of a checkout is offered as itself, hidden folders only when typed, and a relative,
+    unreadable, or empty path offers nothing.
+    """
+    web_ = make_web(Agent(TestModel()))
+    fresh, linked = tmp_path / 'fresh', tmp_path / 'fresh-wt'
+    repository(fresh, linked=linked, branch='wt')
+    # Git still lists a locked worktree whose folder is gone; the dialog leaves out a missing one.
+    git('-C', str(fresh), 'worktree', 'add', '--lock', '-b', 'gone', str(tmp_path / 'gone'))
+    shutil.rmtree(tmp_path / 'gone')
+    (fresh / 'src').mkdir()
+    (tmp_path / 'frozen').mkdir()
+    (tmp_path / '.free').mkdir()
+    (tmp_path / 'french.txt').touch()
+    assert not any(p['name'] == 'fresh' for p in web_.get('/api/sessions?include_worktrees=true').json())
+
+    def completed(path: str) -> list[tuple[str, list[tuple[str, str]]]]:
+        response = web_.get(f'/api/directories?path={quote(path)}')
+        assert response.status_code == 200, response.text
+        return [
+            (p['name'], [(w['label'], w['root']) for w in p['worktrees'] if not w['missing']]) for p in response.json()
+        ]
+
+    def at(*parts: str) -> str:
+        return str(tmp_path.resolve().joinpath(*parts))
+
+    repo = ('fresh', [('main', at('fresh')), ('wt', at('fresh-wt'))])
+    assert completed(at('fr')) == [repo, ('frozen', [('frozen', at('frozen'))])]
+    assert completed(at('fresh')) == [repo]
+    [found] = web_.get(f'/api/directories?path={quote(at("fresh-"))}').json()
+    assert (at('gone'), True) in [(w['root'], w['missing']) for w in found['worktrees']]
+    assert completed(at('.f')) == [('.free', [('.free', at('.free'))])]
+    assert completed(at('fresh') + os.sep) == [('src', [('src', at('fresh', 'src'))])]
+    assert completed('fresh') == completed(at('nowhere') + os.sep) == completed(at('a\0', 'b')) == completed('') == []
 
 
 def test_a_bare_repository_is_not_a_worktree(tmp_path: Path) -> None:
