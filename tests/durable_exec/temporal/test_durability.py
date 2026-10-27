@@ -82,6 +82,7 @@ from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrde
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
+    FallbackExceptionGroup,
     ModelAPIError,
     ModelAuthenticationError,
     ModelContextWindowExceededError,
@@ -424,6 +425,150 @@ async def test_durability_fallback_attempts_run_as_activities(client: Client):
     assert output == 'from fallback'
     # The failed attempt on the agent's model and the one on the fallback model.
     assert _scheduled_activity_count(history) == 2
+
+
+exhausted_fallback_durable_agent = Agent(
+    FunctionModel(_failing_model_fn, model_name='failing'),
+    name='durability_exhausted_fallback_agent',
+    capabilities=[
+        ModelFallback('also_failing'),
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            models={'also_failing': FunctionModel(_failing_model_fn, model_name='also_failing')},
+        ),
+    ],
+)
+
+
+@workflow.defn
+class ExhaustedFallbackDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await exhausted_fallback_durable_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_exhausted_fallback_fails_the_workflow(client: Client):
+    """A `ModelFallback` chain that runs out raises its group in workflow code, which fails the workflow.
+
+    Failing only the workflow task instead would have Temporal retry it until the execution times out.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ExhaustedFallbackDurableAgentWorkflow],
+        plugins=[AgentPlugin(exhausted_fallback_durable_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ExhaustedFallbackDurableAgentWorkflow.run,
+                args=['hello'],
+                id=ExhaustedFallbackDurableAgentWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == FallbackExceptionGroup.__name__
+
+
+_backup_streamed: list[str] = []
+
+
+def _late_stream_failure_agent(name: str, *, fail_after_output: bool) -> Agent[object, str]:
+    """An agent whose model fails partway through a stream, or before it, with a `ModelFallback` to another model."""
+
+    async def primary(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        if fail_after_output:
+            yield 'partial'
+        raise ModelAPIError('primary', 'stream broke')
+
+    async def backup(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        _backup_streamed.append(name)
+        yield 'from backup'
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _event in stream:
+            pass
+
+    return Agent(
+        FunctionModel(stream_function=primary, model_name='primary'),
+        deps_type=object,
+        name=name,
+        capabilities=[
+            ModelFallback('backup'),
+            TemporalDurability(
+                activity_config=BASE_ACTIVITY_CONFIG,
+                models={'backup': FunctionModel(stream_function=backup, model_name='backup')},
+                event_stream_handler=handler,
+            ),
+        ],
+    )
+
+
+late_stream_failure_agent = _late_stream_failure_agent('durability_late_stream_failure', fail_after_output=True)
+early_stream_failure_agent = _late_stream_failure_agent('durability_early_stream_failure', fail_after_output=False)
+
+
+@workflow.defn
+class LateStreamFailureWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> tuple[str, int, int, int]:
+        usage = RunUsage()
+        try:
+            output = (await late_stream_failure_agent.run(prompt, usage=usage)).output
+        except ModelAPIError as error:
+            output = f'raised: {error.message}'
+        return output, usage.input_tokens, usage.output_tokens, usage.requests
+
+
+@workflow.defn
+class EarlyStreamFailureWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await early_stream_failure_agent.run(prompt)).output
+
+
+async def test_durability_stream_failing_after_output_does_not_fall_back(client: Client):
+    """A stream that fails after producing output in its activity is raised, not fallen back from, and its usage counts.
+
+    The activity delivers the output to the event handler before the workflow sees the stream, as outside durable
+    execution, where only a stream that fails before its first event falls back. The error crosses the activity
+    boundary with what the stream produced, so the interrupted response is committed with its usage.
+    """
+    _backup_streamed.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[LateStreamFailureWorkflow],
+        plugins=[AgentPlugin(late_stream_failure_agent)],
+    ):
+        result = await client.execute_workflow(
+            LateStreamFailureWorkflow.run,
+            args=['hello'],
+            id=LateStreamFailureWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert result == ('raised: stream broke', 50, 1, 1)
+    assert _backup_streamed == []
+
+
+async def test_durability_stream_failing_before_output_falls_back(client: Client):
+    """A stream that fails before producing any output still falls back to the next model."""
+    _backup_streamed.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[EarlyStreamFailureWorkflow],
+        plugins=[AgentPlugin(early_stream_failure_agent)],
+    ):
+        output = await client.execute_workflow(
+            EarlyStreamFailureWorkflow.run,
+            args=['hello'],
+            id=EarlyStreamFailureWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'from backup'
+    assert _backup_streamed == ['durability_early_stream_failure']
 
 
 @workflow.defn
