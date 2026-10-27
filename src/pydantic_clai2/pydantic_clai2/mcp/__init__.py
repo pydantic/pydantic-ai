@@ -86,11 +86,7 @@ class MCPPlugin(Plugin[MCPSettings]):
     def __init__(self, host: PluginHost[None], settings: MCPSettings, *, store: MCPStore | None = None) -> None:
         """`store` defaults to the user's `mcp.json`, with the session's project files; tests pass their own."""
         super().__init__(host, settings)
-        self.servers = MCPServers(
-            store or MCPStore(workspace=host.workspace),
-            settings.servers,
-            history=lambda: host.conversation.messages,
-        )
+        self.servers = MCPServers(store or MCPStore(workspace=host.workspace), settings.servers)
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (
@@ -99,7 +95,7 @@ class MCPPlugin(Plugin[MCPSettings]):
         )
 
     def get_commands(self) -> Sequence[Command]:
-        command = MCPCommand(servers=self.servers)
+        command = MCPCommand(servers=self.servers, history=lambda: self.host.conversation.messages)
         return (
             Command(
                 name='mcp',

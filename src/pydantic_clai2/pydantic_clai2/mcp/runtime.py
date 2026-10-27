@@ -14,7 +14,7 @@ Signed out, it is marked `error` with that hint instead of holding the prompt up
 
 import textwrap
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -25,9 +25,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from anyio import to_thread
 
 from pydantic_ai import RunContext
-from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Toolset
-from pydantic_ai.messages import ModelMessage
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool
 from pydantic_clai2.mcp.settings import (
     RemoteServer,
@@ -95,20 +93,10 @@ def _shape(server: Server) -> Server:
 class MCPServers:
     """Merge the configured sources and own every held connection."""
 
-    def __init__(
-        self,
-        store: MCPStore,
-        plugin_servers: Servers | None = None,
-        *,
-        history: Callable[[], Sequence[ModelMessage]] = tuple,
-    ) -> None:
-        """`plugin_servers` come from `/plugins add mcp` settings, kept for existing configurations.
-
-        `history` is the current conversation, which says which on-demand servers the model has loaded.
-        """
+    def __init__(self, store: MCPStore, plugin_servers: Servers | None = None) -> None:
+        """`plugin_servers` come from `/plugins add mcp` settings, kept for existing configurations."""
         self.store = store
         self._plugin_servers = plugin_servers or {}
-        self._history = history
         self._overrides: dict[tuple[Source, Path | None, str], bool] = {}
         """Session-only enable state for servers whose file `/mcp` does not write."""
         self._connections: dict[str, _Connection] = {}
@@ -167,10 +155,6 @@ class MCPServers:
         """Prefixed tool names recorded when the server last started."""
         connection = self._connections.get(entry.name)
         return connection.tools if connection is not None else ()
-
-    def loaded(self, entry: ServerEntry) -> bool:
-        """Whether the model has loaded this on-demand server in the current conversation."""
-        return capability_id(entry.name) in parse_loaded_capabilities(self._history())
 
     def description(self, entry: ServerEntry) -> str:
         """The catalog line: the configured one, else what the server said about itself, else its name."""
