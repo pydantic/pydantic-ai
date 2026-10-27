@@ -2,6 +2,7 @@
 
 import heapq
 import os
+import subprocess
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -53,21 +54,36 @@ async def list_paths(folder: Path) -> tuple[str, ...]:
     In a Git checkout they are the files Git tracks or would add, so `.gitignore` applies; elsewhere a walk
     that skips hidden and `SKIPPED` folders. At most `FILE_LIMIT` files either way.
     """
-    try:
-        listed = await anyio.run_process(
-            ['git', '-C', str(folder), 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
-            check=False,
-        )
-    except OSError:  # No Git installed.
-        listed = None
-    if listed is not None and listed.returncode == 0:
-        # An unmerged file is listed once per stage.
-        names = dict.fromkeys(name for name in listed.stdout.decode(errors='replace').split('\0') if name)
-        files = list(names)[:FILE_LIMIT]
-    else:
+    files = await _git_files(folder)
+    if files is None:
         files = await to_thread.run_sync(_walk, folder)
     folders = {f'{parent}/': None for name in files for parent in _parents(name)}
     return (*files, *folders)
+
+
+async def _git_files(folder: Path) -> list[str] | None:
+    """The first `FILE_LIMIT` files Git tracks or would add in `folder`, stopping Git there; `None` outside a checkout."""
+    try:
+        process = await anyio.open_process(
+            ['git', '-C', str(folder), 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+            stdin=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:  # No Git installed.
+        return None
+    names: dict[str, None] = {}
+    """In order, once each: an unmerged file is listed once per stage."""
+    async with process:
+        assert process.stdout is not None
+        rest = b''
+        async for chunk in process.stdout:
+            *listed, rest = (rest + chunk).split(b'\0')
+            names.update(dict.fromkeys(name.decode(errors='replace') for name in listed if name))
+            if len(names) >= FILE_LIMIT:
+                # A huge untracked folder, such as a home directory under Git, need not be listed to the end.
+                process.kill()
+                return list(names)[:FILE_LIMIT]
+    return list(names) if process.returncode == 0 else None
 
 
 def best(paths: tuple[str, ...], query: str) -> list[str]:
