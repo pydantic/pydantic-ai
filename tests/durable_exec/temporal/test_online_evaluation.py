@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 
 import pytest
 from pydantic import BaseModel
@@ -17,8 +18,10 @@ from pydantic_ai.usage import UsageLimits
 try:
     from temporalio import workflow
     from temporalio.client import Client
+    from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
+    from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec.temporal import AgentPlugin, TemporalDurability
 except ImportError:  # pragma: lax no cover
@@ -35,11 +38,13 @@ if sys.version_info >= (3, 14):  # pragma: lax no cover
 with workflow.unsafe.imports_passed_through():
     try:
         from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-        from pydantic_evals.online import OnlineEvaluator, wait_for_evaluations
+        from pydantic_evals.online import OnlineEvaluator, SamplingContext, wait_for_evaluations
         from pydantic_evals.online_capability import OnlineEvaluation
         from pydantic_evals.otel import SpanTreeRecordingError
     except ImportError:  # pragma: lax no cover
         pytest.skip('pydantic_evals not installed', allow_module_level=True)
+
+    from ._shared import workflow_activity_raises
 
 pytestmark = [pytest.mark.xdist_group(name='temporal-online-evaluation')]
 
@@ -153,3 +158,65 @@ async def test_online_evaluation_dispatches_once_across_replays(client: Client):
     ).replay_workflow(await handle.fetch_history())
     await wait_for_evaluations()
     assert _evaluated == evaluated_before_replay
+
+
+_sampling_attempts: list[str] = []
+
+
+def _failing_sample_rate(ctx: SamplingContext) -> bool:
+    _sampling_attempts.append(str(ctx.inputs))
+    raise RuntimeError('sampling failed')
+
+
+_failing_agent = Agent(
+    TestModel(),
+    name='online_evaluation_failing_agent',
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=1)),
+            )
+        ),
+        OnlineEvaluation(
+            id='online_evaluation',
+            evaluators=[
+                OnlineEvaluator(evaluator=RecordRun('failing'), sample_rate=_failing_sample_rate, run_on_errors=True)
+            ],
+        ),
+    ],
+)
+
+
+@workflow.defn
+class FailingDispatchWorkflow:
+    @workflow.run
+    async def run(self) -> None:
+        try:
+            await _failing_agent.run('failed run', usage_limits=UsageLimits(request_limit=0))
+        except UsageLimitExceeded:
+            pass
+        await _failing_agent.run('completed run')
+
+
+async def test_online_evaluation_dispatch_failure_is_retried_per_activity_retry_policy(client: Client):
+    """A dispatch whose sampling raises is retried up to the activity's `maximum_attempts`.
+
+    A failed run keeps its own exception, with a warning; a completed run fails with the dispatch error.
+    """
+    _evaluated.clear()
+    _sampling_attempts.clear()
+    with pytest.warns(UserWarning, match='Online evaluation of the failed agent run was not dispatched'):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[FailingDispatchWorkflow],
+            plugins=[AgentPlugin(_failing_agent)],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            with workflow_activity_raises(RuntimeError, 'sampling failed'):
+                await client.execute_workflow(
+                    FailingDispatchWorkflow.run, id=f'online-evaluation-failing-{uuid.uuid4()}', task_queue=TASK_QUEUE
+                )
+    assert _sampling_attempts == ['failed run'] * 3 + ['completed run'] * 3
+    assert _evaluated == []

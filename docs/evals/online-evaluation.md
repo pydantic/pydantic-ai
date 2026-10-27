@@ -1023,6 +1023,8 @@ The capability supports all the same features as the [`@evaluate()`][pydantic_ev
 
 Under [durable execution](../durable_execution/overview.md), the agent run is workflow code that the engine replays, so the capability doesn't sample or dispatch evaluators there. Instead it runs sampling and dispatch as one [durable operation](../capabilities/custom.md#durable-capability-operations) (a Temporal activity, DBOS step or Prefect task) after the run. The engine records that operation, so a replay returns the recorded result rather than evaluating the run again, and sampling callables and evaluators run outside workflow code.
 
+This once-per-run guarantee needs a durability capability, such as [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] or [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]. Under the deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` wrappers, the capability still samples and dispatches in workflow code, so a replay can evaluate a run again. Migrate to the durability capability as described for [Temporal](../durable_execution/temporal.md#wrapper-agent-path-deprecated), [DBOS](../durable_execution/dbos.md#wrapper-agent-path-deprecated) and [Prefect](../durable_execution/prefect.md#wrapper-agent-path-deprecated).
+
 Durable operations are identified by their capability's [`id`][pydantic_ai.capabilities.AbstractCapability.id], so give the capability one when the agent has a durability capability. Agent construction raises a [`UserError`][pydantic_ai.exceptions.UserError] without it:
 
 ```python

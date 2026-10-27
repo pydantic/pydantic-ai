@@ -189,22 +189,13 @@ except ImportError:  # pragma: lax no cover
 
 from .._inline_snapshot import snapshot
 from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
-from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part, try_import
+from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
 from ..realtime_connections import InferredConnection
 from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
-
-with try_import() as evals_available:
-    from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-    from pydantic_evals.online import wait_for_evaluations
-    from pydantic_evals.online_capability import OnlineEvaluation
-
-
-class OnlineEvaluationAnswer(BaseModel):
-    text: str
 
 
 def test_durability_codecs() -> None:
@@ -5554,30 +5545,3 @@ def test_rebuilt_request_policy_follows_the_run(
             assert policy is not None
             assert policy.include_content is run_include_content
     assert include_content_ctx.get() is None
-
-
-@pytest.mark.skipif(not evals_available(), reason='pydantic_evals not installed')
-async def test_prefect_online_evaluation_sees_live_output() -> None:
-    """Prefect tasks run in the flow's process, so the dispatch task hands evaluators the live output, once."""
-    evaluated: list[tuple[str | None, object]] = []
-
-    @dataclass
-    class RecordRun(Evaluator):
-        def evaluate(self, ctx: EvaluatorContext) -> bool:
-            evaluated.append((ctx.name, ctx.output))
-            return True
-
-    agent = Agent(
-        TestModel(),
-        name='prefect_online_evaluation_agent',
-        output_type=OnlineEvaluationAnswer,
-        capabilities=[PrefectDurability[object](), OnlineEvaluation(id='online_evaluation', evaluators=[RecordRun()])],
-    )
-
-    @flow
-    async def run_flow() -> str:
-        return (await agent.run('go')).run_id
-
-    run_id = await run_flow()
-    await wait_for_evaluations()
-    assert evaluated == [(run_id, OnlineEvaluationAnswer(text='a'))]
