@@ -29,13 +29,14 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.skills import SkillDefinition, Skills
+from pydantic_ai_harness.subagents import TaskControl
 from pydantic_clai2.builtin_plugins.coder_folders import edit_agent_folders, is_folder_name
 from pydantic_clai2.builtin_plugins.coder_skills import edit_skills
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.project_settings import repository_directories
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
-from pydantic_clai2.runtime._session import supports_local_workspace
+from pydantic_clai2.runtime.session import supports_local_workspace
 from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
@@ -50,6 +51,9 @@ SKILL_FOLDERS_FEATURE = 'coder-skill-folders'
 
 DISABLED_SKILLS_FEATURE = 'coder-disabled-skills'
 """Builds without it would reject a saved `disabled_skills`, so they drop the setting and offer every skill."""
+
+TASK_CONTROL_FEATURE = 'coder-task-control'
+"""Builds without it would reject a saved `task_control`, so they drop the setting."""
 
 
 def _expand_home(value: str, *, home: Path) -> str:
@@ -68,6 +72,10 @@ class CoderSettings(BaseModel):
     workspace: str | None = Field(default=None, description='Deprecated workspace option, retained for saved settings.')
     repo_context: bool = Field(default=True, description='Include repository instructions with coding tools.')
     sub_agents: bool = Field(default=True, description='Enable delegation to sub-agents.')
+    task_control: bool = Field(
+        default=True,
+        description='With sub-agents, let the model run tasks in the background and steer, answer, or cancel them.',
+    )
     agent_folders: list[str] = Field(
         default_factory=list,
         description=(
@@ -286,7 +294,11 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
     @classmethod
     def from_host(cls, host: PluginHost[DepsT]) -> Self:
         # Tags the setting, so a build that cannot read it uses the default instead of failing to load `coder`.
-        requires = {'skill_folders': [SKILL_FOLDERS_FEATURE], 'disabled_skills': [DISABLED_SKILLS_FEATURE]}
+        requires = {
+            'task_control': [TASK_CONTROL_FEATURE],
+            'skill_folders': [SKILL_FOLDERS_FEATURE],
+            'disabled_skills': [DISABLED_SKILLS_FEATURE],
+        }
         return cls(host, host.settings(CoderSettings, requires=requires))
 
     def __init__(self, host: PluginHost[DepsT], settings: CoderSettings) -> None:
@@ -343,6 +355,7 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             repo_context=settings.repo_context,
             sub_agents=settings.sub_agents,
             agent_folders=settings.folders(home=Path.home()) or None,
+            task_control=TaskControl() if settings.sub_agents and settings.task_control else None,
         )
         if self._skills is None or self._skill_workspace is None:
             return (coder,)

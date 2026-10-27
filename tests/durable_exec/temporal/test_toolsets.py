@@ -1043,7 +1043,12 @@ async def test_temporal_mcptoolset_instructions_propagate(client: Client):
             id=MCPToolsetInstructionsWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
-        assert output == snapshot('Be a helpful assistant.')
+        assert output == snapshot("""\
+<context id="toolset:mcp">
+Be a helpful assistant.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
 
 
 def test_temporalize_mcptoolset_dispatches_to_temporalmcptoolset():

@@ -55,6 +55,30 @@ with capture_run_messages() as messages:
 
 Use this for in-process debugging. It is a better fit than broad logging when the user wants to inspect one failing run.
 
+## Recover a Failed Run
+
+A run that raises (`UsageLimitExceeded`, `UnexpectedModelBehavior`, any other `AgentRunError`, or a tool's exception) returns no result, and only `RunCancelled` carries the run's messages. `capture_run_messages()` records them as the run goes, so the work done before the error can be kept. To continue instead of starting over, pass them back with no new prompt: the new run picks up from the last request, without repeating tool calls that already ran.
+
+```python
+from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits, capture_run_messages
+
+agent = Agent('openai:gpt-5.2', name='research_agent')
+
+
+async def research(question: str) -> str:
+    with capture_run_messages() as messages:
+        try:
+            return (await agent.run(question, usage_limits=UsageLimits(request_limit=10))).output
+        except UsageLimitExceeded:
+            pass
+    # Outside the block: within one block, `messages` only holds the first run's messages.
+    return (await agent.run(message_history=messages, usage_limits=UsageLimits(request_limit=5))).output
+```
+
+- The resumed run's usage and limits start from zero.
+- When a token or cost limit is crossed, the billed response that crossed it is kept in `messages` with `state='interrupted'`, so the resumed run doesn't send that request again, unless a hook rejected that response with `ModelRetry` ([#11425](https://github.com/pydantic/pydantic-ai/issues/11425)). See [Usage limits](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits).
+- To keep a run from hitting `request_limit` at all, a capability can read `ctx.usage.requests` and `ctx.usage_limits.request_limit` in `before_model_request`, tell the model how many requests are left, and drop function tools in `prepare_tools` on the last one. See [Wrapping up before the request limit](https://pydantic.dev/docs/ai/core-concepts/agent/#wrapping-up-before-the-request-limit).
+
 ## Debug and Validate Agent Behavior
 
 Use Logfire for observability across agent runs, tools, and model requests. Set it up by default when you build a new application, unless the user already uses another OpenTelemetry backend:
