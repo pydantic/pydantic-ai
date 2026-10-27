@@ -12,10 +12,20 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai.capabilities import PrefixTools
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    CompactionPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextContent,
+    TextPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -65,12 +75,18 @@ def _tool_returns(messages: list[ModelMessage]) -> int:
     return sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
 
 
+def _user_text(part: UserPromptPart) -> str:
+    if isinstance(part.content, str):
+        return part.content
+    return ''.join(item.content for item in part.content if isinstance(item, TextContent))
+
+
 def _repo_notes(messages: list[ModelMessage]) -> list[str]:
     notes: list[str] = []
     for message in messages:
         for part in message.parts:
-            if isinstance(part, UserPromptPart) and isinstance(part.content, str) and '<context-file ' in part.content:
-                notes.append(part.content)
+            if isinstance(part, UserPromptPart) and '<context-file ' in (text := _user_text(part)):
+                notes.append(text)
     return notes
 
 
@@ -549,7 +565,7 @@ class TestNestedTraversal:
         )
         result = await agent.run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
         parts = [
-            (type(part), part.content)
+            (type(part), part.content if isinstance(part, SystemPromptPart) else _user_text(part))
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
             for part in message.parts
@@ -674,6 +690,98 @@ class TestNestedTraversal:
         assert _repo_notes(result.all_messages()) == snapshot(
             ['<context-file path="AGENTS.md">\nROOT BODY\n</context-file>']
         )
+
+    @pytest.mark.parametrize('nested_inject', ['pointer', 'contents'])
+    async def test_note_parts_carry_the_origin_and_directory_in_metadata(
+        self, tmp_path: Path, nested_inject: Literal['pointer', 'contents']
+    ) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+        result = await self._read_files(tmp_path, ['sub/one.py'], nested_inject=nested_inject)
+        metadata = [
+            item.metadata
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            for item in (
+                [part]
+                if isinstance(part, SystemPromptPart)
+                else part.content
+                if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+                else []
+            )
+            if isinstance(item, SystemPromptPart | TextContent)
+        ]
+        expected = {'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': str(tmp_path / 'sub')}
+        assert metadata == [expected] * (2 if nested_inject == 'pointer' else 1)
+
+    async def test_a_later_run_does_not_repeat_a_note_still_in_history(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+        _write(tmp_path / 'sub' / 'two.py', 'two')
+        first = await self._read_files(tmp_path, ['sub/one.py'])
+        second = await self._read_files(tmp_path, ['sub/two.py'], message_history=first.all_messages())
+        assert len(_repo_notes(first.all_messages())) == 1
+        assert _repo_notes(second.new_messages()) == []
+
+    async def test_text_with_other_or_malformed_metadata_does_not_count_as_a_note(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+        history: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        [
+                            TextContent(
+                                'other', metadata={'origin': 'somewhere.else', 'directory': str(tmp_path / 'sub')}
+                            ),
+                            TextContent(
+                                'malformed',
+                                metadata={'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': 7},
+                            ),
+                        ]
+                    )
+                ]
+            ),
+            ModelResponse(parts=[TextPart('ok')]),
+        ]
+        result = await self._read_files(tmp_path, ['sub/one.py'], message_history=history)
+        assert len(_repo_notes(result.new_messages())) == 1
+
+    async def test_compaction_resurfaces_a_note_it_summarized_away(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+        _write(tmp_path / 'sub' / 'two.py', 'two')
+        first = await self._read_files(tmp_path, ['sub/one.py'])
+        compacted = [*first.all_messages(), ModelRequest(parts=[CompactionPart('The agent read sub/one.py.')])]
+        second = await self._read_files(tmp_path, ['sub/two.py'], message_history=compacted)
+        assert _repo_notes(second.new_messages()) == snapshot(
+            ['<context-file path="sub/AGENTS.md">\nNESTED BODY\n</context-file>']
+        )
+
+    async def _read_files(
+        self,
+        root: Path,
+        paths: list[str],
+        *,
+        nested_inject: Literal['pointer', 'contents'] = 'contents',
+        message_history: list[ModelMessage] | None = None,
+    ) -> AgentRunResult[str]:
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            done = _tool_returns(messages) - _tool_returns(message_history or [])
+            if done < len(paths):
+                args = json.dumps({'path': paths[done]})
+                yield {0: DeltaToolCall(name='read_file', json_args=args, tool_call_id=f'read{done}')}
+            else:
+                yield 'done'
+
+        return await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=root),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject=nested_inject),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=root), message_history=message_history)
 
     async def test_filesystem_rooted_above_the_workspace_resolves_against_its_own_root(self, tmp_path: Path) -> None:
         project = tmp_path / 'project'
