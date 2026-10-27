@@ -46,8 +46,8 @@ sharing identical content load once. Where the workspace can resolve symlinks, a
 symlinked file is labeled with its target's name, so `CLAUDE.md -> AGENTS.md`
 reaches the model as `AGENTS.md`.
 
-When `home_dir` is `None` (the default), only the working directory is scanned -- no
-walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.
+When `home_dir` is `None` (the default) and `root_markers` is unset, only the working
+directory is scanned -- no walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.
 
 To walk up to the repository root instead, pass `root_markers=('.git',)`: the walk-up stops at the nearest directory, starting at the working directory, that contains one of the named entries. A `.git` file, as in a linked worktree, counts like a `.git` directory. When no such directory exists, only the working directory is scanned. `root_markers` and `home_dir` cannot be combined.
 

@@ -41,7 +41,7 @@ print(result.output)
 
 Loads `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor up to `home_dir` (inclusive), or up to the nearest ancestor holding one of `root_markers`. Precedence is ancestor-first, workspace-last: broadest context first, most specific last. Files are deduped by the path a symlink resolves to and by content hash, so a symlinked `CLAUDE.md -> AGENTS.md` or two ancestors sharing identical content load once. Where the workspace can resolve symlinks, a symlinked file is labeled with its target's name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`. Symlinks to instruction files outside the directory being scanned are skipped, including shared dotfiles in another directory.
 
-When `home_dir` is `None` (the default), only the working directory is scanned -- no walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.
+When `home_dir` is `None` (the default) and `root_markers` is unset, only the working directory is scanned -- no walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.
 
 To walk up to the repository root instead, pass `root_markers=('.git',)`: the walk-up stops at the nearest directory, starting at the working directory, that contains one of the named entries. A `.git` file, as in a linked worktree, counts like a `.git` directory. When no such directory exists, only the working directory is scanned. `root_markers` and `home_dir` cannot be combined.
 
