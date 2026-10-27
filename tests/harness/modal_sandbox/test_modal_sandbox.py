@@ -598,3 +598,12 @@ def test_live_tier_with_empty_credentials_skips_unless_required(
 def test_empty_sandbox_id_is_rejected() -> None:
     with pytest.warns(HarnessDeprecationWarning), pytest.raises(UserError, match='empty string'):
         ModalSandbox(sandbox_id='')  # pyright: ignore[reportArgumentType]
+
+
+def test_a_non_string_sandbox_id_is_rejected() -> None:
+    # The deprecated argument is typed `Never`, so nothing static stops `sandbox_id=123` from becoming a ref.
+    with (
+        pytest.warns(HarnessDeprecationWarning),
+        pytest.raises(UserError, match='must be a string naming a Modal sandbox, got 123'),
+    ):
+        ModalSandbox(sandbox_id=123)  # pyright: ignore[reportArgumentType]

@@ -39,4 +39,63 @@ MCP(
 )
 ```
 
+## Tool names
+
+By default, the model sees the server's tools under the names the server gives them. Generic names like `search` can collide with the tools of another server or with your own, so pass `tool_prefix` to prepend a prefix to each name, joined with `_`:
+
+```python {title="mcp_capability_tool_prefix.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import MCP
+
+agent = Agent(
+    '{{ openai:medium }}',
+    capabilities=[
+        MCP('https://docs.example.com/mcp', id='docs', tool_prefix=True),  # `docs_search`
+        MCP('https://tickets.example.com/mcp', tool_prefix='tickets'),  # `tickets_search`
+    ],
+)
+```
+
+`tool_prefix=True` uses the `id=` you pass as the prefix, and raises a [`UserError`][pydantic_ai.exceptions.UserError] without one: the `id` derived from the URL's hostname is never used, so the tool names the model sees are always ones you chose. `allowed_tools` keeps matching the server's own tool names, and the capability's `id` and its toolset's `id` don't change, so [durable execution](../durable_execution/overview.md) and `defer_loading` work as before. With [native MCP](../native-tools.md#mcp-server-tool), the model provider names the server's tools, so the prefix applies to the local tools only.
+
+!!! note
+    Prefixing MCP tool names by default is planned for v3.
+
+## Per-user credentials
+
+In an app where each user has their own credentials for the MCP server, one agent serves all of them, so `authorization_token` and `headers` can't be fixed when the capability is created. Pass a function instead: it's called with the [run context][pydantic_ai.tools.RunContext] at the start of each run, so it can read the current user's token from the run's [dependencies](../dependencies.md):
+
+```python {title="mcp_capability_per_user.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import MCP
+
+
+@dataclass
+class Deps:
+    mcp_token: str
+
+
+def mcp_token(ctx: RunContext[Deps]) -> str:
+    return f'Bearer {ctx.deps.mcp_token}'
+
+
+agent = Agent(
+    '{{ openai:medium }}',
+    deps_type=Deps,
+    capabilities=[MCP('https://mcp.example.com/api', authorization_token=mcp_token)],
+)
+
+
+async def main():
+    result = await agent.run('What is 7 plus 5?', deps=Deps(mcp_token='<token>'))
+    print(result.output)
+    #> The answer is 12.
+```
+
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+The value the function returns is used for that run on both sides: the native [`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool] is built with it, and the local toolset connects in an MCP session of its own, so concurrent runs never share a session between users. Returning `None` sends no `Authorization` header. `headers` accepts a function the same way. See [per-user authentication](../mcp/client.md#per-user-authentication) for why each user needs a session of their own.
+
 For lower-level access — managing the [`MCPToolset`][pydantic_ai.mcp.MCPToolset] lifecycle directly, advanced transport / client configuration, or using MCP servers without going through a capability — see the [MCP documentation](../mcp/overview.md).

@@ -30,6 +30,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.capabilities import FileUnderstanding
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -266,6 +267,29 @@ async def test_each_fallback_candidate_applies_its_own_profile():
 
     assert tool_returns(first_sent[0])[0].content == MEMO_NOTE
     assert tool_returns(second_sent[0])[0].content == MEMO
+
+
+async def test_file_understanding_describes_the_file_before_a_note_is_needed():
+    """`FileUnderstanding` runs before the request is prepared, so the model gets a description, not a note."""
+    sent: list[list[ModelMessage]] = []
+
+    def describe(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('Someone reading a shopping list.')])
+
+    agent = agent_with_tool_file(
+        FunctionModel(calls_get_file_then(sent), profile=NO_AUDIO),
+        MEMO,
+        capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe))],
+    )
+
+    await agent.run('Get the file.')
+
+    [request] = sent
+    assert tool_returns(request)[0].content == snapshot("""\
+-----BEGIN FILE id="memo" type="text/plain"-----
+Someone reading a shopping list.
+-----END FILE id="memo"-----\
+""")
 
 
 def file_input_flags(model: Model) -> dict[str, object]:

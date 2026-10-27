@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import fields, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -24,15 +24,19 @@ from pydantic_ai import (
     BinaryAudio,
     BinaryContent,
     BinaryImage,
+    Citation,
+    ContentCitationAnchor,
     DeferredToolRequests,
     DeferredToolRequestsEvent,
     DeferredToolResults,
     DeferredToolResultsEvent,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     ImageUrl,
     InstructionPart,
     InstrumentationSettings,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -46,8 +50,10 @@ from pydantic_ai import (
     RunUsage,
     SpeechPart,
     SpeechPartDelta,
+    StructuredContent,
     TextContent,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
     ToolApproved,
@@ -61,6 +67,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
@@ -181,6 +188,169 @@ def test_text_content():
     text_content = TextContent(content='Pydantic AI!', metadata={'foo': 'bar'})
     assert text_content.content == 'Pydantic AI!'
     assert text_content.metadata == {'foo': 'bar'}
+
+
+class _UIState(BaseModel):
+    url: str
+    cart_total: float
+
+
+@pytest.mark.parametrize(
+    'item, expected',
+    [
+        pytest.param(StructuredContent({'url': '/p/42', 'n': [1, None]}), '{"url":"/p/42","n":[1,null]}', id='json'),
+        pytest.param(
+            StructuredContent({'note': '</ui_state> & more'}, tag='ui_state'),
+            r'<ui_state>{"note":"\u003c/ui_state\u003e \u0026 more"}</ui_state>',
+            id='json-tag-escaped',
+        ),
+        pytest.param(
+            StructuredContent(_UIState(url='/p/42', cart_total=949.0), format='xml', tag='ui_state'),
+            '<ui_state>\n  <url>/p/42</url>\n  <cart_total>949.0</cart_total>\n</ui_state>',
+            id='xml',
+        ),
+        pytest.param(
+            StructuredContent([1, 2], tag='ids', description='The ids the user selected.'),
+            'The ids the user selected.\n<ids>[1,2]</ids>',
+            id='description',
+        ),
+        pytest.param(
+            StructuredContent([1, 2], format=lambda value: f'{len(value)} ids', tag='ids', description='Unused.'),
+            '2 ids',
+            id='function',
+        ),
+        pytest.param(StructuredContent({'a': 1}, content='given'), 'given', id='given-content'),
+    ],
+)
+def test_structured_content_renders_once(item: StructuredContent, expected: str):
+    """The text sent to text models is rendered when the item is created, and kept as given when it is passed in."""
+    assert item.content == expected
+
+
+def test_structured_content_subclass_renders_its_own_way():
+    """A subclass carries its rendering, so it doesn't have to be passed each time the item is created."""
+
+    class UIStateContent(StructuredContent):
+        value: _UIState
+
+        def render(self) -> str:
+            return f'<ui_state url="{self.value.url}" />'
+
+    assert UIStateContent(_UIState(url='/p/42', cart_total=1)).content == '<ui_state url="/p/42" />'
+
+
+@pytest.mark.parametrize(
+    'item',
+    [
+        pytest.param(lambda: StructuredContent({}, format='xml'), id='xml-without-tag'),
+        pytest.param(lambda: StructuredContent([1], format=lambda value: ''), id='function'),
+    ],
+)
+def test_structured_content_rejects_empty_text(item: Callable[[], StructuredContent]):
+    """An empty `content` is re-rendered on load, so storing one would change the text a reloaded history sends."""
+    with pytest.raises(ValueError, match='`StructuredContent` rendered to empty text'):
+        item()
+
+
+def test_structured_content_renders_again_when_replaced_without_content():
+    """Changing the value keeps the stored text, so replacing it renders again only when `content` is cleared."""
+    item = StructuredContent({'a': 1}, tag='t')
+    assert replace(item, value={'a': 2}).content == '<t>{"a":1}</t>'
+    assert replace(item, value={'a': 2}, content='').content == '<t>{"a":2}</t>'
+    # `format` isn't stored, so a non-default one has to be passed again.
+    xml = StructuredContent({'a': 1}, tag='t', format='xml')
+    assert replace(xml, value={'a': 2}, content='', format='xml').content == '<t>\n  <a>2</a>\n</t>'
+
+
+@pytest.mark.parametrize('tag', ['ui state', 'ui-state', 'UIState', 'System', '1st', 'x></ui_state><system'])
+def test_structured_content_rejects_a_tag_outside_the_vocabulary(tag: str):
+    """Tags are lowercase snake_case, so no casing of a framework tag (`<SYSTEM>`) gets through either."""
+    with pytest.raises(ValueError, match=r'`StructuredContent\.tag` must be lowercase letters, digits and `_`'):
+        StructuredContent({}, tag=tag)
+
+
+@pytest.mark.parametrize('tag', ['system', 'tool_result', 'context', 'retry_feedback'])
+def test_structured_content_rejects_a_framing_tag(tag: str):
+    """User content can't wear a tag the framework frames its own text in, such as its `<system>` voice."""
+    with pytest.raises(ValueError, match=rf"`StructuredContent\.tag` cannot be '{tag}', a tag the framework frames"):
+        StructuredContent({}, tag=tag)
+
+
+def test_structured_content_with_its_text_skips_the_tag_check():
+    """An item whose text is already fixed, as a stored one is, loads whatever its tag.
+
+    Otherwise a history stored with `tag='memory'` would stop loading once a later release frames its own text in
+    `<memory>`. The tag only matters when the text is rendered.
+    """
+    stored = {'kind': 'structured-content', 'value': {'a': 1}, 'content': '<system>{"a":1}</system>', 'tag': 'system'}
+    loaded = TypeAdapter[UserContent](UserContent).validate_python(stored)
+    assert isinstance(loaded, StructuredContent)
+    assert (loaded.tag, loaded.content) == ('system', '<system>{"a":1}</system>')
+
+
+def test_structured_content_round_trips_through_json():
+    """The stored text comes back byte-for-byte, so a reloaded history is sent exactly as before, and the value as JSON data.
+
+    The subclass and its `render` don't survive the round-trip; the text they produced does.
+    """
+
+    class UIStateContent(StructuredContent):
+        def render(self) -> str:
+            return 'custom'
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    [
+                        StructuredContent(_UIState(url='/p/42', cart_total=949.0), tag='ui_state'),
+                        UIStateContent({'a': 1}, metadata={'source': 'app'}),
+                        TextContent('plain'),
+                        'Why did the total jump?',
+                    ]
+                )
+            ]
+        )
+    ]
+    dumped = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    assert dumped[0]['parts'][0]['content'] == snapshot(
+        [
+            {
+                'content': '<ui_state>{"url":"/p/42","cart_total":949.0}</ui_state>',
+                'metadata': None,
+                'kind': 'structured-content',
+                'value': {'url': '/p/42', 'cart_total': 949.0},
+                'tag': 'ui_state',
+                'description': None,
+            },
+            {
+                'content': 'custom',
+                'metadata': {'source': 'app'},
+                'kind': 'structured-content',
+                'value': {'a': 1},
+                'tag': None,
+                'description': None,
+            },
+            {'content': 'plain', 'metadata': None, 'kind': 'text-content'},
+            'Why did the total jump?',
+        ]
+    )
+    [request] = ModelMessagesTypeAdapter.validate_python(dumped)
+    assert isinstance(request, ModelRequest)
+    [part] = request.parts
+    assert isinstance(part, UserPromptPart)
+    assert part.content == snapshot(
+        [
+            StructuredContent(
+                content='<ui_state>{"url":"/p/42","cart_total":949.0}</ui_state>',
+                value={'url': '/p/42', 'cart_total': 949.0},
+                tag='ui_state',
+            ),
+            StructuredContent(content='custom', value={'a': 1}, metadata={'source': 'app'}),
+            TextContent(content='plain'),
+            'Why did the total jump?',
+        ]
+    )
 
 
 @pytest.mark.parametrize(
@@ -868,6 +1038,98 @@ def test_builtin_tool_call_part_has_content(args: dict[str, object] | str | None
 def test_builtin_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
     part = NativeToolCallPart(tool_name='web_search', args=args)
     assert not part.has_content()
+
+
+def test_citation_message_history_round_trip() -> None:
+    """Citations survive a dump and load of message history, and dump to the documented wire format."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'Paris is the capital of France. [1]',
+                    citations=[
+                        Citation(
+                            sources=[
+                                WebCitationSource(
+                                    url='https://example.com/paris',
+                                    title='Paris',
+                                    excerpts=["Paris is France's capital city."],
+                                )
+                            ],
+                            anchor=MarkerCitationAnchor(start=32, end=35),
+                        ),
+                        Citation(
+                            sources=[
+                                DocumentCitationSource(
+                                    document_id='file-123',
+                                    title='report.pdf',
+                                    excerpts=['The report identifies Paris as the capital.'],
+                                )
+                            ]
+                        ),
+                    ],
+                )
+            ]
+        )
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages)
+
+    assert ModelMessagesTypeAdapter.validate_python(serialized) == messages
+    assert serialized[0]['parts'][0]['citations'] == snapshot(
+        [
+            {
+                'sources': [
+                    {
+                        'kind': 'web',
+                        'url': 'https://example.com/paris',
+                        'title': 'Paris',
+                        'excerpts': ["Paris is France's capital city."],
+                    }
+                ],
+                'anchor': {'start': 32, 'end': 35, 'kind': 'marker'},
+            },
+            {
+                'sources': [
+                    {
+                        'kind': 'document',
+                        'document_id': 'file-123',
+                        'title': 'report.pdf',
+                        'excerpts': ['The report identifies Paris as the capital.'],
+                    }
+                ],
+                'anchor': None,
+            },
+        ]
+    )
+
+
+def test_text_part_delta_replaces_citations() -> None:
+    """A citations delta replaces the part's citations, as it replaces their raw entries in `provider_details`."""
+    first = Citation(sources=[WebCitationSource(url='https://example.com/paris')])
+    second = Citation(sources=[DocumentCitationSource(document_id='file-123', title='report.pdf')])
+    part = TextPart('Answer', citations=[first], provider_details={'citations': ['first']})
+
+    delta = TextPartDelta(content_delta='', citations_delta=[second], provider_details={'citations': ['second']})
+
+    part = delta.apply(part)
+
+    assert part == TextPart('Answer', citations=[second], provider_details={'citations': ['second']})
+
+
+@pytest.mark.parametrize(
+    'build, match',
+    [
+        pytest.param(lambda: ContentCitationAnchor(start=-1, end=0), '0 <= start < end', id='negative-start'),
+        pytest.param(lambda: MarkerCitationAnchor(start=2, end=1), '0 <= start < end', id='end-before-start'),
+        pytest.param(lambda: ContentCitationAnchor(start=1, end=1), '0 <= start < end', id='empty-range'),
+        pytest.param(lambda: Citation(sources=[]), 'at least one source', id='no-sources'),
+        pytest.param(lambda: DocumentCitationSource(), 'at least one source field', id='empty-document-source'),
+    ],
+)
+def test_citation_invariants(build: Callable[[], object], match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        build()
 
 
 def test_file_part_serialization_roundtrip():
@@ -3527,6 +3789,20 @@ def test_post_compaction_window_slices_at_the_latest_compaction_part():
     assert window[1] is messages[-1]
 
 
+def test_post_compaction_window_opens_at_the_turn_of_a_request_side_summary():
+    """A summary in a request opens the window at the start of its run of consecutive requests, which history
+    normalization merges into one and reorders, so the window is the same before and after."""
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('old context'),
+        ModelResponse(parts=[TextPart(content='old answer')]),
+        ModelRequest.user_text_prompt('kept context'),
+        ModelRequest(parts=[CompactionPart(content='summary')]),
+        ModelRequest.user_text_prompt('tail'),
+    ]
+
+    assert post_compaction_window(messages) == messages[2:]
+
+
 def test_post_compaction_window_accepts_a_minimal_sequence():
     """The runtime `Sequence` contract only requires integer `__getitem__`; the window must
     not depend on slice support that a minimal conforming implementation may lack."""
@@ -3634,7 +3910,9 @@ def test_user_prompt_part_content_items_must_be_user_content():
     assert UserPromptPart([image]).content == [image]
 
     # Every member of the union is accepted, so adding one cannot be forgotten here.
-    assert UserPromptPart(['hello', TextContent(content='hi'), ImageUrl('https://example.com/i.png'), CachePoint()])
+    assert UserPromptPart(
+        ['hello', StructuredContent({}), TextContent(content='hi'), ImageUrl('https://example.com/i.png'), CachePoint()]
+    )
 
 
 def test_user_content_types_matches_union():

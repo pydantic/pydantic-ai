@@ -53,10 +53,14 @@ class Macroscope(AbstractCapability[AgentDepsT]):
 
     base: str | None = None
     """Git ref to diff against. When `None`, `--base` is omitted and the CLI
-    auto-detects the base branch itself (and creates its own review worktree)."""
+    auto-detects the base branch itself (and creates its own review worktree).
+    Must not start with `-`."""
 
     command: str = 'macroscope'
-    """Name or path of the CLI binary. Override for a non-default install location."""
+    """Name or path of the CLI binary. Override for a non-default install location.
+
+    Cannot start with `-` or contain `=`; put the CLI on the workspace's PATH instead.
+    """
 
     cwd: str | Path | None = None
     """Deprecated and ignored: the review runs in the workspace's working directory.
@@ -102,6 +106,7 @@ class Macroscope(AbstractCapability[AgentDepsT]):
             command=self.command,
             base=self.base,
             timeout=self.timeout,
+            id=self.id or 'macroscope',
         )
 
     def get_instructions(self) -> str | None:

@@ -11,6 +11,8 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any, Literal, cast
 
+import httpx
+import httpx2
 import pytest
 
 from pydantic_ai import Agent, RunContext
@@ -152,6 +154,37 @@ def model_view(messages: list[ModelMessage]) -> Any:
         return value
 
     return drop_timestamps(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
+
+
+@pytest.fixture
+def weather_over_http() -> Any:
+    """`weather_server`'s HTTP app, built in a sync fixture like `weather`."""
+    return weather_server().http_app(stateless_http=True, json_response=True)
+
+
+async def test_a_hostname_derived_id_doesnt_identify_the_server_to_an_app(weather_over_http: Any):
+    """An app result names its server only by an `id` chosen for it, so a URL toolset without one names none, as before."""
+    client: httpx.AsyncClient | httpx2.AsyncClient
+    if MCP_SDK_V2:
+        client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=weather_over_http))
+    else:
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=weather_over_http))
+    toolset = MCPToolset('http://testserver/mcp', http_client=client)
+    assert toolset.id == 'testserver'
+    agent = Agent(TestModel(call_tools=['get_forecast']), toolsets=[toolset])
+    try:
+        async with weather_over_http.router.lifespan_context(weather_over_http):
+            result = await agent.run('Forecast?')
+    finally:
+        await client.aclose()
+
+    (forecast,) = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.tool_name == 'get_forecast'
+    ]
+    assert forecast.metadata is not None
+    assert forecast.metadata['mcp_app']['toolset_id'] is None
 
 
 async def test_server_declares_mcp_apps_extension(weather: MCPToolset[Any]):

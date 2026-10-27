@@ -161,7 +161,8 @@ class TestShellTool:
         recorder = Recorder()
         script = 'import os; os.ftruncate(1, 1 << 32)'
         command = f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'
-        await shell(tmp_path, {'command': command}, capabilities=[recorder])
+        # Without a log limit, which would empty a log this size when the command ends.
+        await shell(tmp_path, {'command': command}, capabilities=[recorder], max_log_bytes=None)
         assert recorder.finished.total_lines is None
         assert recorder.finished.truncated
 
@@ -287,6 +288,20 @@ class TestShellTool:
             assert 'Shell supervisor exited with 125' in await shell(tmp_path, {'command': 'echo hi'})
         finally:
             jobs.chmod(0o700)
+
+    async def test_jobs_directory_removed_by_a_command(self, tmp_path: Path) -> None:
+        # The jobs directory is looked up once per run, so a later launch recreates it.
+        capability = Shell[None](denied_commands=[], tools=['shell'])
+        results = await call_tools(
+            [capability],
+            # The removed job never publishes its status, so the first call waits out its timeout.
+            [
+                ('shell', {'command': 'rm -rf .pydantic-ai-harness', 'timeout': 0.2}),
+                ('shell', {'command': 'echo again'}),
+            ],
+            workspace=LocalWorkspaceBackend(tmp_path),
+        )
+        assert results[1].startswith('again\nPID: ')
 
     async def test_no_jobs_directory(self, tmp_path: Path) -> None:
         # A file where the jobs directory belongs fails the call; retrying cannot help.

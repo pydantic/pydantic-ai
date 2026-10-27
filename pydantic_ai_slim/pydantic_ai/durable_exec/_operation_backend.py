@@ -11,6 +11,7 @@ from ._operation import (
     DurableOperationConfig,
     DurableOperationId,
     OperationConfigRole,
+    ParameterTransports,
     resolve_tool_operation_config,
 )
 from ._operation_names import DurableOperationNamer, JournalOperationNamer
@@ -38,6 +39,13 @@ def in_durable_unit() -> bool:
 
 @contextmanager
 def durable_unit_scope() -> Generator[None]:
+    """Mark the current task as running a durable unit's body.
+
+    `CallableOperationBackend` enters it around every unit. A `RegisteredOperationBackend` enters it
+    around its worker-side handler, so a nested durable operation called from inside the unit (a
+    `DurableWorkspace` call, a capability's durable operation called from a tool) runs directly
+    instead of scheduling a second unit.
+    """
     token = _IN_DURABLE_UNIT.set(True)
     try:
         yield
@@ -46,6 +54,12 @@ def durable_unit_scope() -> Generator[None]:
 
 
 class BoundDurableOperation(Generic[ParamsT_bound, WireT_bound, ResultT_bound], Protocol):
+    """The caller a backend returns for one bound [`DurableOperation`][pydantic_ai.durable_exec.DurableOperation].
+
+    Calling it runs the operation in a durable unit when the run is inside the engine's durable
+    container, passing per-call `config` (such as a per-tool override) when there is one.
+    """
+
     @property
     @abstractmethod
     def operation(self) -> DurableOperation[ParamsT_bound, WireT_bound, ResultT_bound]: ...
@@ -64,6 +78,9 @@ class DurableOperationBackend(ABC, Generic[ConfigT]):
     `RegisteredOperationBackend`. See
     [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
     """
+
+    parameter_transports: ParameterTransports = ParameterTransports()
+    """How each operation's parameters cross into a durable unit; unchanged unless the engine overrides it."""
 
     @abstractmethod
     def bind(
@@ -236,10 +253,18 @@ class RegisteredOperationBackend(DurableOperationBackend[ConfigT]):
     [durable backend guide](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/).
     """
 
-    def __init__(self, *, namer: DurableOperationNamer, config: DurableOperationConfig[ConfigT]) -> None:
+    def __init__(
+        self,
+        *,
+        namer: DurableOperationNamer,
+        config: DurableOperationConfig[ConfigT],
+        parameter_transports: ParameterTransports | None = None,
+    ) -> None:
         self._namer = namer
         self._config = config
         self._registrations: list[Callable[..., object]] = []
+        if parameter_transports is not None:
+            self.parameter_transports = parameter_transports
 
     def bind(
         self, operation: DurableOperation[ParamsT, WireT, ResultT]

@@ -23,14 +23,16 @@ from typing import Any, Literal
 from uuid import uuid4
 
 import pytest
+from pydantic import TypeAdapter
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext, TextOutput
 from pydantic_ai.capabilities import (
     MCP,
     AbstractCapability,
     Capability,
     CombinedCapability,
     DynamicCapability,
+    FileUnderstanding,
     HandleDeferredToolCalls,
     LocalWorkspace,
     NativeTool,
@@ -55,12 +57,14 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    SystemPromptPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
@@ -76,6 +80,7 @@ from .append_only import (
     Known,
     Provider,
     Scenario,
+    Turn,
     build_capabilities,
     check_conversation,
     discover_capabilities,
@@ -121,6 +126,7 @@ def _keep_model(ctx: ModelSelectionContext[Any]) -> Model:
 FIXTURES: dict[str, Fixture] = {
     'CombinedCapability': lambda _: CombinedCapability([Thinking()]),
     'DynamicCapability': lambda _: DynamicCapability(lambda ctx: Thinking()),
+    'FileUnderstanding': lambda _: FileUnderstanding(fallback_subagent_model=TestModel()),
     'HandleDeferredToolCalls': lambda _: HandleDeferredToolCalls(lambda ctx, requests: requests.build_results()),
     'LocalWorkspace': lambda tmp_path: LocalWorkspace(tmp_path),
     'MCP': lambda _: MCP(local=MCPToolset(_mcp_server())),
@@ -140,6 +146,11 @@ FIXTURES: dict[str, Fixture] = {
 """Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
 
 EXEMPT: dict[str, Exempt] = {
+    'BatchModelRequests': Exempt(
+        "Sends each request through the provider's batch API, which the scenario doesn't serve. A batch item's body is "
+        "built by the same code as the model's own request, so it's the unbatched request's (see the providers' "
+        '`batch_encode` tests).'
+    ),
     'NativeOrLocalTool': Exempt(
         'Base class that needs a subclass; `WebSearch`, `WebFetch`, `XSearch` and `MCP` are its cases.'
     ),
@@ -165,12 +176,45 @@ KNOWN: dict[str, tuple[Known, ...]] = {
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
 ALLOWED: dict[str, Allowed] = {
+    'agent:effort_change': Allowed(
+        'docs/capabilities/thinking.md: an API without a mid-conversation effort channel gets each change as the request-level '
+        'effort, which is part of the cache key',
+        (('settings', 'setting:reasoning_effort'),),
+        max_moves=2,
+        providers=('openai-chat',),
+    ),
     'agent:dynamic_instructions': Allowed(
         'docs/agent.md: dynamic instructions are re-rendered for every request, after the static ones and outside '
         'the cached prefix; append mode is #8188',
         # The `@agent.instructions` part, which has no id of its own, after the agent's static instructions.
         (('system', 'instruction:anonymous@1'),),
         max_moves=4,
+    ),
+    **{
+        f'retry:{name}+request-scoped': Allowed(
+            'A request-scoped system prompt (#9711) is sent for one request, as the tail, and left out of the next '
+            'one, retried steps included; Anthropic clears it natively',
+            (('messages', 'system-prompt'),),
+            tail=True,
+            records=('request-scoped system prompt',),
+            providers=('openai-responses', 'openai-chat'),
+        )
+        for name in ('tool-retry', 'output-validation-retry')
+    },
+    'Capability(defer_loading=True)': Allowed(
+        'docs/capabilities/on-demand.md: Chat Completions has no deferred-tool channel, so a load adds the '
+        "capability's tools to `tools`, like #9405's mid-run newcomers",
+        tuple(('tools', f'tool:{name}') for name in ('write_note', 'read_note', 'delete_note')),
+        providers=('openai-chat',),
+    ),
+    # Since #10938, a `no_output` retry leaves out the request-scoped prompt no user message would clear, so
+    # Anthropic drops it from the tail like the OpenAI APIs.
+    'retry:no-output-retry+request-scoped': Allowed(
+        'A request-scoped system prompt (#9711) is sent for one request, as the tail, and left out of the next '
+        'one, retried steps included',
+        (('messages', 'system-prompt'),),
+        tail=True,
+        records=('request-scoped system prompt',),
     ),
 }
 """Documented prefix movers, checked exactly."""
@@ -188,11 +232,171 @@ def _dynamic_instructions(agent: Agent[Any, Any], clock: Clock) -> None:
         return f'The time is {clock.now:%H:%M}.'
 
 
+def _effort_by_step(ctx: RunContext[Any]) -> ModelSettings:
+    """Raise the effort as the conversation goes on: at a tool-result step of the first run, and as the second starts."""
+    responses = sum(isinstance(message, ModelResponse) for message in ctx.messages)
+    return ModelSettings(thinking='low' if responses == 0 else 'medium' if responses < 3 else 'high')
+
+
 AGENT_FEATURES: dict[str, Scenario] = {
     'agent:dynamic_system_prompt': Scenario(configure=_dynamic_system_prompt, check_ids=False),
     'agent:dynamic_instructions': Scenario(configure=_dynamic_instructions, check_ids=False),
+    # The models whose APIs can change effort mid-conversation (#10385); Chat Completions can't.
+    'agent:effort_change': Scenario(
+        run_kwargs={'model_settings': _effort_by_step},
+        model_names={'openai-responses': 'gpt-6.1-sol', 'openai-chat': 'gpt-6.1-sol'},
+        serialize_history=True,
+    ),
 }
 """Agent features, not capabilities, that render state into the prompt, run through the same checks."""
+
+
+def write_note(content: str) -> str:
+    """Write a note."""
+    return 'Saved.'
+
+
+def read_note() -> str:
+    """Read the notes."""
+    return 'No notes.'  # pragma: no cover
+
+
+def delete_note() -> str:
+    """Delete the notes."""
+    return 'Deleted.'  # pragma: no cover
+
+
+def look_up_archive(topic: str) -> str:
+    """Look a topic up in the archive."""
+    return 'Nothing archived.'  # pragma: no cover
+
+
+VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
+    # Two deferred capabilities, the first loaded, with tools declared out of name order: the loaded tools
+    # must keep the order their deferred entries were sent in, ahead of the other capability's.
+    'Capability(defer_loading=True)': (
+        lambda _: [
+            Capability(
+                id='notes', description='Notes.', tools=[write_note, read_note, delete_note], defer_loading=True
+            ),
+            Capability(id='archive', description='The archive.', tools=[look_up_archive], defer_loading=True),
+        ],
+        Scenario(state_calls=(('load_capability', {'id': 'notes'}), ('write_note', {'content': 'Sports too.'}))),
+    ),
+}
+"""Capabilities in a configuration their defaults don't reach, with a scenario that exercises it."""
+
+
+def _flaky_tool(agent: Agent[Any, Any], clock: Clock) -> None:
+    attempts = 0
+
+    @agent.tool_plain
+    def check_forecast(city: str) -> str:
+        """Check the forecast for a city."""
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ModelRetry('The forecast service is busy, try again.')
+        return f'Sunny in {city}.'
+
+
+def _count(text: str) -> int:
+    """Read the answer as a count; anything else fails validation, so the model is asked again."""
+    return TypeAdapter(int).validate_python(text)
+
+
+@dataclass
+class _RequestScopedNudge(AbstractCapability[Any]):
+    """Add a request-scoped system prompt (#9711) to every request, the way `WarnNearLimits` does."""
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(SystemPromptPart('Keep it short.', scope='request'))
+        return request_context
+
+
+_LOOK_UP = ('look_up', {'topic': 'weather'})
+
+RETRY_SCENARIOS: dict[str, Scenario] = {
+    # A tool raises `ModelRetry`, so its result is a `ToolReturnPart(outcome='retried')` and the call is made again.
+    'tool-retry': Scenario(
+        configure=_flaky_tool,
+        turns=(
+            Turn(calls=(_LOOK_UP,)),
+            Turn(calls=(('check_forecast', {'city': 'Paris'}),)),
+            Turn(calls=(('check_forecast', {'city': 'Paris'}),)),
+            Turn(text='Sunny in Paris.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
+        ),
+        serialize_history=True,
+    ),
+    # Text output fails validation, so `RetryFeedbackPart(cause='validation_error')` asks for it again.
+    'output-validation-retry': Scenario(
+        output_type=TextOutput(_count),
+        turns=(
+            Turn(calls=(_LOOK_UP,)),
+            Turn(text='several'),
+            Turn(text='3'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='a few'),
+            Turn(text='4'),
+        ),
+        serialize_history=True,
+        replay_text='5',
+    ),
+    # A response with nothing usable as output gets `RetryFeedbackPart(cause='no_output')`.
+    'no-output-retry': Scenario(
+        turns=(
+            Turn(calls=(_LOOK_UP,)),
+            Turn(text=''),
+            Turn(text='Here is the weather.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text=''),
+            Turn(text='Here is more.'),
+        ),
+        serialize_history=True,
+    ),
+}
+"""Conversations that retry, continued from stored history. Each also runs with a request-scoped system prompt
+on every request, which a retried step must still leave out of the next request."""
+
+
+def _timekeeping() -> list[AbstractCapability[Any]]:
+    capability = Capability[Any](
+        id='timekeeping', defer_loading=True, description='Tell the time.', instructions='Give times in UTC.'
+    )
+
+    @capability.instructions
+    def now() -> str:
+        return f'The time is {CLOCK.now:%H:%M}.'
+
+    return [capability]
+
+
+LOADED_CAPABILITY_CASES: dict[str, tuple[Callable[[], list[AbstractCapability[Any]]], Scenario]] = {
+    # The clock moves on every request, so every request after the load records a change to its instructions.
+    'deferred:dynamic_instructions': (
+        _timekeeping,
+        Scenario(
+            turns=(
+                Turn(calls=(('load_capability', {'id': 'timekeeping'}),)),
+                Turn(calls=(_LOOK_UP,)),
+                Turn(text='Here is the weather.'),
+                Turn(calls=(('look_up', {'topic': 'sports'}),)),
+                Turn(text='Here is more.'),
+            ),
+            serialize_history=True,
+        ),
+    ),
+}
+"""Deferred capabilities the model loads mid-conversation, whose instructions then change."""
+
+RETRY_CASES: dict[str, tuple[Scenario, bool]] = {
+    **{f'retry:{name}': (scenario, False) for name, scenario in RETRY_SCENARIOS.items()},
+    **{f'retry:{name}+request-scoped': (scenario, True) for name, scenario in RETRY_SCENARIOS.items()},
+}
 
 CAPABILITIES = discover_capabilities(('pydantic_ai.capabilities', 'pydantic_ai.models'))
 
@@ -200,12 +404,26 @@ CAPABILITIES = discover_capabilities(('pydantic_ai.capabilities', 'pydantic_ai.m
 def test_every_capability_has_a_case():
     """Every table entry names a capability that still exists, so renames and removals don't leave dead rows."""
     tables = FIXTURES.keys() | EXEMPT.keys() | KNOWN.keys() | ALLOWED.keys() | {name for name, _ in UNSUPPORTED}
-    stale = tables - CAPABILITIES.keys() - AGENT_FEATURES.keys()
+    stale = (
+        tables
+        - CAPABILITIES.keys()
+        - AGENT_FEATURES.keys()
+        - RETRY_CASES.keys()
+        - VARIANTS.keys()
+        - LOADED_CAPABILITY_CASES.keys()
+    )
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
-@pytest.mark.parametrize('name', sorted(CAPABILITIES.keys() - EXEMPT.keys()) + sorted(AGENT_FEATURES))
+@pytest.mark.parametrize(
+    'name',
+    sorted(CAPABILITIES.keys() - EXEMPT.keys())
+    + sorted(AGENT_FEATURES)
+    + sorted(RETRY_CASES)
+    + sorted(VARIANTS)
+    + sorted(LOADED_CAPABILITY_CASES),
+)
 async def test_conversation_only_appends(
     name: str, provider: Provider, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
 ):
@@ -215,6 +433,15 @@ async def test_conversation_only_appends(
         pytest.skip('mcp not installed')
     if name in AGENT_FEATURES:
         capabilities, scenario = [], AGENT_FEATURES[name]
+    elif name in LOADED_CAPABILITY_CASES:
+        build, scenario = LOADED_CAPABILITY_CASES[name]
+        capabilities = build()
+    elif name in RETRY_CASES:
+        scenario, nudged = RETRY_CASES[name]
+        capabilities = [_RequestScopedNudge()] if nudged else []
+    elif name in VARIANTS:
+        fixture, scenario = VARIANTS[name]
+        capabilities = build_capabilities(name, lambda: AbstractCapability, fixture, tmp_path)
     else:
         capabilities = build_capabilities(name, CAPABILITIES[name].load, FIXTURES.get(name), tmp_path)
         scenario = Scenario()
@@ -704,3 +931,22 @@ def test_instruction_parts_sharing_an_id_are_told_apart():
         'anthropic', [body('First.'), body('First.')], (b'', b''), [parameters('First.'), parameters('First.')]
     )
     assert result.changes() == []
+
+
+def test_a_request_scoped_prompt_left_visible_fails():
+    """A request-scoped prompt still visible after its request fails the `request-scope` check.
+
+    A unit test of the check on hand-built Anthropic requests, since #10938 fixed the one case the matrix had:
+    the earlier request's prompt is marked `clear_at: next_user_message`, and no user message follows it.
+    """
+    nudge = {'role': 'system', 'content': [{'type': 'text', 'text': 'Keep it short.'}], 'clear_at': 'next_user_message'}
+    first = [{'role': 'user', 'content': 'Hi'}, nudge]
+    second = [
+        *first,
+        {'role': 'assistant', 'content': [{'type': 'text', 'text': ''}]},
+        {'role': 'system', 'content': [{'type': 'text', 'text': 'Please return text or call a tool.'}]},
+    ]
+    bodies = [json.dumps({'model': 'claude-opus-5-5', 'messages': messages}).encode() for messages in (first, second)]
+    result = ConversationResult('anthropic', bodies, (b'', b''), [])
+    with pytest.raises(pytest.fail.Exception, match=re.escape('request 1 still shows')):
+        check_conversation('example', result)

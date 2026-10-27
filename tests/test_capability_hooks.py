@@ -2609,6 +2609,78 @@ class TestModelRequestErrorHooks:
         result = await agent.run('hello')
         assert result.output == 'recovered response'
 
+    async def test_recovered_response_rejected_with_model_retry_counts_its_usage(self):
+        """A recovered response `after_model_request` rejects stays in history for context, and its usage counts."""
+        calls = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError('model exploded')
+            return ModelResponse(
+                parts=[TextPart('second response')], usage=RequestUsage(input_tokens=1, output_tokens=1)
+            )
+
+        @dataclass
+        class RecoverThenRejectCap(AbstractCapability[Any]):
+            async def on_model_request_error(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+            ) -> ModelResponse:
+                return ModelResponse(
+                    parts=[TextPart('recovered response')], usage=RequestUsage(input_tokens=10, output_tokens=5)
+                )
+
+            async def after_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+            ) -> ModelResponse:
+                if response.text == 'recovered response':
+                    raise ModelRetry('try again')
+                return response
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[RecoverThenRejectCap()])
+        result = await agent.run('hello')
+
+        assert result.output == 'second response'
+        assert result.usage == snapshot(RunUsage(requests=2, output_tokens=6, input_tokens=11))
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='recovered response')],
+                    usage=RequestUsage(input_tokens=10, output_tokens=5),
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryFeedbackPart(
+                            content='try again',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='second response')],
+                    usage=RequestUsage(input_tokens=1, output_tokens=1),
+                    model_name='function:model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+
     async def test_on_model_request_error_not_called_on_success(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])

@@ -7,8 +7,17 @@ from pydantic import JsonValue
 from termflow.tui.completion import Completion
 
 from pydantic_ai.messages import BinaryContent
-from pydantic_clai2.plugins import Conversation, LiveSession, PluginHost, SessionCatalog, TaskCatalog
+from pydantic_clai2.plugins import (
+    Conversation,
+    ForkInfo,
+    LiveSession,
+    PluginHost,
+    QueuedInput,
+    SessionCatalog,
+    TaskCatalog,
+)
 from pydantic_clai2.plugins.menus import SettingsMenu
+from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_clai2.ui.rendering.status import Status
 
 _OPENS_NONE = 'This CLAI opens no other live sessions.'
@@ -49,12 +58,29 @@ class HostSession:
         return self._host.tasks
 
     @property
+    def forks(self) -> tuple[ForkInfo, ...]:
+        return ()
+
+    @property
     def running(self) -> bool:
         return False
 
     @property
     def queued(self) -> int:
         return 0
+
+    @property
+    def queue(self) -> list[QueuedInput]:
+        return []
+
+    def edit_queued(self, input_id: str, text: str, /) -> None:
+        raise LookupError(NOT_QUEUED)
+
+    def remove_queued(self, input_id: str, /) -> None:
+        raise LookupError(NOT_QUEUED)
+
+    def steer(self, text: str, /) -> bool:
+        return False
 
     @property
     def watchers(self) -> int:

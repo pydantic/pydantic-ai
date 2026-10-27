@@ -9,8 +9,8 @@ def image_media_type_from_bytes(data: bytes) -> str | None:
     https://github.com/openai/openai-node/issues/1850). Sniffing the decoded bytes lets adapters
     report the media type the caller actually received instead of the provider's claim.
 
-    Harness's `FileSystem` duplicates these signatures in `_sniff_media_type`
-    (`pydantic_ai_harness/filesystem/_toolset.py`), extended with GIF and PDF. Change both together.
+    Harness's `FileSystem` duplicates these signatures in `sniff_media_type`
+    (`pydantic_ai_harness/filesystem/_content.py`), extended with GIF and PDF. Change both together.
     """
     if data.startswith(b'\x89PNG'):
         return 'image/png'

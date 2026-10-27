@@ -61,6 +61,8 @@ Rename the tool with `inventory_tool_name`, or scope which roots it scans with
 `asset_roots`.
 Skill discovery goes at most eight directories deep.
 
+With `FileSystem` on the agent, the inventory tool steps aside for `FileSystem`'s `read_file`, as long as every asset root is inside the working directory (the default roots are). The tool is marked with [`unless_tool_kind`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind) set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind (keep `FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet, [#10927](https://github.com/pydantic/pydantic-ai/issues/10927)). The instructions name the asset roots and say to inspect them with file tools, or with the inventory tool when it's offered. They name no reader, so they're the same with or without `FileSystem` and stay static. The decision is made from `asset_roots`, not from `FileSystem`'s access rules: `denied_patterns` that cover the roots, or `allowed_patterns` that leave them out, still drop the inventory tool.
+
 ### 3. Nested-on-traversal (off by default)
 
 When the model lists or reads a directory, surface that directory's

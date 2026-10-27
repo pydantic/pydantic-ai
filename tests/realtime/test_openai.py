@@ -38,6 +38,7 @@ from pydantic_ai.messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -90,6 +91,7 @@ from pydantic_ai.realtime._openai_protocol import (
     seed_items,
     server_vad_from_turn_detection,
 )
+from pydantic_ai.realtime._utils import session_instructions
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     CancelResponse,
@@ -1248,6 +1250,8 @@ def test_session_config_thinking_maps_to_reasoning_on_reasoning_models() -> None
 
     assert reasoning('low') == {'effort': 'low'}
     assert reasoning('high') == {'effort': 'high'}
+    # The realtime reasoning efforts stop at `xhigh`, where `max` lands.
+    assert reasoning('max') == {'effort': 'xhigh'}
     assert reasoning(True) == {'effort': 'medium'}
     # `thinking=False` sends effort `'none'`, which the SDK type omits but the reasoning models accept
     # and honor with zero reasoning tokens; omitting `reasoning` would leave them at their default effort.
@@ -1660,6 +1664,120 @@ async def test_connect_without_tools_omits_tools(monkeypatch: pytest.MonkeyPatch
     session = json.loads(ws.sent[0])['session']
     assert 'tools' not in session
     assert 'voice' not in session['audio']['output']
+
+
+class _OpenWebSocket(FakeWebSocket):
+    """A websocket that stays open after the handshake, as a server would until the session closes."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        await asyncio.Event().wait()
+        yield  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    ('profile', 'expected'),
+    [
+        (None, ('system', 'The caller is Jamie.')),
+        ({'supports_system_messages': False}, ('user', '<system>The caller is Jamie.</system>')),
+    ],
+)
+async def test_mid_session_system_prompt_channel_follows_the_profile(
+    monkeypatch: pytest.MonkeyPatch, profile: RealtimeModelProfile | None, expected: tuple[str, str]
+) -> None:
+    """A system prompt goes out as a `system` message where the profile says the model heeds one, else as tagged text."""
+    ws = _OpenWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'), profile=profile)
+    assert model.profile.get('supports_system_messages') is (profile is None)
+
+    async with Agent().realtime(model).session() as session:
+        await session.send(SystemPromptPart(content='The caller is Jamie.'), respond=False)
+
+    [item] = [json.loads(frame)['item'] for frame in ws.sent if json.loads(frame)['type'] == 'conversation.item.create']
+    assert (item['role'], item['content'][0]['text']) == expected
+    assert not any(json.loads(frame)['type'] == 'response.create' for frame in ws.sent)
+
+
+async def test_connect_sends_seeded_system_prompts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The standing system prompt opens the session instructions; a later one is seeded in place as `<system>` text."""
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='Standing prompt.'), UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='Mid-conversation note.'), UserPromptPart(content='more')]),
+        ModelResponse(parts=[TextPart(content='sure')]),
+    ]
+    model = OpenAIRealtimeModel('gpt-realtime')
+    async with model.connect(
+        messages=[*history, ModelRequest(parts=[])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            instruction_parts=[InstructionPart(content='Agent instructions.')]
+        ),
+    ):
+        pass
+
+    assert json.loads(ws.sent[0])['session']['instructions'] == 'Standing prompt.\n\nAgent instructions.'
+    assert [
+        (item['item']['role'], [content['text'] for content in item['item']['content']])
+        for item in map(json.loads, ws.sent[1:])
+    ] == snapshot(
+        [
+            ('user', ['hi']),
+            ('assistant', ['hello']),
+            ('user', ['<system>Mid-conversation note.</system>']),
+            ('user', ['more']),
+            ('assistant', ['sure']),
+        ]
+    )
+
+
+async def test_seed_items_drop_answered_request_scoped_system_prompts() -> None:
+    """A request-scoped system prompt whose request was answered isn't seeded; the current request's still is.
+
+    That's what `Model.prepare_messages` does for a model that can't clear request-scoped prompts itself.
+    """
+    history = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='Standing prompt.'),
+                SystemPromptPart(content='Answered note.', scope='request'),
+                UserPromptPart(content='hi'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(
+            parts=[SystemPromptPart(content='Current note.', scope='request'), UserPromptPart(content='more')]
+        ),
+    ]
+    items = await seed_items(history, profile=RealtimeModelProfile(), provider_name='openai')
+    assert [(item['role'], [content['text'] for content in item['content']]) for item in items] == (
+        snapshot(
+            [
+                ('user', ['hi']),
+                ('assistant', ['hello']),
+                ('user', ['<system>Current note.</system>']),
+                ('user', ['more']),
+            ]
+        )
+    )
+
+    # A system prompt after a leading request-scoped one isn't the standing prompt, so dropping the
+    # request-scoped one doesn't make it one: it's seeded in place rather than lost.
+    history[0] = ModelRequest(
+        parts=[
+            SystemPromptPart(content='Answered note.', scope='request'),
+            SystemPromptPart(content='Later prompt.'),
+            UserPromptPart(content='hi'),
+        ]
+    )
+    assert session_instructions(history, ModelRequestParameters()) == ''
+    items = await seed_items(history, profile=RealtimeModelProfile(), provider_name='openai')
+    assert [(item['role'], [content['text'] for content in item['content']]) for item in items][:2] == [
+        ('user', ['<system>Later prompt.</system>']),
+        ('user', ['hi']),
+    ]
 
 
 async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:

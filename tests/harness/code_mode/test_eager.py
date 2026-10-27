@@ -110,7 +110,9 @@ async def observe(capability: CodeMode[None], ctx: RunContext[None], events: Seq
 
 
 class TestEagerCodeMode:
-    async def test_executes_before_model_stream_finishes(self):
+    @pytest.mark.parametrize('chunk_size', [4, 1])
+    async def test_executes_before_model_stream_finishes(self, chunk_size: int):
+        """Statements run while the call streams, including when every delta splits the `\\n` escape."""
         first_call = asyncio.Event()
         calls: list[str] = []
 
@@ -125,7 +127,7 @@ class TestEagerCodeMode:
             if prior_run_code_calls(messages):
                 yield 'done'
                 return
-            chunks = stream_json_args(code, chunk_size=4)
+            chunks = stream_json_args(code, chunk_size=chunk_size)
             yield {1: DeltaToolCall(name='run_code')}
             for chunk in chunks[:-1]:
                 yield {1: DeltaToolCall(json_args=chunk)}

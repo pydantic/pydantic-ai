@@ -218,11 +218,13 @@ To let the users of an open-source or local app run it on their own ChatGPT plan
 | `ImageGeneration` | Image generation — native when supported, direct fallback via an image model name or `ImageGenerator` | Yes |
 | `MCP` | MCP server — native when supported, direct connection | Yes |
 | `LocalWorkspace` | A `ctx.workspace` on this machine (host subprocesses and files, no isolation); `read_only=True` refuses commands and changes | Yes |
+| `FileUnderstanding` | Replaces files the model's profile rejects with descriptions written by `fallback_subagent_model` | Yes |
 | `PrepareTools` | Filters or modifies tool definitions per step | No |
 | `PrefixTools` | Wraps a capability and prefixes its tool names | Yes |
 | `NativeTool` | Registers a provider-native tool with the agent | Yes |
 | `Toolset` | Wraps an `AbstractToolset` | No |
 | `ProcessHistory` | Wraps a history processor function — a thin wrapper over the `before_model_request` hook | No |
+| `BatchModelRequests` | Sends model requests through the OpenAI, Anthropic or Gemini batch API at batch prices; runs started together share batches | Yes |
 
 ### When to Use Each Agent Method
 

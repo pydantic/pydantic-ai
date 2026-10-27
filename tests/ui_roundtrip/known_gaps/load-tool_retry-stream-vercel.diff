@@ -1,0 +1,18 @@
+--- expected
++++ actual
+@@ -37,6 +37 @@
+-     "outcome": "retried",
+-     "retry": {
+-      "cause": "model_retry",
+-      "attempt": 1,
+-      "max_retries": 2
+-     }
++     "outcome": "failed"
+@@ -192,6 +187 @@
+-     "outcome": "retried",
+-     "retry": {
+-      "cause": "model_retry",
+-      "attempt": 1,
+-      "max_retries": 2
+-     }
++     "outcome": "failed"

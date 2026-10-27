@@ -23,9 +23,9 @@ already includes cache reads and writes; no CLAI sum adds them again.
 | Surface | Source | What the number means |
 | --- | --- | --- |
 | Status row `context: X/Y`, before each request | `compaction` `_ContextGauge` on harness `ContextUsageEvent` (`ReportContextUsage`, `estimate_context_tokens`) | Latest response's `context_tokens` (input as `context_input_tokens` reads it, plus output), plus a heuristic for the messages and newly revealed tool schemas since, minus the reclaim of a compaction in this request. With no reported usage yet, the heuristic alone, without most tool definitions, shown with `~` |
-| Status row `context`, during streaming | `Session._stream`, every event | Latest response's `context_tokens` (a long decode's input is its first request's) |
+| Status row `context`, during streaming | `Session._stream`, every event | Latest response's `context_tokens` (input as `context_input_tokens` reads it, plus output) |
 | Status row `context`, end of turn | `_run_prompt` | Last response's `context_tokens` |
-| Status row window `Y` | gauge window (honours the `compaction` override), else `Model.context_window` | Model window |
+| Status row window `Y` | gauge window (honours the `compaction` override), else `Model.context_window`; before a request, the selected model's `infer_model_profile` window | Model window |
 | Status row `~N streamed tokens` / `N output tokens` | streamed characters / 4, then `result.usage.output_tokens` | Turn output, including a summary call and forwarded subagent usage |
 | Status row cost, `/cost`, `/usage` | `usage_report.session_usage`: sum of `ModelResponse.usage` in retained history | Tokens processed and billed, per turn |
 | Subagent status row | `tasks.py`: child's last `context_tokens`, child model window | Same as the main row |
@@ -34,6 +34,7 @@ already includes cache reads and writes; no CLAI sum adds them again.
 | `herdr` pane: `tokens`, `context` | `session_usage(...).total.total_tokens`; gauge fraction | Tokens processed; context fraction |
 | `/resume` browser `N tok` | harness `ConversationStore`: sum of `total_tokens` | Tokens processed |
 | Automatic compaction (0.85), `coder` `ClearToolResults` (0.7; #9930 would drop it) | `estimate_context_tokens` | Trigger for each |
+| Experimental background compaction (`background_start` of the 0.85 trigger), and whether its held summary still fits under the trigger | `estimate_context_tokens`, minus the `estimate_token_count` reclaim of the swap | Start and fit check |
 | `protected_tokens` tail, `/compact` "tokens saved" | `estimate_message_tokens` (`find_token_cutoff` for the tail): per-message heuristic scaled to the reported `input_tokens` between responses, heuristic alone without usage | Estimate |
 | Reclaim, `compact_messages` span `tokens_before`/`tokens_after` | `estimate_token_count` (heuristic only) | Estimate |
 | Imported Claude Code and Codex sessions | per-request usage (`input + cache read + cache write`; Codex `last_token_usage`) | Set once per response, never summed |
@@ -107,7 +108,9 @@ which leaves files out, as `FilePart` and user-prompt images already were.
    figure drops while streaming and jumps at the end of the request.
 8. **Summary calls are missing from cost.** `/cost` and the footer sum the retained responses. An
    automatic summary call's usage only reaches the run's `RunUsage`. `/compact` sums into a
-   `RunUsage` that is then discarded. A `/fork` copies history, so its `/cost` includes the parent's
+   `RunUsage` that is then discarded. A background summary (experimental) counts into the
+   `RunUsage` of the turn that started it, like an automatic one, but when it finishes after that
+   turn ended, the turn's output-token figure has already been shown without it. A `/fork` copies history, so its `/cost` includes the parent's
    retained responses.
 9. **Totals of processed tokens are not context.** `/cost`, the `herdr` `tokens` field, and the
    browser's `tok` count every request's whole input again, so they grow roughly quadratically.

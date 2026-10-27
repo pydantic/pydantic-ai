@@ -38,7 +38,7 @@ _GLM_5_3_REASONING_EFFORT_MAPPING = {'minimal': 'low', 'medium': 'high', 'xhigh'
 """GLM-5.3 only accepts `reasoning_effort` values `low`, `high`, and `max` (per the Z.AI docs, and the
 'please use low, high, or max' text of the error Z.AI returns for `thinking.type: 'disabled'` on the model),
 so the unified levels it doesn't accept map to the nearest supported one — the same fallback approach as
-Gemini's `MINIMAL` -> `LOW`. `xhigh` maps to `max`, which has no unified equivalent."""
+Gemini's `MINIMAL` -> `LOW`. `xhigh` maps up to `max`, which unified `max` sends unchanged."""
 
 
 def zai_model_profile(model_name: str) -> ModelProfile | None:

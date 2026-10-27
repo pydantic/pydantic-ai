@@ -252,7 +252,7 @@ def test_model_profile_thinking_defaults():
         assert profile.get('google_supports_thinking_level') is True, f'{name} should support thinking_level'
 
     # Gemini 2.5: supports thinking, but uses budget (thinking_level=False)
-    for name in ('gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-image'):
+    for name in ('gemini-2.5-flash', 'gemini-2.5-pro'):
         profile = google_model_profile(name)
         assert profile is not None, f'{name} should have a profile'
         assert profile.get('supports_thinking') is True, f'{name} should support thinking'
@@ -266,6 +266,8 @@ def test_model_profile_thinking_defaults():
         'gemini-1.5-pro',
         'gemini-pro',
         'gemma-3-27b-it',
+        # The Gemini API and Vertex both reject a thinking config for this 2.5 image model.
+        'gemini-2.5-flash-image',
     ):
         profile = google_model_profile(name)
         assert profile is not None, f'{name} should have a profile'

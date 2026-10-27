@@ -8,7 +8,7 @@ import re
 import threading
 import time
 from collections.abc import AsyncGenerator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any, assert_type
 
 import pytest
@@ -1048,7 +1048,6 @@ class TestBridgeFailureModes:
         shutdown(replacement, owner=replacement_thread)
         gc.collect()
 
-    @pytest.mark.skip(reason='Cleanup never finishes in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
     def test_an_unwind_that_finishes_within_the_cancel_timeout_keeps_the_loop_warm(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1064,6 +1063,8 @@ class TestBridgeFailureModes:
             def step(self, func, name=None, config=None):  # type: ignore[no-untyped-def]
                 raise Suspend('retry scheduled')
 
+        unwinding = threading.Event()
+        cancel_held = threading.Event()
         cleanup_finished = threading.Event()
 
         agent = build_agent(act)
@@ -1072,17 +1073,35 @@ class TestBridgeFailureModes:
             try:
                 return await agent.run('go')  # type: ignore[return-value]
             finally:
-                await asyncio.sleep(0.02)
+                unwinding.set()
+                # The cleanup finishes as soon as the handler's cancel reaches it.
+                with suppress(asyncio.CancelledError):
+                    await asyncio.Event().wait()
                 cleanup_finished.set()
 
         warm = loops.get()
         thread = loops._thread  # pyright: ignore[reportPrivateUsage]
         assert thread is not None
+        schedule = warm.call_soon_threadsafe
+
+        def cancel_once_unwinding(callback: Callable[..., object], *args: Any) -> asyncio.Handle:
+            # The handler thread replies to the suspended step and then sends the cancel, which can
+            # reach the loop before or after the run resumes. Send it once the run is unwinding, as a
+            # handler thread that lags the loop on a busy runner does, so it always finds the run
+            # still unwinding instead of interrupting it before the cleanup starts.
+            if callback.__name__ == 'cancel_and_notify':
+                assert unwinding.wait(timeout=_READINESS_WAIT_TIMEOUT)
+                cancel_held.set()
+            return schedule(callback, *args)
+
+        monkeypatch.setattr(warm, 'call_soon_threadsafe', cancel_once_unwinding)
 
         with pytest.raises(Suspend):
-            run_durable(run_with_quick_cleanup, context=SuspendingContext(), cancel_timeout=0.1)
+            run_durable(run_with_quick_cleanup, context=SuspendingContext(), cancel_timeout=_READINESS_WAIT_TIMEOUT)
 
-        assert cleanup_finished.wait(timeout=5)
+        # A renamed cancel callback would slip past the hold and bring the race back.
+        assert cancel_held.is_set()
+        assert cleanup_finished.wait(timeout=_READINESS_WAIT_TIMEOUT)
         # The unwind beat the budget, so the loop is still the one the next invocation gets.
         assert loops.get() is warm
         assert not warm.is_closed()
@@ -1380,7 +1399,7 @@ class TestEnqueueGuard:
             run_durable(lambda: agent.run('go'), context=ctx)
 
     def test_enqueue_from_an_event_handler_on_a_model_event_raises(self) -> None:
-        """Model events reach the handler inside the model step (`capture_event_stream`); a replay
+        """Model events reach the handler inside the model step (`consume_event_stream`); a replay
         serves the recorded step, so an enqueue there would be dropped. The first handler call is
         the model-request capture, so enqueuing after draining the stream raises on that path."""
 

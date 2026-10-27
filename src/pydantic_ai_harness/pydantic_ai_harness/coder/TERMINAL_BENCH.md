@@ -79,8 +79,9 @@ Until that code is released, this release-pinned recipe cannot benchmark it.
 Record which Coder generation you used when comparing scores.
 
 Later releases add `delegate_task` by default, so a run on one of those measures a
-different composition. Pass `sub_agents=False` as an agent kwarg to compare against the
-six-tool generation.
+different composition. The pinned adapter has no option for `Coder(sub_agents=False)`,
+so it cannot reproduce the six-tool generation on those releases; record the composition
+with the score.
 
 Install the matching `[coder]` extra via `pip_packages` so the agent venv also
 gets ripgrep. Omit `allowed_commands`: current Coder has no command allowlist,

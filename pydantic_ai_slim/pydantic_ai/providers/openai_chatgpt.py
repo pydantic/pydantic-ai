@@ -394,8 +394,14 @@ class OpenAIChatGPTProvider(OAuthCredentialsProvider[OpenAIChatGPTCredentials]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        # The public OpenAI API, so first-party flags apply beneath the plan-usage dialect.
-        return merge_profile(OpenAIProvider.model_profile(model_name), openai_chatgpt_model_profile(model_name))
+        # The public OpenAI API, so first-party flags apply beneath the plan-usage dialect. The dialect profile
+        # restates the shared `openai_model_profile`, so the first-party schema transformer is layered back on top.
+        openai_profile = OpenAIProvider.model_profile(model_name)
+        return merge_profile(
+            openai_profile,
+            openai_chatgpt_model_profile(model_name),
+            openai_profile and ModelProfile(json_schema_transformer=openai_profile.get('json_schema_transformer')),
+        )
 
     def __init__(
         self,

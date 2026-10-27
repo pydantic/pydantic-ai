@@ -382,7 +382,7 @@ async def test_continued_requests_are_one_response(stream: bool, allow_model_req
             finish_reason='stop',
             run_id=IsStr(),
             conversation_id=IsStr(),
-            metadata={'__pydantic_ai__': {'initial_input_tokens': 10}},
+            metadata={'__pydantic_ai__': {'context_input_tokens': 10}},
         )
     )
 
@@ -619,7 +619,7 @@ async def test_stream_drop_that_would_repeat_output_raises(allow_model_requests:
                 provider_response_id='request-1',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'initial_input_tokens': 8}},
+                metadata={'__pydantic_ai__': {'context_input_tokens': 8}},
                 state='interrupted',
             )
         ]
@@ -660,7 +660,7 @@ _RECORDED_CASES = [
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'initial_input_tokens': 109}},
+                metadata={'__pydantic_ai__': {'context_input_tokens': 109}},
             )
         ),
     ),
@@ -688,7 +688,7 @@ _RECORDED_CASES = [
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
-                metadata={'__pydantic_ai__': {'initial_input_tokens': 110}},
+                metadata={'__pydantic_ai__': {'context_input_tokens': 110}},
             )
         ),
     ),

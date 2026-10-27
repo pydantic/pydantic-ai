@@ -195,6 +195,7 @@ _MISTRAL_REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['none', 'high']] = {
     'medium': 'high',
     'high': 'high',
     'xhigh': 'high',
+    'max': 'high',
 }
 """Maps the unified `thinking` setting to Mistral's `reasoning_effort`.
 
@@ -651,8 +652,9 @@ class MistralModel(Model[Mistral]):
     ) -> Literal['none', 'high'] | MistralUnset:
         """Map the unified `thinking` setting to Mistral's `reasoning_effort`.
 
-        Only models with adjustable reasoning accept `reasoning_effort`; always-on models
-        (`magistral`) reason unconditionally and must not receive it.
+        Only models with adjustable reasoning accept `reasoning_effort`; always-on models (the dated
+        `magistral` ids) reason unconditionally and have no effort to turn down, so they receive nothing,
+        not even for `thinking=False`.
         """
         thinking = model_request_parameters.thinking
         if thinking is None or self.profile.get('thinking_always_enabled', False):
