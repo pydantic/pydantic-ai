@@ -9,6 +9,7 @@ from dirty_equals import IsInt
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -215,3 +216,26 @@ class TestFallbackCompaction:
                 'compaction.tokens_after': 195,
             }
         )
+
+    @pytest.mark.parametrize('rejected_first', [True, False], ids=['rejected_then_raises', 'raises_then_rejected'])
+    async def test_a_rejected_summary_next_to_a_failing_strategy_leaves_the_history_unchanged(
+        self, rejected_first: bool
+    ) -> None:
+        def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelAPIError('summarizer', 'unavailable')
+
+        calls: list[str] = []
+        sent: list[list[ModelMessage]] = []
+        rejected = SummarizingCompaction[None](
+            model=_summarizer(VERBOSE_SUMMARY, calls), max_messages=1, keep_messages=2
+        )
+        failing = SummarizingCompaction[None](model=FunctionModel(fail), max_messages=1, keep_messages=2)
+        chain = [rejected, failing] if rejected_first else [failing, rejected]
+        history = _history()
+
+        await _agent(FallbackCompaction[None](max_tokens=40, fallback_chain=chain), sent).run(
+            'Next?', message_history=history
+        )
+
+        assert calls == [VERBOSE_SUMMARY]
+        assert sent[0][:-1] == history

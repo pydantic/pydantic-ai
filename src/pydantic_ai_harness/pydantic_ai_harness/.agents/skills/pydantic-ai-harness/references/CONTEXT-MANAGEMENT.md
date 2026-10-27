@@ -175,8 +175,9 @@ tries the next strategy when one raises a `fallback_on` exception, re-raising th
 fail. When its trigger runs the chain, it also skips a `SummarizingCompaction` result that isn't
 smaller than the history, and leaves the history unchanged if nothing shrinks it. With no trigger,
 its request hook does nothing (it still works as a tier or via `compact_now`). Experimental
-`background_start` (a fraction of the trigger, such as `0.85`) runs the first strategy early in a background task and swaps its held result in when the trigger fires,
-falling back to the normal chain when it is stale or failed. The task can outlive a run, so call
+`background_start` (a fraction of the trigger, such as `0.85`) runs the first strategy early in a
+background task and swaps its held result in when the trigger fires, falling back to the normal
+chain when it is stale or failed. The task can outlive a run, so call
 `await compaction.aclose()` when done with the instance; `take_background_compaction(...)` applies a
 held result outside a run (for a `/compact` command) and returns `None` when there is none.
 

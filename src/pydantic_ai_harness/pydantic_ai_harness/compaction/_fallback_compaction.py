@@ -192,9 +192,11 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
     ) -> list[ModelMessage]:
         """The first successful compaction result; with *smaller_only*, a summary that isn't smaller falls through.
 
-        When every strategy falls through that way, *messages* is returned unchanged.
+        When no strategy succeeds and one of them was such a summary, *messages* is returned unchanged:
+        that strategy completed, it just didn't help, so an error from another one isn't the outcome.
         """
         last_error: Exception | None = None
+        rejected = False
         for strategy in self.fallback_chain:
             try:
                 if not (smaller_only and isinstance(strategy, SummarizingCompaction)):
@@ -208,10 +210,12 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
                 )
                 if compacted is not None:
                     return compacted
+                rejected = True
             except self.fallback_on as error:
                 last_error = error
-        if last_error is None:
+        if rejected:
             return messages
+        assert last_error is not None
         raise last_error
 
     async def before_model_request(
