@@ -120,15 +120,29 @@ from typing import Any
 
 from pydantic_ai import CompactionStartEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, on_event
+from pydantic_ai.toolsets import FunctionToolset
 
 
 @dataclass
 class HoldCompaction(AbstractCapability[Any]):
-    busy: bool = False
+    """Holds off compaction while a multi-step plan still needs the full history."""
+
+    planning: bool = False
+
+    def get_toolset(self) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any]()
+
+        @toolset.tool_plain
+        def set_planning(planning: bool) -> str:
+            """Say whether you're in a multi-step plan that needs the whole conversation."""
+            self.planning = planning
+            return 'Noted.'
+
+        return toolset
 
     @on_event(CompactionStartEvent)
     async def _hold(self, ctx: RunContext[Any], event: CompactionStartEvent) -> None:
-        if self.busy:
+        if self.planning and event.reason != 'context_overflow':
             event.cancel('a plan step needs the full history')
 ```
 

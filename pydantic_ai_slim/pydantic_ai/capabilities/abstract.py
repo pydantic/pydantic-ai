@@ -1111,8 +1111,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     ) -> ModelRequestContext:
         """Called before each *attempt* at a model request, once the serving model is known.
 
-        This is the hook for work that depends on which model is about to run: compaction,
-        context-window fitting, per-profile message translation. Unlike
+        This is the hook for work that depends on which model is about to run: context-window fitting,
+        per-profile message translation. Compaction has a hook of its own,
+        [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history], which runs after this one.
+        Unlike
         [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request],
         which runs once per request step while the model may still change,
         `request_context.model` here is the model that will actually serve the request, and
@@ -1125,7 +1127,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         message — belongs in `before_model_request` instead.
 
         Changes made here shape the request that goes on the wire but are not persisted to the
-        agent's message history, which is finalized by `before_model_request`.
+        agent's message history, which is finalized by `before_model_request`. The exception is an
+        attempt whose history is compacted: the compaction is made from, and replaces the history with,
+        the messages as these hooks left them, so the ones it keeps carry this attempt's changes.
         """
         return request_context
 
@@ -1215,7 +1219,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         The returned [`CompactionResult.messages`][pydantic_ai.capabilities.CompactionResult.messages] are sent
         in place of [`request.messages`][pydantic_ai.capabilities.CompactionRequest.messages], and replace the
-        run's message history once a response to them is accepted: a compaction for a model that then fails
+        run's message history once a response to them is accepted, so the messages kept from `request.messages`
+        carry the `prepare_model_request` hooks' changes for this attempt, like the compaction itself is made for
+        its model: a compaction for a model that then fails
         is discarded, and its usage is counted like a failed attempt's. A
         [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] raised here fails the attempt like an error
         from the model itself, so it reaches
