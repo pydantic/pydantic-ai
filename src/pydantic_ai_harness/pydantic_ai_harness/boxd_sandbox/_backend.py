@@ -12,6 +12,9 @@ changing acquisition, command, or error handling:
 - Cancelling the call ends the command: boxd sends its process group SIGTERM, then SIGKILL.
 - A command wakes a suspended or hibernated machine. On a stopped one `stream_exec` raises `ConflictError`,
   and `machines.start` boots it again with its disk.
+- `machines.fork` copies a running machine live, disk and memory, in under a second, into a machine that is
+  isolated whenever the source is. A suspended machine is forked from its disk alone, without its memory or
+  the writes it had not flushed.
 - Deleting or stopping a machine during a command ends the call with `APIConnectionError`; `machines.get` then
   raises `NotFoundError` or reports `stopped`. A delete can return while `get` still reports the machine, so
   deletion is confirmed.
@@ -34,7 +37,7 @@ import posixpath
 import re
 import shlex
 import uuid
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Literal
 
@@ -265,6 +268,60 @@ async def _probe(client: AsyncBoxd, machine_id: str) -> WorkspaceUnavailableErro
     return None
 
 
+async def _find_named(client: AsyncBoxd, name: str, org: str | None) -> Machine | None:
+    """The machine called `name`; `None` if boxd has none, or the lookup failed.
+
+    A lookup by name resolves in the credentials' default organization, so with `org` the
+    organization's machines are listed instead.
+    """
+    try:
+        if org is None:
+            return await client.machines.get(name)
+        return next((m for m in await client.machines.list(org=org) if m.name == name), None)
+    except boxd.BoxdError:
+        return None
+
+
+async def _launch(
+    client: AsyncBoxd,
+    name: str,
+    request: Callable[[], Awaitable[Machine]],
+    *,
+    org: str | None,
+    verb: Literal['create', 'fork'],
+) -> Machine:
+    """Send `request`, which makes a machine called `name` in `org`, and find the machine if the reply is lost.
+
+    A refusal no retry can fix raises `WorkspaceUnavailableError`; connection failures, rate limits,
+    and server errors propagate, as they do from every other operation.
+    """
+    with anyio.move_on_after(_LIFECYCLE_TIMEOUT):
+        try:
+            return await request()
+        except (boxd.APIConnectionError, boxd.ConflictError) as error:
+            # The machine may have been made before the reply was lost, by this call or an earlier one.
+            if (machine := await _find_named(client, name, org)) is None:
+                if isinstance(error, boxd.ConflictError):
+                    raise WorkspaceUnavailableError(f'boxd refused to {verb} the machine: {error}') from error
+                raise
+            return machine
+        except boxd.NotFoundError as error:
+            raise WorkspaceUnavailableError(f'boxd could not {verb} the machine: {error}') from error
+        except Exception as error:
+            translated = _translate(error, f'boxd refused to {verb} the machine')
+            if translated is error:
+                raise
+            # boxd refused the request (an invalid setting, a size the organization lacks): no retry can fix it.
+            raise WorkspaceUnavailableError(str(translated)) from error
+    with anyio.move_on_after(_REQUEST_TIMEOUT):
+        if (machine := await _find_named(client, name, org)) is not None:
+            return machine
+    # A stalled control plane is transient, not a command deadline.
+    raise TimeoutError(
+        f'boxd did not {verb} the machine within {_LIFECYCLE_TIMEOUT:g}s; the boxd control plane may be unreachable.'
+    )
+
+
 def _command_line(argv: Sequence[str], *, cwd: str | None, env: Mapping[str, str], marker: str) -> str:
     """The line boxd runs under `/bin/sh -c`: `argv` in `cwd`, with `env` added and stdin at EOF.
 
@@ -392,13 +449,47 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
         """Return the machine's current `boxd.Machine` record, creating or attaching to it on first use.
 
         Use its `id` with your own `boxd.AsyncBoxd` for boxd features the workspace API does not
-        cover, such as snapshots, checkpoints, forks, and public URLs. Attaching by `ref` to a machine
+        cover, such as snapshots, checkpoints, and public URLs. Attaching by `ref` to a machine
         that no longer exists raises `WorkspaceUnavailableError`; it does not create a replacement.
         """
         async with self._operation():
             client, machine_id = await self._acquire()
             async with _mapped_errors('Could not read the boxd machine', client=client, machine_id=machine_id):
                 return await client.machines.get(machine_id)
+
+    async def fork(self) -> WorkspaceRef:
+        """Copy the machine into a new isolated machine and return the copy's ref, creating or attaching on first use.
+
+        The copy has the machine's disk and memory as they are now, running processes included, and the
+        two change independently after. Pass its ref as `workspace=` to work in the copy. The copy is not
+        tied to this backend, so delete it with `BoxdSandbox().destroy(ref)` when you are done.
+
+        A machine that is not isolated, or that is on a named boxd network, raises
+        `WorkspaceUnavailableError`, as attaching to it does: the copy would keep that access.
+        """
+        async with self._operation():
+            client, machine_id = await self._acquire()
+            async with _mapped_errors('Could not fork the boxd machine', client=client, machine_id=machine_id):
+                source = await client.machines.get(machine_id)
+            # Checked again: a machine can be put on a network after it was attached.
+            if (refusal := _refusal(source)) is not None:
+                raise WorkspaceUnavailableError(refusal)
+            if source.status != 'running':
+                # boxd forks a suspended machine from its disk alone, without its memory or unflushed writes.
+                await self._wait_until_ready(client, machine_id)
+            name = f'{_NAME_PREFIX}{uuid.uuid4().hex}'
+            org = None if source.org is None else source.org.name
+
+            async def make_copy() -> Machine:
+                forked = await _launch(
+                    client, name, lambda: client.machines.fork(machine_id, name, isolated=True), org=org, verb='fork'
+                )
+                # Logged here, so the copy's id is recorded even if the caller was cancelled meanwhile.
+                logger.info('Forked boxd machine %s into %s (%s)', machine_id, forked.id, forked.name)
+                return forked
+
+            forked = await run_to_completion(make_copy)
+        return WorkspaceRef(provider='boxd', id=forked.id)
 
     async def _acquire(self) -> tuple[AsyncBoxd, str]:
         """The API client and the id of a machine that is ready for commands, creating or attaching on first use."""
@@ -428,39 +519,21 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
         if self._create_name is None:
             self._create_name = f'{_NAME_PREFIX}{uuid.uuid4().hex}'
         name = self._create_name
-        with anyio.move_on_after(_LIFECYCLE_TIMEOUT):
-            try:
-                machine = await client.machines.create(
-                    name,
-                    org=self._org,
-                    from_snapshot=self._snapshot,
-                    isolated=True,
-                    vcpu=self._vcpu,
-                    auto_suspend_timeout=self._auto_suspend_timeout,
-                )
-            except (boxd.APIConnectionError, boxd.ConflictError) as error:
-                # The machine may have been created before the reply was lost, by this call or an earlier one.
-                if (machine := await self._find_created(client, name)) is None:
-                    if isinstance(error, boxd.ConflictError):
-                        raise WorkspaceUnavailableError(f'boxd refused to create the machine: {error}') from error
-                    raise
-            except boxd.NotFoundError as error:
-                raise WorkspaceUnavailableError(f'boxd could not create the machine: {error}') from error
-            except Exception as error:
-                translated = _translate(error, 'boxd refused to create the machine')
-                if translated is error:
-                    raise
-                # boxd refused the request (an invalid setting, a size the organization lacks): no retry can fix it.
-                raise WorkspaceUnavailableError(str(translated)) from error
-            return self._record_created(machine)
-        with anyio.move_on_after(_REQUEST_TIMEOUT):
-            if (machine := await self._find_created(client, name)) is not None:
-                return self._record_created(machine)
-        # A stalled control plane is transient, not a command deadline.
-        raise TimeoutError(
-            f'boxd machine creation did not complete within {_LIFECYCLE_TIMEOUT:g}s; '
-            'the boxd control plane may be unreachable.'
+        machine = await _launch(
+            client,
+            name,
+            lambda: client.machines.create(
+                name,
+                org=self._org,
+                from_snapshot=self._snapshot,
+                isolated=True,
+                vcpu=self._vcpu,
+                auto_suspend_timeout=self._auto_suspend_timeout,
+            ),
+            org=self._org,
+            verb='create',
         )
+        return self._record_created(machine)
 
     def _record_created(self, machine: Machine) -> WorkspaceRef:
         self._ref = ref = WorkspaceRef(provider='boxd', id=machine.id)
@@ -468,19 +541,6 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
         # Logged at creation, so the id can be found whatever ends the run before it is stored.
         logger.info('Created boxd machine %s (%s)', machine.id, machine.name)
         return ref
-
-    async def _find_created(self, client: AsyncBoxd, name: str) -> Machine | None:
-        """The machine an earlier create under `name` made; `None` if boxd has none, or the lookup failed.
-
-        A lookup by name resolves in the credentials' default organization, so with `org` the
-        organization's machines are listed instead.
-        """
-        try:
-            if self._org is None:
-                return await client.machines.get(name)
-            return next((m for m in await client.machines.list(org=self._org) if m.name == name), None)
-        except boxd.BoxdError:
-            return None
 
     async def _wait_until_ready(self, client: AsyncBoxd, machine_id: str) -> str:
         """Wait until the machine accepts commands, starting it if it is stopped, and return its id.

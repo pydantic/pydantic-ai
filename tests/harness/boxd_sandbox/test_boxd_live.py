@@ -121,6 +121,55 @@ async def test_reattach_by_ref_reaches_the_same_machine(client: boxd.AsyncBoxd) 
         assert attached.ref == owner.ref
 
 
+# A process that outlives the command starting it, and a check that it still runs.
+_TICKER = 'setsid sh -c "while :; do date +%s > tick; sleep 1; done" </dev/null >/dev/null 2>&1 & echo $! > ticker.pid'
+_TICKING = 'kill -0 "$(cat ticker.pid)" && echo ticking'
+
+
+async def test_fork_copies_files_and_running_processes_and_the_copies_diverge(client: boxd.AsyncBoxd) -> None:
+    """Validates the fake-encoded assumption that a fork is a new isolated machine on no network, and shows
+    what the fake can't: the copy starts with the machine's files and running processes, and the two
+    change independently after."""
+    sandbox = BoxdSandbox(client=client)
+    async with _owned(client) as source:
+        await source.run(['sh', '-c', f'echo before > state.txt; {_TICKER}'], timeout=60)
+        assert source.ref is not None
+        ref = await sandbox.fork(source.ref)
+        try:
+            assert ref != source.ref
+            copy = BoxdSandboxBackend(client=client, ref=ref)
+            machine = await copy.get_machine()
+            assert (machine.networking.isolated, machine.networking.networks) == (True, [])
+            assert (
+                await copy.run(['sh', '-c', f'cat state.txt; {_TICKING}'], timeout=60)
+            ).stdout == 'before\nticking\n'
+            await copy.run(['sh', '-c', 'echo after > state.txt'], timeout=60)
+            assert (await source.run(['cat', 'state.txt'], timeout=60)).stdout == 'before\n'
+        finally:
+            await sandbox.destroy(ref)
+
+
+async def test_fork_wakes_a_suspended_machine_so_the_copy_keeps_its_memory(client: boxd.AsyncBoxd) -> None:
+    """boxd forks a suspended machine from its disk alone, without its running processes or the writes it
+    had not flushed to disk; `fork` wakes the machine first, so the copy has both."""
+    sandbox = BoxdSandbox(client=client)
+    async with _owned(client) as source:
+        await source.run(['sh', '-c', f'echo unflushed > state.txt; {_TICKER}'], timeout=60)
+        assert source.ref is not None
+        await client.machines.pause(source.ref.id)
+        with anyio.fail_after(60):
+            while (await client.machines.get(source.ref.id)).status != 'suspended':
+                await anyio.sleep(0.5)
+        ref = await sandbox.fork(source.ref)
+        try:
+            copy = BoxdSandboxBackend(client=client, ref=ref)
+            assert (
+                await copy.run(['sh', '-c', f'cat state.txt; {_TICKING}'], timeout=60)
+            ).stdout == 'unflushed\nticking\n'
+        finally:
+            await sandbox.destroy(ref)
+
+
 async def test_timeout_raises_with_the_partial_output_and_stops_the_command(client: boxd.AsyncBoxd) -> None:
     """Validates the fake-encoded assumptions that output printed before a client-side deadline reaches the
     `WorkspaceTimeoutError`, and that cancelling the exec call kills the command's process group."""
@@ -233,6 +282,8 @@ async def test_a_machine_that_is_not_isolated_is_neither_used_nor_deleted(client
             await BoxdSandboxBackend(client=client, ref=ref).run(['true'], timeout=30)
         with pytest.raises(ValueError, match='is not isolated'):
             await BoxdSandbox(client=client).destroy(ref)
+        with pytest.raises(WorkspaceUnavailableError, match='is not isolated'):
+            await BoxdSandbox(client=client).fork(ref)
         assert (await client.machines.get(machine.id)).status != 'destroyed'
     finally:
         await client.machines.delete(machine.id)
@@ -328,4 +379,5 @@ def test_docs_example(example: CodeExample) -> None:
     """
     _, runs = run_block(example, cleanup=documented_cleanup(_DOCS_BLOCKS, 'delete_machine'))
     assert all(run.used_sandbox for run in runs), runs
-    assert len({run.ref for run in runs}) <= 1, runs
+    # Follow-up runs work in the first run's machine, or in a copy of it the block forked.
+    assert len({run.ref for run in runs}) <= 1 + example.source.count('.fork('), runs

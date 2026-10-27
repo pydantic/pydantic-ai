@@ -110,6 +110,39 @@ The ref holds no credentials, so the process that reattaches needs `BOXD_API_KEY
 
 A run leaves a backend you built open. Call `await backend.aclose()` when you are done with it: that closes the client it opened from `BOXD_API_KEY`, not the machine, and a later operation opens a new one. A `client=` you passed is never closed.
 
+## Fork a machine
+
+`fork(ref)` copies a machine into a new isolated one, with its files and running processes as they are at that moment, and returns the copy's ref. After that the two change independently, so agents can try different approaches from the same starting point at once:
+
+```python {names="defined"}
+import asyncio
+
+from pydantic_ai import Agent
+from pydantic_ai_harness.boxd_sandbox import BoxdSandbox
+from pydantic_ai_harness.coder import Coder
+
+sandbox = BoxdSandbox()
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[sandbox, Coder()])
+
+
+async def main() -> None:
+    setup = await agent.run('Clone https://github.com/pydantic/pydantic-ai and install it with `uv sync`.')
+    ref = setup.workspace.ref
+    assert ref is not None  # set once the run has used the machine
+    copy = await sandbox.fork(ref)
+
+    await asyncio.gather(
+        agent.run('Speed up the slowest test by caching what it builds.', workspace=ref),
+        agent.run('Speed up the slowest test by mocking its network calls.', workspace=copy),
+    )
+    await sandbox.destroy(copy)
+
+
+asyncio.run(main())
+```
+
+A copy takes about a second and starts with everything the machine had, including what the agent wrote to disk. `fork` wakes a suspended machine and starts a stopped one first, and, as attaching does, refuses one that is not isolated or is on a named boxd network. The copy isn't tied to the machine it came from: destroy each when you are done.
+
 ## Prepare a machine before the run
 
 To seed files before the agent starts, build the backend yourself, write through a `Workspace`, and pass the backend to the run:
@@ -136,7 +169,7 @@ async def run_in_prepared_machine() -> str:
             await BoxdSandbox().destroy(ref)
 ```
 
-The run uses the backend as it is, so `BoxdSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the machine instead, store `backend.ref` and pass it as `workspace=` to reattach later. For boxd features the workspace API doesn't cover, such as snapshots, forks, and public URLs, `await backend.get_machine()` returns the machine's `boxd.Machine` record; use its `id` with your own `boxd.AsyncBoxd`.
+The run uses the backend as it is, so `BoxdSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the machine instead, store `backend.ref` and pass it as `workspace=` to reattach later. For boxd features the workspace API doesn't cover, such as snapshots and public URLs, `await backend.get_machine()` returns the machine's `boxd.Machine` record; use its `id` with your own `boxd.AsyncBoxd`.
 
 ## Clean up
 
@@ -177,11 +210,11 @@ async def delete_failed_run_machine(ctx: RunContext[None], *, error: BaseExcepti
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[BoxdSandbox(), Coder(), hooks])
 ```
 
-A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed worker right after creation, leaves the machine behind. Every machine the backend creates is named `pydantic-ai-` and 32 hex digits, and its id is logged at `INFO` as `Created boxd machine <id> (<name>)`; find leftovers with `boxd list` and delete one with `await BoxdSandbox().destroy(WorkspaceRef(provider='boxd', id=...))`.
+A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed worker right after creation, leaves the machine behind. Every machine the backend creates is named `pydantic-ai-` and 32 hex digits, and its id is logged at `INFO` as `Created boxd machine <id> (<name>)`, and a copy's as `Forked boxd machine <source> into <id> (<name>)`; find leftovers with `boxd list` and delete one with `await BoxdSandbox().destroy(WorkspaceRef(provider='boxd', id=...))`.
 
 ## Security model
 
-Every machine `BoxdSandbox` creates is isolated: its metadata endpoint refuses token requests, and boxd installs no `boxd` CLI, env vars, or integrations in it, so code the agent runs holds no boxd credentials. It has no peers on boxd's private network, so it can't reach your other machines there. It can reach the internet, and a server the agent starts in it can't be reached from outside unless you publish its port with `boxd machine proxy`. Isolation can't be turned off.
+Every machine `BoxdSandbox` creates is isolated: its metadata endpoint refuses token requests, and boxd installs no `boxd` CLI, env vars, or integrations in it, so code the agent runs holds no boxd credentials. It has no peers on boxd's private network, so it can't reach your other machines there. It can reach the internet, and a server the agent starts in it can't be reached from outside unless you publish its port with `boxd machine proxy`. Isolation can't be turned off, and a copy `fork` makes is isolated too.
 
 Attaching to a machine that is not isolated, or that is on a named boxd network, raises `WorkspaceUnavailableError`, and `destroy` refuses a machine that is not isolated with `ValueError`. So a ref from tampered message history can't point the agent at, or delete, one of your machines that can reach the others. It can still name another isolated machine the credentials can see, such as another conversation's: keep refs server-side, next to the conversation they belong to.
 

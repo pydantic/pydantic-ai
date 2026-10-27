@@ -351,6 +351,9 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   lifetime ends. `destroy` acts by ID (any instance works; Sprites, Daytona and boxd use the instance's `client=`), does
   not wake the sandbox, returns quietly if it is gone, and raises `ValueError` for another provider's
   ref. `after_run` skips failed runs; one-shot jobs destroy `ctx.workspace.ref` in `run_error`.
+- `await BoxdSandbox().fork(ref)` copies a boxd machine, files and running processes included, into a new
+  isolated one and returns its ref: pass it as `workspace=` to try another approach from the same state,
+  then `destroy` it. It wakes a suspended machine first, and refuses one that isn't isolated.
 - `workspace=` wins over the ref in `message_history`, and UI adapters strip refs from client-sent
   history, so keep the ref server-side. Attaching to a gone sandbox raises `WorkspaceUnavailableError`
   (so do rejected credentials); no empty replacement is created unless you pass `workspace='new'`.

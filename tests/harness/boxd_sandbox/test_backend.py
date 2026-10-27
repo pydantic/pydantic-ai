@@ -174,7 +174,7 @@ class TestCreate:
     async def test_a_stalled_create_times_out(self, host: FakeBoxd, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(f'{_MODULE}._LIFECYCLE_TIMEOUT', 0.05)
         host.create_gate = asyncio.Event()
-        with pytest.raises(TimeoutError, match=re.escape('boxd machine creation did not complete within 0.05s')):
+        with pytest.raises(TimeoutError, match=re.escape('boxd did not create the machine within 0.05s')):
             await BoxdSandboxBackend().run(['true'])
 
     async def test_a_create_that_answers_too_late_is_found_by_name(
@@ -614,3 +614,63 @@ async def test_trio_is_refused_before_any_boxd_call(fake_boxd: FakeBoxd) -> None
         await BoxdSandbox().destroy(_ref('machine-1'))
     await backend.aclose()
     assert not fake_boxd.clients
+
+
+class TestFork:
+    async def test_fork_copies_the_machine_into_a_new_isolated_one(
+        self, host: FakeBoxd, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        backend = BoxdSandboxBackend()
+        await backend.run(['true'])
+        assert backend.ref is not None
+        with caplog.at_level(logging.INFO, logger=_MODULE):
+            ref = await backend.fork()
+        source, copy = host.machines[backend.ref.id], host.machines[ref.id]
+        assert _NAME.fullmatch(copy.name) and copy.name != source.name
+        assert (copy.isolated, copy.networks, copy.forked_from) == (True, [], (source.id, 'running'))
+        assert backend.ref == _ref(source.id)
+        assert caplog.messages == [f'Forked boxd machine {source.id} into {copy.id} ({copy.name})']
+
+    async def test_a_suspended_machine_is_woken_before_it_is_forked(self, host: FakeBoxd) -> None:
+        """boxd forks a suspended machine from its disk alone, without its memory or unflushed writes."""
+        backend = BoxdSandboxBackend()
+        await backend.run(['true'])
+        assert backend.ref is not None
+        host.machines[backend.ref.id].status = 'suspended'
+        ref = await backend.fork()
+        assert host.machines[ref.id].forked_from == (backend.ref.id, 'running')
+
+    async def test_a_machine_put_on_a_network_after_attaching_is_not_forked(self, host: FakeBoxd) -> None:
+        backend = BoxdSandboxBackend()
+        await backend.run(['true'])
+        assert backend.ref is not None
+        host.machines[backend.ref.id].networks = ['team']
+        with pytest.raises(WorkspaceUnavailableError, match='is on the boxd networks team'):
+            await backend.fork()
+        assert len(host.machines) == 1
+
+    @pytest.mark.parametrize('org', [None, 'acme'])
+    async def test_a_lost_fork_reply_finds_the_copy_in_the_source_organization(
+        self, host: FakeBoxd, org: str | None
+    ) -> None:
+        source = host.add(org=org)
+        host.lose_fork_reply = True
+        ref = await BoxdSandboxBackend(ref=_ref(source.id)).fork()
+        (copy,) = [machine for machine in host.machines.values() if machine.forked_from is not None]
+        assert (ref, copy.org) == (_ref(copy.id), org)
+        assert host.listed_orgs == ([] if org is None else [org])
+
+    async def test_a_source_deleted_before_the_fork_is_unavailable(self, host: FakeBoxd) -> None:
+        source = host.add()
+        host.fork_errors.append(boxd.NotFoundError(f'source machine {source.id!r} not found', code='not_found'))
+        with pytest.raises(
+            WorkspaceUnavailableError, match="boxd could not fork the machine: source machine 'machine-1'"
+        ):
+            await BoxdSandboxBackend(ref=_ref(source.id)).fork()
+
+    async def test_a_dropped_connection_with_no_copy_propagates(self, host: FakeBoxd) -> None:
+        source = host.add()
+        host.fork_errors.append(boxd.APIConnectionError('the connection dropped'))
+        with pytest.raises(boxd.APIConnectionError, match='the connection dropped'):
+            await BoxdSandboxBackend(ref=_ref(source.id)).fork()
+        assert len(host.machines) == 1

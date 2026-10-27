@@ -112,6 +112,21 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         check_ref(ref)
         await destroy_machine(self.client, ref.id)
 
+    async def fork(self, ref: WorkspaceRef) -> WorkspaceRef:
+        """Copy a machine into a new isolated machine and return the copy's ref.
+
+        The copy has the machine's disk and memory as they are now, running processes included, and the
+        two change independently after: pass its ref as `workspace=` to run an agent in the copy, and
+        `destroy` it when you are done. A suspended machine is woken first, and a stopped one started. A
+        machine that is not isolated, or that is on a named boxd network, raises
+        `WorkspaceUnavailableError`, as attaching to it does.
+        """
+        backend = self.backend(ref)
+        try:
+            return await backend.fork()
+        finally:
+            await backend.aclose()
+
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it attaches or creates on first use."""
         if ref is not None and ref.provider != 'boxd':

@@ -9,6 +9,7 @@ child holds its output open; closing the stream sends the command's process grou
 without waiting for it to end; and a command killed by a signal exits 128 plus its number. Deleting a
 machine kills its commands, and a command that ends while its machine is deleted or stopped raises
 `APIConnectionError`, as production's does. A machine created from a snapshot keeps the snapshot's networks, isolated or not.
+A fork copies the machine's record, not its files: every machine runs its commands in `host_root`.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from boxd import (
     NotFoundError,
     OutputChunk,
 )
+from boxd.models import OrgRef
 
 # Output a command writes after it exits is read for this long, then dropped.
 _DRAIN_GRACE = 0.05
@@ -79,6 +81,9 @@ class FakeMachine:
     delete_lag: int = 0
     processes: list[asyncio.subprocess.Process] = field(default_factory=list[asyncio.subprocess.Process])
     starts: int = 0
+    org: str | None = None
+    # A copy's source machine: its id, and its status when it was forked.
+    forked_from: tuple[str, str] | None = None
 
     def record(self, status: str | None = None) -> Machine:
         return Machine.model_construct(
@@ -86,6 +91,7 @@ class FakeMachine:
             name=self.name,
             status=status or self.status,
             networking=MachineNetworking(networks=self.networks, isolated=self.isolated),
+            org=None if self.org is None else OrgRef(id=f'org-{self.org}', name=self.org),
         )
 
 
@@ -213,6 +219,21 @@ class FakeMachines:
             raise APIConnectionError('the connection dropped before the reply arrived')
         return machine.record()
 
+    async def fork(self, source: str, name: str | None = None, *, isolated: bool = False) -> Machine:
+        owner = self._owner
+        owner.check_call()
+        if owner.fork_errors:
+            raise owner.fork_errors.pop(0)
+        origin = owner.find(source)
+        machine = owner.add(
+            name=name, isolated=origin.isolated or isolated, networks=list(origin.networks), org=origin.org
+        )
+        machine.forked_from = (origin.id, origin.status)
+        if owner.lose_fork_reply:
+            owner.lose_fork_reply = False
+            raise APIConnectionError('the connection dropped before the reply arrived')
+        return machine.record()
+
     async def list(self, *, org: str | None = None) -> list[Machine]:
         owner = self._owner
         owner.check_call()
@@ -324,10 +345,12 @@ class FakeBoxd:
         self.reject_credentials = False
         self.report_destroyed = False
         self.lose_create_reply = False
+        self.lose_fork_reply = False
         # With `create_gate`: create the machine, then wait, instead of waiting before creating it.
         self.create_then_hang = False
         self.drop_exit_status = False
         self.create_errors: list[BoxdError] = []
+        self.fork_errors: list[BoxdError] = []
         self.get_errors: list[BaseException] = []
         self.probe_errors: list[BoxdError] = []
         self.start_errors: list[BoxdError] = []
@@ -350,6 +373,7 @@ class FakeBoxd:
         networks: list[str] | None = None,
         create_kwargs: dict[str, Any] | None = None,
         boot_polls: int = 0,
+        org: str | None = None,
     ) -> FakeMachine:
         machine_id = f'machine-{len(self.machines) + 1}'
         machine = FakeMachine(
@@ -360,6 +384,7 @@ class FakeBoxd:
             networks=networks or [],
             create_kwargs=create_kwargs or {},
             boot_polls=boot_polls,
+            org=org,
         )
         self.machines[machine_id] = machine
         return machine

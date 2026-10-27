@@ -250,3 +250,21 @@ async def test_coder_works_in_the_machine(host: FakeBoxd, tmp_path: Path) -> Non
     )
     assert 'hi from the machine' in results[1]
     assert (tmp_path / 'hello.sh').read_text() == 'echo hi from the machine\n'
+
+
+async def test_fork_copies_a_machine_and_closes_the_client_it_opened(host: FakeBoxd) -> None:
+    source = host.add()
+    ref = await BoxdSandbox[None]().fork(WorkspaceRef(provider='boxd', id=source.id))
+    assert host.machines[ref.id].forked_from == (source.id, 'running')
+    assert [client.closed for client in host.clients] == [True]
+
+
+async def test_fork_leaves_a_supplied_client_open(host: FakeBoxd) -> None:
+    source = host.add()
+    await BoxdSandbox[None](client=boxd.AsyncBoxd()).fork(WorkspaceRef(provider='boxd', id=source.id))
+    assert [client.closed for client in host.clients] == [False]
+
+
+async def test_fork_refuses_another_providers_ref() -> None:
+    with pytest.raises(ValueError, match="expected 'boxd'"):
+        await BoxdSandbox[None]().fork(WorkspaceRef(provider='daytona', id='x'))
