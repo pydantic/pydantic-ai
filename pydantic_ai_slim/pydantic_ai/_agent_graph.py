@@ -709,9 +709,7 @@ class _PreparedAttempt:
         request_context._serving_wrapper = None  # pyright: ignore[reportPrivateUsage]
         request_context.model_id = self.model_id
         request_context.messages = list(self.messages)
-        request_context.model_settings = (
-            cast(ModelSettings, dict(self.model_settings)) if self.model_settings is not None else None
-        )
+        request_context.model_settings = self.model_settings.copy() if self.model_settings is not None else None
         request_context.model_request_parameters = self.model_request_parameters
 
 
@@ -768,8 +766,11 @@ class _AttemptCompaction:
 
     def take(self, other: _AttemptCompaction) -> None:
         """Make `other` this attempt's compaction, in place, once this one has been discarded."""
-        for attr in dataclasses.fields(self):
-            setattr(self, attr.name, getattr(other, attr.name))
+        self.requested = other.requested
+        self.result = other.result
+        self.record = other.record
+        self.error = other.error
+        self.billed = other.billed
 
 
 def _same_message(a: _messages.ModelMessage, b: _messages.ModelMessage) -> bool:
