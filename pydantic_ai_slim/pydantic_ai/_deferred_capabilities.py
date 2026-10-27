@@ -177,8 +177,7 @@ class LoadExchanges:
     def observe(self, part: ModelRequestPart | ModelResponsePart) -> str | None:
         """Fold in `part`, returning the capability it loads if it's a `load_capability` return completing a load.
 
-        Only the call/return pairing: `loads` also
-        counts a capability loaded without a `load_capability` call.
+        Only the call/return pairing: `loads` also counts a capability loaded without a `load_capability` call.
         """
         if isinstance(part, LoadCapabilityCallPart):
             if part.capability_id is not None:
