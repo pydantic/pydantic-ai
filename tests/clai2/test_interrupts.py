@@ -2,7 +2,10 @@
 
 import asyncio
 import signal
+import sys
+import threading
 
+import anyio
 import pytest
 
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
@@ -111,6 +114,61 @@ async def test_signal_cancels_from_the_loop() -> None:
         await asyncio.Event().wait()
 
     assert not await Interrupts().run(operation())
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='`signal.pthread_kill` is POSIX-only')
+async def test_signal_wakes_an_idle_loop() -> None:
+    """Ctrl-C must wake a loop with nothing else to do, as while a quiet `!command` runs.
+
+    Python runs a signal handler only once the selector returns. Sent from another thread, which
+    needs the GIL, the signal arrives once the loop has blocked in the selector.
+    """
+    idle = threading.Event()
+
+    def send() -> None:
+        idle.wait()
+        signal.pthread_kill(threading.get_ident(), signal.SIGINT)
+
+    sender = threading.Thread(target=send)
+    loop = asyncio.get_running_loop()
+    next_event = asyncio.Event()
+
+    async def operation() -> None:
+        sender.start()
+        loop.call_soon(idle.set)
+        await asyncio.Event().wait()
+
+    timer = loop.call_later(5, next_event.set)
+    try:
+        assert not await Interrupts().run(operation())
+    finally:
+        timer.cancel()
+        sender.join()
+    assert not next_event.is_set()
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='the proactor loop has no `add_signal_handler`')
+@pytest.mark.parametrize('added', ['before', 'during'])
+async def test_asyncio_signal_handling_keeps_working(added: str) -> None:
+    """`add_signal_handler` sets a wakeup fd of its own, which a run neither replaces nor clears."""
+    loop = asyncio.get_running_loop()
+    received = asyncio.Event()
+
+    async def operation() -> None:
+        if added == 'during':
+            loop.add_signal_handler(signal.SIGUSR1, received.set)
+        signal.raise_signal(signal.SIGINT)
+        await asyncio.Event().wait()
+
+    if added == 'before':
+        loop.add_signal_handler(signal.SIGUSR1, received.set)
+    try:
+        assert not await Interrupts().run(operation())
+        signal.raise_signal(signal.SIGUSR1)
+        with anyio.fail_after(5):
+            await received.wait()
+    finally:
+        loop.remove_signal_handler(signal.SIGUSR1)
 
 
 async def test_external_cancellation_propagates() -> None:
