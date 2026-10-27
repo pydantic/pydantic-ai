@@ -820,6 +820,11 @@ def _cacheable_instruction_count(instruction_parts: Sequence[InstructionPart]) -
 
     Agent runs sort static parts first, but a direct `Model.request` caller may not, and a dynamic
     part must never end up inside the cached prefix.
+
+    Unlike Anthropic and Bedrock, this places no second breakpoint after the `on_change='append'` blocks that follow
+    the static parts. OpenAI keeps only a request's last four breakpoints, so with a second one a `CachePoint` or two
+    would push out the breakpoint after the static instructions first, which is the one every conversation shares
+    even when its append blocks differ.
     """
     return next((i for i, part in enumerate(instruction_parts) if part.dynamic), len(instruction_parts))
 
@@ -2405,6 +2410,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 )
             elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
+            elif isinstance(part, ModelSettingsDeltaPart):
+                if (update := self._map_model_settings_delta(part)) is not None:
+                    yield update
             elif isinstance(part, _UnpreparedPart):  # pragma: no cover
                 raise _unprepared_part_error(part)
             elif isinstance(part, SpeechPart):
@@ -2414,6 +2422,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 assert_never(part)
         if file_content:
             yield await self._map_user_prompt(UserPromptPart(content=file_content))
+
+    def _map_model_settings_delta(self, part: ModelSettingsDeltaPart) -> chat.ChatCompletionMessageParam | None:
+        """Map a `ModelSettingsDeltaPart` to the message that changes the setting mid-conversation, or `None` for none.
+
+        Chat Completions has no such message, so `prepare_messages` drops the parts and this raises. A subclass that
+        sets `_renders_effort_deltas` for an API that extends Chat Completions with one overrides it.
+        """
+        raise _unprepared_part_error(part)
 
     async def _map_image_url_item(self, item: ImageUrl) -> ChatCompletionContentPartImageParam:
         """Map an ImageUrl to a chat completion image content part."""

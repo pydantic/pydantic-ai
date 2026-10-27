@@ -89,6 +89,9 @@ def elevenlabs_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_image_input': False,
         # User and assistant text items seed the conversation, which reconnect relies on too.
         'supports_session_seeding': True,
+        # A mid-session `system` message is accepted, but the model doesn't act on it (checked live: a note sent as a
+        # `system` message was used in none of three runs, and in all three runs as `<system>`-tagged user text).
+        'supports_system_messages': False,
         'supports_seeding_images': False,
         # Seeded user audio becomes an empty text part, and an assistant item needs a non-empty text part.
         'supports_seeding_audio': False,

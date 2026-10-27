@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from functools import cached_property
+from itertools import chain
 from typing import Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overload
 
 from ... import UnexpectedModelBehavior, _utils, usage
@@ -85,6 +86,7 @@ from ...tools import AgentDepsT, ToolDefinition
 from ...toolsets._tool_search import discovered_tool_names_in_order
 from .. import (
     Model,
+    ModelRequestContext,
     ModelRequestParameters,
     StreamedResponse,
     ToolVisibility,
@@ -103,7 +105,13 @@ from .. import (
     get_user_agent,
 )
 from .._decode_errors import check_json_response, map_decode_errors
-from .._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint, split_cache_setting
+from .._prompt_cache import (
+    excess_cache_points,
+    instruction_cache_boundaries,
+    previous_tail_needing_breakpoint,
+    split_cache_setting,
+    split_instruction_cache_points,
+)
 from .._sdk_retries import with_max_retries
 from .._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 
@@ -182,6 +190,7 @@ try:
         BetaCodeExecutionToolResultBlockParam,
         BetaCompactionBlock,
         BetaCompactionBlockParam,
+        BetaCompactionConfigParam,
         BetaContainerParams,
         BetaContainerUploadBlockParam,
         BetaContentBlockParam,
@@ -266,6 +275,14 @@ try:
         map_citation_for_replay,
         map_citations,
         with_document_citations,
+    )
+    from ._compaction import (
+        ON_DEMAND_COMPACTION_BETA,
+        compaction_instructions,
+        is_signed_compaction,
+        settle_output_config,
+        settle_tool_choice,
+        without_unanswered_tool_calls,
     )
     from ._containers import is_tool_result_only
     from ._errors import is_expired_container_error, map_api_errors
@@ -976,23 +993,102 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
         response = await self._messages_create(messages, False, model_settings, model_request_parameters)
-        response = check_json_response(self.model_name, response)
-        if isinstance(response, BetaMessage):
-            model_response = self._process_response(
-                response, model_request_parameters, model_settings, fetched_pages_from_history(messages)
-            )
-        else:
-            # The request was streamed behind the scenes, see `_messages_create`. `map_api_errors` maps a transport
-            # error that breaks the stream off, both while it opens and while it's read.
-            async with response.source:
-                streamed_response = await self._process_streamed_response(
-                    response, model_request_parameters, model_settings, fetched_pages_from_history(messages)
-                )
-                async for _ in streamed_response:
-                    pass
-            model_response = streamed_response.get()
+        model_response = await self._finish_response(response, messages, model_settings, model_request_parameters)
         mark_continuation_context_input_tokens(messages, model_response)
         return model_response
+
+    async def _finish_response(
+        self,
+        response: BetaMessage | AnthropicEventStream,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        """Turn the response to a non-streaming `_messages_create` call into a `ModelResponse`."""
+        response = check_json_response(self.model_name, response)
+        if isinstance(response, BetaMessage):
+            return self._process_response(
+                response, model_request_parameters, model_settings, fetched_pages_from_history(messages)
+            )
+        # The request was streamed behind the scenes, see `_messages_create`. `map_api_errors` maps a transport
+        # error that breaks the stream off, both while it opens and while it's read.
+        async with response.source:
+            streamed_response = await self._process_streamed_response(
+                response, model_request_parameters, model_settings, fetched_pages_from_history(messages)
+            )
+            async for _ in streamed_response:
+                pass
+        return streamed_response.get()
+
+    async def compact_messages(
+        self,
+        request_context: ModelRequestContext,
+        *,
+        instructions: str | None = None,
+    ) -> ModelResponse:
+        """Compact messages with Anthropic's on-demand compaction.
+
+        This sends the conversation to the Messages API with the `compaction` parameter, which summarizes it instead
+        of replying. It reads the conversation's prompt cache, like any other request with the same prefix. The
+        returned `ModelResponse` holds a single `CompactionPart` with the readable summary, and its signature in
+        `provider_details`. Keep it in the message history: later requests send it back in place of the messages
+        before it, with the `compact-2026-09-04` beta that it needs. Only Claude models that support on-demand
+        compaction accept the block.
+
+        The parameters Anthropic rejects on a compaction request are left out of it: `stop_sequences`, structured
+        output's `output_config.format`, the `remaining` task budget and `anthropic_context_management`. A forcing
+        `tool_choice` is relaxed to `auto`, and the calls of a trailing response that has no tool results yet are
+        dropped. Images and documents in the summarized messages don't survive compaction.
+
+        Args:
+            request_context: The model request context containing messages, settings, and parameters.
+            instructions: Optional focus for the summary, such as what to keep. Anthropic replaces its whole
+                summarization prompt with the instructions it's given, so the focus is sent inside a full
+                summarization prompt rather than on its own. On OpenAI, `instructions` replaces the agent's
+                instructions for the compaction request instead.
+
+        Returns:
+            A `ModelResponse` with a single `CompactionPart` containing the summary.
+
+        Raises:
+            UserError: If the model doesn't support on-demand compaction, according to its
+                [`anthropic_supports_on_demand_compaction`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_on_demand_compaction]
+                profile flag.
+            UnexpectedModelBehavior: If Anthropic returns no summary, for example when `max_tokens` cuts it off.
+        """
+        check_allow_model_requests()
+        if not self.profile.get('anthropic_supports_on_demand_compaction', False):
+            raise UserError(
+                f'{self.model_name!r} does not support on-demand compaction. '
+                'See https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand for the supported models.'
+            )
+        model_settings, model_request_parameters = self.prepare_request(
+            request_context.model_settings,
+            request_context.model_request_parameters,
+        )
+        model_settings = cast(AnthropicModelSettings, model_settings or {})
+        compaction = BetaCompactionConfigParam(type='summarize')
+        if instructions and (focus := instructions.strip()):
+            compaction['instructions'] = compaction_instructions(focus)
+        messages = without_unanswered_tool_calls(list(request_context.messages))
+        response = await self._messages_create(
+            messages, False, model_settings, model_request_parameters, compaction=compaction
+        )
+        model_response = await self._finish_response(response, messages, model_settings, model_request_parameters)
+
+        # A summary that's missing or empty is no compaction boundary, so the history it would replace can't be dropped.
+        match model_response.parts:
+            case [CompactionPart(content=str(content))] if content:
+                # The usage is the conversation that was summarized, but the context the response leaves behind
+                # is the summary alone, its output: a size trigger mustn't read the old conversation back.
+                mark_context_input_tokens(model_response, 0)
+                return model_response
+            case _:
+                stop_reason = (model_response.provider_details or {}).get('finish_reason')
+                raise UnexpectedModelBehavior(
+                    f'Anthropic returned no compaction summary (stop reason {stop_reason!r}).'
+                    + (' Raise `max_tokens` to leave room for the summary.' if stop_reason == 'max_tokens' else '')
+                )
 
     async def count_tokens(
         self,
@@ -1168,6 +1264,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         stream: Literal[True],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        compaction: BetaCompactionConfigParam | None = None,
     ) -> AnthropicEventStream:
         pass
 
@@ -1178,6 +1276,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         stream: Literal[False],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        compaction: BetaCompactionConfigParam | None = None,
     ) -> BetaMessage | AnthropicEventStream:
         pass
 
@@ -1187,6 +1287,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         stream: bool,
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        compaction: BetaCompactionConfigParam | None = None,
     ) -> BetaMessage | AnthropicEventStream:
         """Calls the Anthropic API to create a message.
 
@@ -1195,6 +1297,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         A non-streaming request is streamed anyway when the SDK requires it for its `max_tokens`, so its response
         can be a stream too.
+
+        With `compaction`, this is a compaction request, which samples no reply: the parameters Anthropic rejects
+        on one are settled here, on the request as it would otherwise be sent, so the rest of the request (and the
+        prompt cache it reads) stays the same.
         """
         model_request_parameters = self._declare_newcomers_left_alone(model_settings, model_request_parameters)
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
@@ -1233,6 +1339,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
+        stop_sequences = model_settings.get('stop_sequences', OMIT)
+        if compaction is not None:
+            betas.add(ON_DEMAND_COMPACTION_BETA)
+            context_management = None
+            stop_sequences = OMIT
+            tool_choice = settle_tool_choice(tool_choice)
+            output_config = settle_output_config(output_config)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
         container, container_from_history = self._get_container(messages, model_settings)
         recovery_messages, compaction_boundary = self._stale_thinking_block_recovery_history(messages)
@@ -1270,10 +1383,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     stream=stream,
                     cache_control=auto_cache_control or OMIT,
                     thinking=thinking,
-                    stop_sequences=model_settings.get('stop_sequences', OMIT),
+                    stop_sequences=stop_sequences,
                     timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                     metadata=model_settings.get('anthropic_metadata', OMIT),
                     context_management=context_management or OMIT,
+                    compaction=compaction or OMIT,
                     container=container_param or OMIT,
                     service_tier=_resolve_anthropic_service_tier(model_settings),
                     speed=self._effective_speed(model_settings, anthropic_profile),
@@ -1368,21 +1482,28 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas: set[str],
         model_settings: AnthropicModelSettings,
     ) -> BetaContextManagementConfigParam | None:
-        """Add compaction beta and default context_management when messages contain CompactionParts.
+        """Add the compaction betas, and default context_management, that the messages' CompactionParts need.
 
         This ensures CompactionParts can be round-tripped even without AnthropicCompaction active. A part
         without `provider_name` is a summary the application wrote, sent as text, so it turns nothing on.
+        A signed block from [`compact_messages`][pydantic_ai.models.anthropic.AnthropicModel.compact_messages]
+        needs its own beta, and Anthropic rejects it alongside the threshold compaction edit, so it gets no default.
         """
-        has_compaction_parts = any(
-            isinstance(part, CompactionPart) and part.provider_name is not None
+        compaction_parts = [
+            part
             for msg in messages
             if isinstance(msg, ModelResponse)
             for part in msg.parts
-        )
+            if isinstance(part, CompactionPart) and part.provider_name is not None
+        ]
+        has_signed_compaction = any(is_signed_compaction(part) for part in compaction_parts)
+        if has_signed_compaction:
+            betas.add(ON_DEMAND_COMPACTION_BETA)
+        has_compaction_parts = any(not is_signed_compaction(part) for part in compaction_parts)
         if has_compaction_parts:
             betas.add('compact-2026-01-12')
         context_management = model_settings.get('anthropic_context_management')
-        if has_compaction_parts and context_management is None:
+        if has_compaction_parts and not has_signed_compaction and context_management is None:
             context_management = cast(
                 BetaContextManagementConfigParam, {'edits': [{'type': _ANTHROPIC_COMPACT_EDIT_TYPE}]}
             )
@@ -1817,7 +1938,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     CompactionPart(
                         content=item.content,
                         provider_name=self.system,
-                        provider_details=compaction_provider_details(item.encrypted_content),
+                        provider_details=compaction_provider_details(item.encrypted_content, item.signature),
                     )
                 )
             else:
@@ -2304,12 +2425,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for text in [*leading_texts, *(part.content for part in instruction_parts)]
         ]
         if cache_instructions:
-            # `instruction_parts` are sorted static-first, so the cache point goes on the last static
-            # instruction block, or on the system prompt block when every instruction is dynamic.
-            cache_block_idx = len(leading_texts) + sum(1 for part in instruction_parts if not part.dynamic) - 1
-            if cache_block_idx >= 0:
-                ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
-                system_prompt_blocks[cache_block_idx]['cache_control'] = self._build_cache_control(ttl)
+            ttl: Literal['5m', '1h'] = '5m' if cache_instructions is True else cache_instructions
+            # After the literal instructions (or the system prompt when there are none), and after the append
+            # blocks; see `instruction_cache_boundaries`. `_limit_cache_points` drops the second first.
+            static_parts, stable_parts = instruction_cache_boundaries(instruction_parts)
+            static_count = len(leading_texts) + static_parts
+            if static_count:
+                system_prompt_blocks[static_count - 1]['cache_control'] = self._build_cache_control(ttl)
+            stable_count = len(leading_texts) + stable_parts
+            if stable_count > static_count:
+                system_prompt_blocks[stable_count - 1]['cache_control'] = self._build_cache_control(ttl)
         return system_prompt_blocks
 
     async def _map_model_request(
@@ -2650,8 +2775,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> None:
         if part.provider_name == self.system:  # pragma: no branch
             compaction_block = BetaCompactionBlockParam(content=part.content, type='compaction')
-            if part.provider_details and part.provider_details.get('encrypted_content') is not None:
-                compaction_block['encrypted_content'] = part.provider_details['encrypted_content']
+            details = part.provider_details or {}
+            if (encrypted_content := details.get('encrypted_content')) is not None:
+                compaction_block['encrypted_content'] = encrypted_content
+            if (signature := details.get('signature')) is not None:
+                compaction_block['signature'] = signature
             assistant_content_params.append(compaction_block)
 
     def _map_thinking_part(
@@ -2846,9 +2974,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> None:
         """Limit the number of cache points in the request to Anthropic's maximum.
 
-        System prompt and tool definition cache points always take priority; excess message
-        cache points are removed oldest-first. When automatic caching is enabled, the
-        server-applied breakpoint uses 1 of the available slots, reducing the budget for
+        Tool definition cache points and the first instruction cache point always take priority; excess
+        message cache points are removed oldest-first, after the instruction cache point behind the
+        `on_change='append'` blocks (see `split_instruction_cache_points`). When automatic caching
+        is enabled, the server-applied breakpoint uses 1 of the available slots, reducing the budget for
         explicit breakpoints by one.
 
         Raises:
@@ -2857,11 +2986,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """
         # Anthropic enforces a maximum of 4 cache points per request.
         max_points = 4 - (1 if automatic_caching else 0)
-        reserved = (
-            sum(1 for block in system_prompt if 'cache_control' in cast(dict[str, Any], block))
+        system_points = (
+            [cast('dict[str, Any]', block) for block in system_prompt if 'cache_control' in block]
             if isinstance(system_prompt, list)
-            else 0
+            else []
         )
+        reserved, optional_points = split_instruction_cache_points(system_points)
         # cache_control can be in the middle of the tools list if builtin tools are added after.
         reserved += sum(1 for tool in tools if 'cache_control' in tool)
 
@@ -2872,7 +3002,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for block in reversed(cast('list[BetaContentBlockParam]', message['content']))
         )
         for block_dict in excess_cache_points(
-            message_blocks,
+            chain(message_blocks, optional_points),
             max_points=max_points,
             reserved=reserved,
             is_cache_point=lambda block: 'cache_control' in block,
