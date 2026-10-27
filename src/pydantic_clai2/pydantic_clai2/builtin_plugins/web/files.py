@@ -75,18 +75,17 @@ def best(paths: tuple[str, ...], query: str) -> list[str]:
 
     A name or path starting with it comes first, then a name holding it, a path holding it, and a path holding
     its characters in order; within each, shallower and shorter paths first. An empty query lists the top level.
-    A file typed in full comes first; a folder typed in full is left out, for what it holds.
+    A file typed in full comes first, as the shortest of its rank; a folder typed in full is left out, for what it
+    holds.
     """
     needle = query.lower()
     ranked: list[tuple[int, int, int, str]] = []
     for path in paths:
         lowered = path.lower()
         name = _name(lowered)
-        if lowered == needle:
-            if path.endswith('/'):
-                continue  # A folder typed in full: what it holds comes next.
-            rank = -1  # A file typed in full: first, so Enter can send it as it is.
-        elif lowered.startswith(needle) or name.startswith(needle):
+        if lowered == needle and path.endswith('/'):
+            continue  # A folder typed in full: what it holds comes next.
+        if lowered.startswith(needle) or name.startswith(needle):
             rank = 0
         elif needle in name:
             rank = 1
