@@ -694,6 +694,68 @@ class TestNestedTraversal:
             ['<context-file path="AGENTS.md">\nWRITTEN DURING THE RUN\n</context-file>']
         )
 
+    async def test_contents_past_the_budget_are_surfaced_as_pointers(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'a' / 'AGENTS.md', 'A' * 10)
+        _write(tmp_path / 'b' / 'AGENTS.md', 'B' * 30)
+        _write(tmp_path / 'c' / 'AGENTS.md', 'C' * 10)
+        for name in 'abc':
+            _write(tmp_path / name / 'x.py', 'x')
+        paths = ['a/x.py', 'b/x.py', 'c/x.py']
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            returns = _tool_returns(messages)
+            if returns < len(paths):
+                args = json.dumps({'path': paths[returns]})
+                yield {0: DeltaToolCall(name='read_file', json_args=args, tool_call_id=f'call{returns}')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path),
+                RepoContext(
+                    autoload_instructions=False, nested_traversal=True, nested_inject='contents', nested_max_chars=25
+                ),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        parts = [
+            (type(part).__name__, part.content)
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, SystemPromptPart | UserPromptPart) and part.content != 'go'
+        ]
+        assert parts == snapshot(
+            [
+                (
+                    'UserPromptPart',
+                    """\
+<context-file path="a/AGENTS.md">
+AAAAAAAAAA
+</context-file>\
+""",
+                ),
+                (
+                    'SystemPromptPart',
+                    'A directory you just accessed has an instruction file, not loaded here. Its path is in the `<context-file>` tag that follows. Read the file if it is relevant to your task.',
+                ),
+                ('UserPromptPart', '<context-file path="b/AGENTS.md" />'),
+                (
+                    'UserPromptPart',
+                    """\
+<context-file path="c/AGENTS.md">
+CCCCCCCCCC
+</context-file>\
+""",
+                ),
+            ]
+        )
+
+    def test_negative_budget_is_rejected(self) -> None:
+        with pytest.raises(UserError, match=r'`RepoContext\.nested_max_chars` must not be negative'):
+            RepoContext(nested_max_chars=-1)
+
     async def test_working_directory_file_is_surfaced_when_autoload_is_off(self, tmp_path: Path) -> None:
         _write(tmp_path / 'AGENTS.md', 'ROOT BODY')
         _write(tmp_path / 'README.md', 'readme')

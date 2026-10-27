@@ -157,6 +157,13 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     `home_dir`.
     """
 
+    nested_max_chars: int | None = None
+    """For Strategy 3 with `nested_inject='contents'`: the total characters of nested file contents to inline per run.
+
+    A file that would take the total past it is surfaced as a pointer instead. `None` (the default) inlines
+    every file.
+    """
+
     _context_files: list[ContextFile] | None = field(default=None, init=False, repr=False, compare=False)
     """Walk-up result for this run, loaded once in `before_run` via `ctx.workspace`."""
 
@@ -169,11 +176,16 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     _toolset: RepoContextToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     """The one inventory toolset, shared with every per-run copy so durable execution sees the leaf it registered."""
 
+    _nested_chars: int = field(default=0, init=False, repr=False, compare=False)
+    """Characters of nested file contents inlined so far this run."""
+
     _sniff_traversal_tools: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if isinstance(self.root_markers, str):
             raise UserError(f'`RepoContext.root_markers` takes a sequence of names, e.g. `({self.root_markers!r},)`.')
+        if self.nested_max_chars is not None and self.nested_max_chars < 0:
+            raise UserError('`RepoContext.nested_max_chars` must not be negative.')
         if self.home_dir is not None and self.root_markers:
             raise UserError('`RepoContext` takes either `home_dir` or `root_markers` to stop the walk-up, not both.')
         if self.workspace_dir is not None:
@@ -193,6 +205,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         run = replace_no_init(self)
         run._context_files = None
         run._seen_dirs = set()
+        run._nested_chars = 0
         run._cached_working_dir = None
         return run
 
@@ -328,7 +341,12 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if context_file is None or key in self._seen_dirs:
             return
         self._seen_dirs.add(key)
-        ctx.enqueue(*self._render_note(context_file))
+        inline = self.nested_inject == 'contents' and (
+            self.nested_max_chars is None or self._nested_chars + len(context_file.content) <= self.nested_max_chars
+        )
+        if inline:
+            self._nested_chars += len(context_file.content)
+        ctx.enqueue(*self._render_note(context_file, inline=inline))
 
     async def _resolve_directory(self, workspace: Workspace, raw_path: str) -> Path:
         working_dir = await self._working_dir(workspace)
@@ -340,14 +358,14 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return candidate
         return candidate.parent if not entry.is_dir else candidate
 
-    def _render_note(self, context_file: ContextFile) -> Sequence[str | SystemPromptPart]:
+    def _render_note(self, context_file: ContextFile, *, inline: bool) -> Sequence[str | SystemPromptPart]:
         """The file's contents as repository data, or a framework pointer followed by the file's path as data.
 
         The contents and the path are the repository's, not the operator's or the framework's, so they go on
         the user channel in a `<context-file>` tag. Only the pointer's own wording is in system voice.
         """
         label = self._label(context_file.path)
-        if self.nested_inject == 'contents':
+        if inline:
             return [render_context_file(context_file, label=label)]
         return [SystemPromptPart(_POINTER_NOTE), render_context_file_path(label)]
 

@@ -124,12 +124,13 @@ def test_coder_members_and_parameters() -> None:
     for text in ('Custom instructions', 'DRY', 'YAGNI', 'SOLID', 'Zen of Python'):
         assert text in instructions
     repo = next(item for item in coder.capabilities if isinstance(item, RepoContext))
-    assert (repo.root_markers, repo.nested_traversal, repo.nested_inject, repo.expose_inventory_tool) == (
-        ('.git',),
-        True,
-        'contents',
-        False,
-    )
+    assert (
+        repo.root_markers,
+        repo.nested_traversal,
+        repo.nested_inject,
+        repo.nested_max_chars,
+        repo.expose_inventory_tool,
+    ) == (('.git',), True, 'contents', 32_000, False)
     delegation = next(item for item in coder.capabilities if isinstance(item, SubAgents))
     assert (delegation.include_self, delegation.agents, delegation.agent_folders) == (True, (), None)
     limits = next(item for item in coder.capabilities if isinstance(item, ToolOutputLimits))

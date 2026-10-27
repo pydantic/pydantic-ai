@@ -94,7 +94,9 @@ result = agent.run_sync('List the source directory.')
 ```
 
 `nested_inject='pointer'` (default) enqueues a one-line note pointing at the
-file; `'contents'` enqueues the file body. The note reaches message history
+file; `'contents'` enqueues the file body. Set `nested_max_chars` to cap the characters of file
+bodies `'contents'` inlines per run: a file that would go past it is surfaced
+as a pointer instead. The note reaches message history
 before the next model request. Each directory is surfaced at most once per run,
 and the working directory's files are not surfaced again when the walk-up
 already loaded them.
@@ -167,6 +169,7 @@ RepoContext(
     traversal_path_arg='path',                                       # deprecated fallback
     asset_roots=('.claude', '.agents', '.codex', '.grok'),
     root_markers=(),                # Sequence[str] -- stop the walk-up at the nearest dir containing one, e.g. ('.git',)
+    nested_max_chars=None,          # int | None -- cap on inlined nested contents per run
 )
 ```
 

@@ -57,6 +57,9 @@ MAX_READ_CHARS = 50_000
 MAX_OUTPUT_CHARS = 64000
 """Characters kept from any tool result."""
 
+MAX_NESTED_INSTRUCTION_CHARS = 32_000
+"""Characters of subdirectory instruction files inlined per run; files past it are surfaced as pointers."""
+
 MAX_FILE_TOOL_RETRIES = 5
 """Consecutive retries each file tool allows before the run fails.
 
@@ -158,6 +161,7 @@ class Coder(CombinedCapability[AgentDepsT]):
                     root_markers=('.git',),
                     nested_traversal=True,
                     nested_inject='contents',
+                    nested_max_chars=MAX_NESTED_INSTRUCTION_CHARS,
                 )
             )
         if sub_agents:

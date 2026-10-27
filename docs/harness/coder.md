@@ -125,9 +125,10 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
    Each file tool allows five consecutive retries (for a denied path or a stale edit) rather than the agent's default one,
    so a repeated correctable mistake does not end a long run.
 3. [`Shell`](shell.md)`(denied_commands=[], allow_interactive=True, default_timeout=270, tools=['shell'])`.
-4. [`RepoContext`](repo-context.md)`(expose_inventory_tool=False, root_markers=('.git',), nested_traversal=True, nested_inject='contents')`
+4. [`RepoContext`](repo-context.md)`(expose_inventory_tool=False, root_markers=('.git',), nested_traversal=True, nested_inject='contents', nested_max_chars=32000)`
    for repository instructions: the `CLAUDE.md`/`AGENTS.md` files from the repository root down to the working directory
-   at run start, and those in subdirectories when the agent first reads or lists something under them.
+   at run start, and those in subdirectories when the agent first reads or lists something under them. Past
+   32,000 characters of subdirectory files in a run, further ones are surfaced as pointers.
    Pass `repo_context=False` to leave it out when the agent already binds its own `RepoContext`, so the
    instruction files are not loaded twice.
 5. [`SubAgents`](subagents.md)`(include_self=True, agent_folders=None)`, so the agent can hand a self-contained
