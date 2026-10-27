@@ -90,6 +90,7 @@ from pydantic_ai.toolsets._deferred_capability_loader import (
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -389,6 +390,7 @@ def test_stale_loaded_eager_capability_is_not_revealed() -> None:
     assert tool_defs_from_pre_definition_load_returns(ctx, [tool_def]) == {}
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_is_tool_available_definition_survives_aggregator_fold() -> None:
     """A caller-held definition stays available after an aggregator removes it from resolved tools."""
     capability_tools = FunctionToolset()
@@ -445,6 +447,9 @@ async def test_is_tool_available_definition_survives_aggregator_fold() -> None:
     assert folding_toolset.availability == [False, True, True]
 
 
+@pytest.mark.moves_cache_prefix(
+    reason="the second run is given a hand-built history that branches from the first run's"
+)
 async def test_stale_loaded_eager_capability_tool_stays_hidden() -> None:
     """Resumed loaded state does not reveal a tool owned by a capability that is now eager."""
     toolset = FunctionToolset()
@@ -1503,6 +1508,40 @@ class TestHooksCapability:
         agent = Agent(FunctionModel(failing_model), capabilities=[hooks])
         result = await agent.run('hello')
         assert result.output == 'recovered from run error'
+
+    async def test_on_run_error_recovery_run_stream(self):
+        """A run that fails before streaming a final result yields the result `on_run_error` recovered with."""
+        hooks = Hooks()
+
+        @hooks.on.run_error
+        async def recover(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output=f'recovered from {error}')
+
+        async def failing_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            raise RuntimeError('model exploded')
+            yield  # pragma: no cover
+
+        agent = Agent(FunctionModel(stream_function=failing_stream), capabilities=[hooks])
+        async with agent.run_stream('hello') as stream:
+            assert await stream.get_output() == 'recovered from model exploded'
+            assert [output async for output in stream.stream_output()] == ['recovered from model exploded']
+
+    async def test_on_run_error_no_recovery_run_stream(self):
+        """`run_stream` still raises the run's error when `on_run_error` re-raises it."""
+        hooks = Hooks()
+
+        @hooks.on.run_error
+        async def reraise(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            raise error
+
+        async def failing_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            raise RuntimeError('model exploded')
+            yield  # pragma: no cover
+
+        agent = Agent(FunctionModel(stream_function=failing_stream), capabilities=[hooks])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            async with agent.run_stream('hello'):
+                pass  # pragma: no cover
 
     async def test_on_run_error_chaining(self):
         hooks = Hooks()
