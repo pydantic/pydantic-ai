@@ -668,7 +668,7 @@ async def test_no_sink_still_emits_otel_events(capfire: CaptureLogfire):
 
 @needs_logfire
 async def test_scoring_run_id_shared_within_one_call(capfire: CaptureLogfire):
-    """All events from one target call share a scoring run id, across sink groups; separate calls get separate ids."""
+    """All events from one target call share a run id, across sink groups; separate calls get separate ids."""
     config = OnlineEvalConfig(default_sink=Collector())
 
     @config.evaluate(
@@ -686,11 +686,10 @@ async def test_scoring_run_id_shared_within_one_call(capfire: CaptureLogfire):
     records = [dict(r.log_record.attributes or {}) for r in capfire.log_exporter.get_finished_logs()]
     assert len(records) == 4
     first_call, second_call = records[:2], records[2:]
-    assert len({str(r['logfire.evaluation.scoring_run_id']) for r in first_call}) == 1
-    assert len({str(r['logfire.evaluation.scoring_run_id']) for r in second_call}) == 1
-    assert first_call[0]['logfire.evaluation.scoring_run_id'] != second_call[0]['logfire.evaluation.scoring_run_id']
+    assert len({str(r['logfire.scorer.run_id']) for r in first_call}) == 1
+    assert len({str(r['logfire.scorer.run_id']) for r in second_call}) == 1
+    assert first_call[0]['logfire.scorer.run_id'] != second_call[0]['logfire.scorer.run_id']
     assert len({str(r['gen_ai.evaluation.id']) for r in records}) == 4
-    assert {str(r['logfire.evaluation.context']) for r in records} == {'online'}
 
 
 @needs_logfire

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from opentelemetry import baggage, trace
 from opentelemetry._logs import LogRecord, SeverityNumber, get_logger
@@ -32,13 +32,7 @@ if TYPE_CHECKING:
     # Imported only for type annotations; `online` imports from this module at runtime.
     from .online import SpanReference
 
-__all__ = ('EvaluationContextKind', 'build_parent_context', 'emit_otel_events')
-
-EvaluationContextKind = Literal['online', 'experiment']
-"""Where an evaluation result was produced, written to `logfire.evaluation.context`.
-
-Logfire's hosted scorers additionally emit `'hosted'`; pydantic-evals never does.
-"""
+__all__ = ('build_parent_context', 'emit_otel_events')
 
 
 # --- Attribute name constants -------------------------------------------------
@@ -60,15 +54,11 @@ _ATTR_EVALUATOR_VERSION = 'gen_ai.evaluation.evaluator.version'
 # the attribute Logfire's hosted scorers already emit.
 _ATTR_EVAL_ID = 'gen_ai.evaluation.id'
 
-# Logfire-specific extensions that make the record lossless and groupable. These
-# have no semconv analogue, so they live in the `logfire.evaluation.*` namespace.
-_LOGFIRE_EVAL_PREFIX = 'logfire.evaluation.'
-_ATTR_KIND = 'logfire.evaluation.kind'
-_ATTR_CONTEXT = 'logfire.evaluation.context'
-_ATTR_SCORING_RUN_ID = 'logfire.evaluation.scoring_run_id'
-_ATTR_SCHEMA_VERSION = 'logfire.evaluation.schema_version'
-# Bump when the meaning or shape of the attributes above changes incompatibly.
-_SCHEMA_VERSION = 1
+# Extensions with no semconv analogue. They use the names and values that Logfire's
+# hosted scorers write, so one query reads results from both.
+_LOGFIRE_SCORER_PREFIX = 'logfire.scorer.'
+_ATTR_SCORE_TYPE = 'logfire.scorer.score_type'
+_ATTR_RUN_ID = 'logfire.scorer.run_id'
 
 _EVENT_NAME = 'gen_ai.evaluation.result'
 _OTEL_SCOPE = 'pydantic-evals'
@@ -92,7 +82,6 @@ def emit_otel_events(
     failures: Sequence[EvaluatorFailure],
     target: str,
     scoring_run_id: str,
-    context: EvaluationContextKind = 'online',
     include_baggage: bool = True,
 ) -> None:
     """Emit one `gen_ai.evaluation.result` OTel event per result/failure.
@@ -111,21 +100,18 @@ def emit_otel_events(
         target: Name of the function/agent being evaluated. Written to
             `gen_ai.evaluation.target`.
         scoring_run_id: Identifier shared by every result produced by one scoring
-            pass over one target call. Written to `logfire.evaluation.scoring_run_id`.
-        context: Where the evaluation ran. Written to `logfire.evaluation.context`.
+            pass over one target call. Written to `logfire.scorer.run_id`.
         include_baggage: When True (the default), each emitted event also carries
             every key from the current OTel baggage as an attribute. Standard
             `gen_ai.*` and `error.type` attributes always win on conflict, and
-            baggage keys in the reserved `logfire.evaluation.*` namespace are dropped.
+            baggage keys in the reserved `logfire.scorer.*` namespace are dropped.
     """
     if not results and not failures:
         return
 
     # Apply baggage first so standard attributes always win on conflict.
     shared_attrs = _baggage_attrs() if include_baggage else {}
-    shared_attrs[_ATTR_CONTEXT] = context
-    shared_attrs[_ATTR_SCORING_RUN_ID] = scoring_run_id
-    shared_attrs[_ATTR_SCHEMA_VERSION] = _SCHEMA_VERSION
+    shared_attrs[_ATTR_RUN_ID] = scoring_run_id
     shared_attrs[_ATTR_TARGET] = target
     for result in results:
         _emit_result(result, shared_attrs)
@@ -134,8 +120,8 @@ def emit_otel_events(
 
 
 def _baggage_attrs() -> dict[str, Any]:
-    """Snapshot the current OTel baggage as a flat attribute mapping, minus the reserved `logfire.evaluation.*` keys."""
-    return {str(k): v for k, v in baggage.get_all().items() if not str(k).startswith(_LOGFIRE_EVAL_PREFIX)}
+    """Snapshot the current OTel baggage as a flat attribute mapping, minus the reserved `logfire.scorer.*` keys."""
+    return {str(k): v for k, v in baggage.get_all().items() if not str(k).startswith(_LOGFIRE_SCORER_PREFIX)}
 
 
 def build_parent_context(span_reference: SpanReference | None) -> Context | None:
@@ -234,24 +220,24 @@ def _format_score(value: Any) -> str:
 
 
 def _set_score_attrs(attrs: dict[str, Any], value: Any) -> None:
-    """Populate `score.value`, `score.label` and `logfire.evaluation.kind` from a pydantic-evals scalar.
+    """Populate `score.value`, `score.label` and `logfire.scorer.score_type` from a pydantic-evals scalar.
 
     - bool → both: `score.value` = 0.0/1.0, `score.label` = `"pass"`/`"fail"`.
       Dual representation so numeric queries and categorical queries both work;
-      `kind = 'assertion'` keeps it distinguishable from a numeric or string result.
-    - int/float → `score.value` only, `kind = 'score'`.
-    - str → `score.label` only (evaluator returned a categorical tag), `kind = 'label'`.
+      `score_type = 'pass_fail'` keeps it distinguishable from a numeric or string result.
+    - int/float → `score.value` only, `score_type = 'numeric'`.
+    - str → `score.label` only (evaluator returned a categorical tag), `score_type = 'categorical'`.
     """
     if isinstance(value, bool):
         attrs[_ATTR_SCORE_VALUE] = 1.0 if value else 0.0
         attrs[_ATTR_SCORE_LABEL] = 'pass' if value else 'fail'
-        attrs[_ATTR_KIND] = 'assertion'
+        attrs[_ATTR_SCORE_TYPE] = 'pass_fail'
     elif isinstance(value, (int, float)):
         attrs[_ATTR_SCORE_VALUE] = float(value)
-        attrs[_ATTR_KIND] = 'score'
+        attrs[_ATTR_SCORE_TYPE] = 'numeric'
     elif isinstance(value, str):
         attrs[_ATTR_SCORE_LABEL] = value
-        attrs[_ATTR_KIND] = 'label'
+        attrs[_ATTR_SCORE_TYPE] = 'categorical'
 
 
 def _serialize_evaluator_source(source: EvaluatorSpec) -> str:

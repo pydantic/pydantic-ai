@@ -87,7 +87,7 @@ def test_emits_event_with_parent_span(capfire: CaptureLogfire):
 
 
 def test_record_attributes_per_result_kind(capfire: CaptureLogfire):
-    """Every event carries a unique id, the shared scoring run id, context and schema version, and a kind derived from the value type."""
+    """Every event carries a unique id, the shared run id, and a score type derived from the value type."""
     failure = EvaluatorFailure(name='Judge', error_message='boom', error_stacktrace='tb', source=_spec('Judge'))
     emit_otel_events(
         results=[_result('Passed', True), _result('Accuracy', 1), _result('Tone', 'pass')],
@@ -101,43 +101,35 @@ def test_record_attributes_per_result_kind(capfire: CaptureLogfire):
         [
             {
                 'gen_ai.evaluation.id': IsStr(),
-                'logfire.evaluation.context': 'online',
-                'logfire.evaluation.scoring_run_id': '00000000-0000-4000-8000-000000000000',
-                'logfire.evaluation.schema_version': 1,
+                'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
                 'gen_ai.evaluation.target': 'f',
                 'gen_ai.evaluation.name': 'Passed',
                 'gen_ai.evaluation.evaluator.source': '{"name":"Passed","arguments":null}',
                 'gen_ai.evaluation.score.value': 1.0,
                 'gen_ai.evaluation.score.label': 'pass',
-                'logfire.evaluation.kind': 'assertion',
+                'logfire.scorer.score_type': 'pass_fail',
             },
             {
                 'gen_ai.evaluation.id': IsStr(),
-                'logfire.evaluation.context': 'online',
-                'logfire.evaluation.scoring_run_id': '00000000-0000-4000-8000-000000000000',
-                'logfire.evaluation.schema_version': 1,
+                'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
                 'gen_ai.evaluation.target': 'f',
                 'gen_ai.evaluation.name': 'Accuracy',
                 'gen_ai.evaluation.evaluator.source': '{"name":"Accuracy","arguments":null}',
                 'gen_ai.evaluation.score.value': 1.0,
-                'logfire.evaluation.kind': 'score',
+                'logfire.scorer.score_type': 'numeric',
             },
             {
                 'gen_ai.evaluation.id': IsStr(),
-                'logfire.evaluation.context': 'online',
-                'logfire.evaluation.scoring_run_id': '00000000-0000-4000-8000-000000000000',
-                'logfire.evaluation.schema_version': 1,
+                'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
                 'gen_ai.evaluation.target': 'f',
                 'gen_ai.evaluation.name': 'Tone',
                 'gen_ai.evaluation.evaluator.source': '{"name":"Tone","arguments":null}',
                 'gen_ai.evaluation.score.label': 'pass',
-                'logfire.evaluation.kind': 'label',
+                'logfire.scorer.score_type': 'categorical',
             },
             {
                 'gen_ai.evaluation.id': IsStr(),
-                'logfire.evaluation.context': 'online',
-                'logfire.evaluation.scoring_run_id': '00000000-0000-4000-8000-000000000000',
-                'logfire.evaluation.schema_version': 1,
+                'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
                 'gen_ai.evaluation.target': 'f',
                 'gen_ai.evaluation.name': 'Judge',
                 'gen_ai.evaluation.evaluator.source': '{"name":"Judge","arguments":null}',
@@ -147,19 +139,6 @@ def test_record_attributes_per_result_kind(capfire: CaptureLogfire):
         ]
     )
     assert len({str(r['gen_ai.evaluation.id']) for r in records}) == len(records)
-
-
-def test_context_is_written_to_record(capfire: CaptureLogfire):
-    emit_otel_events(
-        results=[_result('X', True)],
-        failures=[],
-        target=_target('f'),
-        scoring_run_id=_RUN_ID,
-        context='experiment',
-    )
-
-    attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
-    assert attrs['logfire.evaluation.context'] == 'experiment'
 
 
 def test_bool_false_emits_fail_label(capfire: CaptureLogfire):
@@ -425,10 +404,10 @@ def test_baggage_does_not_overwrite_standard_attrs(capfire: CaptureLogfire):
     assert attrs['gen_ai.evaluation.score.label'] == 'pass'
 
 
-def test_baggage_cannot_set_logfire_evaluation_attrs(capfire: CaptureLogfire):
-    """Baggage keys in the reserved `logfire.evaluation.*` namespace are dropped, even where the record omits that key."""
-    ctx = _baggage.set_baggage('logfire.evaluation.kind', 'score')
-    ctx = _baggage.set_baggage('logfire.evaluation.context', 'hosted', ctx)
+def test_baggage_cannot_set_logfire_scorer_attrs(capfire: CaptureLogfire):
+    """Baggage keys in the reserved `logfire.scorer.*` namespace are dropped, even where the record omits that key."""
+    ctx = _baggage.set_baggage('logfire.scorer.score_type', 'numeric')
+    ctx = _baggage.set_baggage('logfire.scorer.id', 'spoofed', ctx)
     token = _otel_context.attach(ctx)
     try:
         emit_otel_events(
@@ -441,8 +420,9 @@ def test_baggage_cannot_set_logfire_evaluation_attrs(capfire: CaptureLogfire):
         _otel_context.detach(token)
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
-    assert 'logfire.evaluation.kind' not in attrs
-    assert attrs['logfire.evaluation.context'] == 'online'
+    assert 'logfire.scorer.score_type' not in attrs
+    assert 'logfire.scorer.id' not in attrs
+    assert attrs['logfire.scorer.run_id'] == _RUN_ID
 
 
 def test_include_baggage_false_skips_snapshot(capfire: CaptureLogfire):

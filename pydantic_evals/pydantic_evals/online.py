@@ -450,7 +450,7 @@ class OnlineEvalConfig:
     carries the keys present in the current OTel baggage as attributes — useful
     for propagating tenant/user/request identifiers from the calling context.
     Standard `gen_ai.*` and `error.type` attributes always win on conflict, and
-    baggage keys in the reserved `logfire.evaluation.*` namespace are dropped, so
+    baggage keys in the reserved `logfire.scorer.*` namespace are dropped, so
     baggage cannot accidentally overwrite or inject the record's own attributes.
 
     Set to `False` to skip the baggage snapshot per event.
