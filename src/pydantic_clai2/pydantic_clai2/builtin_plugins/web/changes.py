@@ -3,14 +3,15 @@
 `Last turn` and `This session` come from the session's own `write_file` and `edit_file` calls, so
 they work outside Git too: each file's diff runs from its content before the first call in scope to
 its content on disk now, so a file edited three times shows one diff. That earlier content is
-replayed from the calls: a file the session wrote first counts as created, as its transcript row
-shows it; an edit is undone on the content after it. `Uncommitted` and `Branch vs base` run Git in
-the session's workspace. The payloads are mirrored by `web-ui/src/protocol.ts`.
+replayed from the calls (see `_before`), with the file's last commit as the starting point the
+calls cannot give. `Uncommitted` and `Branch vs base` run Git in the session's workspace. The
+payloads are mirrored by `web-ui/src/protocol.ts`.
 """
 
 import difflib
 import posixpath
-from collections.abc import Sequence
+import subprocess
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast
@@ -29,6 +30,8 @@ MAX_DIFF_CHARS = 100_000
 """Characters of one file's diff the page receives; the rest is cut, on a line boundary."""
 MAX_FILE_BYTES = 2_000_000
 """Files larger than this are listed without a diff."""
+MAX_FILES = 300
+"""Files listed in one scope; the rest are counted in `Changes.omitted`, so a huge diff cannot stall the page."""
 BASES = ('main', 'master', 'origin/main', 'origin/master')
 """Branches tried, in order, as the base when `origin/HEAD` names none."""
 
@@ -56,6 +59,8 @@ class Changes:
     """The branch `Branch vs base` compares with."""
     note: str | None = None
     """Why the scope cannot be shown, such as a workspace outside Git."""
+    omitted: int = 0
+    """Changed files left out past `MAX_FILES`."""
 
 
 async def session_changes(messages: Sequence[ModelMessage], workspace: Path, *, scope: ChangeScope) -> Changes:
@@ -147,18 +152,30 @@ def _tool_changes(calls: list[FileCall], workspace: Path, *, turn: int | None) -
         first = next((index for index, op in enumerate(ops) if turn is None or op.turn == turn), None)
         if first is None:
             continue
+        created = first == 0 and ops[0].content is not None
         try:
             now = _read(workspace / path)
         except _Undiffable as exc:
-            files.append(FileChange(path=path, status='M', diff=Diff(path=path, diff=''), note=str(exc)))
+            files.append(_undiffed(path, 'A' if created else 'M', str(exc)))
             continue
-        before = _before(ops, first, now)
+        before = _before(ops, first, now, lambda: _committed(workspace, path))
         if isinstance(before, _Unknown):
-            note = 'Its content before these changes is not known: the file changed in another way since.'
-            files.append(FileChange(path=path, status='M', diff=Diff(path=path, diff=''), note=note))
+            note = 'Its content before these changes is not known, so it has no diff.'
+            files.append(_undiffed(path, 'D' if now is None else 'M', note))
         elif (change := file_change(path, before, now)) is not None:
             files.append(change)
-    return Changes(scope='session' if turn is None else 'turn', files=sorted(files, key=lambda change: change.path))
+    return _listed(Changes(scope='session' if turn is None else 'turn'), files)
+
+
+def _listed(changes: Changes, files: list[FileChange]) -> Changes:
+    """`changes` with `files` by path, up to `MAX_FILES` of them."""
+    changes.files = sorted(files, key=lambda change: change.path)[:MAX_FILES]
+    changes.omitted = len(files) - len(changes.files)
+    return changes
+
+
+def _undiffed(path: str, status: FileStatus, note: str) -> FileChange:
+    return FileChange(path=path, status=status, diff=Diff(path=path, diff=''), note=note)
 
 
 def _shown_path(path: str, workspace: Path) -> str:
@@ -187,26 +204,46 @@ def _read(path: Path) -> str | None:
     return data.decode('utf-8', errors='replace')
 
 
-def _before(ops: list[FileCall], first: int, now: str | None) -> Content:
-    """The file's content before `ops[first]`, replayed from the calls around it."""
+def _before(ops: list[FileCall], first: int, now: str | None, committed: Callable[[], str | None]) -> Content:
+    """The file's content before `ops[first]`, replayed from the calls around it.
+
+    Forward from the last whole write before it, else back from the disk through the edits since.
+    When neither tells, forward from the file's last commit, `committed()`, if that leads to what is on
+    disk now; a file with no commit that the session first wrote whole counts as created.
+    """
     written = next((index for index in range(first - 1, -1, -1) if ops[index].content is not None), None)
     if written is not None:
-        # Forward from the last whole write before the scope.
-        text: Content = ops[written].content
-        for op in ops[written + 1 : first]:
-            text = _apply(text, op.replacements)
-        return text
-    if ops[0].content is not None:
-        # The session's first call on it wrote it whole: it counts as created, as its transcript row shows it.
-        return None
-    if any(op.content is not None for op in ops[first:]):
-        # Only edits came before a later whole write, which hides what they edited.
-        return UNKNOWN
-    # Back from the disk, undoing every edit since.
-    text = now
-    for op in reversed(ops[first:]):
-        text = _apply(text, [(new, old) for old, new in reversed(op.replacements)])
+        return _replay(ops[written].content, ops[written + 1 : first])
+    if all(op.content is None for op in ops[first:]):
+        undone = now
+        for op in reversed(ops[first:]):
+            undone = _apply(undone, [(new, old) for old, new in reversed(op.replacements)])
+        if not isinstance(undone, _Unknown):
+            return undone
+    base = committed()
+    if base is None:
+        return None if ops[0].content is not None else UNKNOWN
+    return _replay(base, ops[:first]) if _replay(base, ops) == now else UNKNOWN
+
+
+def _replay(text: Content, ops: list[FileCall]) -> Content:
+    """`text` after `ops`, in order."""
+    for op in ops:
+        text = op.content if op.content is not None else _apply(text, op.replacements)
     return text
+
+
+def _committed(workspace: Path, path: str) -> str | None:
+    """`path`'s content in the last commit of the workspace's Git repository; `None` without one, or untracked."""
+    if posixpath.isabs(path):
+        return None
+    try:
+        result = subprocess.run(
+            ['git', '--no-optional-locks', 'show', f'HEAD:./{path}'], cwd=workspace, capture_output=True, check=False
+        )
+    except OSError:
+        return None
+    return result.stdout.decode('utf-8', errors='replace') if result.returncode == 0 else None
 
 
 def _apply(text: Content, replacements: list[tuple[str, str]]) -> Content:
@@ -284,23 +321,27 @@ async def _git_changes(workspace: Path, *, scope: Literal['uncommitted', 'branch
         return Changes(scope=scope, note='This repository has no commits yet.')
     base: str | None = None
     against = 'HEAD'
-    if scope == 'branch':
-        base = await _base(workspace)
-        if base is None:
-            return Changes(scope=scope, note='No base branch found: neither origin/HEAD nor main or master.')
-        against = (await _git(workspace, 'merge-base', 'HEAD', base)).strip()
-    options = ('--no-color', '--no-ext-diff', '--no-renames', against)
-    numstat, patch = await _git(workspace, 'diff', '--numstat', '-z', *options), await _git(workspace, 'diff', *options)
-    return Changes(scope=scope, base=base, files=git_files(numstat, patch))
+    options = ('--no-color', '--no-ext-diff', '--no-renames')
+    try:
+        if scope == 'branch':
+            base = await _base(workspace)
+            if base is None:
+                return Changes(scope=scope, note='No base branch found: neither origin/HEAD nor main or master.')
+            against = (await _git(workspace, 'merge-base', 'HEAD', base)).strip()
+        numstat = await _git(workspace, 'diff', '--numstat', '-z', *options, against)
+        patch = await _git(workspace, 'diff', *options, against)
+    except GitError as exc:
+        return Changes(scope=scope, base=base, note=f'Git could not compare: {exc}')
+    return _listed(Changes(scope=scope, base=base), git_files(numstat, patch))
 
 
 async def _base(workspace: Path) -> str | None:
     """The branch this one is compared with: `origin/HEAD`'s, else the first of `BASES` that exists."""
     try:
-        return (await _git(workspace, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD')).strip()
+        names = [(await _git(workspace, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD')).strip()]
     except GitError:
-        pass
-    for name in BASES:
+        names = []
+    for name in [*names, *BASES]:
         try:
             await _git(workspace, 'rev-parse', '--verify', '--quiet', f'{name}^{{commit}}')
         except GitError:

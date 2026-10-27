@@ -135,14 +135,39 @@ async def test_a_file_whose_earlier_content_is_unknown_is_listed_without_a_diff(
     (tmp_path / 'rewritten.py').write_text('whole\n')
     history = History()
     history.turn(
-        'one', edit('edited.py', 'a = 1', 'a = 2'), edit('rewritten.py', 'a', 'b'), write('rewritten.py', 'whole\n')
+        'one',
+        edit('edited.py', 'a = 1', 'a = 2'),
+        edit('rewritten.py', 'a', 'b'),
+        write('rewritten.py', 'whole\n'),
+        edit('removed.py', 'a = 1', 'a = 2'),
     )
 
     found = await session_changes(history.messages, tmp_path, scope='session')
-    assert listed(found) == [('edited.py', 'M', 0, 0), ('rewritten.py', 'M', 0, 0)]
-    assert [change.note for change in found.files] == [
-        'Its content before these changes is not known: the file changed in another way since.'
-    ] * 2
+    assert listed(found) == [('edited.py', 'M', 0, 0), ('removed.py', 'D', 0, 0), ('rewritten.py', 'M', 0, 0)]
+    assert {change.note for change in found.files} == {
+        'Its content before these changes is not known, so it has no diff.'
+    }
+
+
+async def test_the_last_commit_is_the_start_the_calls_cannot_give(repo: Path) -> None:
+    """A tracked file the session rewrote whole, or edited by deleting text, diffs against its last commit."""
+    (repo / 'a.py').write_text('def a():\n    return 100\n')
+    (repo / 'b.py').write_text('def b():\n')
+    (repo / 'c.py').write_text('changed outside the session\n')
+    git(repo, 'add', 'c.py')
+    git(repo, 'commit', '-q', '-m', 'c')
+    (repo / 'c.py').write_text('changed again\n')
+    history = History()
+    history.turn(
+        'one',
+        write('a.py', 'def a():\n    return 100\n'),
+        edit('b.py', '    return 2\n', ''),
+        edit('c.py', 'changed outside', 'changed inside'),
+    )
+
+    found = await session_changes(history.messages, repo, scope='session')
+    assert listed(found) == [('a.py', 'M', 1, 1), ('b.py', 'M', 0, 1), ('c.py', 'M', 0, 0)]
+    assert found.files[2].note == 'Its content before these changes is not known, so it has no diff.'
 
 
 async def test_deleted_large_binary_and_outside_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -176,7 +201,7 @@ async def test_deleted_large_binary_and_outside_files(tmp_path: Path, monkeypatc
     session = await session_changes(history.messages, workspace, scope='session')
     by_path = {change.path: change for change in session.files}
     assert sorted(by_path) == sorted([str(tmp_path / 'outside.py'), 'big.txt', 'folder', 'image.bin', 'long.py'])
-    assert by_path['big.txt'].note == 'Too large to diff.'
+    assert (by_path['big.txt'].status, by_path['big.txt'].note) == ('A', 'Too large to diff.')
     assert by_path['image.bin'].note == 'Binary file.'
     assert by_path['folder'].note == 'Is a directory'
     assert by_path['long.py'].diff.truncated
@@ -187,7 +212,7 @@ async def test_deleted_large_binary_and_outside_files(tmp_path: Path, monkeypatc
     assert listed(turn) == [(str(tmp_path / 'outside.py'), 'M', 1, 1), ('gone.py', 'D', 0, 1)]
 
 
-async def test_uncommitted_matches_git_diff_head(repo: Path) -> None:
+async def test_uncommitted_matches_git_diff_head(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (repo / 'a.py').write_text('def a():\n    return 10\n')
     (repo / 'b.py').unlink()
     (repo / 'c.py').write_text('c = 1\n')
@@ -204,6 +229,10 @@ async def test_uncommitted_matches_git_diff_head(repo: Path) -> None:
     assert found.files[0].diff.diff.startswith('--- a/a.py\n+++ b/a.py\n@@ -1,2 +1,2 @@')
     assert found.files[3].note == 'Binary file.'
 
+    monkeypatch.setattr(changes_module, 'MAX_FILES', 3)
+    capped = await session_changes([], repo, scope='uncommitted')
+    assert ([change.path for change in capped.files], capped.omitted) == (['a.py', 'b.py', 'c.py'], 1)
+
 
 async def test_branch_against_its_base(repo: Path) -> None:
     git(repo, 'switch', '-q', '-c', 'feature')
@@ -216,9 +245,17 @@ async def test_branch_against_its_base(repo: Path) -> None:
     assert (found.base, listed(found)) == ('main', [('a.py', 'M', 1, 1), ('feature.py', 'A', 1, 0)])
 
     # A clone's `origin/HEAD` names the base instead.
-    git(repo, 'update-ref', 'refs/remotes/origin/trunk', 'main')
     git(repo, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk')
+    assert (await session_changes([], repo, scope='branch')).base == 'main', 'origin/HEAD names no branch yet'
+    git(repo, 'update-ref', 'refs/remotes/origin/trunk', 'main')
     assert (await session_changes([], repo, scope='branch')).base == 'origin/trunk'
+
+    # A base with no history in common, as after a shallow clone, says why it cannot compare.
+    empty_tree = git(repo, 'hash-object', '-t', 'tree', '/dev/null').strip()
+    unrelated_commit = git(repo, 'commit-tree', empty_tree, '-m', 'unrelated').strip()
+    git(repo, 'update-ref', 'refs/remotes/origin/trunk', unrelated_commit)
+    unrelated = await session_changes([], repo, scope='branch')
+    assert (unrelated.base, unrelated.note) == ('origin/trunk', 'Git could not compare: git merge-base failed')
 
 
 @pytest.mark.parametrize('scope', ['uncommitted', 'branch'])

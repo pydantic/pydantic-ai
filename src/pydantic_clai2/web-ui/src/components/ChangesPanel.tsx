@@ -8,33 +8,45 @@ import { ChevronIcon, CloseIcon, DiffIcon } from './icons'
 const SCOPES: { scope: ChangeScope; label: string; empty: string }[] = [
   { scope: 'turn', label: 'Last turn', empty: 'The last turn changed no files.' },
   { scope: 'session', label: 'This session', empty: 'This session has changed no files yet.' },
-  { scope: 'uncommitted', label: 'Uncommitted', empty: 'Nothing is changed since the last commit.' },
-  { scope: 'branch', label: 'Branch vs base', empty: 'This branch has no changes against its base.' },
+  {
+    scope: 'uncommitted',
+    label: 'Uncommitted',
+    empty: 'No tracked file differs from the last commit. Untracked files are not shown, as in git diff HEAD.',
+  },
+  {
+    scope: 'branch',
+    label: 'Branch vs base',
+    empty: 'No tracked file differs from where this branch left its base. Untracked files are not shown.',
+  },
 ]
 
 /** Files with more changed lines than this start collapsed, so one large file does not bury the rest. */
 const COLLAPSE_LINES = 400
+/** The lines each diff mounts until the user asks for the rest, as a file-change card does. */
+const PREVIEW_LINES = 60
 
 export const CHANGES_KEY = 'E'
 
-/** The files `session` changed in `scope`, asked again whenever `key` changes, such as when a turn ends; none while
- * `key` is `null`. The last answer stays until the next arrives. */
-export function useChanges(session: SessionApi, scope: ChangeScope, key: string | null) {
-  const [found, setFound] = useState<{ changes: Changes | null; error: string | null }>({ changes: null, error: null })
+/** The files `session` changed in `scope`, asked again whenever `active` turns on, such as when a turn ends. An answer
+ * stays until the next arrives, but only for the session `owner` it was asked for. */
+export function useChanges(session: SessionApi, scope: ChangeScope, owner: string, active: boolean) {
+  const [found, setFound] = useState<{ owner: string; scope: ChangeScope; changes: Changes | null; error: string | null }>()
   const [version, setVersion] = useState(0)
   useEffect(() => {
-    if (key === null) return
+    if (!active) return
     let current = true
+    const settle = (changes: Changes | null, error: string | null) => current && setFound({ owner, scope, changes, error })
     session.changes(scope).then(
-      (changes) => current && setFound({ changes, error: null }),
-      (error: unknown) => current && setFound({ changes: null, error: error instanceof Error ? error.message : String(error) }),
+      (changes) => settle(changes, null),
+      (error: unknown) => settle(null, error instanceof Error ? error.message : String(error)),
     )
     return () => {
       current = false
     }
-  }, [session, scope, key, version])
+  }, [session, scope, owner, active, version])
   const refresh = useCallback(() => setVersion((value) => value + 1), [])
-  return { ...found, refresh }
+  const mine = found?.owner === owner && found.scope === scope ? found : undefined
+  return { changes: mine?.changes ?? null, error: mine?.error ?? null, refresh }
 }
 
 const anchor = (path: string) => `change-${path.replace(/[^A-Za-z0-9_-]/g, '-')}`
@@ -59,7 +71,7 @@ function FileDiff({ change, open, onToggle }: { change: FileChange; open: boolea
         (change.note ? (
           <div className="changes-note">{change.note}</div>
         ) : (
-          change.diff.diff && <DiffView diff={change.diff} />
+          change.diff.diff && <DiffView diff={change.diff} preview={PREVIEW_LINES} />
         ))}
     </section>
   )
@@ -68,12 +80,15 @@ function FileDiff({ change, open, onToggle }: { change: FileChange; open: boolea
 /** What the session changed, beside the conversation: a file list and each file's diff, by scope. */
 export function ChangesPanel({
   session,
-  sessionKey,
+  owner,
+  active,
   onClose,
 }: {
   session: SessionApi
-  /** Changes whenever the files may have: the session shown and its turn's end; `null` while a turn runs. */
-  sessionKey: string | null
+  /** The session shown, which the answers belong to. */
+  owner: string
+  /** Whether to ask: off while a turn runs, so the panel asks again as it ends. */
+  active: boolean
   onClose: () => void
 }) {
   const [scope, setScope] = useState<ChangeScope>(() => {
@@ -81,10 +96,10 @@ export function ChangesPanel({
     return SCOPES.find((entry) => entry.scope === saved)?.scope ?? 'session'
   })
   useEffect(() => localStorage.setItem('clai-changes-scope', scope), [scope])
-  const { changes, error, refresh } = useChanges(session, scope, sessionKey)
+  const { changes, error, refresh } = useChanges(session, scope, owner, active)
   // Paths opened or closed by hand; the rest follow their size.
   const [toggled, setToggled] = useState<Record<string, boolean>>({})
-  const shown = changes?.scope === scope ? changes : null
+  const shown = changes
   const files = shown?.files ?? []
   const isOpen = (change: FileChange) => toggled[change.path] ?? change.added + change.removed <= COLLAPSE_LINES
   const jump = (change: FileChange) => {
@@ -100,7 +115,12 @@ export function ChangesPanel({
       <header className="side-panel-head">
         <DiffIcon size={15} />
         <span className="side-panel-title">Changes</span>
-        <button className="ghost small changes-refresh" onClick={refresh} title="Ask again">
+        <button
+          className="ghost small changes-refresh"
+          onClick={refresh}
+          disabled={!active}
+          title={active ? 'Ask again' : 'Asks again when the turn ends'}
+        >
           Refresh
         </button>
         <button className="icon-button" onClick={onClose} title={`Hide the changes (${MOD}⇧${CHANGES_KEY})`} aria-label="Hide the changes">
@@ -135,6 +155,7 @@ export function ChangesPanel({
               <span>
                 {files.length} {files.length === 1 ? 'file' : 'files'} changed
                 {shown.base && <> against <span className="mono">{shown.base}</span></>}
+                {shown.omitted > 0 && `, ${shown.omitted} more not shown`}
               </span>
               <Counts change={total} />
             </div>

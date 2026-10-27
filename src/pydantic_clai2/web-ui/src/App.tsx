@@ -280,8 +280,9 @@ export function App() {
     setSidePanel(null)
   }, [])
   // The files may have changed when a turn ends, so the count and the panel ask again then; not while one runs.
-  const changesKey = connection === 'open' && !chat.running ? (shown ?? '') : null
-  const changed = useChanges(session, 'session', changesKey).changes?.files.length ?? 0
+  const changesActive = connection === 'open' && !chat.running
+  const sessionChanges = useChanges(session, 'session', shown ?? '', changesActive).changes
+  const changed = (sessionChanges?.files.length ?? 0) + (sessionChanges?.omitted ?? 0)
 
   // A `/theme` palette paints the page as it paints the terminal; `default` keeps Pydantic's colours in the chosen mode.
   const palette = state.theme?.palette ?? null
@@ -814,7 +815,7 @@ export function App() {
         />
       )}
       {changes && !orchestrating && (
-        <ChangesPanel session={session} sessionKey={changesKey} onClose={() => setChanges(false)} />
+        <ChangesPanel session={session} owner={shown ?? ''} active={changesActive} onClose={() => setChanges(false)} />
       )}
       {shownPanel && !changes && !orchestrating && (
         <SidePanel

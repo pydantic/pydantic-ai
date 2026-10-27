@@ -514,4 +514,6 @@ export interface Changes {
   base: string | null
   /** Why the scope cannot be shown, such as a workspace outside Git. */
   note: string | null
+  /** Changed files left out, past the most one answer lists. */
+  omitted: number
 }
