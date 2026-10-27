@@ -118,7 +118,7 @@ class Shell:
 
     def capability(self) -> PostHog[None]:
         [capability] = self.loader.capabilities()
-        assert isinstance(capability, PostHog)
+        assert isinstance(capability, PostHog) and capability.defer_loading
         return capability  # pyright: ignore[reportUnknownVariableType]
 
     async def run_capability(self) -> PostHog[None] | None:
@@ -128,7 +128,9 @@ class Shell:
         plugin = entry.loaded.plugin
         assert isinstance(plugin, posthog.PostHogPlugin)
         assert self.loader.capabilities() == [WorkspacelessCapability(plugin.for_run)]
-        return await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        capability = await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        assert capability is None or capability.defer_loading
+        return capability
 
 
 def script(

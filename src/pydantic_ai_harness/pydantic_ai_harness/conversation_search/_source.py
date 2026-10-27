@@ -22,6 +22,7 @@ search layer.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Protocol, runtime_checkable
 
@@ -31,12 +32,16 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestPart,
     SystemPromptPart,
 )
+from pydantic_ai_harness.compaction._summary import without_summaries
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord
 
 SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
-"""The exact prefix a `SummarizingCompaction` writes into the summary artifact it inserts.
+"""The exact prefix an earlier `SummarizingCompaction` wrote into the summary system prompt it inserted.
+
+Summaries are now a `CompactionPart`; this only recognizes ones in histories saved before that.
 
 Byte-for-byte mirror of `pydantic_ai_harness.compaction._summarizing_compaction.SUMMARY_PREFIX`,
 including the blank line: that is the marker compaction itself matches on to recognize its own
@@ -140,11 +145,29 @@ def _overlap_length(history: list[str], snapshot: list[str]) -> int:
     return 0
 
 
-def is_summary_artifact(message: ModelMessage) -> bool:
-    """Return whether a message is a compaction summary artifact (never indexed)."""
-    if not isinstance(message, ModelRequest):
-        return False
-    return any(isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX) for part in message.parts)
+def without_summary_artifacts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """*messages* without compaction summary artifacts, which are never indexed.
+
+    A summary is the part `SummarizingCompaction` marks as its own; a `CompactionPart` an
+    application wrote itself stays searchable. In a history saved before `SummarizingCompaction` wrote
+    one, the summary is a system prompt opening with `SUMMARY_PREFIX`. Only the summary part is removed,
+    since continuing a history merges the summary's request with the real turns next to it; a request
+    left with nothing else is dropped.
+    """
+    out: list[ModelMessage] = []
+    for message in without_summaries(messages):
+        if isinstance(message, ModelRequest) and any(_is_legacy_summary(part) for part in message.parts):
+            parts = [part for part in message.parts if not _is_legacy_summary(part)]
+            if not parts:
+                continue
+            message = replace(message, parts=parts)
+        out.append(message)
+    return out
+
+
+def _is_legacy_summary(part: ModelRequestPart) -> bool:
+    """Whether *part* is the summary system prompt an earlier `SummarizingCompaction` wrote."""
+    return isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX)
 
 
 class SnapshotHistorySource:
@@ -189,7 +212,7 @@ class SnapshotHistorySource:
         history: list[ModelMessage] = []
         history_hashes: list[str] = []
         for snapshot in await self._store.list_snapshots(run_id=run_id):
-            messages = [message for message in snapshot.messages if not is_summary_artifact(message)]
+            messages = without_summary_artifacts(snapshot.messages)
             snapshot_hashes = [message_hash(message) for message in messages]
             overlap = _overlap_length(history_hashes, snapshot_hashes)
             # Keep the later copies of the overlap: they carry what core added after the

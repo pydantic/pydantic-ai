@@ -138,6 +138,7 @@ _REALTIME_UNCALLED_HOOKS: tuple[str, ...] = (
     'after_model_request',
     'wrap_model_request',
     'on_model_request_error',
+    'get_wrapper_model',
     'before_output_validate',
     'after_output_validate',
     'wrap_output_validate',
@@ -211,7 +212,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     returns a replacement instance, that configuration is re-extracted from the replacement at run
     setup. The exception is
     [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
-    which is always called per-run during toolset assembly. On each model request,
+    which is always called per-run during toolset assembly, and
+    [`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model], called for every
+    model request. On each model request,
     [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]
     encloses the complete dynamic lifecycle: `before_model_request`, the model call with
     `on_model_request_error` recovery, and `after_model_request`.
@@ -489,6 +492,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         capability surface decisions tracked in #5477.
         """
 
+    def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        """Prepare an emitted event synchronously before immediate listeners or stream delivery."""
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
 
@@ -624,7 +630,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return None
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
-        """Return a replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7."""
+        """Return a replay-stable `conversation_id` for a run that has none to inherit, or `None` to generate a UUID7.
+
+        Durable execution capabilities whose `run_id` is replay-stable can derive it with
+        [`conversation_id_from_run_id()`][pydantic_ai.durable_exec.conversation_id_from_run_id],
+        as the Temporal, DBOS and Prefect capabilities do.
+        """
         return None
 
     def get_run_clock(self) -> Callable[[], datetime] | None:
@@ -725,6 +736,39 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],
         [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset],
         or custom [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] subclasses.
+        """
+        return None
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        """Wrap the model that serves a model request, or return None to leave it unchanged.
+
+        Called for every model request, with the model that will send it: the one
+        [`get_model`][pydantic_ai.capabilities.AbstractCapability.get_model], the run's `model=` or a
+        [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook selected,
+        after every `before_model_request` hook has run, so the wrapper also applies when a hook swaps the model. It's
+        meant to wrap the model each attempt is sent to, so falling back between models would wrap each of them; a
+        [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is wrapped as a whole for now.
+        Return a [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel] around `model` to change how requests
+        are sent, as [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] does. The returned model is
+        entered (`async with`) around each request it serves and exited after it, also when the request fails, so set
+        up per-request resources in its `__aenter__`; keep long-lived ones on the capability.
+
+        When multiple capabilities provide wrappers, they follow middleware semantics: the first capability in the
+        list wraps outermost, as with
+        [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset].
+        A wrapper that doesn't call its wrapped model's `request()`, such as `BatchModelRequests`, which sends requests
+        through the batch API, skips the wrappers inside it: put behavior that should run once per model request in
+        [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] instead.
+
+        Under [durable execution](../durable_execution/overview.md), requests are sent from a durable unit (an
+        activity, step or task), so this is called there too, with the model the unit rebuilds; in a Temporal
+        activity, on the agent's own capabilities rather than ones
+        [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returned. Return a wrapper that doesn't do
+        I/O when it's created. The wrapper that's applied outside the unit answers questions like
+        [`continuation_delay`][pydantic_ai.models.Model.continuation_delay] without sending anything.
+
+        Not called for a capability with
+        [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] set.
         """
         return None
 

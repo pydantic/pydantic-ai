@@ -91,7 +91,12 @@ class LinearPlugin(Plugin[LinearSettings, DepsT]):
             return saved_key()(ctx)
 
         return (
-            Linear[DepsT](auth=token, read_only=settings.read_only, include_instructions=settings.include_instructions),
+            Linear[DepsT](
+                defer_loading=True,
+                auth=token,
+                read_only=settings.read_only,
+                include_instructions=settings.include_instructions,
+            ),
         )
 
     def get_commands(self) -> Sequence[Command]:
@@ -106,7 +111,9 @@ class LinearPlugin(Plugin[LinearSettings, DepsT]):
             return None
         # A new client per run: FastMCP keeps tokens in memory once connected, so `/linear logout` would
         # otherwise leave this session signed in.
-        return Linear[DepsT](client=method.client(), include_instructions=self.settings.include_instructions)
+        return Linear[DepsT](
+            defer_loading=True, client=method.client(), include_instructions=self.settings.include_instructions
+        )
 
     def settings_menu(self) -> SettingsMenu:
         source = _Settings(self.host)

@@ -30,6 +30,7 @@ CURATED = {
     'persistence',
     'observability',
     'notifications',
+    'hooks',
     'herdr',
     'aoe',
     'mcp',

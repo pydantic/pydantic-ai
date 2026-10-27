@@ -451,6 +451,8 @@ class Session(Generic[DepsT, OutputT]):
         self._monty_notes: list[tuple[str, str]] = []
         """Cells the user ran in Monty since the last prompt, with the conversation they ran in."""
         self.on_context_usage: Callable[[int], None] | None = None
+        self.on_usage: Callable[[Sequence[ModelMessage]], None] | None = None
+        """Told the conversation so far, history included, after each model response of a streamed run."""
         self.on_context_window: Callable[[int], None] | None = None
         """Told the context window of each streamed request's model, when its profile knows one."""
         self.on_setup_error: Callable[[CapabilitySetupError], None] | None = None
@@ -939,7 +941,13 @@ class Session(Generic[DepsT, OutputT]):
             self.on_context_window(window)
 
         async def observed() -> AsyncIterable[AgentStreamEvent]:
+            reported: ModelResponse | None = None
             async for event in events:
+                if self.on_usage is not None:
+                    latest = next((m for m in reversed(ctx.messages) if isinstance(m, ModelResponse)), None)
+                    if latest is not None and latest is not reported:
+                        reported = latest
+                        self.on_usage(ctx.messages)
                 if self.on_context_usage is not None:
                     for message in reversed(ctx.messages):
                         if isinstance(message, ModelResponse) and message.usage.input_tokens:

@@ -149,7 +149,7 @@ _LAUNCHER = f"""missing=
 for tool in {' '.join(_REQUIRED_TOOLS)}; do command -v "$tool" > /dev/null 2>&1 || missing="$missing $tool"; done
 if [ -n "$missing" ]; then echo $missing; exit {_MISSING_TOOLS}; fi
 if [ "$exclusive" = 1 ]; then
-  (umask 077 && mkdir "$dir") || exit 126
+  (umask 077 && mkdir -p "${{dir%/*}}" && mkdir "$dir") || {{ [ -e "$dir" ] && exit 126; exit 125; }}
 else
   (umask 077 && mkdir -p "$dir") || exit 125
 fi

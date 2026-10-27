@@ -152,7 +152,7 @@ async def main():
 1. The agent's `name` is used to uniquely identify its activities.
 2. Attach durability via `capabilities=[...]`. The capability discovers the agent's name, model, and toolsets when bound to the agent, and registers an activity for each. Outside a workflow, the capability is transparent — the agent behaves as a normal `Agent`.
 3. The workflow represents a deterministic piece of code that can use non-deterministic activities for operations that require I/O. Subclassing [`PydanticAIWorkflow`][pydantic_ai.durable_exec.temporal.PydanticAIWorkflow] is optional but provides proper typing for the `__pydantic_ai_agents__` class variable.
-4. List the agents used by this workflow. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] automatically registers the activities contributed by each agent's [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability with the worker. Alternatively, if modifying the worker initialization is easier than the workflow class, you can use [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin] to register an agent's activities directly on the worker.
+4. List the agents used by this workflow. The [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] automatically registers the activities and child workflows contributed by each agent's [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability with the worker. Alternatively, if modifying the worker initialization is easier than the workflow class, you can use [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin] to register an agent's activities and child workflows directly on the worker. Use one of these plugin paths when any tool is configured with `child_workflow`; registering only `TemporalDurability.temporal_activities` is rejected because it would omit the required workflow definitions.
 5. `agent.run()` works as usual; inside the workflow, model requests, tool calls, and MCP server communication are routed through Temporal activities.
 6. We connect to the Temporal server which keeps track of workflow and activity execution.
 7. This assumes the Temporal server is [running locally](https://github.com/temporalio/temporal#download-and-start-temporal-server-locally).
@@ -619,6 +619,7 @@ This has a few operational implications:
 - **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. A [`request_timeout`](../timeouts.md#model-request-deadlines) model setting covers all segments of the turn: it runs as a workflow timer, and cancels the in-flight activity when it fires. With a [`FallbackModel`](../models/overview.md#fallback-model), the deadlines run inside the activities instead, and the picked model's deadline carries over from one segment's activity to the next. Model request activities are given a default `heartbeat_timeout` of 30 seconds; see [Activity Configuration](#activity-configuration) for how heartbeating works across the other activities.
 - **Retries and waits**: a failed segment retries independently. Delays between background polls use durable Temporal timers and do not consume activity wall-clock time.
 - **Cancellation**: if an error abandons a suspended job, its provider teardown runs in a dedicated cancellation activity.
+- **Batching**: [batched requests](../batch.md#durable-execution) work the same way: submitting a request and each check on its batch are separate activities, with durable timers between checks.
 
 !!! note
     If you use a custom [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with your own `serialize_run_context`, keep including the `usage` and `usage_limits` fields: tools and capabilities running inside activities read them from the [`RunContext`][pydantic_ai.tools.RunContext], e.g. to adapt to the run's remaining [usage budget](../agent.md#usage-limits).
@@ -851,6 +852,92 @@ their Temporal activity, so `metadata={'temporal': False}` on an MCP tool raises
 
 !!! tip "Configuring third-party tools"
     [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] is the recommended path when the activity config doesn't belong on the tool definition — for example, tools defined in third-party packages, or a group of tools that share the same timeout profile but live in different files.
+
+### Child workflows
+
+An async function tool can run as a Temporal child workflow instead of an activity. This is useful
+when the tool runs a nested agent with its own `TemporalDurability`: the nested model requests and
+tool calls remain durable operations with their own timeouts and retries, recorded in the child's
+separate workflow history instead of growing the parent's.
+
+Set the `'temporal'` metadata value to a dictionary whose only key is `'child_workflow'`. Its value
+accepts the same options as [`workflow.start_child_workflow()`](https://python.temporal.io/temporalio.workflow.html#start_child_workflow):
+
+```python {title="temporal_child_workflow.py" test="skip"}
+from datetime import timedelta
+
+from temporalio import workflow
+from temporalio.workflow import ChildWorkflowConfig
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
+from pydantic_ai.toolsets import FunctionToolset
+
+researcher = Agent(
+    '{{ openai:medium }}',
+    name='researcher',
+    capabilities=[TemporalDurability()],
+)
+
+delegation = FunctionToolset(id='delegation')
+
+
+@delegation.tool_plain(
+    metadata={
+        'temporal': {
+            'child_workflow': ChildWorkflowConfig(execution_timeout=timedelta(minutes=10))
+        }
+    }
+)
+async def research(topic: str) -> str:
+    """Research a topic in depth."""
+    result = await researcher.run(f'Research: {topic}')
+    return result.output
+
+
+lead = Agent(
+    '{{ openai:medium }}',
+    name='lead',
+    toolsets=[delegation],
+    capabilities=[TemporalDurability()],
+)
+
+
+@workflow.defn
+class LeadWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [lead, researcher]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await lead.run(prompt)
+        return result.output
+```
+
+Each `research` call starts a child workflow, and the `researcher` agent's model requests and tool
+calls are activities in that child's history rather than the parent's. List both agents in
+`__pydantic_ai_agents__` (or pass an [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin]
+for each) so the worker registers the nested agent's activities as well as the child workflow
+definition.
+
+When `id` is omitted, the child workflow ID is the parent's workflow ID followed by a UUID generated
+deterministically by the workflow. The `id`, `task_queue`, `execution_timeout`, `run_timeout`,
+`task_timeout`, `id_reuse_policy`, `retry_policy`, `cron_schedule`, `cancellation_type`,
+`parent_close_policy`, `memo`, `search_attributes`, `versioning_intent`, `static_summary`,
+`static_details`, and `priority` options are passed through to Temporal. The tool body
+runs as deterministic workflow code, so it must delegate I/O to durable operations, such as a nested
+agent's activities. Child workflows are not supported for sync, dynamic, or MCP tools.
+
+An exception raised by the tool body fails the child workflow and reaches the parent's tool call the
+way a failed activity would. The child is retried according to its `retry_policy`, except on errors a
+retry can't fix, such as a [`UserError`][pydantic_ai.exceptions.UserError], which an activity doesn't
+retry either.
+
+A worker registers a toolset's child workflow when the plugin configures it, if a tool in the
+toolset has `child_workflow` metadata by then (tools added with `@agent.tool` included) or a
+[`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability sets it. Workers for agents
+without such tools register only their activities, as before. Metadata that first appears later,
+for example from a capability that rewrites tool definitions during a run, fails the tool call
+with a `UserError`.
 
 ## Activity Retries
 

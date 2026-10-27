@@ -134,15 +134,15 @@ class OrdinalAuth(Generic[DepsT]):
         match await to_thread.run_sync(source, self.settings.sign_in):
             case KeyReference() as reference:
                 token = await to_thread.run_sync(partial(resolve_key, token=reference))
-                return Ordinal[DepsT](auth=token, include_instructions=instructions)
+                return Ordinal[DepsT](defer_loading=True, auth=token, include_instructions=instructions)
             case 'environment':
                 # Harness reads the variable when it connects and fails closed when it is unset.
-                return Ordinal[DepsT](include_instructions=instructions)
+                return Ordinal[DepsT](defer_loading=True, include_instructions=instructions)
             case 'browser':
                 # Each run builds its own client from the stored tokens, so a sign-out reaches the next run.
                 if not await to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
                     return None
-                return Ordinal[DepsT](client=SIGN_IN.client(), include_instructions=instructions)
+                return Ordinal[DepsT](defer_loading=True, client=SIGN_IN.client(), include_instructions=instructions)
             case 'none':  # pragma: no branch -- the cases cover every `source` result.
                 raise UserError(f'Ordinal has no /keys entry. {SETUP}')
 

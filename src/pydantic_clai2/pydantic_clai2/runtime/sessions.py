@@ -77,7 +77,7 @@ class Sessions(Generic[DepsT, OutputT]):
         self.naming = NamingClient(generate=self.generate, enabled=lambda: self.context.settings.session_namer)
         """How this session names the conversations it queues on `namer`."""
         self.namer = namer or SessionNamer(store=store)
-        self.namer.listeners.append(self.named)
+        self.join()
         self._newest_name: tuple[str, str] | None = None
         """The conversation and title `named` heard last, which wins over one still waiting for the terminal."""
         self.on_resume: Callable[[Sequence[ModelMessage]], Awaitable[None]] | None = None
@@ -86,6 +86,15 @@ class Sessions(Generic[DepsT, OutputT]):
         """Moves the session into a directory, so `/resume ID` continues one where it was saved; `clai2 --web` only."""
         self.show_live: Callable[[str], Awaitable[str | None]] = _not_shown
         """Shows in the terminal another live session holding a conversation, with the notice; `None` when none does."""
+
+    def join(self) -> None:
+        """Hear the titles `namer` announces; again once a closed session is live again, as after a failed `/reload`."""
+        if self.named not in self.namer.listeners:
+            self.namer.listeners.append(self.named)
+
+    def close(self) -> None:
+        """Stop hearing the titles `namer` announces, so nothing the process shares keeps this session alive."""
+        self.namer.listeners.remove(self.named)
 
     @property
     def follows_workspace(self) -> bool:

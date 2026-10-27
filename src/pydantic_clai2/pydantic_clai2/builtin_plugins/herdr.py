@@ -1,9 +1,11 @@
 """Opt-in herdr state, session, metadata, and conversation-title integration."""
 
 import os
+import re
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 import anyio
 from pydantic import JsonValue
@@ -20,7 +22,8 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai_harness.ask_user import AskUserAnsweredEvent, AskUserRequestedEvent
 from pydantic_ai_harness.compaction import ContextUsageEvent
-from pydantic_clai2.builtin_plugins._herdr_client import HerdrClient
+from pydantic_clai2.builtin_plugins._herdr_client import SOURCE, HerdrClient
+from pydantic_clai2.config.settings_store import config_dir
 from pydantic_clai2.plugins import (
     ConversationChanged,
     NoSettings,
@@ -34,6 +37,25 @@ from pydantic_clai2.plugins import (
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.ui.rendering.usage_report import session_usage
 
+_UNSAFE_ARGUMENT = re.compile(r"['\x00-\x1f\x7f-\x9f]")
+"""Herdr rejects the whole report when a resume argument contains an apostrophe or a control character."""
+
+
+def _resume_argv(conversation_id: str, settings_database: Path | None, *, saved: bool) -> list[JsonValue] | None:
+    """The command herdr runs to reopen this conversation after a restart, if its settings path is known.
+
+    Herdr keeps the last command it accepted, so an unsaved conversation needs one too: `--resume` cannot open it
+    yet, and `--session-id` refuses an ID once it is saved.
+    """
+    if settings_database is None:
+        return None
+    argv = ['clai2', '--resume' if saved else '--session-id', conversation_id]
+    if settings_database.resolve() != (config_dir() / 'config.db').resolve():
+        argv += ['--database', str(settings_database.resolve())]
+    if any(_UNSAFE_ARGUMENT.search(argument) for argument in argv):
+        return None
+    return list[JsonValue](argv)
+
 
 class _Reporter:
     def __init__(self, *, host: PluginHost[None], client: HerdrClient) -> None:
@@ -42,7 +64,7 @@ class _Reporter:
         self.depth = 0
         self.waiting: set[str] = set()
         self.last_state: tuple[str, str] | None = None
-        self.last_session: tuple[str, str] | None = None
+        self.last_session: tuple[str, Path, bool] | None = None
         self.last_metadata: dict[str, JsonValue] | None = None
         self.last_title: str | None = None
         self.context: str | None = None
@@ -60,25 +82,37 @@ class _Reporter:
     def title(self) -> str | None:
         conversation = self.host.conversation
         if isinstance(conversation, Session) and conversation.conversations is not None:
-            reference = (conversation.conversation_id, str(conversation.conversations.database.resolve()))
+            # Saving the first prompt makes the conversation resumable, so it is part of the reference.
+            reference = (
+                conversation.conversation_id,
+                conversation.conversations.database.resolve(),
+                bool(conversation.summary.revision),
+            )
             if reference != self.last_session:
-                self.context = None
-                self.client.submit(
-                    'session',
-                    'pane.report_agent_session',
-                    {'agent_session_id': reference[0], 'agent_session_path': reference[1]},
-                )
+                conversation_id, database, saved = reference
+                if self.last_session is None or self.last_session[:2] != reference[:2]:
+                    self.context = None
+                params: dict[str, JsonValue] = {
+                    'agent_session_id': conversation_id,
+                    'agent_session_path': str(database),
+                }
+                resume_argv = _resume_argv(conversation_id, self.host.settings_database, saved=saved)
+                if resume_argv is not None:
+                    params['resume_argv'] = resume_argv
+                self.client.submit('session', 'pane.report_agent_session', params)
                 self.last_session = reference
         return conversation.title
 
     def refresh(self) -> None:
         title = self.title()
         total = session_usage(self.host.conversation.messages).total
-        tokens: dict[str, JsonValue] = {'model': self.host.status.model, 'tokens': f'{total.total_tokens:,}'}
-        if self.context is not None:
-            tokens['context'] = self.context
+        tokens: dict[str, JsonValue] = {
+            'model': self.host.status.model,
+            'tokens': f'{total.total_tokens:,}',
+            'context': self.context,
+        }
         metadata: dict[str, JsonValue] = {
-            'applies_to_source': 'herdr:clai2',
+            'applies_to_source': SOURCE,
             'ttl_ms': 86_400_000,
             'tokens': tokens,
         }

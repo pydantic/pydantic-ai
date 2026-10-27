@@ -8,7 +8,7 @@ from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -44,6 +44,7 @@ from pydantic_ai import (
     RequestUsage,
     RetryFeedbackPart,
     RetryInfo,
+    RunContext,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -66,7 +67,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import NativeTool, ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
     ContentFilterError,
@@ -77,10 +78,12 @@ from pydantic_ai.exceptions import (
     ModelRequestRejectedError,
     ModelRetry,
     ModelServerError,
+    ModelUnavailableError,
     SuspendedResponseExpired,
 )
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
+    InstructionPart,
     ModelResponsePart,
     ModelResponseStreamEvent,
     ToolSearchCallPart,
@@ -5237,10 +5240,15 @@ def _text_reply(response_id: str, text: str) -> resp.Response:
     return response_message([message]).model_copy(update={'id': response_id})
 
 
-def _digested(request: ModelMessage, response: ModelResponse) -> bytes:
-    """What a response's digest covers: the history it was created from, then each of its parts."""
+def _digested(request: ModelMessage, response: ModelResponse, *, legacy: bool = False) -> bytes:
+    """What a response's digest covers: the history it was created from, then each of its parts.
+
+    A request's `instructions` aren't covered, except by a `legacy` digest, recorded before they were left out.
+    """
     part_adapter: TypeAdapter[ModelResponsePart] = TypeAdapter(ModelResponsePart)
     parts = (b'\n' + part_adapter.dump_json(part, exclude_none=True) for part in response.parts)
+    if isinstance(request, ModelRequest) and not legacy:
+        request = replace(request, instructions=None)
     return ModelMessagesTypeAdapter.dump_json([request], exclude_none=True) + b''.join(parts)
 
 
@@ -5444,6 +5452,100 @@ async def test_openai_previous_response_id_auto_resends_a_redacted_tool_result_m
     third_request = get_mock_responses_kwargs(mock_client)[2]
     assert 'previous_response_id' not in third_request
     assert 'secret' not in json.dumps(third_request['input'])
+
+
+async def test_openai_previous_response_id_keeps_chaining_when_a_rewritten_block_changes_beside_an_append_block(
+    allow_model_requests: None,
+):
+    """A rewrite-mode change opens a new instruction window, which renders earlier requests' instructions differently.
+
+    The server doesn't keep a request's instructions with its response, so they're not part of the digest, and the
+    chain continues (#11263).
+    """
+    calls = 0
+
+    @dataclass
+    class Catalog(AbstractCapability[object]):
+        def get_instructions(self) -> Callable[[RunContext[object]], InstructionPart]:
+            def catalog(ctx: RunContext[object]) -> InstructionPart:
+                return InstructionPart('Catalog: a, b.', name='catalog', on_change='append', dynamic=True)
+
+            return catalog
+
+    @dataclass
+    class Counter(AbstractCapability[object]):
+        def get_instructions(self) -> Callable[[RunContext[object]], str]:
+            return lambda ctx: f'Tool calls so far: {calls}'
+
+    mock_client = MockOpenAIResponses.create_mock(
+        [
+            response_message([_function_call_item('fc_1', '{}', name='tool')]).model_copy(update={'id': 'resp_1'}),
+            response_message([_function_call_item('fc_2', '{}', name='tool')]).model_copy(update={'id': 'resp_2'}),
+            _text_reply('resp_3', 'Done'),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='resp_seed'),
+        capabilities=[Catalog(id='catalog'), Counter(id='counter')],
+    )
+
+    @agent.tool_plain
+    def tool() -> str:
+        nonlocal calls
+        calls += 1
+        return 'ok'
+
+    await agent.run('Question')
+
+    assert [request.get('previous_response_id') for request in get_mock_responses_kwargs(mock_client)] == [
+        'resp_seed',
+        'resp_1',
+        'resp_2',
+    ]
+
+
+async def test_openai_previous_response_id_continues_from_a_digest_that_covers_instructions(
+    allow_model_requests: None,
+):
+    """A digest recorded when a request's instructions were still covered keeps its response continued."""
+    mock_client = MockOpenAIResponses.create_mock([_text_reply('resp_2', 'two')])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    request = ModelRequest(parts=[UserPromptPart(content='Hello')], instructions='Be terse.')
+    response = ModelResponse(parts=[TextPart(content='one')], provider_name='openai', provider_response_id='resp_1')
+    response = replace(response, history_digest=hashlib.sha256(_digested(request, response, legacy=True)).hexdigest())
+
+    await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto')).run(
+        'Again', message_history=[request, response]
+    )
+
+    [sent] = get_mock_responses_kwargs(mock_client)
+    assert sent['previous_response_id'] == 'resp_1'
+
+
+async def test_openai_previous_response_id_digest_covers_instructions_sent_as_input(allow_model_requests: None):
+    """Prompted output sends the instructions as an input message, which the server keeps, so redacting them is a change."""
+    mock_client = MockOpenAIResponses.create_mock(
+        [_text_reply('resp_1', '{"response": "one"}'), _text_reply('resp_2', '{"response": "two"}')]
+    )
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    first = await Agent(model, model_settings=settings, output_type=PromptedOutput(str), instructions='PIN 1234').run(
+        'Hello'
+    )
+
+    redacted = [
+        replace(message, instructions='PIN [redacted]') if isinstance(message, ModelRequest) else message
+        for message in first.all_messages()
+    ]
+    await Agent(model, model_settings=settings, output_type=PromptedOutput(str), instructions='PIN [redacted]').run(
+        'Again', message_history=redacted
+    )
+
+    first_request, second_request = get_mock_responses_kwargs(mock_client)
+    assert first_request['input'][0]['content'].startswith('PIN 1234')
+    assert 'previous_response_id' not in second_request
 
 
 async def test_openai_previous_response_id_keys_the_history_digest_when_given_a_key(allow_model_requests: None):
@@ -6361,9 +6463,11 @@ async def test_openai_responses_thinking_part_from_other_model(
     allow_model_requests: None, anthropic_api_key: str, openai_api_key: str
 ):
     m = AnthropicModel(
-        'claude-sonnet-4-6',
+        'claude-sonnet-5-5',
         provider=AnthropicProvider(api_key=anthropic_api_key),
-        settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
+        settings=AnthropicModelSettings(
+            anthropic_thinking={'type': 'adaptive', 'display': 'summarized'}, anthropic_effort='max'
+        ),
     )
     agent = Agent(m)
 
@@ -6377,7 +6481,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=UTC),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6391,24 +6495,24 @@ async def test_openai_responses_thinking_part_from_other_model(
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=43,
-                    output_tokens=269,
+                    input_tokens=16,
+                    output_tokens=1353,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 43,
-                        'output_tokens': 269,
-                        'thinking_tokens': 23,
+                        'input_tokens': 16,
+                        'output_tokens': 1353,
+                        'thinking_tokens': 772,
                     },
-                    output_reasoning_tokens=23,
-                    cost=Decimal('0.004164'),
+                    output_reasoning_tokens=772,
+                    cost=Decimal('0.013562'),
                 ),
-                model_name='claude-sonnet-4-6',
+                model_name='claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_011CfY5JvP9tsuUrzoV5SHP9',
+                provider_response_id='msg_011CgPJyh9xDdEPQbmr4d7cH',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -6434,7 +6538,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=UTC),
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6442,47 +6546,47 @@ async def test_openai_responses_thinking_part_from_other_model(
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
+                        id='rs_0cd077c38ef4ecd0006ade3550569887d28c4d2908b77c7c12',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
+                        id='rs_0cd077c38ef4ecd0006ade3550569887d28c4d2908b77c7c12',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
+                        id='rs_0cd077c38ef4ecd0006ade3550569887d28c4d2908b77c7c12',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
+                        id='rs_0cd077c38ef4ecd0006ade3550569887d28c4d2908b77c7c12',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
+                        id='rs_0cd077c38ef4ecd0006ade3550569887d28c4d2908b77c7c12',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
+                        id='rs_0cd077c38ef4ecd0006ade3550569887d28c4d2908b77c7c12',
                         provider_name='openai',
                     ),
                     TextPart(
                         content=IsStr(),
-                        id='msg_0bd463641f0080ef006abbec8067f887d19765a3359225c08d',
+                        id='msg_0cd077c38ef4ecd0006ade3568b7c487d2ab3dacdac8c6bf83',
                         provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=300,
-                    output_tokens=3010,
-                    output_reasoning_tokens=2496,
-                    details={'reasoning_tokens': 2496},
-                    cost=Decimal('0.030475'),
+                    input_tokens=566,
+                    output_tokens=3006,
+                    output_reasoning_tokens=2368,
+                    details={'reasoning_tokens': 2368},
+                    cost=Decimal('0.0307675'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -6490,10 +6594,10 @@ async def test_openai_responses_thinking_part_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2026, 9, 29, 16, 50, 29, tzinfo=UTC),
+                    'timestamp': IsDatetime(),
                     'service_tier': 'default',
                 },
-                provider_response_id='resp_0bd463641f0080ef006abbec55308087d1ac30fbbf212ebde7',
+                provider_response_id='resp_0cd077c38ef4ecd0006ade354fd93887d28c1da5846255f42d',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -15382,6 +15486,25 @@ _ERROR_EVENT: dict[str, Any] = {
             id='stream-response-failed-background',
         ),
         pytest.param(
+            True,
+            _sse(
+                {**_CREATED_EVENT, 'response': {**_CREATED_EVENT['response'], 'background': True}},
+                {
+                    'type': 'response.failed',
+                    'response': {
+                        **_failed_response_json(
+                            {'code': 'no_capacity', 'type': 'too_many_requests', 'message': 'No capacity.'}
+                        ),
+                        'background': True,
+                    },
+                    'sequence_number': 1,
+                },
+            ),
+            429,
+            None,
+            id='stream-response-failed-azure-type',
+        ),
+        pytest.param(
             False,
             json.dumps(_failed_response_json({'code': 'server_error', 'message': 'The model failed'})).encode(),
             None,
@@ -15440,17 +15563,68 @@ async def test_response_error_raises_model_api_error(
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
 @pytest.mark.parametrize(
-    ('code', 'category'),
+    ('error', 'body'),
     [
-        pytest.param('rate_limit_exceeded', ModelRateLimitError, id='rate-limit'),
-        pytest.param('context_length_exceeded', ModelContextWindowExceededError, id='context-window'),
+        pytest.param(
+            {'code': 'rate_limit_exceeded', 'message': 'Rate limit reached'},
+            {'code': 'rate_limit_exceeded', 'message': 'Rate limit reached'},
+            id='untyped',
+        ),
+        pytest.param(
+            {'code': 'no_capacity', 'type': 'too_many_requests', 'message': 'No capacity.'},
+            {'code': 'no_capacity', 'message': 'No capacity.', 'type': 'too_many_requests'},
+            id='typed',
+        ),
     ],
 )
-async def test_failed_response_body_gets_category(allow_model_requests: None, code: str, category: type[ModelAPIError]):
+async def test_stream_response_failed_error_body(
+    allow_model_requests: None, error: dict[str, str], body: dict[str, str]
+):
+    """An in-stream `response.failed` error's `body` has a `type` only when the provider sent one."""
+    content = _sse(
+        {**_CREATED_EVENT, 'response': {**_CREATED_EVENT['response'], 'background': True}},
+        {
+            'type': 'response.failed',
+            'response': {**_failed_response_json(error), 'background': True},
+            'sequence_number': 1,
+        },
+    )
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=content, headers={'content-type': 'text/event-stream'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        agent = Agent(OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client)))
+        with pytest.raises(ModelHTTPError) as exc_info:
+            async with agent.run_stream('Hello') as result:
+                await result.get_output()  # pragma: no cover — the error raises while the stream opens
+
+    assert exc_info.value.body == body
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    ('code', 'error_type', 'category'),
+    [
+        pytest.param('rate_limit_exceeded', None, ModelRateLimitError, id='rate-limit'),
+        pytest.param('context_length_exceeded', None, ModelContextWindowExceededError, id='context-window'),
+        pytest.param('no_capacity', 'too_many_requests', ModelRateLimitError, id='azure-too-many-requests'),
+    ],
+)
+async def test_failed_response_body_gets_category(
+    allow_model_requests: None, code: str, error_type: str | None, category: type[ModelAPIError]
+):
     """A failed response body gets the same category as the same error in a stream, though no status code."""
 
     async def handler(request: httpx2.Request) -> httpx2.Response:
-        body = _failed_response_json({'code': code, 'message': 'Failed'})
+        error: dict[str, Any] = {'code': code, 'message': 'Failed'}
+        if error_type is not None:
+            error['type'] = error_type
+        body = _failed_response_json(error)
         return httpx2.Response(200, content=json.dumps(body).encode(), headers={'content-type': 'application/json'})
 
     async with AsyncOpenAI(
@@ -15466,6 +15640,7 @@ async def test_failed_response_body_gets_category(allow_model_requests: None, co
     # A context window overflow is a rejected request even without a status code.
     assert isinstance(exc_info.value, ModelRequestRejectedError) == (category is ModelContextWindowExceededError)
     assert exc_info.value.provider_error_code == code
+    assert exc_info.value.provider_error_type == error_type
     assert exc_info.value.in_stream is False
 
 
@@ -15483,6 +15658,47 @@ async def test_response_error_event_first_falls_back(allow_model_requests: None)
     ) as openai_client:
         primary = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
         agent = Agent(FallbackModel(primary, TestModel(custom_output_text='from fallback')))
+
+        async with agent.run_stream('Hello') as result:
+            output = await result.get_output()
+
+    assert output == 'from fallback'
+
+
+_AZURE_THROTTLE_ERROR_EVENT: dict[str, Any] = {
+    'type': 'error',
+    'sequence_number': 1,
+    'error': {'type': 'too_many_requests', 'code': 'no_capacity', 'message': 'No capacity.'},
+}
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+async def test_azure_too_many_requests_stream_error_falls_back(allow_model_requests: None):
+    """An Azure OpenAI throttle sent inside a stream is a `ModelRateLimitError`, so the documented tuple falls back.
+
+    https://github.com/pydantic/pydantic-ai/issues/11242
+    """
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            content=_sse(_CREATED_EVENT, _AZURE_THROTTLE_ERROR_EVENT),
+            headers={'content-type': 'text/event-stream'},
+        )
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        primary = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(
+            FallbackModel(
+                primary,
+                TestModel(custom_output_text='from fallback'),
+                fallback_on=(ModelRateLimitError, ModelUnavailableError),
+            )
+        )
 
         async with agent.run_stream('Hello') as result:
             output = await result.get_output()

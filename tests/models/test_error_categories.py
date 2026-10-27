@@ -735,6 +735,22 @@ CASES = [
         attrs={'status_code': 429, 'provider_error_code': 'organization_usage_limit_exceeded'},
     ),
     Case(
+        id='openai-too-many-requests',
+        model=_openai,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'message': 'No capacity',
+                    'type': 'too_many_requests',
+                    'code': 'no_capacity',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': 'no_capacity'},
+    ),
+    Case(
         id='openai-stream-credit-balance-exhausted',
         model=_openai,
         handler=_sse_data({'error': {'message': 'No credits left', 'code': 'credit_balance_exhausted'}}),
@@ -764,6 +780,19 @@ CASES = [
         handler=_sse_data({'error': {'message': 'Slow down', 'code': 'slow_down', 'type': 'rate_limit_error'}}),
         categories={ModelHTTPError, ModelRateLimitError},
         attrs={'status_code': 429, 'in_stream': True, 'provider_error_type': 'rate_limit_error'},
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-too-many-requests',
+        model=_openai,
+        handler=_sse_data({'error': {'message': 'No capacity', 'type': 'too_many_requests', 'code': 'no_capacity'}}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={
+            'status_code': 429,
+            'in_stream': True,
+            'provider_error_code': 'no_capacity',
+            'provider_error_type': 'too_many_requests',
+        },
         stream=True,
     ),
     Case(
