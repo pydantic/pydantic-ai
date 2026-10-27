@@ -117,68 +117,10 @@ README, or source code.
 
 ## Docs
 
-Every released capability ships two hand-maintained docs that must stay in sync
-with the code and with each other:
+Read and apply [Docs Conventions](docs-conventions.md) before checking capability documentation.
+That guide owns README/page/skill parity, runnable examples, page conventions, and blown-out harness compositions.
 
-- the **README** next to the implementation (`src/pydantic_ai_harness/pydantic_ai_harness/<capability>/README.md`,
-  or `src/pydantic_ai_harness/pydantic_ai_harness/experimental/<capability>/README.md` for ACP), which
-  serves GitHub and PyPI, and
-- the **unified doc** on the docs site, flat under `docs/harness/<capability>.md`. The
-  `docs/harness/` folder has no `capabilities/` or `experimental/` subdirectories.
-
-Checks:
-
-- Both the README and the unified doc are updated for any user-facing change
-  (public class, params, defaults, tool names, extras, safety semantics). A
-  change reflected in only one of them is a defect, not a follow-up.
-- The `pydantic-ai-harness` agent skill
-  (`src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/`) reflects the change:
-  a new capability is listed in its routing table and covered in the matching
-  `references/` file, and a changed parameter, default, tool name, or extra is
-  updated there too.
-- **Harness blown-out parity.** A packaged harness (`Coder`, `Researcher`, ...)
-  has its composition written out in full — default instructions and allowlists
-  included, not imported — in its docs page's "Blown-out equivalent" AND in its
-  `src/pydantic_ai_harness/examples/` counterpart. Any change to a harness's composition or defaults
-  updates all three together (implementation, docs page, example) in the same
-  PR; drift here is a defect, not a follow-up.
-- The two do not contradict each other or the source on extras, option names,
-  defaults, or safety caveats.
-- Every snippet in both docs is runnable: all imports present, class/param names
-  match the source, model ids unchanged from what the source uses. Imports use
-  the canonical module path (never `pydantic_ai_harness.experimental.*` for a
-  graduated capability).
-- **Purpose-first lead.** The opening paragraph of each page and README states
-  what the capability is for and when to reach for it -- no internal hook or
-  class name (`before_model_request`, `after_tool_execute`, ...) before the
-  purpose. Mechanism belongs lower down.
-- **Name matches the capability.** The doc filename, its `# H1`, and the
-  README's `# H1` all use the capability's descriptive name (e.g.
-  "Tool Output Limits", not "Overflow"; "Runtime Capability Creation", not
-  "Authoring").
-- **Source link.** Each page links its source module
-  (`https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/<module>/`)
-  so a reading agent can verify behavior. Where the capability exposes a public
-  class, the page may also end with a `## API reference` section of
-  `::: pydantic_ai_harness...` autodoc blocks (auto-expanded from the docstring,
-  not hand-written).
-- **Stability framing.** Graduated capabilities carry the soft note "The API may
-  change between releases..." mirrored from their README -- NOT a
-  `HarnessExperimentalWarning` block or "removed in any release" wording. ACP is
-  the only page that keeps an `!!! warning "Experimental"` (it may still be
-  removed).
-- Links: harness-internal and Pydantic AI docs links are relative `.md` links
-  (`../toolsets.md` from `docs/harness/`), and API elements use reference-style
-  links (`[RunContext][pydantic_ai.tools.RunContext]`). The offline link check
-  in CI verifies that each target file and anchor exists.
-- Docs explain composition constraints and safety implications.
 - The PR links an issue.
-
-The mechanical half of these checks (README present + linked, flat page present,
-source link present, name matches, no experimental strings on non-ACP pages, no
-hook name in the lead) is enforced by `tests/harness/test_docs_parity.py`. The semantic
-half (does the prose match the code, are snippets truly runnable) is what the
-reviewer below is for.
 
 This is the last documentation gate before merge. Run the `docs-parity-reviewer`
 skill (`.agents/skills/docs-parity-reviewer/SKILL.md`) on the change as the final

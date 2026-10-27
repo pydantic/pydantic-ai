@@ -107,11 +107,7 @@ release: a renamed module keeps a shim package at its old path, and a renamed
 class keeps a module-level `__getattr__` alias, both emitting
 `HarnessDeprecationWarning` via the helpers in `src/pydantic_ai_harness/pydantic_ai_harness/_warn.py`.
 
-Top-level re-exports in `src/pydantic_ai_harness/pydantic_ai_harness/__init__.py` (`CodeMode`,
-`FileSystem`, `Shell`, `ManagedPrompt`) are the exception, not the rule. Once an
-export has shipped in a published release it is a backward-compatibility
-commitment: do not move, rename, or break it. Do not add new top-level
-re-exports.
+A root export shipped in a published release is a backward-compatibility commitment: do not move, rename, or break it.
 
 APIs are subject to change between releases; breaking changes ship deprecation
 warnings where practical.
