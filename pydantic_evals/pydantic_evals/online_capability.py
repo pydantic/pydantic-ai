@@ -136,8 +136,14 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         run_evaluation = _CURRENT_RUN_EVALUATION.get()
         joining = run_evaluation is not None and run_evaluation.run_id == ctx.run_id
 
-        # Skip if disabled or already inside an evaluation context (e.g. Dataset.evaluate)
-        if not (config.enabled if joining else config.should_evaluate()):
+        # Skip if disabled or already inside an evaluation context (e.g. Dataset.evaluate). A joining
+        # capability skips only the task-run check, which the capturing capability's own task run
+        # would fail; `enabled` and `disable_evaluation()` still apply.
+        if joining:
+            evaluate = config.enabled and not _online_internal.EVALUATION_DISABLED.get()
+        else:
+            evaluate = config.should_evaluate()
+        if not evaluate:
             return await handler()
 
         # Use the raw prompt so sampling and evaluation see the same inputs value.

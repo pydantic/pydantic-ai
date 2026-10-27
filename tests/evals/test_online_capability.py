@@ -712,3 +712,29 @@ async def test_multiple_capabilities_each_see_their_own_outcome():
     [(_, _, inner_ctx)] = inner.calls
     assert isinstance(outer_ctx.output, ValueError)
     assert inner_ctx.output == 'success (no tool calls)'
+
+
+async def test_multiple_capabilities_respect_disable_evaluation_between_them():
+    """`disable_evaluation()` entered between two `OnlineEvaluation`s silences the inner one."""
+
+    @dataclass
+    class DisableInside(AbstractCapability[Any]):
+        async def wrap_run(self, ctx: RunContext[Any], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+            with disable_evaluation():
+                return await handler()
+
+    outer, inner = Collector(), Collector()
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=OnlineEvalConfig(default_sink=outer)),
+            DisableInside(),
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=OnlineEvalConfig(default_sink=inner)),
+        ],
+    )
+
+    await agent.run('hello')
+    await wait_for_evaluations()
+
+    assert len(outer.calls) == 1
+    assert inner.calls == []
