@@ -1045,6 +1045,7 @@ class BedrockConverseModel(Model[BaseClient]):
             and _thinking_rejects_tool_forcing(
                 _effective_thinking_type(settings, model_request_parameters, profile), profile
             )
+            and not _accepts_forced_tool_choice_while_thinking(profile)
         ):
             # This would result in `toolChoice: any`, which isn't available here.
             suggested_output_type = (
@@ -2597,16 +2598,22 @@ def _thinking_rejects_tool_forcing(
 ) -> bool:
     """Whether this request's thinking rejects the forced tool choice Tool Output relies on.
 
-    Extended thinking and thinking on the non-Anthropic variants do, except three. xAI Grok always reasons, and Converse
-    accepts a forced `toolChoice` with Grok 4.6 while it reasons (Grok 4.7 is assumed to match). Z.AI GLM accepts a forced `toolChoice` while it reasons, but doesn't always call the forced tool. OpenAI GPT-5.6
-    and GPT-6 accept output tools while they think, offered without a forced `toolChoice` as their profile doesn't enable forcing.
+    Extended thinking and thinking on the non-Anthropic variants do, except two. xAI Grok always reasons, and Converse
+    accepts a forced `toolChoice` with Grok 4.6 while it reasons (Grok 4.7 is assumed to match). OpenAI GPT-5.6 and
+    GPT-6 accept output tools while they think, offered without a forced `toolChoice` as their profile doesn't enable
+    forcing.
     """
-    return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') not in (
-        'deepseek',
-        'openai_responses',
-        'xai',
-        'zai',
-    )
+    return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') not in ('openai_responses', 'xai')
+
+
+def _accepts_forced_tool_choice_while_thinking(profile: BedrockModelProfile) -> bool:
+    """Whether an explicit output tool is sent as asked while this model thinks.
+
+    Z.AI GLM accepts a forced `toolChoice` while it reasons, but doesn't always call the forced tool. DeepSeek V3.2 is
+    included so an explicit output tool isn't refused; it has no forced `toolChoice` at all. The default output mode
+    still falls back for both, as it does on Bedrock without thinking.
+    """
+    return profile.get('bedrock_thinking_variant') in ('deepseek', 'zai')
 
 
 def _support_tool_forcing(
@@ -2627,7 +2634,11 @@ def _support_tool_forcing(
         )
     else:
         unavailable_reason = FORCING_UNSUPPORTED_REASON
-    if unavailable_reason is None and _thinking_rejects_tool_forcing(thinking_type, profile):
+    if (
+        unavailable_reason is None
+        and _thinking_rejects_tool_forcing(thinking_type, profile)
+        and not _accepts_forced_tool_choice_while_thinking(profile)
+    ):
         if profile.get('bedrock_thinking_variant') != 'anthropic':
             unavailable_reason = (
                 "Bedrock doesn't support forcing tool use with thinking enabled for this model. "

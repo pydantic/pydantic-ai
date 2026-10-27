@@ -8956,14 +8956,24 @@ def test_bedrock_non_anthropic_raw_thinking_does_not_override_unified_thinking(
         model.prepare_request(settings, params)
 
 
-@pytest.mark.parametrize('model_name', ['zai.glm-5', 'deepseek.v3.2'])
-@pytest.mark.parametrize('output_mode', ['tool', 'auto'])
-def test_bedrock_output_tool_kept_while_thinking_on(
-    bedrock_provider: BedrockProvider, model_name: str, output_mode: Literal['tool', 'auto']
+@pytest.mark.parametrize(
+    'model_name,output_mode,expected_mode',
+    [
+        ('zai.glm-5', 'tool', 'tool'),
+        ('deepseek.v3.2', 'tool', 'tool'),
+        ('zai.glm-5', 'auto', 'native'),
+        ('deepseek.v3.2', 'auto', 'prompted'),
+    ],
+)
+def test_bedrock_output_mode_while_thinking_on(
+    bedrock_provider: BedrockProvider,
+    model_name: str,
+    output_mode: Literal['tool', 'auto'],
+    expected_mode: Literal['tool', 'native', 'prompted'],
 ) -> None:
-    """With thinking on, an output tool is kept for these models, both when requested and by default. No `UserError`.
+    """An explicit output tool is kept with thinking on. A default output type falls back, as it did on `main`.
 
-    Not a VCR test: this is the pre-request output-mode and guard decision, which a recording doesn't capture.
+    Not a VCR test: this is the pre-request output-mode decision, which a recording doesn't capture.
     """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
     params = ModelRequestParameters(
@@ -8974,7 +8984,7 @@ def test_bedrock_output_tool_kept_while_thinking_on(
 
     _, prepared_params = model.prepare_request(BedrockModelSettings(thinking=True), params)
 
-    assert prepared_params.output_mode == 'tool'
+    assert prepared_params.output_mode == expected_mode
 
 
 async def test_bedrock_explicit_forced_tool_choice_sent_while_thinking_on(
