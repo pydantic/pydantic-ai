@@ -20,7 +20,7 @@ from ._utils import atomic_write_bytes, is_str_dict, user_cache_dir
 VERSION_CHECK_URL = 'https://info.pydantic.dev/versions.json'
 """Reports the latest release of every package Pydantic publishes, keyed by registry and then by name.
 
-Read as `{'pypi': {'pydantic-ai': {'latest': '2.46.0'}}}`. The endpoint only ever adds keys, so
+Read as `{'pypi': {'pydantic-ai-slim': {'latest': '2.46.0'}}}`. The endpoint only ever adds keys, so
 anything this doesn't recognise is ignored rather than treated as a malformed response.
 """
 

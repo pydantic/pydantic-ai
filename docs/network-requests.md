@@ -6,13 +6,13 @@ One of them, [the version check](#the-version-check), goes to a server run by Py
 
 ## Model provider requests
 
-Requests to model providers carry this header:
+Requests to model providers carry this header by default:
 
 ```text
 User-Agent: pydantic-ai/{version}
 ```
 
-For example, Pydantic AI 2.45.0 sends `User-Agent: pydantic-ai/2.45.0`.
+For example, Pydantic AI 2.45.0 sends `User-Agent: pydantic-ai/2.45.0`. [Bedrock](models/bedrock.md) requests are the exception: `botocore` sets its own `User-Agent`.
 
 ## The version check
 
