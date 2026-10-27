@@ -156,7 +156,9 @@ class ModelProfile(TypedDict, total=False):
 
     When `False`, non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
     `<system>...</system>` content in `Model.prepare_messages`. Leading ones still hoist to the
-    provider's top-level system parameter.
+    provider's top-level system parameter, and when there are any, or instructions, they're followed
+    by a sentence saying what the tag means. `<system>` tags in user prompts and tool returns are escaped,
+    so that text can't open or close the tag.
 
     APIs that only accept an inline system prompt in certain positions (e.g. Anthropic requires it
     to follow a user turn) still set this to `True`; it's on their model adapters to make the
@@ -193,7 +195,8 @@ class ModelProfile(TypedDict, total=False):
     """Whether the provider's API can change the thinking effort from a point in the conversation onward. Default: `False`.
 
     When `True`, on a model whose adapter renders the change (`OpenAIResponsesModel`'s `configuration_update`
-    item, `AnthropicModel`'s per-message `output_config`), a
+    item, `AnthropicModel`'s per-message `output_config`, `OpenRouterModel`'s `configuration_update` system
+    message), a
     [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] is sent in place and the request
     keeps the conversation's earlier request-level effort, so the prompt cache survives the change. When
     `False`, `Model.prepare_messages` drops those parts and the current effort goes out as the request-level

@@ -458,9 +458,9 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
             await ctx.emit(event_type(tool_call_id=call.tool_call_id, call=call))
         try:
             value = await handler(args)
-        except Exception as error:
+        except Exception as exc:
             failure = ToolReturnPart(
-                tool_name=call.tool_name, content=str(error), tool_call_id=call.tool_call_id, outcome='retried'
+                tool_name=call.tool_name, content=str(exc), tool_call_id=call.tool_call_id, outcome='retried'
             )
             await self._finish(ctx, call, failure, speculative=speculative)
             raise

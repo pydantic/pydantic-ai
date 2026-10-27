@@ -44,7 +44,8 @@ A delegate's name -- how the parent model refers to it, and how it is listed in 
 ## Deps, usage, tools, and capabilities
 
 - **Deps are forwarded.** The parent run's `deps` are passed to each sub-agent, so sub-agents share the parent's `AgentDepsT` (enforced by the type signature -- every sub-agent is an `AbstractAgent[AgentDepsT, Any]`).
-- Delegated agents run in the parent's workspace, including wrappers such as `ReadOnlyWorkspace`.
+- Delegated agents inherit the parent's workspace unless `workspace_resolver` selects another directory.
+  Parent read-only restrictions still apply.
 - **Usage is shared by default.** The parent's `usage` is passed to each sub-agent run, so token usage aggregates and a parent `usage_limits` applies across the whole agent tree. Set `forward_usage=False` to give each sub-agent run its own accounting.
 - **The parent's tools are not passed on.** A sub-agent runs with its own tools. To delegate to an agent that has all of the parent's tools and capabilities, use `include_self=True` (see "Delegating to the agent itself" below).
 - **Capabilities can be shared.** `shared_capabilities` are applied to every sub-agent run -- e.g. give all sub-agents a common guardrail, memory, or planning capability without rebuilding each `Agent`.
@@ -68,7 +69,7 @@ agent = Agent(
 
 - **Only what is bound to the `Agent` carries over.** Capabilities, toolsets, instructions, and model settings passed to the parent's `run()` are not part of the agent, so the delegate does not get them. Passing `SubAgents(include_self=True)` itself to `run()` raises a `UserError` when the run starts, since the delegate would come up without it.
 - **Delegation depth is capped.** The delegate carries `delegate_task` too, so `max_depth` (default `3`, counting the top-level run) bounds the tree: the top-level run delegates, its delegates delegate once more, and a run at the limit gets neither `delegate_task` nor the sub-agent listing. The limit applies to every delegation through `SubAgents`, including explicit rosters.
-- **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation, and the delegate returns the agent's own `output_type`, rendered with `str()` (a delegate run that ends with [`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) returns a steering message instead, as described under failure handling).
+- **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation, and the delegate returns the agent's own `output_type`, rendered with `str()` (a delegate run that ends with [`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) or [`PendingModelResponse`](https://pydantic.dev/docs/ai/core-concepts/batch/#ending-a-run-while-it-waits) returns a steering message instead, as described under failure handling).
 - The deprecated `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
 - **On Temporal, delegate to `self` only.** Sub-agents read from `agent_folders` add a toolset at run time, which Temporal refuses, so pass `SubAgents(include_self=True, agent_folders=None)`; see [delegation on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
 
@@ -145,11 +146,54 @@ orchestrator = Agent(
 - **A delegate can be restricted.** `SubAgent(linter, models=['fast'])` pins that delegate to `fast`: the first listed key is what it runs on when the parent passes no `model`, and the others are refused with a `ModelRetry`. The restriction is rendered in the prompt listing (`- linter: Runs the linter (models: fast)`). Restricting to a key the menu does not define is a `ValueError` at construction.
 - **A rejected key costs nothing.** An unknown or unavailable key comes back as a `ModelRetry` listing the valid options, before the delegate's `max_calls` budget is charged.
 
+## Per-delegation working directory
+
+Set `workspace_resolver` to offer `delegate_task(working_directory=...)`. The async callback receives
+the parent `RunContext` and a `DelegationWorkspaceRequest` with the delegate name and requested
+directory, and returns a `Workspace`. The host
+validates the request and decides which delegates may use another workspace. Without this option,
+the tool omits `working_directory` and children inherit the parent's workspace.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.subagents import DelegationWorkspaceRequest, SubAgent, SubAgents
+
+workspaces: dict[str, Workspace] = {'/repos/policy': Workspace(LocalWorkspaceBackend('/repos/policy'))}
+
+
+async def resolve_workspace(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
+    if request.agent_name != 'reviewer' or request.directory not in workspaces:
+        raise ModelRetry('Choose the reviewer and a configured directory.')
+    return workspaces[request.directory]
+
+
+reviewer = Agent(name='reviewer', deps_type=object, capabilities=[FileSystem(read_only=True)])
+delegation = SubAgents(
+    agents=[SubAgent(reviewer, read_only=True)],
+    workspace_resolver=resolve_workspace,
+)
+```
+
+The child runs with the returned workspace, so its relative file paths and repository instructions
+use that directory. Read-only restrictions from the parent or `SubAgent(read_only=True)` still apply.
+Also limit the delegate to trusted read-only tools: arbitrary Python tools can bypass the workspace
+API. The resolver must preserve any additional backend restrictions the application requires.
+
+The caller owns the returned workspace and keeps its resources alive until background children
+finish. Managed tasks record the resolved directory in `DelegationTask.working_directory`. On resume,
+omitting the argument resolves that saved directory again; changing it is rejected. The resolver must
+therefore accept its own resolved directory spelling. Older tasks without this field inherit the
+parent workspace. Remote and durable delegations reject directory overrides. This option does not
+change where disk agent definitions are discovered: `SubAgents.workspace` controls that separately.
+
 ## Failure handling
 
 A *soft outcome* returns a steering message to the parent as a normal tool result, so its model reads the message and decides what to do next (rather than immediately re-delegating, which a `ModelRetry` invites). A timeout, a reached `usage_limits` budget, and an exhausted `max_calls` budget are always soft. When `on_failure` is set, the message it carries replaces the built-in default for these outcomes.
 
-A sub-agent run that ends with `DeferredToolRequests` (its `output_type` includes it and a tool needed approval or was deferred) is a soft outcome too. The parent cannot approve the child's tool calls or resume its run, and delegating the same task again would most likely stop the same way, so instead of returning the marker as output the delegation returns a steering message naming the sub-agent and why it stopped, or the `on_failure` message when that is set. A sub-agent that resolves its own deferred calls, for example with [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/), never ends this way and returns its output as usual.
+A sub-agent run that ends with `DeferredToolRequests` (its `output_type` includes it and a tool needed approval or was deferred) is a soft outcome too. The parent cannot approve the child's tool calls or resume its run, and delegating the same task again would most likely stop the same way, so instead of returning the marker as output the delegation returns a steering message naming the sub-agent and why it stopped, or the `on_failure` message when that is set. A sub-agent that resolves its own deferred calls, for example with [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/), never ends this way and returns its output as usual. A run that ends with `PendingModelResponse` (its `output_type` includes it and a model request was left waiting on the provider, for example in a batch) returns a steering message the same way, including on a remote worker, and the request is cancelled, since nobody will check on it later. Cancelling is best effort, and a [batch](https://pydantic.dev/docs/ai/core-concepts/batch/) is only cancelled once no other request in it is still waiting.
 
 A sub-agent run that fails with a *soft model error* (`ModelRetry`, `UnexpectedModelBehavior`, e.g. it exhausted its own retries) is, by default, converted into a `ModelRetry` for the parent -- so the parent's model sees `Sub-agent '<name>' failed: ...` and can react by re-delegating. The delegate tool defaults to `tool_retries=2`, so the parent aborts only after that many consecutive delegate failures; the counter resets after any successful delegation. Raise `tool_retries` to tolerate a flakier sub-agent, or set `None` to inherit the parent agent's default tool retries. Set `on_failure` for a delegate to make its failures soft instead: the child error returns the `on_failure` message as a normal tool result.
 
@@ -168,7 +212,7 @@ An *unexpected crash* -- any other exception the child raises, such as a provide
 
 Both are notifications. One delegation is one `delegate_task` call, so a start and its end share the `tool_call_id` core stamps on every event; that is how a subscriber pairs them when the model delegates in parallel.
 
-`outcome` follows the failure handling above: `ok` (the child's output went back to the parent), `timeout`, `budget` (the child's own `usage_limits`), `failed` (a soft model error, returned as `on_failure` or raised as a `ModelRetry`, or a child run that ended with `DeferredToolRequests`, returned as a steering message), or `contained` (a crash `contain_errors` caught). `output` is what the delegate tool hands back to the parent in each case: the child's output, the steering message, or the retry text. It is emitted from inside the tool, before any `ToolGuardrail` result guard screens that text for the model; a host that needs the screened version reads the `ToolReturnPart` in core's `FunctionToolResultEvent`. `usage` is the child's own `RunUsage` when it has separate accounting (`usage_limits` set, or `forward_usage=False`) and `None` when it accrues into the parent's usage, where its share is not separable.
+`outcome` follows the failure handling above: `ok` (the child's output went back to the parent), `timeout`, `budget` (the child's own `usage_limits`), `failed` (a soft model error, returned as `on_failure` or raised as a `ModelRetry`, or a child run that ended with `DeferredToolRequests` or `PendingModelResponse`, returned as a steering message), or `contained` (a crash `contain_errors` caught). `output` is what the delegate tool hands back to the parent in each case: the child's output, the steering message, or the retry text. It is emitted from inside the tool, before any `ToolGuardrail` result guard screens that text for the model; a host that needs the screened version reads the `ToolReturnPart` in core's `FunctionToolResultEvent`. `usage` is the child's own `RunUsage` when it has separate accounting (`usage_limits` set, or `forward_usage=False`) and `None` when it accrues into the parent's usage, where its share is not separable.
 
 A delegation refused before the child runs (an unknown sub-agent, a model key off the menu, an exhausted `max_calls` budget) emits nothing; the tool result says why. An exception that propagates out of the delegate tool (a shared usage limit, an uncontained crash, a cancellation) ends without an end event. A `SubAgentToolset` registered directly in `Agent(toolsets=[...])` has no owning capability and emits nothing. As with any capability event, a listener that raises aborts the parent run.
 
@@ -464,6 +508,7 @@ SubAgents(
     tool_retries=2,        # extra delegate-tool attempts after a sub-agent error before aborting (None inherits the agent default)
     contain_errors=False,  # default for SubAgent.contain_errors: contain an unexpected crash as a bounded retry
     workspace=None,        # WorkspaceBackend to read agent_folders from instead of the run's workspace
+    workspace_resolver=None,  # async (ctx, request: DelegationWorkspaceRequest) -> Workspace
     include_self=False,    # also list the running agent itself as the delegate `self`
     max_depth=3,           # delegation levels, counting the top-level run
     task_control=None,     # TaskControl -- background tasks, task-control tools, questions, and task events
@@ -595,6 +640,10 @@ A child waits for its own descendants and consumes their reports before its fina
 output settles. Reports are routed to the direct parent; an idle parent receives
 pending reports on its next explicitly started run. Enqueue delivery is acknowledged
 only when core emits `EnqueuedMessagesEvent`, and acknowledgements are persisted.
+With task control, a child's `ask_parent` question is routed the same way:
+`questions(conversation_id=...)` lists the children whose question awaits delivery, and
+the observer is notified when one starts waiting, so an application can start its idle
+parent's next run to answer it.
 
 `steer(task_id, text)` sends a running child a user message on its own run's queue
 with `priority='asap'`: the child reads it at its next model request, and one about to

@@ -47,9 +47,9 @@ from pydantic_ai_harness.step_persistence.conversations import (
     SqliteConversationStore,
 )
 from pydantic_clai2 import DEFAULT_PLUGINS, create_agent
-from pydantic_clai2._app import STOCK_PLUGINS, create_stock_agent
+from pydantic_clai2.app import STOCK_PLUGINS, create_stock_agent
 from pydantic_clai2.plugins import PluginHost, load_plugin
-from pydantic_clai2.runtime._session import Session, SessionStepStore
+from pydantic_clai2.runtime.session import Session, SessionStepStore
 from pydantic_clai2.runtime.sessions import PersistencePlugin
 from tests.clai2.test_session_browser import repository
 
@@ -277,7 +277,7 @@ async def test_step_records_another_writer_locks_out_do_not_fail_the_turn(
         return connect(*args, **{**kwargs, 'timeout': 0.01})
 
     monkeypatch.setattr(sqlite3, 'connect', connect_without_waiting)
-    caplog.set_level(logging.INFO, logger='pydantic_clai2.runtime._session')
+    caplog.set_level(logging.INFO, logger='pydantic_clai2.runtime.session')
 
     def run_command() -> str:
         # Another CLAI sharing `sessions.db` starts a long write while the tool runs.
@@ -309,7 +309,11 @@ async def test_step_records_another_writer_locks_out_do_not_fail_the_turn(
     assert session.conversations is not None and session.summary.run_id is not None
     saved = await session.conversations.get(conversation_id=session.summary.id)
     assert saved.summary.outcome == 'completed' and saved.messages == session.messages
-    skipped = {record.getMessage(): record.levelno for record in caplog.records if record.name.endswith('_session')}
+    skipped = {
+        record.getMessage(): record.levelno
+        for record in caplog.records
+        if record.name == 'pydantic_clai2.runtime.session'
+    }
     # Below `WARNING`, which `logging` would print over the live display.
     assert skipped.get('Skipped saving a tool effect: database is locked') == logging.INFO
     assert skipped.get('Skipped saving a step checkpoint: database is locked') == logging.INFO
@@ -719,6 +723,9 @@ async def test_stock_agent_delegates_with_plugin_tools_instructions_and_guardrai
     assert agent is not session.agent
 
 
+@pytest.mark.moves_cache_prefix(
+    reason='a changed plugin snapshot rebuilds the agent with other tools and instructions, which the test exercises'
+)
 async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: Path) -> None:
     model = TestModel(call_tools=[], custom_output_text='answer')
     agent = create_stock_agent(model)

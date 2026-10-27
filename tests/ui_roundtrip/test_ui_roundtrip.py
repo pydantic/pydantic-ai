@@ -54,6 +54,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    ModelSettingsDeltaPart,
     StructuredContent,
     SystemPromptPart,
     TextPart,
@@ -812,6 +813,24 @@ SCENARIOS = [
                 ]
             ),
             ModelResponse(parts=[TextPart('The total includes shipping.')]),
+        ],
+    ),
+    Scenario(
+        id='withdrawn_settings_change',
+        script=_text_script,
+        agent_kwargs={'model_settings': ModelSettings(thinking='low')},
+        gaps=_gaps(_AGUI_ACTIVITY, ('load', 'dump', 'agui'), ('load', 'stream', 'agui')),
+        # A run that failed after recording a raise to `'high'`, so no response answered it. The next turn is
+        # back at `'low'`, so it records the change back.
+        seed=[
+            ModelRequest(
+                parts=[
+                    UserPromptPart('Question 0'),
+                    ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True),
+                ]
+            ),
+            ModelResponse(parts=[TextPart('Hello.')]),
+            ModelRequest(parts=[UserPromptPart('Question 0b'), ModelSettingsDeltaPart(settings={'thinking': 'high'})]),
         ],
     ),
     Scenario(
