@@ -3673,14 +3673,14 @@ def _without_voice_tags(value: Any) -> Any:
     if isinstance(value, list | tuple):
         sequence = cast('list[Any] | tuple[Any, ...]', value)
         items = [_without_voice_tags(item) for item in sequence]
-        return value if all(new is old for new, old in zip(items, sequence)) else items
+        return sequence if all(new is old for new, old in zip(items, sequence)) else items
     if isinstance(value, dict):
         mapping = cast('dict[Any, Any]', value)
         entries = [(_without_voice_tags(key), _without_voice_tags(item)) for key, item in mapping.items()]
         if all(
             new_key is key and new_item is item for (new_key, new_item), (key, item) in zip(entries, mapping.items())
         ):
-            return value
+            return mapping
         return dict(entries)
     if value is None or isinstance(value, bool | int | float | CachePoint) or is_multi_modal_content(value):
         return value
