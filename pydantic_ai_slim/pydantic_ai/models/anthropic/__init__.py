@@ -298,7 +298,6 @@ try:
         place_system_messages_before_generation,
     )
     from ._native_tools import (
-        CODE_EXECUTING_WEB_TOOL_TYPES,
         add_anthropic_caller_param,
         advisor_tool_result_content_ta,
         bash_code_execution_tool_result_content_ta,
@@ -402,8 +401,9 @@ _THINKING_BINDING_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 # (`Container identifier can only be provided when using the code execution tool`) and the legacy Bedrock
 # InvokeModel API, which rejects any `container` (`Extra inputs are not permitted`). Claude Platform on AWS
 # (`AsyncAnthropicAWS`) is an `AsyncAnthropic` subclass, so it gets the direct API's behavior. Vertex and the Bedrock
-# Messages API couldn't be reached to check, and Foundry wasn't tried, so those keep sending the history
-# container until a live request verifies them.
+# Messages API couldn't be reached to check, and Foundry wasn't tried, so they're left out until a live request
+# verifies them. Vertex and Foundry send no container at all (`_FILE_AND_CONTAINER_IDS_UNSUPPORTED_CLIENTS`), so
+# this only keeps the Bedrock Messages API sending the history container.
 _CONTAINER_WITHOUT_CODE_EXECUTION_UNVERIFIED_CLIENTS = (
     AsyncAnthropicVertex,
     AsyncAnthropicBedrockMantle,
@@ -655,9 +655,9 @@ class AnthropicModelSettings(ModelSettings, total=False):
     it will be reused automatically on requests that have code execution: `CodeExecutionTool`,
     or a web tool that code execution may call (see
     [`anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers]).
-    The Anthropic API and legacy Bedrock reject a container on any other request, so Pydantic AI
-    doesn't send it there. Tools passed as `extra_body['tools']` replace the ones Pydantic AI builds,
-    so those are the tools that decide. An id recovered that way is the only container
+    The Anthropic API rejects a container on any other request, so Pydantic AI doesn't send it
+    there. Tools passed as `extra_body['tools']` replace the ones Pydantic AI builds, so they decide
+    whether the history container is sent. An id recovered from history is the only container
     Pydantic AI may replace on its own: if a request carrying both that id and
     `CodeExecutionTool` uploads comes back `500`, the id is dropped and the request is
     sent once more so the upload lands in a fresh container. Nothing else is replaced —
@@ -1986,8 +1986,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         An id from history, including a `pause_turn` reconnect id, isn't reused on a request without code execution
         where the API rejects it (`anthropic_rejects_container_without_code_execution`), such as a follow-up with no
-        tools, or on any API when the request sends web tool versions that default to code execution with direct
-        calls only, as it does when it asks for citations. The tools that decide are the ones the API receives:
+        tools. Whether the request has code execution is read from the tools the API receives:
         `extra_body['tools']` replaces the built list.
         """
         if (container := model_settings.get('anthropic_container')) is not None:
@@ -1998,13 +1997,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return container, False
         if not self.profile.get('anthropic_accepts_file_and_container_ids', True):
             return None, False
-        # The direct-only carve-out covers only web tools Pydantic AI itself sends, so a caller's hand-rolled
-        # `extra_body` tools keep the unverified clients' behavior.
         extra_body_tools = _extra_body_tools(model_settings)
-        if not provisions_code_execution(tools if extra_body_tools is None else extra_body_tools) and (
-            self.profile.get('anthropic_rejects_container_without_code_execution', True)
-            or (extra_body_tools is None and any(tool.get('type') in CODE_EXECUTING_WEB_TOOL_TYPES for tool in tools))
-        ):
+        if self.profile.get(
+            'anthropic_rejects_container_without_code_execution', True
+        ) and not provisions_code_execution(tools if extra_body_tools is None else extra_body_tools):
             return None, False
         # On pause_turn continuation, pass just the container ID string to reconnect.
         # Re-passing BetaContainerParams triggers a prefill rejection on some models
@@ -2307,8 +2303,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> frozenset[str]:
         """Wire names that may legitimately appear in a `server_tool_use` block for this request.
 
-        Derived from the same `_add_native_tools` call that builds the request payload, so the
-        filter can't drift from what is actually sent to the API.
+        The named server tools come from the same `_add_native_tools` call that builds the request payload. The
+        implicit code execution names come from the tools the API receives, which `extra_body['tools']` replaces
+        when it's set.
         """
         native_tools, _, _ = self._add_native_tools([], model_request_parameters, model_settings)
         # `BetaMCPToolsetParam` is the only union member without a `name`, and `_add_native_tools`

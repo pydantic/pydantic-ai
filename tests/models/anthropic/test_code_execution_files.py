@@ -13,7 +13,7 @@ from inline_snapshot import snapshot
 from pydantic import JsonValue
 
 from pydantic_ai import Agent, ModelHTTPError
-from pydantic_ai.capabilities import AbstractCapability, Citations, NativeTool
+from pydantic_ai.capabilities import AbstractCapability, NativeTool
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -444,7 +444,6 @@ class HistoryContainerCase:
     client: str
     model_name: str
     container_sent: bool
-    citations: bool = False
     suspended: bool = False
     native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
     model_settings: AnthropicModelSettings | None = None
@@ -456,18 +455,12 @@ _CODE_EXECUTION_WIRE_TOOL: dict[str, object] = {'type': 'code_execution_20250825
 HISTORY_CONTAINER_CASES = [
     HistoryContainerCase('api', 'api', 'claude-sonnet-4-6', container_sent=False),
     HistoryContainerCase('bedrock', 'bedrock', 'us.anthropic.claude-sonnet-4-6', container_sent=False),
-    HistoryContainerCase('vertex', 'vertex', 'claude-sonnet-4-6', container_sent=True),
+    HistoryContainerCase('vertex', 'vertex', 'claude-sonnet-4-6', container_sent=False),
     HistoryContainerCase('mantle', 'mantle', 'anthropic.claude-sonnet-4-6', container_sent=True),
-    HistoryContainerCase('foundry', 'foundry', 'claude-sonnet-4-6', container_sent=True),
+    HistoryContainerCase('foundry', 'foundry', 'claude-sonnet-4-6', container_sent=False),
     HistoryContainerCase('api-suspended', 'api', 'claude-sonnet-4-6', container_sent=False, suspended=True),
-    HistoryContainerCase('vertex-suspended', 'vertex', 'claude-sonnet-4-6', container_sent=True, suspended=True),
     HistoryContainerCase(
-        'mantle-direct-web-search',
-        'mantle',
-        'anthropic.claude-sonnet-4-6',
-        container_sent=False,
-        citations=True,
-        expected_tools=[('web_search_20260209', ['direct'])],
+        'mantle-suspended', 'mantle', 'anthropic.claude-sonnet-4-6', container_sent=True, suspended=True
     ),
     HistoryContainerCase(
         'api-extra-body-code-execution',
@@ -488,19 +481,6 @@ HISTORY_CONTAINER_CASES = [
         expected_tools=[('web_search_20250305', None)],
     ),
     HistoryContainerCase(
-        'mantle-extra-body-direct-web-search',
-        'mantle',
-        'anthropic.claude-sonnet-4-6',
-        container_sent=True,
-        citations=True,
-        model_settings={
-            'extra_body': {
-                'tools': [{'type': 'web_search_20260209', 'name': 'web_search', 'allowed_callers': ['direct']}]
-            }
-        },
-        expected_tools=[('web_search_20260209', ['direct'])],
-    ),
-    HistoryContainerCase(
         'api-empty-callers',
         'api',
         'claude-sonnet-4-6',
@@ -518,10 +498,10 @@ async def test_anthropic_history_container_without_code_execution_by_client(
 ):
     """A request without code execution doesn't send the history container where the API is known to reject it.
 
-    That includes the container of a suspended response the run resumes. The direct API and the legacy Bedrock
-    InvokeModel API reject it. Vertex AI, the Bedrock Messages API and Foundry haven't been verified, so they keep
-    sending it, unless the request sends web tools that default to code execution with direct calls only, as
-    `Citations()` does. Tools in `extra_body` replace the built ones on the wire, so they decide instead.
+    That includes the container of a suspended response the run resumes. The direct API rejects it. The Bedrock
+    Messages API hasn't been verified, so it keeps sending it, and the legacy Bedrock, Vertex AI and Foundry clients
+    don't send container ids at all. Tools in `extra_body` replace the built ones on the wire, so they decide whether
+    the request has code execution.
 
     Unit test: recording the other clients needs their credentials, recording a suspended response needs a live
     `pause_turn`, and the claim is the request shape.
@@ -566,8 +546,6 @@ async def test_anthropic_history_container_without_code_execution_by_client(
         }
         model = AnthropicModel(case.model_name, provider=AnthropicProvider(anthropic_client=clients[case.client]()))
         capabilities: list[AbstractCapability[None]] = [NativeTool(tool) for tool in case.native_tools]
-        if case.citations:
-            capabilities += [NativeTool(WebSearchTool()), Citations()]
         await Agent(model, deps_type=type(None), capabilities=capabilities, model_settings={'max_tokens': 1024}).run(
             None if case.suspended else 'Follow up.', message_history=history, model_settings=case.model_settings
         )

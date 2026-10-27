@@ -586,11 +586,11 @@ async def test_anthropic_web_tools_rejected_by_bedrock_messages_api(
     https://github.com/pydantic/pydantic-ai/issues/11481
     """
     if isinstance(tool, WebSearchTool):
-        tool_param = AnthropicModel._map_web_search_tool(tool, dynamic_filtering)  # pyright: ignore[reportPrivateUsage]
+        tool_param = AnthropicModel._map_web_search_tool(tool, dynamic_filtering, False, None)  # pyright: ignore[reportPrivateUsage]
         beta = None
     else:
         assert isinstance(tool, WebFetchTool)
-        tool_param, beta = AnthropicModel._map_web_fetch_tool(tool, dynamic_filtering, False)  # pyright: ignore[reportPrivateUsage]
+        tool_param, beta = AnthropicModel._map_web_fetch_tool(tool, dynamic_filtering, False, None)  # pyright: ignore[reportPrivateUsage]
     client = request.getfixturevalue('anthropic_bedrock_mantle_client')
 
     with pytest.raises(APIStatusError, match=rf"tool type '{tool_param['type']}' is not supported for this model"):
