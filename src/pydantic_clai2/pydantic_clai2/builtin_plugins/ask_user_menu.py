@@ -19,6 +19,7 @@ from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.ask_user import (
     TOOL_NAME,
+    Answerer,
     AskUser,
     AskUserAnswer,
     AskUserAnsweredEvent,
@@ -26,8 +27,10 @@ from pydantic_ai_harness.ask_user import (
     AskUserResponse,
     Question,
 )
+from pydantic_ai_harness.permissions import PermissionDecision, PermissionRequest
 from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.plugins import FullScreen, Plugin
+from pydantic_clai2.runtime.permissions import Approve, approval_handler, approval_question, decision
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
@@ -296,14 +299,24 @@ def render_question(event: AgentStreamEvent) -> RenderableType | None:
     return render_answer(event) if isinstance(event, AskUserAnsweredEvent) else None
 
 
+def terminal_approver(answerer: Answerer) -> Approve:
+    """Ask about each call `Permissions` holds as a question to `answerer`."""
+
+    async def approve(request: PermissionRequest) -> PermissionDecision:
+        return decision(await answerer(approval_question(request)))
+
+    return approve
+
+
 class AskUserPlugin(Plugin):
-    """`AskUser` with the terminal answerer, a readable call header, and a transcript line per answer."""
+    """`AskUser` and `/permissions` approvals with the terminal answerer, a readable call header, and answer lines."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         # The picker needs a terminal; a session without one, such as one the browser runs, gets no question tool.
         if not self.host.console.is_terminal:
             return ()
-        return (AskUser(answerer=TerminalAnswerer(full_screen=self.host.full_screen, console=self.host.console)),)
+        answerer = TerminalAnswerer(full_screen=self.host.full_screen, console=self.host.console)
+        return (AskUser(answerer=answerer), approval_handler(terminal_approver(answerer)))
 
     def render(self, event: AgentStreamEvent) -> RenderableType | None:
         return render_question(event)

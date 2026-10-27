@@ -46,7 +46,7 @@ from pydantic_clai2.commands import (
     is_silent,
     set_completions,
 )
-from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config import PERMISSION_MODES, PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.errors import error_message
@@ -74,6 +74,7 @@ from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
+from pydantic_clai2.runtime.permissions import SETTING as PERMISSIONS, permissions_command, session_permissions
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session import (
     Session,
@@ -326,6 +327,17 @@ def create_shell(
             during_turn=True,
             menu=lambda: settings_menu(context, keys=('display.theme',), title='Theme'),
             args_during_turn=True,
+        )
+    )
+    commands.register(
+        Command(
+            name='permissions',
+            description='Choose what runs without asking: /permissions [full|auto|read-only]',
+            handler=lambda args: permissions_command(context, args),
+            complete=lambda args: PERMISSION_MODES if len(args) <= 1 else (),
+            during_turn=True,
+            args_during_turn=True,
+            menu=lambda: settings_menu(context, keys=(PERMISSIONS,), title='Permissions'),
         )
     )
     commands.register(
@@ -665,6 +677,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     """The terminal's editor, while the terminal shows this session and its console is a terminal."""
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
+    permissions: tuple[AgentCapability[DepsT], ...] = field(init=False)
+    """`Permissions` for `run.permissions`, read on each tool call, and its denial of last resort; kept across runs."""
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
@@ -838,6 +852,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         )
         self.sessions.quiet = self.forks.quiet
         self.session.on_setup_error = self.capability_failed
+        self.permissions = session_permissions(lambda: self.context.settings.permissions)
 
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
         """Capabilities bound to the next run: supplied, plugin-registered (guarded), then speculation.
@@ -845,8 +860,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         Speculation sees the others unguarded, and the agent's own capabilities too, so its sandbox
         mount stays within every `FileSystem` and `ToolGuardrail` the run has.
         """
-        granted = (*self.plugins, *self.loader.capabilities())
-        bound = (*self.plugins, *self.loader.run_capabilities())
+        granted = (*self.plugins, *self.loader.capabilities(), *self.permissions)
+        bound = (*self.plugins, *self.loader.run_capabilities(), *self.permissions)
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)

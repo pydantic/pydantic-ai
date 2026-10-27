@@ -80,10 +80,24 @@ export interface Dialog {
   text: string
 }
 
+/** A tool call `/permissions` holds until the user approves it. */
+export interface ApprovalInfo {
+  tool: string
+  action: 'command' | 'write'
+  /** The command, or the path the call writes. */
+  subject: string
+  /** Why the session's permission mode asks. */
+  reason: string
+  /** The change a file write would make. */
+  diff: Diff | null
+}
+
 export interface Questions {
   id: string
   questions: QuestionInfo[]
   asker: string | null
+  /** Set when the question asks to approve a held tool call: answer it with one of its labels, or a reason to deny. */
+  approval: ApprovalInfo | null
 }
 
 export interface SessionInfo {
@@ -109,7 +123,11 @@ export interface StatusInfo {
   code_mode: boolean | null
   /** The `run.speculative_code_mode` setting, which turns code mode on for its runs too. */
   speculation: boolean | null
+  /** The `run.permissions` mode; `null` without CLAI's settings. */
+  permissions: PermissionMode | null
 }
+
+export type PermissionMode = 'full' | 'auto' | 'read-only'
 
 export type Switch = 'run.code_mode' | 'run.speculative_code_mode'
 

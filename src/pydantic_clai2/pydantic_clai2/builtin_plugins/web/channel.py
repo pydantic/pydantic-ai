@@ -44,6 +44,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
 from pydantic_clai2.commands import is_command_input
+from pydantic_clai2.config import PERMISSION_MODES, PermissionMode
 from pydantic_clai2.plugins import CommandEnd, ForkEnd, LiveSession, TurnOutcome
 from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_clai2.ui.rendering.usage_report import session_usage
@@ -53,6 +54,7 @@ if TYPE_CHECKING:
 
 CODE_MODE = 'run.code_mode'
 SPECULATION = 'run.speculative_code_mode'
+PERMISSIONS = 'run.permissions'
 Switch = Literal['run.code_mode', 'run.speculative_code_mode']
 """The settings the browser's toggles change; nothing else is set from it but through the prompt."""
 USAGE_COMMANDS = frozenset({'/usage', '/cost'})
@@ -151,7 +153,15 @@ class SessionChannel:
             run=None if self._usage is None else usage_info(self._usage),
             code_mode=self._switch(CODE_MODE),
             speculation=self._switch(SPECULATION),
+            permissions=self._permissions(),
         )
+
+    def _permissions(self) -> PermissionMode | None:
+        try:
+            mode = self.session.setting(PERMISSIONS)
+        except KeyError:
+            return None
+        return next((known for known in PERMISSION_MODES if known == mode), None)
 
     def _switch(self, key: str) -> bool | None:
         try:

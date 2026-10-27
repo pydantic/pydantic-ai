@@ -288,6 +288,8 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load().update_channel == 'stable'
     # Databases from before grouped tool calls keep one line per call.
     assert store.load().tool_calls == 'detailed'
+    # Databases from before `/permissions` run everything without asking.
+    assert store.load().permissions == 'full'
     # Older databases show the model in delegated-task rows unless the user turns it off.
     assert store.load().task_models is True
     # Databases from before `/system_prompt` add no instructions of the user's own.
@@ -409,6 +411,7 @@ def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_js
         ('display.spinner', '3'),
         ('run.speculative_code_mode', '"yes"'),
         ('run.instructions', '42'),
+        ('run.permissions', '"sometimes"'),
         ('accounts.pool', '"off"'),
     ],
 )

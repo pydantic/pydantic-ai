@@ -41,6 +41,7 @@ from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
 from pydantic_ai_harness.subagents import DelegationOutcome
+from pydantic_clai2.config import PermissionMode
 from pydantic_clai2.plugins import ForkEnd, ForkInfo, ForkStatus, PanelIcon, PluginOrigin, PluginStatus, QueuedInput
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.forks import failure_line
@@ -128,13 +129,29 @@ class QuestionInfo:
 
 
 @dataclass(kw_only=True)
+class ApprovalInfo:
+    """A tool call `/permissions` holds until the user approves it, which the browser shows as an approval card."""
+
+    tool: str
+    action: Literal['command', 'write']
+    subject: str
+    """The command, or the path the call writes."""
+    reason: str
+    """Why the session's permission mode asks."""
+    diff: Diff | None = None
+    """The change a file write would make, from its arguments."""
+
+
+@dataclass(kw_only=True)
 class Questions:
-    """An open `ask_user_question` request the browser can answer."""
+    """An open `ask_user_question` request the browser can answer, or a held tool call to approve."""
 
     id: str
     questions: list[QuestionInfo]
     asker: str | None = None
     """Who asks when it is not the conversation itself, such as a delegated task."""
+    approval: ApprovalInfo | None = None
+    """Set when the question asks to approve a held tool call; its one question's labels approve or deny it."""
 
 
 @dataclass(kw_only=True)
@@ -224,6 +241,8 @@ class StatusInfo:
     """The `run.code_mode` setting; `None` without CLAI's settings."""
     speculation: bool | None = None
     """The `run.speculative_code_mode` setting, which turns code mode on for its runs too."""
+    permissions: PermissionMode | None = None
+    """The `run.permissions` mode; `None` without CLAI's settings."""
 
 
 @dataclass(kw_only=True)
@@ -1130,11 +1149,12 @@ def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | Non
     return items
 
 
-def questions_info(request: AskUserRequest, *, asker: str | None) -> Questions:
-    """The browser's copy of an `ask_user_question` request."""
+def questions_info(request: AskUserRequest, *, asker: str | None, approval: ApprovalInfo | None = None) -> Questions:
+    """The browser's copy of an `ask_user_question` request, or of the question approving a held call."""
     return Questions(
         id=request.id,
         asker=asker,
+        approval=approval,
         questions=[
             QuestionInfo(
                 header=question.header,

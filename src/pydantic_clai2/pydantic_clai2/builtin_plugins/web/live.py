@@ -12,8 +12,11 @@ from dataclasses import dataclass, field
 import anyio
 
 from pydantic_ai_harness.ask_user import Answerer, AskUserAnswer, AskUserRequest, AskUserResponse, check_response
+from pydantic_ai_harness.permissions import PermissionDecision, PermissionRequest
 from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    ApprovalInfo,
+    Diff,
     QuestionAsked,
     QuestionClosed,
     Questions,
@@ -24,6 +27,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     dump_session,
     questions_info,
 )
+from pydantic_clai2.runtime.permissions import approval_question, decision, proposed_diff
 
 QUEUE_LIMIT = 10_000
 """Messages a browser may fall behind by before it is told to reconnect, so a stalled tab cannot hold a whole session."""
@@ -171,8 +175,22 @@ class BrowserAnswerer:
         return entry.request
 
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
+        return await self._ask(request)
+
+    async def approve(self, request: PermissionRequest) -> PermissionDecision:
+        """Ask whether a call `/permissions` holds may run, as an approval card here and a question in the terminal."""
+        approval = ApprovalInfo(
+            tool=request.call.tool_name,
+            action=request.action,
+            subject=request.subject,
+            reason=request.reason,
+            diff=None if (diff := proposed_diff(request)) is None else Diff(path=request.subject, diff=diff),
+        )
+        return decision(await self._ask(approval_question(request), approval=approval))
+
+    async def _ask(self, request: AskUserRequest, *, approval: ApprovalInfo | None = None) -> AskUserResponse:
         child = DelegationTasks.child_id()
-        questions = questions_info(request, asker=None if child is None else f'Task [{child[:8]}]')
+        questions = questions_info(request, asker=None if child is None else f'Task [{child[:8]}]', approval=approval)
         session = self._session()
         entry = _Open(
             questions=questions, request=request, answered=asyncio.get_running_loop().create_future(), session=session

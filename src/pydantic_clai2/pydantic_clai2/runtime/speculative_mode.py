@@ -53,6 +53,7 @@ from pydantic_ai_harness.code_mode import (
 )
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.guardrails import ToolGuardrail
+from pydantic_ai_harness.permissions import Permissions
 from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL, EagerExecutionCompletedEvent, EagerTiming
 from pydantic_clai2.runtime.repl_state import ReplStates
@@ -309,11 +310,16 @@ class _MountWorkspace(WrapperToolset[AgentDepsT]):
     """Give `CodeMode`'s toolset this run's `_workspace_mount`, once the run's workspace is known."""
 
     mode: _MountMode | None = None
+    permissions: Permissions[AgentDepsT] | None = None
+    """The run's `Permissions`: in `read-only` mode `pathlib` must not write what the file tools would ask about."""
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         code_mode = self.wrapped
         assert isinstance(code_mode, CodeModeToolset)
-        mount = await _workspace_mount(ctx.workspace, self.mode)
+        mode = self.mode
+        if mode == 'read-write' and self.permissions is not None and self.permissions.mode_for(ctx) == 'read-only':
+            mode = 'read-only'
+        mount = await _workspace_mount(ctx.workspace, mode)
         return await replace(code_mode, mount=mount).for_run(ctx)
 
 
@@ -326,12 +332,14 @@ class WorkspaceCodeMode(CodeMode[AgentDepsT]):
     """
 
     mount_mode: _MountMode | None = None
+    permissions: Permissions[AgentDepsT] | None = None
+    """The run's `Permissions`, whose `read-only` mode mounts the directory read-only for that run."""
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """`CodeMode`'s toolset, mounted per run by `_MountWorkspace`."""
         code_mode = super().get_wrapper_toolset(toolset)
         assert code_mode is not None
-        return _MountWorkspace(code_mode, mode=self.mount_mode)
+        return _MountWorkspace(code_mode, mode=self.mount_mode, permissions=self.permissions)
 
 
 def _sandboxed(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
@@ -508,6 +516,7 @@ def speculative_capabilities(
     between prompts; without it the REPL ends with the run.
     """
     mode = _mount_mode(granted)
+    permissions = next((leaf for leaf in granted or () if _is_capability(leaf) and isinstance(leaf, Permissions)), None)
     return [
         WorkspaceCodeMode(
             tools=_sandboxed,
@@ -517,6 +526,7 @@ def speculative_capabilities(
             # read-only calls beyond that frontier, and the eager feed claims them.
             eager=True,
             mount_mode=mode,
+            permissions=permissions,
             os_access=OSAccess(),
             repl_store=repl_states,
         ),

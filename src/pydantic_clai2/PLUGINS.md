@@ -1317,6 +1317,12 @@ is restored on exit, and the question and your picks are printed to the transcri
 `clai2 --web` or piped output, never gets it. While the [`web` plugin](#web-this-session-in-your-browser)
 is loaded, it asks the questions instead, in the browser and this picker at once.
 
+The same picker asks about the calls [`/permissions`](docs/reference.md#permissions) holds: the plugin also binds
+`runtime/permissions.py`'s `approval_handler`, which puts each held call to the answerer as a question with
+`Approve`, `Approve for this session`, and `Deny`; a typed answer denies the call with it as the reason. A
+replacement for this plugin that should answer approvals binds `approval_handler` with its own approver; without
+one, held calls are denied.
+
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
 multi-select questions. With `Other` highlighted, start typing; you do not need
