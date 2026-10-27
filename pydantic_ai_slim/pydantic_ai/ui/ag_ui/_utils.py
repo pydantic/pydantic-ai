@@ -7,7 +7,7 @@ import json
 import re
 import warnings
 from collections.abc import Mapping
-from typing import Any, Final, Literal, Required, cast
+from typing import Any, Final, Literal, Required
 
 from typing_extensions import TypedDict
 
@@ -129,12 +129,12 @@ MediaPartType = Literal['image', 'audio', 'video', 'document']
 """The AG-UI media part types."""
 
 
+_MEDIA_PART_TYPES: dict[str, MediaPartType] = {'image': 'image', 'audio': 'audio', 'video': 'video'}
+
+
 def media_part_type(mime_type: str) -> MediaPartType:
-    """The AG-UI media part type for a MIME type."""
-    prefix = mime_type.split('/', 1)[0].lower()
-    if prefix in ('image', 'audio', 'video'):
-        return cast(MediaPartType, prefix)  # the `in` check narrows it, but pyright can't see that
-    return 'document'
+    """The AG-UI media part type for a MIME type; anything that isn't image, audio or video is a document."""
+    return _MEDIA_PART_TYPES.get(mime_type.split('/', 1)[0], 'document')
 
 
 _AG_UI_VERSION_RE = re.compile(r'(\d+(?:\.\d+)*)')
