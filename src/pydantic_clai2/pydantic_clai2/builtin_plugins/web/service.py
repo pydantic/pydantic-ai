@@ -756,7 +756,7 @@ class WebService:
             try:
                 await catalog.archive(conversation_id)
             except (LookupError, ValueError) as exc:
-                refused.append(f'{conversation_id}: {exc}')
+                refused.append(f'{conversation_id!r}: {exc}')
         if len(refused) < len(unique):
             self.hub.publish(SessionsChanged())
         if refused:

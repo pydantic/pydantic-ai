@@ -336,22 +336,22 @@ async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None
     await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_have_count(0)
 
 
-def sidebar_session(session_id: str, title: str) -> dict[str, object]:
-    return {
-        'id': session_id,
-        'title': title,
-        'workspace': f'/wt/{session_id}',
-        'updated_at': '2026-01-01T00:00:00Z',
-        'state': 'ready',
-        'messages': 2,
-        'model': None,
-        'current': False,
-        'archived': False,
-    }
-
-
 async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(page: Page, web_ui: WebUI) -> None:
     """A project's removed worktrees wait, closed, in one group after its live ones; each archives at once."""
+
+    def sidebar_session(session_id: str, title: str) -> dict[str, object]:
+        return {
+            'id': session_id,
+            'title': title,
+            'workspace': f'/wt/{session_id}',
+            'updated_at': '2026-01-01T00:00:00Z',
+            'state': 'ready',
+            'messages': 2,
+            'model': None,
+            'current': False,
+            'archived': False,
+        }
+
     worktrees = [
         {
             'root': '/wt/live',

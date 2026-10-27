@@ -1015,12 +1015,12 @@ def test_archiving_a_worktree_archives_every_session_in_it(make_web: 'MakeWeb') 
         refused = web_.post('/api/sessions/archive', {'ids': [current, old[0].id, 'missing']})
         assert (refused.status_code, refused.json()['detail']) == (
             400,
-            f'Archived 1 of 3 sessions. {current}: The current session cannot be archived. Switch to another one '
-            'first. missing: No saved session: missing',
+            f"Archived 1 of 3 sessions. '{current}': The current session cannot be archived. Switch to another one "
+            "first. 'missing': No saved session: missing",
         )
         receive_until(socket, SessionsChanged)
         assert web_.post('/api/sessions/archive', {'ids': ['missing']}).json()['detail'] == (
-            'Archived 0 of 1 sessions. missing: No saved session: missing'
+            "Archived 0 of 1 sessions. 'missing': No saved session: missing"
         )
     assert listed() == ['New session']
 
