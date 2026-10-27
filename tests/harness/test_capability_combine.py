@@ -438,6 +438,7 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'CodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
+    'IPythonCodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
     'SmartSearch': Collides(
         'its toolset registers `smart_search` under a fixed name, and its judge `model` decides which '
@@ -740,8 +741,8 @@ def test_system_reminders_keep_two_llm_reminders_whose_models_differ_only_in_set
 
     Not a VCR test: `combine` makes no request.
     """
-    first = LLMReminder[Any](model=TestModel(settings={'temperature': 0.0}))
-    second = LLMReminder[Any](model=TestModel(settings={'temperature': 1.0}))
+    first = LLMReminder[Any](interval=10, model=TestModel(settings={'temperature': 0.0}))
+    second = LLMReminder[Any](interval=10, model=TestModel(settings={'temperature': 1.0}))
 
     merged = SystemReminders.combine(
         [

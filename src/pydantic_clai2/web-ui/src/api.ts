@@ -3,6 +3,8 @@ import type { Snapshot } from './state'
 import { PROTOCOL } from './protocol'
 import type {
   AnswerBody,
+  ChangeScope,
+  Changes,
   CompletionInfo,
   Entered,
   JsonValue,
@@ -130,7 +132,12 @@ export function sessionApi(id: string | null) {
     interrupt: () => call<{ interrupted: boolean }>('POST', `${base}/interrupt`),
     /** One of the images a prompt in this session's transcript lists, as a `data:` URL; fetched once per page. */
     image: (id: string) => image(base, id),
+    /** The files this session changed in `scope`, each with its diff unless `diffs` is off, for the Changes panel. */
+    changes: (scope: ChangeScope, diffs = true) =>
+      call<Changes>('GET', `${base}/changes?scope=${scope}${diffs ? '' : '&diffs=false'}`),
     complete: (text: string) => call<CompletionInfo[]>('GET', `${base}/complete?text=${encodeURIComponent(text)}`),
+    /** The files and folders in the session's folder that best match `query`, the text after an `@`. */
+    files: (query: string) => call<CompletionInfo[]>('GET', `${base}/files?q=${encodeURIComponent(query)}`),
     selectModel: (name: string) => call<void>('POST', `${base}/model`, { name }),
     answer: (request: string, answers: AnswerBody[] | null) =>
       call<void>('POST', `${base}/questions/${request}`, { answers }),

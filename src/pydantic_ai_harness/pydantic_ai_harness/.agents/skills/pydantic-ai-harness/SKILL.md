@@ -223,7 +223,7 @@ This installs `pydantic-ai-slim` at the matching version, so no separate Pydanti
 The `anthropic` and `cli` extras pass through to Pydantic AI; for another provider add its
 `pydantic-ai-slim` extra, for example `uv add "pydantic-ai-slim[openai]"`. Capabilities
 with optional dependencies declare their own extra, for example `[coder]`, `[codemode]`, `[modal]`,
-`[e2b]`, `[sprites]`, `[daytona]`, `[smol]`, `[boxlite]`, `[dynamic-workflow]`, `[skills]`, `[researcher]`, `[exa]`, `[playwright]`, or `[github]`.
+`[ipython]`, `[e2b]`, `[sprites]`, `[daytona]`, `[smol]`, `[boxlite]`, `[dynamic-workflow]`, `[skills]`, `[researcher]`, `[exa]`, `[playwright]`, or `[github]`.
 Each reference gives the exact install line.
 
 ## Imports
@@ -268,7 +268,7 @@ any:
 | Reference | Capabilities |
 |---|---|
 | [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) | `Coder` (`.coder`, `[coder]`); `FileSystem` (`.filesystem`); `SmartSearch` (`.smart_search`); `Shell` (`.shell`); `ModalSandbox` (`.modal_sandbox`, `[modal]`); `E2BSandbox` (`.e2b_sandbox`, `[e2b]`); `SpritesSandbox` (`.sprites_sandbox`, `[sprites]`); `DaytonaSandbox` (`.daytona_sandbox`, `[daytona]`); `SmolSandbox` (`.smol_sandbox`, `[smol]`); `BoxLiteSandbox` (`.boxlite_sandbox`, `[boxlite]`); `DockerSandbox` (`.docker_sandbox`); `SSHWorkspace` (`.ssh_workspace`); `BubblewrapSandbox` (`.bubblewrap_sandbox`); `RepoContext` (`.repo_context`); `Macroscope` (`.macroscope`); `LocalStack` (`.localstack`) |
-| [Code Mode](./references/CODE-MODE.md) | `CodeMode` (`.code_mode`, `[codemode]`) |
+| [Code Mode](./references/CODE-MODE.md) | `CodeMode` (`.code_mode`, `[codemode]`); `IPythonCodeMode` (`.ipython_code_mode`, `[ipython]`) |
 | [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) | `Planning` (`.planning`); `SubAgents`, `SubAgent`, `DelegationReports` (`.subagents`); `Peers` (`.peers`); `DynamicWorkflow` (`.dynamic_workflow`, `[dynamic-workflow]`); `Advisor` (`.advisor`); `BackgroundTools` (`.background_tools`) |
 | [Context Management](./references/CONTEXT-MANAGEMENT.md) | `ClearToolResults`, `SlidingWindowCompaction`, `SummarizingCompaction`, `RelevanceCompaction`, `TieredCompaction`, `FallbackCompaction`, `CompactOnRequest`, `ClampOversizedMessages`, `DeduplicateFileReads`, `WarnNearLimits`, `ReportContextUsage` (`.compaction`); `ToolOutputLimits` (`.tool_output_limits`); `WarnOnCacheBusts` (`.warn_on_cache_busts`); media stores, not a capability (`.media`) |
 | [Knowledge and Memory](./references/KNOWLEDGE-AND-MEMORY.md) | `Memory` (`.memory`); `ConversationSearch` (`.conversation_search`); `Skills` (`.skills`, `[skills]`); `PydanticAIDocs` (`.pydantic_ai_docs`) |
