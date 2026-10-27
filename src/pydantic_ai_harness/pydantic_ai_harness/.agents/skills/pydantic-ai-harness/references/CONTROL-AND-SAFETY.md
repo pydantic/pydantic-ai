@@ -537,11 +537,13 @@ agent = Agent(
   text on the user channel (`<generated_reminder model="...">`), kept in history together as one record.
   A plain `str` a dynamic reminder returns is operator text in system voice. Framing tags in quoted
   text are escaped.
-- `LLMReminder(model=...)` (model required) makes one extra model call per request; its agent is
-  built on first use, so no provider key is needed at construction. On any error it sends
-  `GoalReanchor` text instead, logging a warning with the traceback once per run under
-  `pydantic_ai_harness.system_reminders`; only a budget too tight for the extra request is silent.
-  Gate it with your own cadence wrapper.
+- `LLMReminder(model=..., interval=10)` (model required) makes one extra model call every `interval`
+  requests (10th, 20th, ...; pass `interval` explicitly: left unset it warns that the default used to
+  be `1`). Each firing adds a note and the generated text to history for good, so a run of R requests
+  gains `2 * (R // interval)` parts. Its agent is built on first use, so no provider key is needed at
+  construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
+  traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
+  the extra request is silent. A wrapper that gates it itself should pass `interval=1`.
 - Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
   (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
   gone without a warning, so turn on caching on the model (such as `anthropic_cache`).

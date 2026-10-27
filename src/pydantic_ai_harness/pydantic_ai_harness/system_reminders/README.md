@@ -104,19 +104,21 @@ SystemReminders(dynamic_reminders=[GoalReanchor()])
 from pydantic_ai_harness import SystemReminders
 from pydantic_ai_harness.system_reminders import LLMReminder
 
-SystemReminders(dynamic_reminders=[LLMReminder(model='anthropic:claude-haiku-4-5')])
+SystemReminders(dynamic_reminders=[LLMReminder(model='anthropic:claude-haiku-4-5', interval=10)])
 ```
 
-Dynamic reminders have no cadence of their own -- they run on every model request. `LLMReminder` therefore issues one extra model call per turn (its usage is threaded onto the parent run via `ctx.usage`, so it shows up in `result.usage`, and the generation run is filed under the parent's `conversation_id`). The nested call also runs under the parent's `usage_limits` with one request held back for the model request it precedes, so the reminder cannot push a run past its `request_limit`; once the budget is that tight the generation is skipped and `GoalReanchor` text is used instead. Every other generation failure is logged at warning level with its traceback under the `pydantic_ai_harness.system_reminders` logger namespace, once per run, so a misconfigured `model` (bad id, missing key) shows up in the logs once per run rather than on every model request, while the run carries on with the fallback text. To bound the cost, gate it behind a cadence with an async wrapper:
+`LLMReminder` generates every `interval` model requests: the 10th, 20th, 30th, ... by default, the cadence `TrajectoryJudge` reviews a run on. Each firing issues one extra model call (its usage is threaded onto the parent run via `ctx.usage`, so it shows up in `result.usage`, and the generation run is filed under the parent's `conversation_id`), and adds its note and generated text to the message history for good, sent again on every later request. So `interval` bounds both: a run of R requests makes `R // interval` extra calls and gains `2 * (R // interval)` parts. A run shorter than `interval` requests gets no generated reminder, which is the point of the default: instruction fade sets in over long runs. Set `interval` lower for a tighter cadence, and add `GoalReanchor` alongside it for a free check on every request in between:
 
 ```python
-_llm = LLMReminder(model='anthropic:claude-haiku-4-5')
+from pydantic_ai_harness import SystemReminders
+from pydantic_ai_harness.system_reminders import GoalReanchor, LLMReminder
 
-async def every_tenth(ctx):
-    return await _llm(ctx) if ctx.run_step % 10 == 0 else None
-
-SystemReminders(dynamic_reminders=[every_tenth])
+SystemReminders(dynamic_reminders=[GoalReanchor(), LLMReminder(model='anthropic:claude-haiku-4-5', interval=5)])
 ```
+
+`LLMReminder` defaults to `interval=10`. Earlier releases generated on every model request, and each generation adds two parts to the history for good, so an agent with an `LLMReminder` and no cadence of its own grew its history by two parts on every step. Leaving `interval` unset warns that the default changed: pass `interval=10` to keep the new cadence without the warning, or `interval=1` to generate on every request as before. A wrapper that gates `LLMReminder` itself should pass `interval=1`, so the wrapper alone decides.
+
+The nested call runs under the parent's `usage_limits` with one request held back for the model request it precedes, so the reminder cannot push a run past its `request_limit`; once the budget is that tight the generation is skipped and `GoalReanchor` text is used instead. Every other generation failure is logged at warning level with its traceback under the `pydantic_ai_harness.system_reminders` logger namespace, once per run, so a misconfigured `model` (bad id, missing key) shows up in the logs once per run rather than on every model request, while the run carries on with the fallback text.
 
 Under a durability engine, a `LLMReminder` listed directly in `dynamic_reminders` is a journaled
 capability operation: replay restores the recorded reminder instead of repeating the model call,
@@ -126,8 +128,9 @@ stable default `id='system_reminders'`, so durable recovery works without config
 
 Only a direct entry takes that route. Two shapes do not:
 
-- A wrapper like `every_tenth` above calls `LLMReminder` from orchestration context, where engines
-  that forbid I/O can fail the call outright.
+- A wrapper of your own that calls `LLMReminder` (to gate it on a condition, say) calls it from
+  orchestration context, where engines that forbid I/O can fail the call outright. Called that way,
+  it still applies its `interval`, counted in run steps (`ctx.run_step`).
 - An `LLMReminder` subclass that overrides `__call__` runs that override directly, so it cannot be
   journaled either.
 
@@ -170,7 +173,7 @@ Per-run state (the request counter and per-reminder fire counts) is isolated via
 
 ## Caching guarantee
 
-Reminders never go into the leading system prompt or instructions, and the history only ever grows by appending, so it stays eligible for a cache hit. Plain reminders, `GoalReanchor` included, are request-scoped system prompts at the tail of the request, and the only added cost is reading each one once. An `LLMReminder` record is not request-scoped: every firing adds its note and generated text to the history for good, and every later request sends all of them again. Those accumulated records are read from cache when the prefix before them is cached, and paid for in full when it isn't, so gate `LLMReminder` with a cadence and turn on caching for your model.
+Reminders never go into the leading system prompt or instructions, and the history only ever grows by appending, so it stays eligible for a cache hit. Plain reminders, `GoalReanchor` included, are request-scoped system prompts at the tail of the request, and the only added cost is reading each one once. An `LLMReminder` record is not request-scoped: every firing adds its note and generated text to the history for good, and every later request sends all of them again. Those accumulated records are read from cache when the prefix before them is cached, and paid for in full when it isn't, so keep `LLMReminder`'s `interval` as long as the run allows and turn on caching for your model.
 
 `SystemReminders` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoint it places lands before the reminder.
 
