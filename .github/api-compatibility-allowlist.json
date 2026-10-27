@@ -377,6 +377,18 @@
       "fingerprint": "c2655ed50f60d9b53296c110ea2267134651aa29c6bfa49d4beb7ffcceede410",
       "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `forks=forks`.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11334"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "dcb2431e1bbc812b56173506396ace190fe46904c4f5910fd353fe3861c75f7b",
+      "reason": "`pydantic_ai_harness.step_persistence.conversations.ConversationConflict` was renamed to `SessionConflict` (#10473), since core's `pydantic_ai.conversation_store` now uses the old name; the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10473"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "5086e5a6091c0cc551345ecb69342c5d4377191c4b9cd6a87dc317b29e08ff4f",
+      "reason": "`pydantic_ai_harness.step_persistence.conversations.SqliteConversationStore` was renamed to `SqliteSessionStore` (#10473), since core's `pydantic_ai.conversation_store` now uses the old name; the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10473"
     }
   ],
   "model_name_literals": [
