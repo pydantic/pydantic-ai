@@ -959,6 +959,39 @@ def test_inline_defs_resolves_a_contains_ref():
     )
 
 
+def test_inline_defs_subclass_transforms_a_keyword_ref_once():
+    """A `$ref` under `propertyNames` or `contains` is walked once, so a subclass's `transform()` runs on it once.
+
+    A recording can't check this: cassettes match on method and URI, not the request body.
+    """
+
+    class MarkingTransformer(InlineDefsJsonSchemaTransformer):
+        def transform(self, schema: JsonSchema) -> JsonSchema:
+            if 'description' in schema:
+                schema['description'] += '!'
+            return schema
+
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {
+            'keyed': {'type': 'object', 'propertyNames': {'$ref': '#/$defs/Key'}},
+            'listed': {'type': 'array', 'contains': {'$ref': '#/$defs/Key'}},
+            'key': {'$ref': '#/$defs/Key'},
+        },
+        '$defs': {'Key': {'type': 'string', 'description': 'key'}},
+    }
+    assert MarkingTransformer(schema).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'keyed': {'type': 'object', 'propertyNames': {'type': 'string', 'description': 'key!'}},
+                'listed': {'type': 'array', 'contains': {'type': 'string', 'description': 'key!'}},
+                'key': {'type': 'string', 'description': 'key!'},
+            },
+        }
+    )
+
+
 @pytest.mark.parametrize(('type_', 'keyword'), [('object', 'propertyNames'), ('array', 'contains')])
 @pytest.mark.parametrize('value', [True, False])
 def test_boolean_extra_subschemas_round_trip(type_: str, keyword: str, value: bool):

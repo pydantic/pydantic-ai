@@ -411,6 +411,35 @@ def test_openrouter_google_resolves_property_names_ref_through_tool_preparation(
     assert agent.run_sync('accept').output == 'done'
 
 
+def test_openrouter_google_resolves_contains_ref():
+    """The OpenRouter Google transformer inlines a `$ref` under `contains` and leaves a `contains` without one as written.
+
+    Pydantic never emits `contains`, so the schema is written by hand. A recording can't check this: cassettes
+    match on method and URI, not the request body.
+    """
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {
+            'positives': {'type': 'array', 'items': {'type': 'integer'}, 'contains': {'$ref': '#/$defs/Positive'}},
+            'threes': {'type': 'array', 'items': {'type': 'integer'}, 'contains': {'const': 3}},
+        },
+        '$defs': {'Positive': {'type': 'integer', 'minimum': 1}},
+    }
+    assert _OpenRouterGoogleJsonSchemaTransformer(schema).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'positives': {
+                    'type': 'array',
+                    'items': {'type': 'integer'},
+                    'contains': {'type': 'integer', 'minimum': 1},
+                },
+                'threes': {'type': 'array', 'items': {'type': 'integer'}, 'contains': {'const': 3}},
+            },
+        }
+    )
+
+
 @pytest.mark.parametrize(
     'model_name',
     [

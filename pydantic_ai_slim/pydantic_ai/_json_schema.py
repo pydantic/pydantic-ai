@@ -7,6 +7,7 @@ from typing import Any, ClassVar, Literal, TypeAlias
 
 from pydantic import JsonValue
 
+from ._utils import contains_ref
 from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
@@ -32,15 +33,6 @@ def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
         else:
             node = None
     return node if isinstance(node, dict) else None
-
-
-def contains_ref(node: JsonValue) -> bool:
-    """Whether a `$ref` appears anywhere in `node`."""
-    if isinstance(node, dict):
-        return '$ref' in node or any(contains_ref(value) for value in node.values())
-    if isinstance(node, list):
-        return any(contains_ref(value) for value in node)
-    return False
 
 
 class UseEnumMemberDocstrings:
@@ -245,12 +237,8 @@ class JsonSchemaTransformer(ABC):
                 handled_pattern_properties[key] = self._handle(value)
             schema['patternProperties'] = handled_pattern_properties
 
-        # Inlining drops `$defs`, so a `$ref` left under `propertyNames` would point at nothing. A subtree
-        # without one is left as written, so `transform()` doesn't rewrite a schema that was already valid.
-        if (
-            self.prefer_inlined_defs
-            and (property_names := schema.get('propertyNames')) is not None
-            and contains_ref(property_names)
+        if (property_names := schema.get('propertyNames')) is not None and self._walks_keyword_subschema(
+            property_names
         ):
             schema['propertyNames'] = self._handle(property_names)
 
@@ -267,11 +255,18 @@ class JsonSchemaTransformer(ABC):
         elif items:
             schema['items'] = self._handle(items)
 
-        # Same as `propertyNames` in `_handle_object`.
-        if self.prefer_inlined_defs and (contains := schema.get('contains')) is not None and contains_ref(contains):
+        if (contains := schema.get('contains')) is not None and self._walks_keyword_subschema(contains):
             schema['contains'] = self._handle(contains)
 
         return schema
+
+    def _walks_keyword_subschema(self, subschema: _JsonSchemaNode) -> bool:
+        """Whether to walk a `propertyNames` or `contains` subschema.
+
+        Inlining drops `$defs`, so a `$ref` left under either would point at nothing. A subschema without one
+        is left as written, so `transform()` doesn't rewrite a schema that was already valid.
+        """
+        return self.prefer_inlined_defs and contains_ref(subschema)
 
     def _handle_union(self, schema: JsonSchema, union_kind: Literal['allOf', 'anyOf', 'oneOf']) -> JsonSchema:
         try:
@@ -335,19 +330,10 @@ class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict, prefer_inlined_defs=True)
 
-    # Unlike the base class, walk `propertyNames` and `contains` even without a `$ref`: `transform()` is the
-    # identity here, so the walk only collapses single-member unions.
-    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
-        schema = super()._handle_object(schema)
-        if (property_names := schema.get('propertyNames')) is not None:
-            schema['propertyNames'] = self._handle(property_names)
-        return schema
-
-    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
-        schema = super()._handle_array(schema)
-        if (contains := schema.get('contains')) is not None:
-            schema['contains'] = self._handle(contains)
-        return schema
+    def _walks_keyword_subschema(self, subschema: _JsonSchemaNode) -> bool:
+        # Unlike the base class, walk one without a `$ref` too: `transform()` is the identity here, so the walk
+        # only collapses single-member unions.
+        return True
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         return schema
