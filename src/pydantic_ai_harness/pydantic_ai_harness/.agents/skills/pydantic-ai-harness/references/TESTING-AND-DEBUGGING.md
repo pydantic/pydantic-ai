@@ -337,7 +337,8 @@ the install command, e.g. `pydantic-monty is required for CodeMode. Install it w
 sees only the current one, as `<system>`-tagged user text at the end of the last request. An
 `LLMReminder` firing is instead a lasting record: a `SystemPromptPart` note (no `scope='request'`) and
 the generated text as user-channel `TextContent` in `<generated_reminder model="...">`, both re-sent on
-every later request. `interval` counts model requests from 1.
+every later request. `interval` counts model requests from 1; `LLMReminder` fires only every
+`interval` requests (10 by default), so a short scripted run needs `LLMReminder(..., interval=1)`.
 
 **Looks like it never fires.** Context-window-driven capabilities (the compaction family) cannot
 resolve a window for `TestModel`, so thresholds default high; pass `context_window=` or
