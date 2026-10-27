@@ -297,6 +297,17 @@ export function App() {
     setOpening((current) => (current?.id === sessionId ? null : current))
   }, [sessionId])
 
+  // So does focus: the picked session showing puts the cursor in its composer, unless the reader has moved it off what
+  // the pick left focused (the row clicked, or the page itself) while the session loaded.
+  const focusing = useRef<{ id: string; from: Element | null } | null>(null)
+  useEffect(() => {
+    const pick = focusing.current
+    if (!pick || pick.id !== sessionId) return
+    focusing.current = null
+    const active = document.activeElement
+    if (!active || active === document.body || active === pick.from || !active.isConnected) composer.current?.focus()
+  }, [sessionId])
+
   // The session may not show at all (it closed meanwhile), so stop waiting eventually.
   useEffect(() => {
     if (!opening) return
@@ -326,6 +337,7 @@ export function App() {
   const show = useCallback((id: string) => {
     // A session picked earlier and still opening loses to this one.
     picked.current++
+    if (focusing.current?.id !== id) focusing.current = null
     // Its own spinner stays until it shows; one for a session picked before goes.
     setOpening((current) => (current?.id === id ? current : null))
     setPane('session')
@@ -416,6 +428,7 @@ export function App() {
         setOpening(null)
         return
       }
+      focusing.current = { id: session.id, from: document.activeElement }
       // A watched session's chat is current: it shows at once, and opening it only makes it the default again.
       if (session.id in chats && session.id in live) {
         show(session.id)
@@ -433,6 +446,7 @@ export function App() {
           const saved = await api.transcript(session.id)
           if (request !== picked.current) return
           if (!saved.openable) {
+            focusing.current = null
             setPreview(saved)
             setOpening(null)
             return
@@ -445,6 +459,7 @@ export function App() {
         else setPreview(null)
       } catch (error) {
         if (request !== picked.current) return
+        focusing.current = null
         setOpening(null)
         showError(error instanceof Error ? error.message : String(error))
       }

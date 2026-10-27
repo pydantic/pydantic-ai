@@ -642,3 +642,42 @@ async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: 
     await expect(body.locator('.code-small')).to_have_count(0)
     await expect(body).to_contain_text('line_8 = 8')
     assert '\\n' not in await body.inner_text()
+
+
+async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    current = page.locator('.session.current .session-title')
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    # Whichever session an earlier case left shown, Gamma shows first, so picking Beta switches.
+    await expect(current).to_have_count(1)
+    await sidebar.get_by_text('Browser Gamma', exact=True).click()
+    await expect(current).to_have_text('Browser Gamma')
+    await sidebar.get_by_text('Browser Beta', exact=True).click()
+    await expect(current).to_have_text('Browser Beta')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(composer).to_be_focused()
+    # Typing right away lands in the prompt box.
+    await page.keyboard.type('typed after switching')
+    await expect(composer).to_have_value('typed after switching')
+    await composer.fill('')
+    # Focus the reader moved elsewhere while the session opened stays put.
+    release = asyncio.Event()
+
+    async def hold(route: Route) -> None:
+        await release.wait()
+        await route.continue_()
+
+    await page.route(f'**/api/sessions/{web_ui.delta}/open', hold)
+    await sidebar.get_by_text('Browser Delta', exact=True).click()
+    await expect(page.locator('.session.opening')).to_have_count(1)
+    search = page.get_by_placeholder('Search sessions')
+    await search.focus()
+    release.set()
+    await expect(current).to_have_text('Browser Delta')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(search).to_be_focused()
+    # A watched session shows at once without opening, and takes focus all the same.
+    await sidebar.get_by_text('Browser Gamma', exact=True).click()
+    await expect(current).to_have_text('Browser Gamma')
+    await expect(composer).to_be_focused()
