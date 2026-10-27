@@ -120,7 +120,9 @@ The cache stays intact only if a callable `tools` selector gives the same answer
 
 The catalog block is keyed through the toolset id `code_mode`, which `CodeModeToolset` takes only with `dynamic_catalog=True`. If the agent has another toolset with the id `code_mode` that contributes instructions, the run raises a `UserError` for the duplicate id. Rename that toolset.
 
-Two setups still declare a deferred tool that `run_code` will take over natively, because only the provider's native tool search can find it there: the `'bm25'` and `'regex'` Tool Search strategies, which have no local `search_tools`, and a `tools` selector that keeps another deferred tool native, which keeps the native search on the wire in place of `search_tools`. In those setups the declaration is dropped when the tool moves into `run_code`, as it is with `dynamic_catalog=False`.
+When a `tools` selector sandboxes some deferred tools and keeps others native, the local `search_tools` searches all of them, and the provider's native tool search isn't sent. Neither kind is declared before it's found: a sandboxed tool joins the catalog, and a native one is added the way any tool found by `search_tools` is, which on Anthropic and OpenAI Responses appends it to the conversation. The cost is that in this setup the native tools are found by local keyword matching (or your `strategy` callable) rather than by the provider's server-side search.
+
+The `'bm25'` and `'regex'` Tool Search strategies have no local `search_tools`, so only the provider's native tool search can find a deferred tool there. With them, a deferred tool that `run_code` will take over is still declared natively, and the declaration is dropped when it moves into `run_code`, as it is with `dynamic_catalog=False`.
 
 Pass `dynamic_catalog=False` to keep the catalog in `run_code`'s description instead, which earlier releases did by default:
 

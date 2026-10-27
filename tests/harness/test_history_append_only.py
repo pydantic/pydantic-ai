@@ -166,6 +166,11 @@ def _forecast(city: str) -> str:
     return f'Sunny in {city}.'
 
 
+def _tides(port: str) -> str:
+    """Get the tide times for a port."""
+    return f'High tide at noon in {port}.'
+
+
 def _modal_sandbox() -> AbstractCapability[Any]:
     # Imported here, not at module level, so collecting this file never imports the Modal SDK. The test has
     # already skipped when `modal` isn't installed (`OPTIONAL_DEPENDENCIES`).
@@ -251,6 +256,33 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
                 ('search_tools', {'queries': ['forecast']}),
                 ('run_code', {'code': "await forecast(city='Paris')"}),
             ),
+        ),
+    ),
+    # A selector that sandboxes one deferred tool and keeps another native: `search_tools` searches both, so
+    # neither is declared before it's found (docs/harness/code-mode.md#tool-search-interaction).
+    'CodeMode(tools=not-tides)+ToolSearch': (
+        lambda _: [
+            CodeMode(tools=lambda ctx, td: td.name != 'tides'),
+            ToolSearch(),
+            Toolset(
+                FunctionToolset(
+                    [
+                        Tool(_forecast, name='forecast', defer_loading=True),
+                        Tool(_tides, name='tides', defer_loading=True),
+                    ]
+                )
+            ),
+        ],
+        Scenario(
+            turns=(
+                Turn(calls=(('search_tools', {'queries': ['forecast']}),)),
+                Turn(calls=(('run_code', {'code': "await forecast(city='Paris')"}),)),
+                Turn(text='Sunny in Paris.'),
+                Turn(calls=(('search_tools', {'queries': ['tides']}),)),
+                Turn(calls=(('tides', {'port': 'Brest'}),)),
+                Turn(text='High tide at noon.'),
+            ),
+            serialize_history=True,
         ),
     ),
 }
@@ -348,6 +380,13 @@ ALLOWED: dict[str, Allowed] = {
         tail=True,
         records=('request-scoped system prompt',),
         providers=('openai-responses', 'openai-chat'),
+    ),
+    # docs/tools-advanced.md: Chat Completions has no deferred-tool channel, so the local `search_tools` reveals
+    # the native `tides` by adding it to `tools`. `forecast` goes into `run_code` and moves nothing.
+    'CodeMode(tools=not-tides)+ToolSearch': Allowed(
+        'Chat Completions has no native tool search, so a native reveal adds the tool to `tools`, as documented',
+        (('tools', 'tool:search_tools'), ('tools', 'tool:run_code')),
+        providers=('openai-chat',),
     ),
 }
 """Documented prefix movers, checked exactly."""
