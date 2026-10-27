@@ -871,6 +871,9 @@ async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui
     async with page.expect_request(f'**/api/sessions/{web_ui.lines}/input') as typed_in_full:
         await composer.press('Enter')
     assert (await typed_in_full.value).post_data_json == {'text': 'see @README.md'}
+    # The first message moves the composer from the new-session hero to the bottom bar; type there.
+    await expect(page.locator('.user-bubble').filter(has_text='see @README.md')).to_be_visible()
+    await expect(composer).to_have_value('')
     # A longer word under the caret is not the file typed in full, so Enter takes the suggestion instead.
     await composer.fill('@README.mdx')
     await composer.press('ArrowLeft')
