@@ -115,6 +115,7 @@ from .conftest import (
     legacy_retry_prompt_part,
     message,
     message_part,
+    server_history_agent,
     try_import,
 )
 
@@ -13546,35 +13547,6 @@ async def test_model_settings_delta_after_enqueued_messages_keeps_its_position()
     )
 
 
-def _server_history_agent() -> tuple[Agent[None, str | DeferredToolRequests], list[list[ModelMessage]], list[str]]:
-    """An agent that calls a tool once a prompt asks for one, and records every model request and tool run."""
-    requests: list[list[ModelMessage]] = []
-    deleted: list[str] = []
-
-    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
-        requests.append(messages)
-        last = messages[-1].parts[-1]
-        if isinstance(last, UserPromptPart) and last.content == 'where am I?':
-            yield {0: DeltaToolCall(name='get_location', json_args='{}', tool_call_id='loc-1')}
-        elif isinstance(last, UserPromptPart) and last.content == 'delete a.txt':
-            yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "a.txt"}', tool_call_id='del-1')}
-        else:
-            yield 'ok'
-
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
-        FunctionModel(stream_function=stream_function),
-        output_type=[str, DeferredToolRequests],
-        toolsets=[ExternalToolset([ToolDefinition(name='get_location')])],
-    )
-
-    @agent.tool_plain(requires_approval=True)
-    def delete_file(path: str) -> str:
-        deleted.append(path)
-        return f'Deleted {path}'
-
-    return agent, requests, deleted
-
-
 async def _server_history_turn(
     agent: Agent[None, str | DeferredToolRequests],
     run_input: SubmitMessage | RegenerateMessage,
@@ -13599,7 +13571,7 @@ _AND_NOW = UIMessage(id='u2', role='user', parts=[TextUIPart(text='and now?')])
 @pytest.mark.parametrize('client_sends', ['everything', 'last message only'])
 async def test_server_message_history_follow_up(client_sends: str):
     """`useChat` sends its whole history by default; `prepareSendMessagesRequest` can trim it to the last message."""
-    agent, requests, _ = _server_history_agent()
+    agent, requests, _ = server_history_agent([ExternalToolset([ToolDefinition(name='get_location')])])
     stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
 
     messages = [_HI, _OK, _AND_NOW] if client_sends == 'everything' else [_AND_NOW]
@@ -13617,7 +13589,7 @@ async def test_server_message_history_stale_regenerate_is_an_error_event():
 
     It's on the stream, under a `200`, like any request the adapter rejects once it runs, and the model isn't asked.
     """
-    agent, requests, _ = _server_history_agent()
+    agent, requests, _ = server_history_agent([ExternalToolset([ToolDefinition(name='get_location')])])
     stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
     body = RegenerateMessage(trigger='regenerate-message', id='chat', messages=[_HI, _OK, _AND_NOW])
 
@@ -13657,7 +13629,7 @@ data: [DONE]
 
 @pytest.mark.parametrize('trigger', ['regenerate', 'edit'])
 async def test_server_message_history_regenerate_and_edit_replace_the_turn(trigger: str):
-    agent, requests, _ = _server_history_agent()
+    agent, requests, _ = server_history_agent([ExternalToolset([ToolDefinition(name='get_location')])])
     stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
     stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]), stored)
 
@@ -13680,7 +13652,7 @@ async def test_server_message_history_regenerate_and_edit_replace_the_turn(trigg
 
 async def test_server_message_history_frontend_tool_output():
     """The output of a tool the frontend ran rides on the last assistant message, the one the stored history ends with."""
-    agent, requests, _ = _server_history_agent()
+    agent, requests, _ = server_history_agent([ExternalToolset([ToolDefinition(name='get_location')])])
     where = UIMessage(id='u1', role='user', parts=[TextUIPart(text='where am I?')])
     stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[where]), None)
     assert conversation_view(stored) == snapshot(['user-prompt: where am I?', 'call loc-1'])
@@ -13705,7 +13677,7 @@ async def test_server_message_history_frontend_tool_output():
 @pytest.mark.parametrize('approved', [True, False])
 async def test_server_message_history_tool_approval(approved: bool):
     """An approval resume has no new turn: the stored history ends with the call, and the approval comes from the request."""
-    agent, requests, deleted = _server_history_agent()
+    agent, requests, deleted = server_history_agent([ExternalToolset([ToolDefinition(name='get_location')])])
     delete = UIMessage(id='u1', role='user', parts=[TextUIPart(text='delete a.txt')])
     stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[delete]), None, sdk_version=6)
 
@@ -13733,7 +13705,7 @@ async def test_server_message_history_tool_approval(approved: bool):
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 async def test_dispatch_request_forwards_manage_message_history():
-    agent, requests, _ = _server_history_agent()
+    agent, requests, _ = server_history_agent([ExternalToolset([ToolDefinition(name='get_location')])])
     stored = await _server_history_turn(agent, SubmitMessage(id='chat', messages=[_HI]), None)
     body = SubmitMessage(id='chat', messages=[_HI, _OK, _AND_NOW]).model_dump_json(by_alias=True).encode()
 

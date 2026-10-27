@@ -32,7 +32,7 @@ from pytest_mock import MockerFixture
 
 import pydantic_ai._http
 import pydantic_ai.models
-from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder, ImageGenerator
+from pydantic_ai import Agent, BinaryContent, BinaryImage, DeferredToolRequests, Embedder, ImageGenerator
 from pydantic_ai._cache_health import ConversationCacheMarkStore
 from pydantic_ai.capabilities import instrumentation as instrumentation_capability
 from pydantic_ai.exceptions import PydanticAIDeprecationWarning
@@ -56,6 +56,8 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from . import cassette_hooks, cost_guards
@@ -1620,6 +1622,42 @@ def conversation_view(messages: Sequence[ModelMessage]) -> list[str]:
             elif isinstance(part, (UserPromptPart, SystemPromptPart, TextPart)):  # pragma: no branch
                 view.append(f'{part.part_kind}: {part.content}')
     return view
+
+
+def server_history_agent(
+    toolsets: Sequence[AbstractToolset[None]] = (),
+) -> tuple[Agent[None, str | DeferredToolRequests], list[list[ModelMessage]], list[str]]:
+    """An agent for the UI adapters' server-held history tests, with the model requests and tool runs it records.
+
+    It calls `get_location` for "where am I?" and the approval-gated `delete_file` for "delete a.txt", and answers
+    `ok` otherwise. Pass the frontend `get_location` tool as `toolsets` for a protocol that doesn't send it.
+    """
+    requests: list[list[ModelMessage]] = []
+    deleted: list[str] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        requests.append(messages)
+        last = messages[-1].parts[-1]
+        if isinstance(last, UserPromptPart) and last.content == 'where am I?':
+            yield {0: DeltaToolCall(name='get_location', json_args='{}', tool_call_id='loc-1')}
+        elif isinstance(last, UserPromptPart) and last.content == 'delete a.txt':
+            yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "a.txt"}', tool_call_id='del-1')}
+        else:
+            yield 'ok'
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(stream_function=stream_function),
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        toolsets=toolsets,
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        deleted.append(path)
+        return f'Deleted {path}'
+
+    return agent, requests, deleted
 
 
 # endregion

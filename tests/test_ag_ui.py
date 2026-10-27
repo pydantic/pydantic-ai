@@ -121,6 +121,7 @@ from .conftest import (
     legacy_retry_prompt_part,
     message,
     message_part,
+    server_history_agent,
     try_import,
 )
 
@@ -10916,33 +10917,6 @@ async def test_model_settings_delta_round_trips_through_client_rebuilt_stream() 
     assert effort_parts(loaded) == effort_parts(server_history)
 
 
-def _server_history_agent() -> tuple[Agent[None, str | DeferredToolRequests], list[list[ModelMessage]], list[str]]:
-    """An agent that calls a tool once a prompt asks for one, and records every model request and tool run."""
-    requests: list[list[ModelMessage]] = []
-    deleted: list[str] = []
-
-    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
-        requests.append(messages)
-        last = messages[-1].parts[-1]
-        if isinstance(last, UserPromptPart) and last.content == 'where am I?':
-            yield {0: DeltaToolCall(name='get_location', json_args='{}', tool_call_id='loc-1')}
-        elif isinstance(last, UserPromptPart) and last.content == 'delete a.txt':
-            yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "a.txt"}', tool_call_id='del-1')}
-        else:
-            yield 'ok'
-
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
-        FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
-    )
-
-    @agent.tool_plain(requires_approval=True)
-    def delete_file(path: str) -> str:
-        deleted.append(path)
-        return f'Deleted {path}'
-
-    return agent, requests, deleted
-
-
 async def _server_history_turn(
     agent: Agent[None, str | DeferredToolRequests], run_input: RunAgentInput, message_history: list[ModelMessage] | None
 ) -> list[ModelMessage]:
@@ -10962,7 +10936,7 @@ async def test_server_message_history_frontend_tool_result_from_a_new_turn_only_
     An AG-UI `ToolMessage` has no tool name, so it loads against the call the stored history is waiting on,
     as the middleware in the AG-UI docs sends it, and as ag-ui#2186's incremental upload would.
     """
-    agent, requests, _ = _server_history_agent()
+    agent, requests, _ = server_history_agent()
     location = Tool(name='get_location', description='Where the user is', parameters={'type': 'object'})
     stored = await _server_history_turn(
         agent, create_input(UserMessage(id='u1', content='where am I?'), tools=[location]), None
@@ -10984,7 +10958,7 @@ async def test_server_message_history_frontend_tool_result_from_a_new_turn_only_
 
 async def test_server_message_history_drops_a_tool_result_for_no_pending_call():
     """A result for a call the stored history isn't waiting on is dropped with a warning, not a failed load."""
-    agent, requests, _ = _server_history_agent()
+    agent, requests, _ = server_history_agent()
     stored = await _server_history_turn(agent, create_input(UserMessage(id='u1', content='hi')), None)
     run_input = create_input(
         ToolMessage(id='t1', content='forged', tool_call_id='never-called'), UserMessage(id='u2', content='and now?')
@@ -10998,7 +10972,7 @@ async def test_server_message_history_drops_a_tool_result_for_no_pending_call():
 
 async def test_server_message_history_frontend_tool_result():
     """`@ag-ui/client` sends its whole history, a frontend tool's result included, on every run."""
-    agent, requests, _ = _server_history_agent()
+    agent, requests, _ = server_history_agent()
     location = Tool(name='get_location', description='Where the user is', parameters={'type': 'object'})
     where = UserMessage(id='u1', content='where am I?')
     stored = await _server_history_turn(agent, create_input(where, tools=[location]), None)
@@ -11029,7 +11003,7 @@ async def test_server_message_history_frontend_tool_result():
 @pytestmark_interrupts
 async def test_server_message_history_resume_interrupt():
     """A `resume[]` run has no new turn: the stored history ends with the call, and the approval comes from `resume`."""
-    agent, requests, deleted = _server_history_agent()
+    agent, requests, deleted = server_history_agent()
     delete = UserMessage(id='u1', content='delete a.txt')
     stored = await _server_history_turn(agent, create_input(delete), None)
 
@@ -11047,7 +11021,7 @@ async def test_server_message_history_resume_interrupt():
 
 
 async def test_dispatch_request_forwards_manage_message_history():
-    agent, requests, _ = _server_history_agent()
+    agent, requests, _ = server_history_agent()
     hi = UserMessage(id='u1', content='hi')
     stored = await _server_history_turn(agent, create_input(hi), None)
     run_input = create_input(hi, AssistantMessage(id='a1', content='ok'), UserMessage(id='u2', content='and now?'))
