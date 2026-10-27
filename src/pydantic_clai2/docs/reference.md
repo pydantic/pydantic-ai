@@ -877,6 +877,20 @@ instead of falling back, so a missing login is not hidden. Older CLAI builds kee
 the rest of your settings, but cannot run a profile, `@*`, `@default`, or chain
 model, and run a model without an account on the default account only.
 
+### Long subscription retry waits
+
+For plugin models resolved under `claude-code:`, CLAI stops an automatic retry when an
+HTTP 429 response asks it to wait **more than 60 seconds**. The error shows the requested
+delay and points to `/model`; the response's retry and quota headers are retained.
+Shorter delays, including exactly 60 seconds, and the SDK's ordinary connection and
+transient-error retries remain unchanged. The limit is per retry delay, not per turn.
+
+A fallback chain you selected with `/model chains` can move to its next model after
+this rejection. CLAI does not select another provider on its own. If no configured
+fallback succeeds, the turn ends visibly and retains the prompt, prior responses and
+completed tool results in conversation history. You can continue after the limit
+resets or choose another model. Completed tool side effects are not undone or replayed.
+
 ### vllm connection
 
 Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks. The connection is saved like Codex's, see [Codex authentication](#codex-authentication).

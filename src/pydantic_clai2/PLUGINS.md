@@ -3384,6 +3384,15 @@ CLAI knows, such as an `AnthropicModel` subclass, set `settings_from='anthropic'
 models get that provider's controls instead, such as Claude's thinking mode and
 effort. Any other value raises `ValueError`.
 
+CLAI applies a bounded-wait policy to Anthropic SDK models returned under the
+`claude-code` prefix, including named profiles and fallback-chain members. An HTTP 429
+whose effective `Retry-After` exceeds 60 seconds is surfaced without the SDK's long
+sleep. The SDK keeps its other retry behavior, authentication and client ownership;
+existing HTTP response hooks are preserved. The retry delay, response body and quota
+headers remain available on the typed error. A configured fallback chain can advance
+normally; without one, CLAI ends the turn visibly and keeps its history. Other plugin
+prefixes and preconstructed models that bypass model resolution are unchanged.
+
 The built-in `/effort [VALUE|reset]` shortcut uses the active model's
 `/model settings` effort control, including a plugin provider's `settings_from`
 mapping. It saves values under the plugin model identifier, not the mapped provider.
