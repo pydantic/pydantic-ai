@@ -137,6 +137,12 @@ For Claude, Bedrock compiles strict schemas with Anthropic's
 structured `output_type` whose schema is over them keeps tool output, and explicitly strict schemas over them raise a
 [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before the request is sent.
 
+Native Output is sent as Converse's `outputConfig`, which a `botocore` released before Bedrock added it rejects before
+sending. That can happen on AWS Lambda, where the runtime's bundled `botocore` can shadow a newer one. With such a
+`botocore`, Pydantic AI treats Native Output as unsupported: a bare structured `output_type` uses the output mode it
+would use for a model without Native Output, and an explicit [`NativeOutput`][pydantic_ai.output.NativeOutput] raises
+a [`UserError`][pydantic_ai.exceptions.UserError] asking you to upgrade `boto3` and `botocore`.
+
 The output mode is chosen on the run's first request and kept for the rest of the run (except behind a
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], where each model chooses on every request), so a thinking
 setting that changes from step to step doesn't add or remove the output tool between requests and
