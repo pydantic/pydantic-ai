@@ -1157,6 +1157,7 @@ class TestBridgeFailureModes:
         assert thread is not None
         task_started = threading.Event()
         task_cancelled = threading.Event()
+        tasks: list[asyncio.Task[None]] = []
 
         async def pending_work() -> None:
             task_started.set()
@@ -1165,13 +1166,17 @@ class TestBridgeFailureModes:
             finally:
                 task_cancelled.set()
 
-        loop.call_soon_threadsafe(loop.create_task, pending_work())
+        # Keep the task: a loop holds its tasks only weakly, so a dropped task waiting on an event
+        # nothing else references can be garbage-collected, running its `finally`, before the
+        # retirement gets to cancel it.
+        loop.call_soon_threadsafe(lambda: tasks.append(loop.create_task(pending_work())))
         assert task_started.wait(timeout=5)
 
         loops.retire(loop, None)
 
         thread.join(timeout=5)
         assert task_cancelled.is_set()
+        assert tasks[0].cancelled()
         assert loop.is_closed()
         assert not thread.is_alive()
 
