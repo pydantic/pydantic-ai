@@ -4960,18 +4960,18 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
 
             agent_run: AgentRun[_PreparedDepsT, _PreparedOutputT] | None = None
 
-            async def settle_ended_pending(exc_type: type[BaseException] | None, *_: object) -> None:
+            async def settle_pending_at_run_end(exc_type: type[BaseException] | None, *_: object) -> None:
                 # After the run's hooks and the caller's block, so it knows how the run ended, and before any model it
                 # entered is exited, so a pending response the run didn't end with can still be withdrawn through it.
-                if graph_deps.ended_pending is None:
+                if graph_deps.accepted_pending is None:
                     return
                 assert agent_run is not None
                 result = agent_run.result
-                await _agent_graph.settle_ended_pending(
+                await _agent_graph.settle_accepted_pending(
                     graph_deps, result.output if result is not None else None, failed=exc_type is not None
                 )
 
-            stack.push_async_exit(settle_ended_pending)
+            stack.push_async_exit(settle_pending_at_run_end)
             graph_run = await stack.enter_async_context(
                 self.graph.iter(
                     inputs=self.user_prompt_node,

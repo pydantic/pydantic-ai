@@ -568,12 +568,12 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     adopted_response: _messages.ModelResponse | None = None
     """The trailing history response a no-prompt run continues from, which records this run's ref like its own."""
 
-    ended_pending: tuple[ModelRequestContext, _messages.ModelResponse] | None = dataclasses.field(
+    accepted_pending: tuple[ModelRequestContext, _messages.ModelResponse] | None = dataclasses.field(
         default=None, repr=False
     )
     """The pending response a model request returned and its hooks accepted, settled once the run ends.
 
-    Runtime-only: `settle_ended_pending` leaves it for a later run only if the run ends with it as its output.
+    Runtime-only: `settle_accepted_pending` leaves it for a later run only if the run ends with it as its output.
     """
 
     @property
@@ -1264,14 +1264,14 @@ async def _settle_pending(
         await _cancel_interrupted_job(request_context, response)
 
 
-async def settle_ended_pending(deps: GraphAgentDeps[Any, Any], output: object, *, failed: bool) -> None:
+async def settle_accepted_pending(deps: GraphAgentDeps[Any, Any], output: object, *, failed: bool) -> None:
     """Settle the pending response the run's last model request returned, now that the run has ended.
 
     Only a run that ends with it as its [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] output
     leaves it for a later run: one that fails or is cancelled after the request, or ends with another output (e.g.
     from `after_run`), withdraws it, as does an `iter` run its caller stopped before it ended.
     """
-    pending, deps.ended_pending = deps.ended_pending, None
+    pending, deps.accepted_pending = deps.accepted_pending, None
     accepted = output.response if not failed and isinstance(output, PendingModelResponse) else None
     await _settle_pending(pending, accepted)
 
@@ -2547,8 +2547,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             raise
         if pending is not None and _is_kept(pending, response):
             # A hook that sent the run back to the model, rather than letting it end, superseded the one it accepted.
-            await _settle_pending(ctx.deps.ended_pending, None)
-            ctx.deps.ended_pending = pending
+            await _settle_pending(ctx.deps.accepted_pending, None)
+            ctx.deps.accepted_pending = pending
         else:
             await _settle_pending(pending, response)
         return next_node
