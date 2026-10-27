@@ -9,6 +9,8 @@ from __future__ import annotations as _annotations
 import json
 import os
 import subprocess
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -409,7 +411,15 @@ async def test_overrides_win_over_github(capfire: CaptureLogfire, monkeypatch: p
 
 async def test_not_detected_when_span_is_not_recording(monkeypatch: pytest.MonkeyPatch):
     """Without a recording span, detection doesn't run, so nothing reads files or runs `git`."""
-    import logfire
+    from pydantic_evals import dataset as dataset_module
+
+    real_logfire_span = dataset_module.logfire_span
+
+    @contextmanager
+    def non_recording_span(*args: Any, **kwargs: Any) -> Generator[Any, None, None]:
+        with real_logfire_span(*args, **kwargs) as span:
+            monkeypatch.setattr(span, 'is_recording', lambda: False)
+            yield span
 
     calls: list[None] = []
 
@@ -417,7 +427,7 @@ async def test_not_detected_when_span_is_not_recording(monkeypatch: pytest.Monke
         calls.append(None)  # pragma: no cover
         return {}  # pragma: no cover
 
-    monkeypatch.setattr('pydantic_evals.dataset.ci_provenance_attributes', fake_attributes)
-    with logfire.suppress_instrumentation():
-        await Dataset[Any, Any, Any](name='provenance', cases=[Case(inputs='x')]).evaluate(_task, progress=False)
+    monkeypatch.setattr(dataset_module, 'logfire_span', non_recording_span)
+    monkeypatch.setattr(dataset_module, 'ci_provenance_attributes', fake_attributes)
+    await Dataset[Any, Any, Any](name='provenance', cases=[Case(inputs='x')]).evaluate(_task, progress=False)
     assert calls == []
