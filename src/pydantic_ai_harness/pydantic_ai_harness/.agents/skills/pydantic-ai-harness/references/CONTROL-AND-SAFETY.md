@@ -493,8 +493,13 @@ print(agent.run_sync('Set up storage').output)
 
 ## SystemReminders
 
-Appends reminders to the tail of each model request as an ephemeral user part behind a
-`CachePoint`: never written to message history, never busts the prompt cache.
+Enqueues reminders at the tail of each model request as a request-scoped `SystemPromptPart`
+(`scope='request'`): the model sees each one only in the model request it's part of, and the next
+request, even the next step of the same run, no longer shows it. It's kept in message history, and
+it sits after the cached prefix, so it doesn't invalidate it. Turn on caching on the model
+(e.g. `anthropic_cache`); its breakpoint lands before the reminder. `cache_ttl` is deprecated and
+has no effect. With `interval>1` the model sees a reminder only on the requests where it fires, so
+text it must follow at every step belongs in the agent's instructions, not in a `Reminder`.
 
 ```python
 from pydantic_ai import Agent
@@ -507,8 +512,8 @@ agent = Agent(
     capabilities=[
         SystemReminders(
             reminders=[
-                Reminder('Stay focused on the original request.', interval=5),
-                Reminder('Run the tests before finishing.', interval=10, max_fires=2),
+                Reminder('Stay focused on the original request.', interval=5, tag=None),
+                Reminder('Run the tests before finishing.', interval=10, max_fires=2, tag=None),
             ],
             dynamic_reminders=[
                 GoalReanchor(),
@@ -519,18 +524,33 @@ agent = Agent(
 )
 ```
 
-- `Reminder(content, interval=1, first_after=None, trigger=None, max_fires=None, tag='system-reminder')`:
+- `Reminder(content, interval=1, first_after=None, trigger=None, max_fires=None, tag=None)`:
   requests are counted from 1 per run, so `interval=4` fires on requests 4, 8, 12; `first_after=N`
   moves the first fire to request N, then every `interval` after (`first_after=1, interval=4` fires
-  on 1, 5, 9). `trigger(ctx) -> bool` adds a condition; `tag=None` sends raw text.
-- `dynamic_reminders`: callables `(ctx) -> str | None`, sync or async, evaluated on **every**
-  request, injected raw (no tag).
-- `GoalReanchor()` restates the run's first user prompt; free.
-- `LLMReminder(model=...)` (model required) makes one extra model call per request; its agent is
-  built on first use, so no provider key is needed at construction. On any error it sends
-  `GoalReanchor` text instead, with no warning or log; gate it with your own cadence wrapper.
-- `cache_ttl='5m' | '1h'`. Observe with `ReminderFiredEvent` (`on_fire` is deprecated).
-- Each tail capability (this, `Planning`) adds a cache breakpoint; Anthropic allows 4.
+  on 1, 5, 9). `trigger(ctx) -> bool` adds a condition. Pass `tag=None`: left unset it warns that the
+  default used to be `'system-reminder'`. A reminder needs no tag, since it's already sent as a
+  system prompt; `tag='name'` wraps the text in `<name>`.
+- `dynamic_reminders`: callables `(ctx) -> str | GeneratedReminder | None`, sync or async, evaluated
+  on **every** request. A `str` is sent as written (no tag); a `GeneratedReminder` is quoted as data. Reminders are system prompts, so return only text you wrote and
+  quote user input or tool output as data.
+- `GoalReanchor()` points the model back at the run's first user prompt without repeating it (at the
+  compaction summary once native compaction took the prompt); free. `LLMReminder` returns a
+  `GeneratedReminder`, not a `str`, so it stays data: a fixed note in system voice and the generated
+  text on the user channel (`<generated_reminder model="...">`), kept in history together as one record.
+  A plain `str` a dynamic reminder returns is operator text in system voice. Framing tags in quoted
+  text are escaped.
+- `LLMReminder(model=..., interval=10)` (model required) makes one extra model call every `interval`
+  requests (10th, 20th, ...; pass `interval` explicitly: left unset it warns that the default used to
+  be `1`). Each firing adds a note and the generated text to history for good, so a run of R requests
+  gains `2 * (R // interval)` parts. Its agent is built on first use, so no provider key is needed at
+  construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
+  traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
+  the extra request is silent. A wrapper that gates it itself should pass `interval=1`.
+- Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
+  (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
+  gone without a warning, so turn on caching on the model (such as `anthropic_cache`).
+- `SystemReminders` adds no cache breakpoint; `Planning` adds one for its plan reminder, and
+  Anthropic allows 4.
 - Not spec-serializable.
 
 ## TrajectoryJudge

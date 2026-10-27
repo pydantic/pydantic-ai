@@ -23,7 +23,7 @@ from pydantic_clai2.ui.menus.custom_params import edit_custom_params
 from pydantic_clai2.ui.menus.dialogs import run_settings_menu
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldRow, Runners, first_error, shown
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 _HINT = 'type to filter - Enter add and use model - Ctrl+S settings - Esc close'
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)

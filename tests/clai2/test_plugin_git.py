@@ -19,7 +19,7 @@ from pydantic_clai2.commands import plugins_command
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.plugin_requirements import Requirements
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins._git import clone_repository, parse_repository
+from pydantic_clai2.plugins.git import clone_repository, parse_repository
 from pydantic_clai2.plugins.loader import PluginError
 
 from .test_plugin_loader import SEGMENT, Harness
@@ -415,7 +415,7 @@ async def test_interrupted_clone_is_cleaned_up(tmp_path: Path, monkeypatch: pyte
             await anyio.sleep_forever()
         raise TimeoutError
 
-    monkeypatch.setattr('pydantic_clai2.plugins._git.clone_repository', interrupted_clone)
+    monkeypatch.setattr('pydantic_clai2.plugins.git.clone_repository', interrupted_clone)
     if cancel:
         async with anyio.create_task_group() as group:
             group.start_soon(harness.loader.command, ['add', 'https://example.com/plugin.git'])
@@ -444,7 +444,7 @@ async def test_plugin_created_while_cloning_is_preserved(
             harness.write('demo_plugin')
         return result
 
-    monkeypatch.setattr('pydantic_clai2.plugins._git.clone_repository', concurrent_clone)
+    monkeypatch.setattr('pydantic_clai2.plugins.git.clone_repository', concurrent_clone)
     with pytest.raises(ValueError, match='already exists'):
         await harness.loader.command(['add', repository.as_uri()])
     assert not (harness.store.plugins_dir / '_git' / 'demo_plugin').exists()
@@ -512,7 +512,7 @@ async def test_clone_terminates_git_and_ssh_helper(
         else:
             await harness.loader.command(['add', 'ssh://example.invalid/demo-plugin.git'])
 
-    monkeypatch.setattr('pydantic_clai2.plugins._git.fail_after', controlled_timeout)
+    monkeypatch.setattr('pydantic_clai2.plugins.git.fail_after', controlled_timeout)
     git_pid: int | None = None
     ssh_pid: int | None = None
     try:

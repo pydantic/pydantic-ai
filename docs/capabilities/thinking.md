@@ -80,6 +80,42 @@ Where the provider's own reasoning channel is available — a signed thinking bl
 
 Anthropic is the exception to both *where* that text goes and *how* it is tagged — see [Carried-over thinking](#carried-over-thinking).
 
+## Changing effort mid-conversation
+
+The effort level can change from one run to the next, or from one step to the next through a `model_settings` callable or a capability's [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings]:
+
+```python {title="effort_mid_conversation.py"}
+from pydantic_ai import Agent
+
+agent = Agent('{{ openai:large }}')
+result = agent.run_sync('Plan the database migration.', model_settings={'thinking': 'low'})
+result = agent.run_sync(
+    'Now check the plan for anything that could lose data.',
+    message_history=result.all_messages(),
+    model_settings={'thinking': 'high'},
+)
+```
+
+The request-level effort is part of the provider's [prompt cache](caching.md) key, so sending the new level there makes the provider process the whole conversation again. Where the API can change the effort from a point in the conversation onward, Pydantic AI sends the change that way instead, and every request keeps the effort the conversation started with:
+
+| API | How the change is sent | Models |
+|---|---|---|
+| OpenAI Responses | a `configuration_update` input item | GPT-6 family |
+| Anthropic | an effort-only `system` entry with a per-message `output_config`, under the `mid-conversation-output-config-2026-07-01` beta | Claude Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5 on the Claude API and Google Cloud; Fable 5.1 and Opus 5.5 on the legacy Bedrock InvokeModel client; Opus 5.5 on the Bedrock Messages API client |
+| OpenRouter | a content-less `system` message carrying a `configuration_update`, which OpenRouter sends on in the routed model's own form | Claude Fable 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5; GPT-6 Astra, Sol and Luna and GPT-6.1 Sol, but not their `-pro` variants |
+
+Every other API and model gets the new level as the request-level setting, as before. So do these cases, where the API doesn't take a mid-conversation change:
+
+- A provider-specific effort setting such as `openai_reasoning_effort`, `anthropic_effort` or `openrouter_reasoning` is set.
+- OpenAI truncation (`openai_truncation='auto'`) or server-side compaction is in use.
+- Anthropic thinking isn't adaptive, such as `between_tools` on Claude Sonnet 5.5 or `disabled` on Claude Haiku 5.5.
+- The change is to or from `True` or `False`, which names no effort level.
+
+The framework records each change in message history as a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] at the end of the request it applies to, and the first request that names an effort level records one too. The part holds the changed settings by their unified [`ModelSettings`][pydantic_ai.settings.ModelSettings] keys, such as `{'thinking': 'high'}`; [`RecordedModelSettings`][pydantic_ai.settings.RecordedModelSettings] lists the keys that can be recorded, which today is only the `thinking` effort level. Each model adapter sends the keys it can change mid-conversation in place and the rest as request-level settings. A later run that continues from `message_history` reads the parts to know which effort the conversation started with and which changes to send again. The Vercel AI adapter carries them through the client. The AG-UI adapter streams and dumps them as `pydantic_ai_model_settings_delta` activity messages, which `@ag-ui/client` doesn't send back; see [Records carried as activity messages](../ui/ag-ui.md#activity-records).
+
+!!! note "Anthropic applies a change at the next user turn"
+    Anthropic applies a per-message effort change from the next user turn with new input. OpenRouter documents that it sends a change for a Claude model as this per-message `output_config`, so the same should apply to Claude models on OpenRouter. A change recorded on a step that only returns tool results takes effect at the next user prompt, so changing effort between the steps of one run is supported on OpenAI Responses only.
+
 ## OpenAI
 
 When using the [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], text output inside `<think>` tags is converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
@@ -145,7 +181,7 @@ Reasoning that can't ride Anthropic's native reasoning channel — see [Thinking
 !!! warning "Claude imitates formatting it sees in assistant turns"
     Sending that text in the assistant turn teaches Claude that writing thinking tags is part of its own house style, and it starts emitting them in the answers your users read — which, once persisted to history, reinforces itself every turn.
 
-    Pydantic AI therefore carries such reasoning in a *user message ahead of the assistant turn* for models whose profile sets [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting], which stops the imitation. That flag is set for the whole Anthropic family, and is honored by [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] and [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel].
+    Pydantic AI therefore carries such reasoning in a *user message ahead of the assistant turn* for models whose profile sets [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting], which stops the imitation. That flag is set for the whole Anthropic family, and is honored by [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel], [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], so it also covers Claude served through an [OpenAI-compatible provider](../models/openai.md#openai-compatible-models).
 
     Reasoning sent in a user message would read as something you thought, so it is wrapped in an `<assistant_thinking>` tag rather than the model's own thinking tags. The tag carries no attributes, so a history that comes back through a [UI adapter](../ui/overview.md) renders the same and keeps the [prompt cache](../models/anthropic.md#prompt-caching). The tag is rendered for each request and never stored in your message history, and a closing `</assistant_thinking>` inside the reasoning is escaped so it can't end the block early. The trade-off is that Claude can't tell who wrote carried reasoning, and claims it as its own if you ask (measured on `claude-opus-4-5`).
 
@@ -359,7 +395,7 @@ agent = Agent(model, model_settings=settings)
 !!! note "Wire format details"
     Truthy [`thinking`][pydantic_ai.settings.ModelSettings.thinking] values send both `effort` and `enabled: True` on the wire. The explicit `enabled: True` is a no-op for reasoning-by-default models but load-bearing for reasoning-optional routes (parts of the `google/gemma-*` family, for example) that otherwise leave reasoning disabled despite `effort` being set.
 
-    [`thinking=False`][pydantic_ai.settings.ModelSettings.thinking] sends `reasoning={'effort': 'none'}` — the [documented OpenRouter disable signal](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) — on routes whose upstream can honor disable (e.g. `anthropic/claude-sonnet-4.5`, `z-ai/glm-4.6`). On routes whose upstream can't turn reasoning off (e.g. `openai/o3`, `openai/gpt-5`, `deepseek/deepseek-r1-0528`), OpenRouter rejects `effort='none'` ("Reasoning is mandatory"), so `thinking=False` sends `reasoning={'effort': 'low'}` instead, the least reasoning the route offers. Set [`OpenRouterModelSettings.openrouter_reasoning`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_reasoning] directly when you want explicit per-route control.
+    [`thinking=False`][pydantic_ai.settings.ModelSettings.thinking] sends `reasoning={'effort': 'none'}` — the [documented OpenRouter disable signal](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) — on routes whose upstream can honor disable (e.g. `anthropic/claude-sonnet-4.5`, `z-ai/glm-4.6`). On routes whose upstream can't turn reasoning off (e.g. `openai/o3`, `openai/gpt-5`, `deepseek/deepseek-r1-0528`), OpenRouter rejects `effort='none'` ("Reasoning is mandatory"), so `thinking=False` sends `reasoning={'effort': 'low'}` instead, the least reasoning the route offers. The same goes for routes where OpenRouter makes reasoning mandatory even though the model can turn it off elsewhere, such as `anthropic/claude-sonnet-5.5` (OpenRouter has no equivalent of the Anthropic API's `between_tools`), `google/gemini-3.5-flash`, `z-ai/glm-5.3`, `openai/gpt-oss-120b`, and the Qwen thinking models. Set [`OpenRouterModelSettings.openrouter_reasoning`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_reasoning] directly when you want explicit per-route control.
 
 ## Z.AI
 

@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from contextvars import ContextVar
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, Self
 
 from pydantic_core import SchemaValidator
@@ -11,9 +10,9 @@ from pydantic_core import SchemaValidator
 from .._instructions import normalize_toolset_instruction_parts
 from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
-from ..messages import InstructionPart, ToolsetInstructionSource
+from ..messages import InstructionPart
 from ..tools import ToolDefinition, ToolsPrepareFunc
-from ._instruction_collection import InstructionContribution, make_contribution
+from ._instruction_collection import RELAYS, InstructionContribution, RelayedPart, Relays, make_contribution
 
 if TYPE_CHECKING:
     from .approval_required import ApprovalRequiredToolset
@@ -47,48 +46,6 @@ class SchemaValidatorProt(Protocol):
     def validate_python(
         self, input: Any, *, allow_partial: bool | Literal['off', 'on', 'trailing-strings'] = False, **kwargs: Any
     ) -> Any: ...
-
-
-@dataclass(frozen=True)
-class _RelayedPart:
-    """A part a child contributed while an authoring container's `get_instructions` ran."""
-
-    source: AbstractToolset[Any]
-    source_id: ToolsetInstructionSource | None
-    part: InstructionPart
-    """The part object itself, held so its identity can't be reused by another object meanwhile."""
-    snapshot: InstructionPart
-    """A copy of the part as the child contributed it, so a part edited in place no longer counts as relayed."""
-
-
-@dataclass
-class _Relays:
-    """What an authoring container's declared instruction children contributed while its `get_instructions` ran."""
-
-    author: AbstractToolset[Any]
-    parts: dict[int, _RelayedPart] = field(default_factory=dict[int, _RelayedPart])
-    """The relayed parts, by part identity."""
-    _tree: set[int] | None = None
-
-    def covers(self, toolset: AbstractToolset[Any]) -> bool:
-        """Whether `toolset` is the author or below it through `_instruction_children`.
-
-        A toolset the author reaches some other way, like the one a `DynamicToolset` builds, isn't a child
-        the author passes along: what it returns is the author's own text.
-        """
-        if self._tree is None:
-            tree: set[int] = set()
-            pending: list[AbstractToolset[Any]] = [self.author]
-            while pending:
-                node = pending.pop()
-                tree.add(id(node))
-                pending.extend(node._instruction_children())  # pyright: ignore[reportPrivateUsage]
-            self._tree = tree
-        return id(toolset) in self._tree
-
-
-_RELAYS: ContextVar[_Relays | None] = ContextVar('_RELAYS', default=None)
-"""The relays of the authoring container whose `get_instructions` is running."""
 
 
 @dataclass(kw_only=True)
@@ -151,6 +108,26 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         toolset. Don't return one from your own toolset.
         """
         raise NotImplementedError()
+
+    @property
+    def _explicit_id(self) -> str | None:
+        """The [`id`][pydantic_ai.toolsets.AbstractToolset.id] if one was chosen for this toolset, rather than derived.
+
+        A toolset can derive its `id`, as an `MCPToolset` without one does from its server's hostname.
+        Durable execution only names activities and steps after an explicit one, and two toolsets that
+        derive the same `id` don't collide where one they were given would.
+        """
+        return self.id
+
+    @property
+    def _appends_instructions_by_default(self) -> bool:
+        """Whether the `on_change='append'` of this toolset's instructions is the framework's choice, not its author's.
+
+        Where appending isn't supported, such as in a realtime session or a deferred capability, the
+        blocks keyed under such a toolset's own `id` then fall back to rewriting without the warning an
+        author's own opt-in gets.
+        """
+        return False
 
     @property
     def label(self) -> str:
@@ -239,12 +216,12 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         if not self._authors_own_instructions():
             return await self._collect_child_instruction_contributions(ctx)
 
-        relays = _Relays(self)
-        token = _RELAYS.set(relays)
+        relays = Relays(self)
+        token = RELAYS.set(relays)
         try:
             result = await self.get_instructions(ctx)
         finally:
-            _RELAYS.reset(token)
+            RELAYS.reset(token)
         contributions: list[InstructionContribution[AgentDepsT]] = []
         for part in normalize_toolset_instruction_parts(result):
             # Only the part object a child contributed, unchanged since, is relayed: a part this
@@ -267,9 +244,9 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         # Called from inside an authoring container's `get_instructions` on its own instruction children,
         # record what each part came from and what it said, so the container can tell the parts it relays
         # from the ones it writes.
-        if (relays := _RELAYS.get()) is not None and relays.covers(self):
+        if (relays := RELAYS.get()) is not None and relays.covers(self):
             relays.parts.update(
-                (id(part), _RelayedPart(contribution.source, contribution.source_id, part, replace(part)))
+                (id(part), RelayedPart(contribution.source, contribution.source_id, part, replace(part)))
                 for contribution in contributions
                 for part in contribution.parts
             )
