@@ -8,7 +8,7 @@ commit, raises `GitError` with what the command printed, so the user sees why.
 import os
 import re
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from subprocess import DEVNULL
 from urllib.parse import urlsplit
@@ -90,8 +90,13 @@ async def _run(
     timeout: float = GIT_TIMEOUT,
     env: dict[str, str] | None = None,
     input: bytes | None = None,
+    exact: bool = False,
 ) -> _Ran:
-    """Run `args` in `workspace`, feeding it `input` (else nothing) on stdin; its exit code and combined output."""
+    """Run `args` in `workspace`, feeding it `input` (else nothing) on stdin; its exit code and combined output.
+
+    With `exact`, bytes that are not UTF-8, as in a file name, are kept as surrogates, so a path read from
+    the output reaches Git again unchanged; otherwise they are replaced, for text a person or model reads.
+    """
     try:
         with anyio.fail_after(timeout):
             result = await anyio.run_process(
@@ -104,9 +109,14 @@ async def _run(
             )
     except TimeoutError:
         raise GitError(f'{_label(args)} did not finish within {timeout:g} seconds.') from None
-    except FileNotFoundError:
-        raise GitError(f'{args[0]} is not installed.') from None
-    output = (result.stdout + result.stderr).decode(errors='replace')
+    except OSError as exc:
+        if not workspace.is_dir():
+            # Gone, or replaced by a file, since it was checked.
+            raise LookupError(f'{workspace} no longer exists.') from None
+        if isinstance(exc, FileNotFoundError):
+            raise GitError(f'{args[0]} is not installed.') from None
+        raise
+    output = (result.stdout + result.stderr).decode(errors='surrogateescape' if exact else 'replace')
     return _Ran(code=result.returncode, output=output)
 
 
@@ -123,10 +133,19 @@ def _git_environment() -> dict[str, str]:
     return environment
 
 
-async def _git(workspace: Path, *args: str, timeout: float = GIT_TIMEOUT, input: bytes | None = None) -> str:
+async def _git(
+    workspace: Path, *args: str, timeout: float = GIT_TIMEOUT, input: bytes | None = None, exact: bool = False
+) -> str:
     """`git ARGS` in `workspace`, its output; `GitError` with what it printed when it fails."""
     ran = await _run(
-        workspace, 'git', '--literal-pathspecs', *args, timeout=timeout, env=_git_environment(), input=input
+        workspace,
+        'git',
+        '--literal-pathspecs',
+        *args,
+        timeout=timeout,
+        env=_git_environment(),
+        input=input,
+        exact=exact,
     )
     if ran.code != 0:
         raise GitError(ran.output.strip() or f'git {args[0]} failed.')
@@ -141,7 +160,12 @@ async def _try_git(workspace: Path, *args: str) -> str | None:
 
 def _pathspecs(paths: Sequence[str]) -> bytes:
     """Paths for `--pathspec-from-file=- --pathspec-file-nul`, so no list is too long for a command line."""
-    return b''.join(f'{path}\0'.encode() for path in paths)
+    return b''.join(f'{path}\0'.encode(errors='surrogateescape') for path in paths)
+
+
+def _shown(path: str) -> str:
+    r"""`path` as text: a byte that is not UTF-8 shows as `\xNN`, which is how the page and `_selected` name it."""
+    return path.encode(errors='surrogateescape').decode(errors='backslashreplace')
 
 
 def _directory(workspace: Path) -> Path:
@@ -153,12 +177,24 @@ def _directory(workspace: Path) -> Path:
 async def git_status(workspace: Path) -> GitStatus | None:
     """The repository `workspace` is in, or `None` outside one; `LookupError` when the directory is gone."""
     found = await _read(workspace, pull_request=True)
-    return None if found is None else found[1]
+    if found is None:
+        return None
+    status = found[1]
+    files = [
+        ChangedFile(
+            path=_shown(file.path),
+            status=file.status,
+            original=None if file.original is None else _shown(file.original),
+        )
+        for file in status.files
+    ]
+    return replace(status, files=files)
 
 
 async def _read(workspace: Path, *, pull_request: bool) -> tuple[Path, GitStatus] | None:
     """The repository's top directory, which every path it lists is relative to, and its status.
 
+    Its paths are Git's own, with any byte that is not UTF-8 kept as a surrogate; `git_status` shows them.
     Without `pull_request`, whether one can be opened is not checked, which asks `gh`, and is `None`.
     """
     _directory(workspace)
@@ -166,7 +202,7 @@ async def _read(workspace: Path, *, pull_request: bool) -> tuple[Path, GitStatus
     if not top:
         return None
     root = Path(top)
-    output = await _git(root, 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all')
+    output = await _git(root, 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', exact=True)
     branch, upstream, ahead, behind, files = _parse_status(output)
     remote = await _try_git(root, 'remote', 'get-url', 'origin')
     if upstream is None:
@@ -285,10 +321,13 @@ async def _repository(workspace: Path, *, pull_request: bool = False) -> tuple[P
 
 
 def _selected(status: GitStatus, files: Sequence[str] | None) -> list[ChangedFile]:
-    """The changed files named in `files`, every one when it is `None`; `ValueError` for one without changes."""
+    """The changed files named in `files`, as `git_status` shows them, every one when it is `None`.
+
+    Raises `ValueError` for one without changes.
+    """
     if files is None:
         return status.files
-    changed = {file.path: file for file in status.files}
+    changed = {_shown(file.path): file for file in status.files}
     unknown = [path for path in files if path not in changed]
     if unknown:
         raise ValueError(f'{", ".join(unknown)} has no changes to commit.')
@@ -408,7 +447,7 @@ async def _changes(root: Path, files: list[ChangedFile], *, every: bool) -> str:
     for file in files:
         if file.status == '?':
             text = await to_thread.run_sync(_read_start, root / file.path)
-            parts.append(f'New file {file.path}:\n{text}')
+            parts.append(f'New file {_shown(file.path)}:\n{text}')
     return _cut('\n'.join(parts), DIFF_LIMIT)
 
 

@@ -101,6 +101,8 @@ function GitDialog({
   onNotice: (message: string) => void
 }) {
   const [view, setView] = useState<View>('changes')
+  // Whether the pull request view was opened, which drafts it; it stays mounted after.
+  const [visited, setVisited] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -140,7 +142,8 @@ function GitDialog({
           <BranchIcon size={15} /> {status.branch ?? 'detached HEAD'}
           <span className="git-counts">{gitCounts(status)}</span>
         </h2>
-        {view === 'changes' ? (
+        {/* Both stay mounted once shown, so switching keeps what was typed and drafts each only once. */}
+        <div className="git-view" hidden={view !== 'changes'}>
           <Changes
             git={git}
             status={status}
@@ -154,11 +157,15 @@ function GitDialog({
             onPullRequest={() => {
               setProblem(null)
               setDone(null)
+              setVisited(true)
               setView('pull-request')
             }}
           />
-        ) : (
-          <PullRequest git={git} busy={busy} act={act} onOpened={onRefresh} onBack={() => setView('changes')} />
+        </div>
+        {visited && (
+          <div className="git-view" hidden={view !== 'pull-request'}>
+            <PullRequest git={git} busy={busy} act={act} onOpened={onRefresh} onBack={() => setView('changes')} />
+          </div>
         )}
         {problem && (
           <pre className="setting-error git-problem" role="alert">

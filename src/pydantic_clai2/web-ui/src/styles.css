@@ -715,6 +715,16 @@ pre {
   gap: 10px;
 }
 
+.git-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.git-view[hidden] {
+  display: none;
+}
+
 .git-section + .git-section {
   padding-top: 12px;
   border-top: 1px solid var(--border);

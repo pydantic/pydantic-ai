@@ -377,6 +377,37 @@ async def test_open_a_pull_request(repo: Path, gh_state: Path) -> None:
         await open_pull_request(repo, title='Again', body='')
 
 
+@pytest.mark.skipif(sys.platform == 'darwin', reason='macOS file systems refuse names that are not UTF-8')
+async def test_a_file_name_that_is_not_utf8_is_shown_and_committed(repo: Path) -> None:
+    raw = os.fsdecode(b'latin\xe9.txt')
+    (repo / raw).write_text('latin-1 name\n')
+    (repo / 'notes.txt').write_text('changed\n')
+    status = await git_status(repo)
+    assert status is not None
+    assert sorted(file.path for file in status.files) == ['latin\\xe9.txt', 'notes.txt']
+    drafter = Drafter()
+    await draft_commit_message(repo, model=drafter.resolved, files=['latin\\xe9.txt'])
+    assert drafter.prompts[-1] == 'New file latin\\xe9.txt:\nlatin-1 name\n'
+    await commit(repo, message='Add the file', files=['latin\\xe9.txt'])
+    assert git(repo, 'show', '--name-only', '--format=', 'HEAD').strip() == '"latin\\351.txt"'
+    await commit(repo, message='Change the notes')
+    status = await git_status(repo)
+    assert status is not None and status.files == []
+
+
+async def test_a_workspace_gone_while_git_runs_is_reported_gone(tmp_path: Path) -> None:
+    run = git_actions._run  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(LookupError, match='no longer exists'):
+        await run(tmp_path / 'missing', 'git', 'status')
+    (tmp_path / 'file').write_text('')
+    with pytest.raises(LookupError, match='no longer exists'):
+        await run(tmp_path / 'file', 'git', 'status')
+    program = tmp_path / 'not-executable'
+    program.write_text('')
+    with pytest.raises(PermissionError):
+        await run(tmp_path, str(program))
+
+
 async def test_run_failures(tmp_path: Path) -> None:
     with pytest.raises(GitError, match=r'sleep 5 did not finish within 0.01 seconds'):
         await git_actions._run(tmp_path, 'sleep', '5', timeout=0.01)  # pyright: ignore[reportPrivateUsage]

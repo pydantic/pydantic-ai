@@ -83,6 +83,11 @@ async def test_commit_push_and_open_a_pull_request_from_the_header(
     hook.unlink()
 
     await message.fill('Edit three files')
+    # Looking at the pull request and coming back keeps the message, and drafts nothing again.
+    await dialog.get_by_role('button', name='Create pull request…').click()
+    await expect(dialog.get_by_role('textbox', name='Title')).to_have_value('Add a feature')
+    await dialog.get_by_role('button', name='Back').click()
+    await expect(message).to_have_value('Edit three files')
     await dialog.get_by_role('button', name='Commit all').click()
     await expect(dialog.get_by_role('status')).to_contain_text('Edit three files')
     await expect(chip).to_have_text('feature0 changed, 1 ahead')
