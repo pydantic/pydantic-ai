@@ -16,7 +16,7 @@ For example, Pydantic AI 2.45.0 sends `User-Agent: pydantic-ai/2.45.0`. [Bedrock
 
 ## The version check
 
-When the [first-run banner](logfire.md#the-first-run-banner) or the intro banner of [`clai`](cli.md) is displayed, Pydantic AI checks `https://info.pydantic.dev/versions.json` in a background thread for newer releases of Pydantic AI and Pydantic AI Harness. Those banners are only displayed to someone at a terminal or to a coding agent, and never in CI or under `pytest`, so in practice this means a developer's machine: a deployed service with no terminal attached never makes the request. `clai` displays its banner under the same conditions as the first-run banner, except that configured instrumentation doesn't hide it.
+When the [first-run banner](logfire.md#the-first-run-banner) or the intro banner of [`clai`](cli.md) is displayed, Pydantic AI checks `https://info.pydantic.dev/versions.json` in a background thread for newer releases of Pydantic AI and Pydantic AI Harness. A deployed service with no terminal attached never displays them, so never makes the request. `clai` displays its banner under the same conditions as the first-run banner, except that configured instrumentation doesn't hide it.
 
 The first banner only announces the check, and says how to turn it off. The request is made from the next banner on, at most once per 24 hours per user cache directory, and a newer release it finds appears in the banner after that. A container started with a fresh home directory every time therefore never makes the request.
 

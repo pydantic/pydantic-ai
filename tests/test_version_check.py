@@ -18,6 +18,7 @@ import pydantic_ai._version_check as _version_check
 import pydantic_ai.models as models
 
 from ._inline_snapshot import snapshot
+from .coding_agent_utils import agent_env_vars_in_scope
 from .version_check_utils import install_transport
 
 _NOW = 2_000_000_000.0
@@ -33,16 +34,7 @@ def version_check_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
     monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK', raising=False)
     monkeypatch.delenv('DO_NOT_TRACK', raising=False)
-    monkeypatch.delenv('AI_AGENT', raising=False)
-    monkeypatch.delenv('AGENT', raising=False)
-    # The agent running the suite sets some of these itself, so which of them exist depends on who
-    # ran `pytest`: gathered first, so that clearing them is the same code path either way.
-    signals = [signal for _, signals in _display._CODING_AGENTS for signal in signals]  # pyright: ignore[reportPrivateUsage]
-    names = {signal.partition('=')[0] for signal in signals if not signal.endswith('*')}
-    names |= {
-        name for name in os.environ for signal in signals if signal.endswith('*') and name.startswith(signal[:-1])
-    }
-    for name in names:
+    for name in agent_env_vars_in_scope():
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(_version_check.time, 'time', lambda: _NOW)
     monkeypatch.setattr(_display, 'detect_coding_agent', lambda: None)
@@ -391,13 +383,20 @@ def test_harness_notice_requires_an_installed_harness(monkeypatch: pytest.Monkey
             'pydantic-ai/2.45.0 (Python 3.14.1; TestOS; test-cpu) pydantic-ai-harness/0.8.0 agent/codex',
             id='known-name',
         ),
+        pytest.param(
+            None,
+            None,
+            'pydantic-ai/2.45.0 (Python 3.14.1; TestOS; test-cpu) pydantic-ai-harness/0.8.0',
+            id='no-agent',
+        ),
     ],
 )
 @pytest.mark.usefixtures('announced')
 def test_user_agent_reports_only_known_agent_names(
-    variable: str, value: str, expected: str, monkeypatch: pytest.MonkeyPatch
+    variable: str | None, value: str | None, expected: str, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setenv(variable, value)
+    if variable is not None and value is not None:
+        monkeypatch.setenv(variable, value)
     monkeypatch.setattr(_display, 'detect_coding_agent', _DETECT_CODING_AGENT)
     monkeypatch.setattr(_version_check.platform, 'python_version', lambda: '3.14.1')
     monkeypatch.setattr(_version_check.platform, 'system', lambda: 'TestOS')
@@ -413,21 +412,6 @@ def test_user_agent_reports_only_known_agent_names(
     run_check()
 
     assert requests[0].headers['user-agent'] == expected
-
-
-@pytest.mark.usefixtures('announced')
-def test_no_coding_agent_adds_no_agent_token(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(_display, 'detect_coding_agent', lambda: None)
-
-    def distribution_version(_module: str, _distribution: str) -> None:
-        return None
-
-    monkeypatch.setattr(_version_check, '_distribution_version', distribution_version)
-    requests = install_transport(monkeypatch, lambda request: httpx2.Response(200, json={'pypi': {}}))
-
-    run_check()
-
-    assert ' agent/' not in requests[0].headers['user-agent']
 
 
 @pytest.mark.parametrize(

@@ -29,6 +29,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 
 from ._inline_snapshot import snapshot
+from .coding_agent_utils import agent_env_vars_in_scope
 from .conftest import try_import
 from .continuation_utils import ScriptedContinuationModel, scripted_response
 from .version_check_utils import install_transport
@@ -46,22 +47,6 @@ _detect_coding_agent = _display.detect_coding_agent
 _CODING_AGENTS = _display._CODING_AGENTS  # pyright: ignore[reportPrivateUsage]
 _MIN_TEXT_WIDTH = _display._MIN_TEXT_WIDTH  # pyright: ignore[reportPrivateUsage]
 _MIN_WIDTH_FOR_LOGO = _display._MIN_WIDTH_FOR_LOGO  # pyright: ignore[reportPrivateUsage]
-
-
-def _agent_env_vars_in_scope() -> set[str]:
-    """Every variable `detect_coding_agent` would read, so the suite decides rather than the shell.
-
-    The agent running the tests sets some of these itself, so leaving any behind would make whether
-    a banner appears depend on who ran `pytest`.
-    """
-    names: set[str] = set(_display._NAMED_AGENT_ENV_VARS)  # pyright: ignore[reportPrivateUsage]
-    for _, signals in _CODING_AGENTS:
-        for env_signal in signals:
-            if env_signal.endswith('*'):
-                names.update(name for name in os.environ if name.startswith(env_signal[:-1]))
-            else:
-                names.add(env_signal.partition('=')[0])
-    return names
 
 
 def agent_env(env_signal: str) -> tuple[str, str]:
@@ -105,7 +90,7 @@ def reset_banner(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv('PYTEST_VERSION', raising=False)
     # Left in place, the width of the pane the suite happens to run in would decide the layout.
     monkeypatch.delenv('COLUMNS', raising=False)
-    for agent_var in _agent_env_vars_in_scope():
+    for agent_var in agent_env_vars_in_scope():
         monkeypatch.delenv(agent_var, raising=False)
     # Colour is asserted on its own; everywhere else it would only obscure what's being asserted.
     monkeypatch.setenv('NO_COLOR', '1')
