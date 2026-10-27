@@ -38,7 +38,7 @@ dropped) printf '__pydantic_ai_ssh_ready__\\n' >&2; exit 255 ;;
 chatty) echo 'Welcome to box!'; echo 'Last login: yesterday' >&2 ;;
 slow) sleep 30 ;;
 lossy) cd "$HOME" && sh -c "$*"; exit 255 ;;
-held) cd "$HOME" && sh -c "$*" | cat; exit ;;
+held) cd "$HOME" && { sh -c "$*"; echo $? > "$bin/held-status"; } | cat; exit "$(cat "$bin/held-status")" ;;
 ignoring) exit 0 ;;
 esac
 cd "$HOME" && exec sh -c "$*"
