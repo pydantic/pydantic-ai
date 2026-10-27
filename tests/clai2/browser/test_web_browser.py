@@ -1051,8 +1051,19 @@ async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, 
         await dialog.get_by_label('Branch of the new worktree of repo · main').fill('feature-x')
         await dialog.get_by_label('Base').fill('main')
         # A session that fails to start leaves the worktree made, and trying again starts one in it.
-        await page.route('**/api/sessions/new', lambda route: route.fulfill(status=409, json={'detail': 'Busy'}))
+        # Esc while the request runs keeps the form, as the disabled Back button does.
+        release = asyncio.Event()
+
+        async def busy(route: Route) -> None:
+            await release.wait()
+            await route.fulfill(status=409, json={'detail': 'Busy'})
+
+        await page.route('**/api/sessions/new', busy)
         await dialog.get_by_role('button', name='Create and start').click()
+        await expect(dialog.get_by_role('button', name='Back')).to_be_disabled()
+        await page.keyboard.press('Escape')
+        await expect(dialog.get_by_label('Base')).to_be_visible()
+        release.set()
         await expect(dialog.get_by_role('alert')).to_have_text('Busy')
         await page.unroute('**/api/sessions/new')
         await dialog.get_by_role('button', name='Create and start').click()

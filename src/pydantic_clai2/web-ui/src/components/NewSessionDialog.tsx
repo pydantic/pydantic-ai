@@ -111,7 +111,8 @@ export function NewSessionDialog({
 
   // Registered once, so a re-render during the key press cannot drop it. In the New worktree… form, it goes back to the list.
   const close = useRef(onClose)
-  close.current = worktreeOf ? () => setWorktreeOf(null) : onClose
+  // Not while its request runs, as Back is disabled then: its outcome belongs to the form.
+  close.current = worktreeOf ? () => !sending && setWorktreeOf(null) : onClose
   useEffect(() => {
     const cancel = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
