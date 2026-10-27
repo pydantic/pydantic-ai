@@ -251,6 +251,7 @@ async def test_google_reconnect_without_a_handle_passes_dial_the_conversation_to
         reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False},
     )
     conn.set_message_history(lambda: history)
+    assert conn.message_history is not None and conn.message_history() is history
     events = [event async for event in conn]
     assert calls == [(None, GoogleRealtimeReplay(messages=history, asks_replies_again=False))] * 2
     assert RealtimeSessionReconnectEvent(state_restored=True) in events

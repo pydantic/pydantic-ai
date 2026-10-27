@@ -1715,6 +1715,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._message_history = message_history
 
     @property
+    def message_history(self) -> Callable[[], Sequence[ModelMessage]] | None:
+        """The call so far, when a session has offered it for replay into a fresh session on reconnect."""
+        return self._message_history
+
+    @property
     def _can_reconnect(self) -> bool:
         return (
             not self._gave_up
