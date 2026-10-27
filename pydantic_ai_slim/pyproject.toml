@@ -86,8 +86,8 @@ anthropic = ["anthropic>=1.15.0"]
 xai = ["xai-sdk>=1.16.0"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai>=3.31.0"]
-# `mistralai>=2.9.2` accepts `httpx2.AsyncClient` and no longer caps OpenTelemetry semantic conventions.
-mistral = ["mistralai>=2.9.2"]
+# `mistralai>=3.0` is built on `httpx2` only; 3.1.0 adds the `ResourceChunk` and `ResourceLinkChunk` content types `_map_content` imports.
+mistral = ["mistralai>=3.1.0"]
 bedrock = ["boto3>=1.42.63"]
 # Amazon Bedrock Mantle serves OpenAI models through an OpenAI-compatible API via `AsyncBedrockOpenAI`,
 # which needs `openai` and (for AWS SigV4 auth) `botocore`; the bearer-token path needs `openai` alone.

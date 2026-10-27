@@ -194,7 +194,11 @@ them in hand once the backend answers. So that reply, and the results after it, 
 [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] once the backend answers, or
 calls more tools with those results, which are then a response of their own, after them. The backend's
 calls land wherever Live is in a sentence, so what Live says in the reply is recorded as one
-[`SpeechPart`][pydantic_ai.messages.SpeechPart], ahead of the calls, rather than cut in two at each one.
+[`SpeechPart`][pydantic_ai.messages.SpeechPart], ahead of the calls, rather than cut in two at each one. Live
+also finishes what it was saying when the backend answers, before it speaks the answer, and nothing on the wire
+marks where the answer starts: the reply ends where Live next pauses for half a second, or at anything else
+that happens first (the user speaking, say). Should Live run straight on into the answer without that pause, the
+start of the answer is recorded in the reply, ahead of the results.
 
 Live can also delegate to the *client* rather than to a backend model, leaving your application to
 answer in prose. Pydantic AI configures backend delegation, so a client delegation is reported as a
@@ -592,7 +596,9 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   `live_session_expired` (the duration limit), `live_session_content` (the safety filter), or
   `live_session_connection_lost`. With a [`reconnect`](lifecycle.md#reconnecting) policy, an expired
   or lost WebSocket session is re-opened instead while the policy's reconnects last; one the safety
-  filter ended stays ended.
+  filter ended stays ended. On a [WebRTC sideband](#browser-webrtc), a lost connection is the browser's:
+  Live reports a browser that closed its connection as `connection_lost`, about half a minute later, and
+  the session ends as it would after any other hangup, without an error.
 - A delegated backend that fails, stops short, or reports an error is surfaced as a recoverable
   [`RealtimeSessionErrorEvent`][pydantic_ai.messages.RealtimeSessionErrorEvent] instead: the call
   goes on. When Live reports such a failure only as a session-level error that names no delegation

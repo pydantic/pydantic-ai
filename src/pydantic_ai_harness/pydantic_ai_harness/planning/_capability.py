@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
+from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
     CachePoint,
@@ -306,8 +308,21 @@ class Planning(AbstractCapability[AgentDepsT]):
         return 'Planning'
 
 
+# TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
+# `plan-reminder` as a framing tag there.
+# The `<` of an opening or closing `plan-reminder` tag, in any case, spacing or with attributes, or cut off at the end
+# of the plan, where the frame's own end tag would complete it. Core's own framing tags are left to `neutralize_tags`.
+_PLAN_REMINDER_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?plan-reminder(?=[\s/>]|$))', re.IGNORECASE)
+
+
 def _reminder_text(plan: str) -> str:
-    return f'Your current plan (keep it updated with the planning tools):\n\n{plan}\n</plan-reminder>'
+    """The reminder's body and closing tag, with the plan's step text kept inside the `<plan-reminder>` frame.
+
+    The steps are written by the model, so the `<` of every opening or closing `plan-reminder` tag and of every
+    framing tag core writes is escaped as `&lt;`.
+    """
+    body = _PLAN_REMINDER_TAG_OPENER.sub('&lt;', neutralize_tags(plan))
+    return f'Your current plan (keep it updated with the planning tools):\n\n{body}\n</plan-reminder>'
 
 
 def _has_cache_point_target(parts: Sequence[ModelRequestPart]) -> bool:

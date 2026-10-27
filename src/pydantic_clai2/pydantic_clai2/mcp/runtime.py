@@ -20,7 +20,7 @@ from anyio import to_thread
 
 from pydantic_ai import RunContext
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
-from pydantic_clai2.mcp._settings import (
+from pydantic_clai2.mcp.settings import (
     RemoteServer,
     Server,
     Servers,
@@ -29,9 +29,9 @@ from pydantic_clai2.mcp._settings import (
     missing,
     resolve,
 )
-from pydantic_clai2.mcp._store import MCPStore
-from pydantic_clai2.mcp._tokens import OAuthSignIn, TokenStore
-from pydantic_clai2.plugins.sign_in import SignInRequired, not_signed_in
+from pydantic_clai2.mcp.store import MCPStore
+from pydantic_clai2.mcp.tokens import OAuthSignIn, TokenStore
+from pydantic_clai2.plugins.sign_in import SignInRequiredError, not_signed_in
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPToolset
@@ -337,11 +337,11 @@ async def _signed_out(name: str, server: Server) -> str | None:
     return not_signed_in(method)
 
 
-def _sign_in_required(error: BaseException) -> SignInRequired | None:
-    """The `SignInRequired` FastMCP wrapped, when the stored sign-in was rejected."""
+def _sign_in_required(error: BaseException) -> SignInRequiredError | None:
+    """The `SignInRequiredError` FastMCP wrapped, when the stored sign-in was rejected."""
     current: BaseException | None = error
     while current is not None:
-        if isinstance(current, SignInRequired):
+        if isinstance(current, SignInRequiredError):
             return current
         current = current.__cause__ or current.__context__
     return None

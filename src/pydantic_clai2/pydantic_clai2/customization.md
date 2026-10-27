@@ -18,7 +18,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
 - Change tool output: override render(event), returning a Rich renderable or None.
 - Add a fragment to the status row: return functions from get_status_segments,
   each returning a short string.
-- Add a working animation: return make_spinner(name, frames, interval=...,
+- Add a working animation: return build_spinner(name, frames, interval=...,
   description=...) values from get_spinners, or add an entry in spinners.json next
   to CLAI's settings (/spinner init writes a starter). /spinner picks one; the
   choice persists as display.spinner.
@@ -253,7 +253,7 @@ new source. Do not mutate another plugin or the agent to add a plugin's tools.
 
 ## Finding CLAI source
 
-The package root keeps the shell entry point (`_app.py`) and the documented
+The package root keeps the shell entry point (`app.py`) and the documented
 plugin-author imports `pydantic_clai2.plugins` and `pydantic_clai2.commands`.
 Implementations live in `cli/` (launch and command context), `config/` (settings
 and storage), `runtime/` (sessions and reload), `models/` (catalog and provider
@@ -524,12 +524,12 @@ Offer a working animation with get_spinners; the user selects it with /spinner:
 from collections.abc import Sequence
 
 from pydantic_clai2.plugins import Plugin
-from pydantic_clai2.ui.rendering.spinners import Spinner, make_spinner
+from pydantic_clai2.ui.rendering.spinners import Spinner, build_spinner
 
 
 class Wave(Plugin):
     def get_spinners(self) -> Sequence[Spinner]:
-        return (make_spinner('wave', ['~   ', ' ~  ', '  ~ ', '   ~'], interval=0.1, description='a small wave'),)
+        return (build_spinner('wave', ['~   ', ' ~  ', '  ~ ', '   ~'], interval=0.1, description='a small wave'),)
 ```
 
 Frames are padded to one width and interval is clamped to 0.02-1 seconds. The
@@ -546,7 +546,7 @@ The following uses CLAI's internal UI helpers; check them when upgrading:
 ```python
 from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 from pydantic_clai2.commands import Command
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.plugins import Plugin
