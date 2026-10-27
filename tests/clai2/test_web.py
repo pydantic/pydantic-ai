@@ -7,6 +7,7 @@ import hashlib
 import html
 import io
 import json
+import os
 import re
 import shutil
 import sys
@@ -17,7 +18,7 @@ from contextlib import AbstractContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TypeVar
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import anyio
 import httpx
@@ -819,13 +820,14 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
         projects = web_.get('/api/sessions').json()
         assert projects[0]['current'] is True
         [here] = projects[0]['worktrees']
-        assert [(entry['title'], entry['state'], entry['current']) for entry in here['sessions']] == [
-            ('first', 'completed', True)
-        ]
+        assert [
+            (entry['title'], entry['state'], entry['current'], entry['openable']) for entry in here['sessions']
+        ] == [('first', 'completed', True, True)]
         assert [(project['name'], [w['label'] for w in project['worktrees']]) for project in projects[1:]] == [
             ('Removed folders', ['else'])
         ]
-        assert web_.get('/api/sessions?q=Elsewhere').json()[0]['worktrees'][0]['sessions'][0]['id'] == elsewhere.id
+        [listed] = web_.get('/api/sessions?q=Elsewhere').json()[0]['worktrees'][0]['sessions']
+        assert (listed['id'], listed['openable']) == (elsewhere.id, False), 'its row says it only shows'
 
         transcript = web_.get(f'/api/sessions/{elsewhere.id}').json()
         assert (transcript['title'], transcript['openable'], transcript['items']) == ('Elsewhere', False, [])
@@ -1053,6 +1055,48 @@ def test_new_session_offers_every_worktree_of_a_known_repository(
     assert shown('q=Main&include_worktrees=true') == [main]
     monkeypatch.setenv('PATH', '')
     assert shown('include_worktrees=true') == [main]
+
+
+def test_new_session_completes_a_typed_path_with_its_repository_worktrees(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """New session completes a typed path to directories, listing each repository's worktrees before any session.
+
+    A subfolder of a checkout is offered as itself, hidden folders only when typed, and a relative,
+    unreadable, or empty path offers nothing.
+    """
+    web_ = make_web(Agent(TestModel()))
+    fresh, linked = tmp_path / 'fresh', tmp_path / 'fresh-wt'
+    repository(fresh, linked=linked, branch='wt')
+    # Git still lists a locked worktree whose folder is gone; the dialog leaves out a missing one.
+    git('-C', str(fresh), 'worktree', 'add', '--lock', '-b', 'gone', str(tmp_path / 'gone'))
+    shutil.rmtree(tmp_path / 'gone')
+    (fresh / 'src').mkdir()
+    (tmp_path / 'frozen').mkdir()
+    (tmp_path / '.free').mkdir()
+    (tmp_path / 'french.txt').touch()
+    assert not any(p['name'] == 'fresh' for p in web_.get('/api/sessions?include_worktrees=true').json())
+
+    def completed(path: str) -> list[tuple[str, list[tuple[str, str]]]]:
+        response = web_.get(f'/api/directories?path={quote(path)}')
+        assert response.status_code == 200, response.text
+        return [
+            (p['name'], [(w['label'], w['root']) for w in p['worktrees'] if not w['missing']]) for p in response.json()
+        ]
+
+    def at(*parts: str) -> str:
+        return str(tmp_path.resolve().joinpath(*parts))
+
+    repo = ('fresh', [('main', at('fresh')), ('wt', at('fresh-wt'))])
+    assert completed(at('fr')) == [repo, ('frozen', [('frozen', at('frozen'))])]
+    assert completed(at('fresh')) == [repo]
+    [found] = web_.get(f'/api/directories?path={quote(at("fresh-"))}').json()
+    assert (at('gone'), True) in [(w['root'], w['missing']) for w in found['worktrees']]
+    assert completed(at('.f')) == [('.free', [('.free', at('.free'))])]
+    assert completed(at('fresh') + os.sep) == [('src', [('src', at('fresh', 'src'))])]
+    assert completed('fresh') == completed(at('nowhere') + os.sep) == completed(at('a\0', 'b')) == completed('') == []
+    # At most `COMPLETIONS` directories, in name order.
+    for index in range(13):
+        (tmp_path / f'z{index:02}').mkdir()
+    assert [name for name, _ in completed(at('z'))] == [f'z{index:02}' for index in range(12)]
 
 
 def test_a_bare_repository_is_not_a_worktree(tmp_path: Path) -> None:
@@ -1959,6 +2003,13 @@ def test_sessions_continue_in_their_own_directories(
     repo_context = shell.loader._loaded['repo_context']  # pyright: ignore[reportPrivateUsage]
     assert web_.get('/api/state').json()['follows_workspace'] is True
     assert [web_.get(f'/api/sessions/{id}').json()['openable'] for id in (here, there, lost)] == [True, True, False]
+    rows = {
+        entry['id']: entry['openable']
+        for project in web_.get('/api/sessions').json()
+        for worktree in project['worktrees']
+        for entry in worktree['sessions']
+    }
+    assert [rows[id] for id in (here, there, lost)] == [True, True, False], 'each row says what its transcript says'
     assert web_.get(f'/api/sessions/{lost}').json()['missing'] is True
     with web_.client.websocket_connect(
         f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
