@@ -73,11 +73,16 @@ DEFAULT_ARTIFACT_PATTERNS: Mapping[str, tuple[ArtifactThreat, str]] = {
     'html_comment': ('html_comment', r'<!--'),
     'invisible_character': (
         'invisible_unicode',
-        '[\u180e\u200b\u202a-\u202e\u2060-\u2064\u2066-\u2069\u3164\ufeff\uffa0\U000e0000-\U000e007f]'
-        # Two variation selectors with nothing visible between them, or a supplement selector after anything but
-        # an ideograph: neither occurs in ordinary text, and both can carry hidden bytes.
-        '|[\ufe00-\ufe0f\U000e0100-\U000e01ef](?:[\u00ad\u034f\u200c-\u200f]*[\ufe00-\ufe0f\U000e0100-\U000e01ef])+'
-        '|(?<![\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0003134f])[\U000e0100-\U000e01ef]',
+        '[\u180e\u200b\u202a-\u202e\u2060-\u206f\u3164\ufeff\uffa0\ufff0-\ufff8\U000e0000-\U000e00ff'
+        '\U000e01f0-\U000e0fff]'
+        # Variation selectors where ordinary text has no use for them, and they can carry hidden bits: two with
+        # nothing visible between them, a supplement selector after anything but an ideograph, or one of the
+        # standardized selectors other than the emoji ones after a Latin letter.
+        '|[\ufe00-\ufe0f\U000e0100-\U000e01ef]'
+        '(?:[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180d\u180f\u200c-\u200f]*'
+        '[\ufe00-\ufe0f\U000e0100-\U000e01ef])+'
+        '|(?<![\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000323af])[\U000e0100-\U000e01ef]'
+        '|(?<=[A-Za-z])[\ufe00-\ufe0d]',
     ),
 }
 """The built-in patterns as `name -> (threat, regex)`, matched case-insensitively.
@@ -89,7 +94,8 @@ zero-width joiner and non-joiner (emoji sequences, Persian and Indic scripts), t
 and right-to-left marks, the soft hyphen, a single variation selector (as in an emoji), and the tag
 characters of the England, Scotland, and Wales flags. Variation selectors are flagged where ordinary text has no
 use for them and they can encode hidden bytes: two in a row, or a supplement selector after anything but an
-ideograph. Hangul fillers are flagged, and read as spaces by the phrase patterns.
+ideograph, or a standardized selector other than the emoji ones after a Latin letter. The Hangul fillers
+U+3164 and U+FFA0 are flagged, and every Hangul filler reads as a space to the phrase patterns.
 Repetition is bounded so a long artifact cannot make a pattern backtrack for seconds.
 
 These are a cheap first layer. Prompt injection is ordinary language, so a phrase list misses
