@@ -88,7 +88,10 @@ class ConversationRecord:
     """
 
     forked_from: str | None = None
-    """The entry a [`fork`][pydantic_ai.conversation_store.ConversationStore.fork] branched this conversation off."""
+    """The `conversation_id` of the conversation a [`fork`][pydantic_ai.conversation_store.ConversationStore.fork] copied this one from."""
+
+    forked_at: str | None = None
+    """The last entry of the history the fork kept, or `None` if it kept none or this conversation isn't a fork."""
 
     branches: list[str] = dataclasses.field(default_factory=list[str])
     """The last entries of the branches this conversation has left, oldest first.
@@ -321,6 +324,7 @@ class ConversationStore(ABC):
             deferred_tool_requests=conversation.deferred_tool_requests,
             scope=scope if scope is not None else record.scope if record is not None else None,
             forked_from=record.forked_from if record is not None else None,
+            forked_at=record.forked_at if record is not None else None,
             branches=branches,
         )
         await self.write_record(updated, new_entries=new_entries, expected_revision=expected_revision)
@@ -458,7 +462,8 @@ class ConversationStore(ABC):
             usage=dataclasses.replace(record.usage) if whole else _usage.RunUsage(),
             deferred_tool_requests=record.deferred_tool_requests if whole else None,
             scope=scope if scope is not None else record.scope,
-            forked_from=head_id,
+            forked_from=record.conversation_id,
+            forked_at=head_id,
         )
         await self.write_record(fork, expected_revision=None)
         forked = Conversation(
