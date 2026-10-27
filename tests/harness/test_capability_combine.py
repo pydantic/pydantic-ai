@@ -430,6 +430,7 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'CodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
+    'IPythonCodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
     'SmartSearch': Collides(
         'its toolset registers `smart_search` under a fixed name, and its judge `model` decides which '
