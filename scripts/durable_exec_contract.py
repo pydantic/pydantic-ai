@@ -449,27 +449,36 @@ def _collect_body_members(info: _ClassInfo) -> None:
                 pass
 
 
-def _collect_instance_attributes(members: dict[str, _Member], method: FunctionNode) -> None:
-    """Attributes a method assigns on `self`, typed by their annotation or the annotated parameter assigned."""
+def _instance_attribute_assignments(method: FunctionNode) -> Iterator[tuple[ast.AnnAssign | ast.Assign, str]]:
+    """The assignments `method` makes to an attribute of its first parameter, each with the attribute's name."""
     arguments = [*method.args.posonlyargs, *method.args.args]
     if not arguments:
         return
-    parameters = {argument.arg: argument.annotation for argument in arguments}
     for node in ast.walk(method):
         match node:
-            case ast.AnnAssign(target=ast.Attribute(value=ast.Name(id=owner), attr=name), annotation=annotation):
-                annotation_or_value = annotation
-            case ast.Assign(targets=[ast.Attribute(value=ast.Name(id=owner), attr=name)], value=value):
-                match value:
-                    case ast.Name(id=parameter):
-                        annotation_or_value = parameters.get(parameter)
-                    case ast.Call(func=func):
-                        annotation_or_value = func
-                    case _:
-                        annotation_or_value = None
+            case (
+                ast.AnnAssign(target=ast.Attribute(value=ast.Name(id=owner), attr=name))
+                | ast.Assign(targets=[ast.Attribute(value=ast.Name(id=owner), attr=name)])
+            ) if owner == arguments[0].arg:
+                yield node, name
             case _:
-                continue
-        if owner == arguments[0].arg and name not in members:
+                pass
+
+
+def _collect_instance_attributes(members: dict[str, _Member], method: FunctionNode) -> None:
+    """Attributes a method assigns on `self`, typed by their annotation or the annotated parameter assigned."""
+    parameters = {argument.arg: argument.annotation for argument in [*method.args.posonlyargs, *method.args.args]}
+    for assignment, name in _instance_attribute_assignments(method):
+        match assignment:
+            case ast.AnnAssign(annotation=annotation):
+                annotation_or_value = annotation
+            case ast.Assign(value=ast.Name(id=parameter)):
+                annotation_or_value = parameters.get(parameter)
+            case ast.Assign(value=ast.Call(func=func)):
+                annotation_or_value = func
+            case _:
+                annotation_or_value = None
+        if name not in members:
             members[name] = _Member(annotation_or_value, in_body=False)
 
 
@@ -1009,9 +1018,8 @@ class _Spans:
                     | ast.AsyncFunctionDef(name=name, decorator_list=decorators)
                 ):
                     self.definitions.append((min([start, *(d.lineno for d in decorators)]), end, prefix + name))
-                    arguments = [*statement.args.posonlyargs, *statement.args.args]
-                    if owner is not None and arguments:
-                        self.collect_instance_attributes(statement, owner, arguments[0].arg)
+                    if owner is not None:
+                        self.collect_instance_attributes(statement, owner)
                     self.collect(statement.body, f'{prefix}{name}.', None)
                 case ast.AnnAssign(target=ast.Name(id=name)):
                     self.definitions.append((start, end, prefix + name))
@@ -1020,17 +1028,12 @@ class _Spans:
                 case _:
                     pass
 
-    def collect_instance_attributes(self, method: FunctionNode, owner: str, instance: str) -> None:
-        """Record the attributes `method` assigns on its first parameter, as `_collect_instance_attributes` reads them."""
-        for node in ast.walk(method):
-            match node:
-                case (
-                    ast.AnnAssign(target=ast.Attribute(value=ast.Name(id=name), attr=attribute))
-                    | ast.Assign(targets=[ast.Attribute(value=ast.Name(id=name), attr=attribute)])
-                ) if name == instance:
-                    self.attributes.append((node.lineno, node.end_lineno or node.lineno, f'{owner}.{attribute}'))
-                case _:
-                    pass
+    def collect_instance_attributes(self, method: FunctionNode, owner: str) -> None:
+        """Record the attributes of `owner` that `method` assigns, as `_instance_attribute_assignments` finds them."""
+        for assignment, attribute in _instance_attribute_assignments(method):
+            self.attributes.append(
+                (assignment.lineno, assignment.end_lineno or assignment.lineno, f'{owner}.{attribute}')
+            )
 
     def at(self, line: int) -> set[str]:
         """The qualnames a change to `line` is placed in."""

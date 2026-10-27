@@ -217,13 +217,6 @@ class _FakeGh:
         return self.responses[next(argument for argument in arguments if argument.startswith('repos/'))]
 
 
-@pytest.fixture
-def manifest_root(tmp_path: Path) -> Path:
-    (tmp_path / 'scripts').mkdir()
-    (tmp_path / generator.MANIFEST_PATH).write_text(json.dumps(MANIFEST), encoding='utf-8')
-    return tmp_path
-
-
 def _fake_gh(merge_base: str = MERGE_BASE, extra_files: int = 0) -> _FakeGh:
     head = MODELS_SOURCE.replace("'request'", "'response'")
     models = {'filename': MODELS, 'status': 'modified', 'patch': _patch(MODELS_SOURCE, head)}
@@ -238,6 +231,13 @@ def _fake_gh(merge_base: str = MERGE_BASE, extra_files: int = 0) -> _FakeGh:
             f'repos/{REPO}/contents/{MODELS}?ref={HEAD_SHA}': head,
         }
     )
+
+
+@pytest.fixture
+def manifest_root(tmp_path: Path) -> Path:
+    (tmp_path / 'scripts').mkdir()
+    (tmp_path / generator.MANIFEST_PATH).write_text(json.dumps(MANIFEST), encoding='utf-8')
+    return tmp_path
 
 
 def test_touched_reads_the_pull_request_through_gh(manifest_root: Path, capsys: pytest.CaptureFixture[str]):
