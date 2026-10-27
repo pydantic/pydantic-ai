@@ -815,7 +815,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             messages[:] = reevaluated[:-1]
             next_message = cast(_messages.ModelRequest, reevaluated[-1])
             if appended_system_prompts:
-                next_message = replace(next_message, parts=[*appended_system_prompts, *next_message.parts])
+                next_message = _with_system_prompt_statements(next_message, appended_system_prompts)
         else:
             messages[:] = reevaluated
             parts: list[_messages.ModelRequestPart] = [*appended_system_prompts]
@@ -900,6 +900,33 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         )
 
     __repr__ = dataclasses_no_defaults_repr
+
+
+def _with_system_prompt_statements(
+    request: _messages.ModelRequest, statements: list[_messages.SystemPromptPart]
+) -> _messages.ModelRequest:
+    """Add the changed statements of appending dynamic system prompts to a request that's about to be sent.
+
+    Each one goes right after its prompt's latest statement when that is in this request, which no model has
+    answered yet, so the new value still comes after the one it replaces. The others open the request.
+    """
+    parts = list(request.parts)
+    opening: list[_messages.ModelRequestPart] = []
+    for statement in statements:
+        latest = next(
+            (
+                index
+                for index in range(len(parts) - 1, -1, -1)
+                if isinstance(part := parts[index], _messages.SystemPromptPart)
+                and part.dynamic_ref == statement.dynamic_ref
+            ),
+            None,
+        )
+        if latest is None:
+            opening.append(statement)
+        else:
+            parts.insert(latest + 1, statement)
+    return replace(request, parts=[*opening, *parts])
 
 
 def _repair_interrupted_tail(

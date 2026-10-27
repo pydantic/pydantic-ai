@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, capture_run_messages
 from pydantic_ai.capabilities import ReinjectSystemPrompt
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -46,6 +46,10 @@ class Recorder:
             return ModelResponse(parts=[TextPart('Noted.')])
 
         return FunctionModel(respond, profile=ModelProfile(supports_inline_system_prompts=self.inline_system))
+
+
+def _fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise RuntimeError('The request failed before a response.')
 
 
 def _system_prompts(messages: list[ModelMessage]) -> list[list[SystemPromptPart]]:
@@ -275,6 +279,45 @@ def test_change_opens_a_resumed_request():
 
     assert [[part.content for part in parts] for parts in _system_prompts(result.all_messages())] == snapshot(
         [["The user's name is Frank."], ["The user's name is Bob."]]
+    )
+
+
+def test_change_follows_the_statement_in_a_resumed_request():
+    """A resumed request that holds the prompt's latest statement, never answered, gets the change right after it."""
+    recorder = Recorder()
+    agent = _user_name_agent(recorder)
+    with capture_run_messages() as unanswered:
+        with pytest.raises(RuntimeError):
+            agent.run_sync('Hi!', deps='Frank', model=FunctionModel(_fail))
+
+    result = agent.run_sync(deps='Bob', message_history=unanswered)
+
+    assert [[part.content for part in parts] for parts in _system_prompts(result.all_messages())] == snapshot(
+        [["The user's name is Frank.", "The user's name is Bob."]]
+    )
+    assert recorder.requests == snapshot(
+        [
+            [
+                (
+                    'system-prompt',
+                    """\
+<context id="system_prompt:user_name">
+The user's name is Frank.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                ),
+                (
+                    'system-prompt',
+                    """\
+<context id="system_prompt:user_name">
+The user's name is Bob.
+</context>\
+""",
+                ),
+                ('user-prompt', 'Hi!'),
+            ]
+        ]
     )
 
 
