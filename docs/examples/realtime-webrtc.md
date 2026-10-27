@@ -77,7 +77,7 @@ Overrides: `WEBRTC_REALTIME_MODEL` (default `openai:gpt-realtime`), `WEBRTC_REAL
 
 ## Example Code
 
-The server — it relays the SDP offer to OpenAI, attaches the sideband session, and runs the tools:
+The server — it relays the SDP offer to OpenAI or Azure OpenAI, attaches the sideband session, and runs the tools:
 
 ```snippet {path="/examples/pydantic_ai_examples/realtime_webrtc/app.py"}```
 

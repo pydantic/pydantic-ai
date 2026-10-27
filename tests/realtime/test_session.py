@@ -5,13 +5,14 @@ from __future__ import annotations as _annotations
 import asyncio
 import gc
 import io
+import warnings
 import wave
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from decimal import Decimal
 from threading import Event as ThreadEvent
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast, get_args, get_type_hints
 from uuid import UUID
 
 import anyio
@@ -24,7 +25,6 @@ from pydantic_core import SchemaValidator, core_schema
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai._agent_graph import resolve_conversation_id
 from pydantic_ai._enqueue import PendingMessage
-from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, NativeTool, WebFetch
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -33,6 +33,7 @@ from pydantic_ai.exceptions import (
     RunCancelled,
     ToolFailed,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -59,6 +60,7 @@ from pydantic_ai.messages import (
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ToolCallPart,
@@ -72,6 +74,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
+    AsyncToolCallMode,
     RealtimeError,
     RealtimeEvent,
     RealtimeInputSpeechEndEvent,
@@ -79,6 +82,7 @@ from pydantic_ai.realtime import (
     RealtimeInputTranscriptionErrorEvent,
     RealtimeModel,
     RealtimeModelProfile,
+    RealtimeModelSettingName,
     RealtimeModelSettings,
     RealtimeResponseInterruptedEvent,
     RealtimeSession as _RealtimeSession,
@@ -94,7 +98,14 @@ from pydantic_ai.realtime._session import (
     _pending_message_text,  # pyright: ignore[reportPrivateUsage]
     _TapView,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.realtime._utils import resolve_advertised_tools, seed_pcm_audio, seed_speech_content
+from pydantic_ai.realtime._utils import (
+    SystemPromptContext,
+    SystemPromptText,
+    resolve_advertised_tools,
+    seed_pcm_audio,
+    seed_speech_content,
+    session_instructions,
+)
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     CancelResponse,
@@ -290,6 +301,7 @@ def _profile(
     supports_output_truncation: bool = True,
     supports_text_output: bool = True,
     supports_session_seeding: bool = True,
+    supports_system_messages: bool = True,
     supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(
         {WebSearchTool, WebFetchTool, CodeExecutionTool}
     ),
@@ -302,6 +314,7 @@ def _profile(
         supports_output_truncation=supports_output_truncation,
         supports_text_output=supports_text_output,
         supports_session_seeding=supports_session_seeding,
+        supports_system_messages=supports_system_messages,
         supported_native_tools=supported_native_tools,
     )
 
@@ -434,7 +447,7 @@ class FakeRealtimeModel(RealtimeModel):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[RealtimeConnection]:
         # The same call every provider's `connect` makes.
-        self.last_instructions = get_instructions(messages, model_request_parameters) or ''
+        self.last_instructions = session_instructions(messages, model_request_parameters)
         self.last_tools = model_request_parameters.function_tools
         self.last_native_tools = model_request_parameters.native_tools
         self.last_model_settings = model_settings
@@ -1687,6 +1700,60 @@ async def test_interrupt_played_bytes_after_the_reply_finished_generating_trunca
         _ = [event async for event in events]
 
     assert _speech_cuts(session) == [('interrupted', [100]), ('interrupted', [None])]
+
+
+async def test_interrupt_played_bytes_after_the_reply_finished_generating_records_it_cut_without_truncation() -> None:
+    """Without output truncation (xAI), a finished reply the user cuts off is still recorded where playback stopped.
+
+    Only the provider's copy can't be truncated: no truncation goes out, and the transcript stays whole.
+    """
+    conn = _GatedRealtimeConnection(
+        [*_speech('item-a', 2), ResponseDone()],
+        [*_speech('item-b'), ResponseDone(interrupted=True)],  # a later reply, cut with no position
+    )
+    session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_output_truncation=False))
+
+    async with session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        await anext(stream)  # the second chunk stays buffered and unheard
+        assert [message.state for message in session.all_messages() if isinstance(message, ModelResponse)] == [
+            'complete'
+        ]
+
+        assert await session.interrupt(played_bytes=_CHUNK) is True
+        assert conn.sent == [CancelResponse()]
+
+        conn.release.set()
+        _ = [event async for event in events]
+
+    assert _speech_cuts(session) == [('interrupted', [100]), ('interrupted', [None])]
+
+
+async def test_interrupt_played_bytes_without_truncation_records_the_cut_when_the_cancel_fails() -> None:
+    """A cancel that fails on a dropped link still leaves the reply recorded as cut where playback stopped."""
+
+    class _DroppedLink(_GatedRealtimeConnection):
+        transport_errors = (ConnectionResetError,)
+
+        async def send_input(self, content: RealtimeInput) -> None:
+            raise ConnectionResetError('link dropped')
+
+    conn = _DroppedLink([*_speech('item-a', 2), ResponseDone()], [])
+    session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_output_truncation=False))
+
+    async with session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        await anext(stream)  # the second chunk stays buffered and unheard
+
+        with pytest.raises(RealtimeError, match='link dropped'):
+            await session.interrupt(played_bytes=_CHUNK)
+        conn.release.set()
+
+    assert _speech_cuts(session) == [('interrupted', [100])]
 
 
 async def test_a_tool_after_a_barge_in_on_a_finished_reply_sees_it_cut_off() -> None:
@@ -3762,36 +3829,23 @@ async def test_repeated_malformed_json_args_exceed_tool_retry_budget() -> None:
     assert session._tool_manager.ctx.retries == {'noop': 1}  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_tool_runner_exception_ends_session() -> None:
-    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
-
-    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
-        raise RuntimeError('kaboom')
-
-    session = RealtimeSession(conn, runner)
-    with pytest.raises(RuntimeError, match='kaboom'):
-        await collect_events(session)
-    assert conn.sent == []
-
-
-class _SendsFailedResults(FakeRealtimeConnection):
-    """A connection whose model can't move on without a result for every call (GPT-Live's delegated backend)."""
+class _RecordsUnanswered(FakeRealtimeConnection):
+    """A connection that records the calls the session settled without sending a result."""
 
     def __init__(self, events: list[RealtimeCodecEvent]) -> None:
         super().__init__(events)
         self.unanswered: list[str] = []
 
-    @property
-    def _sends_failed_tool_results(self) -> bool:
-        return True
-
     def _tool_call_unanswered(self, tool_call_id: str) -> None:
         self.unanswered.append(tool_call_id)
 
 
-async def test_tool_exception_is_sent_as_a_failure_where_the_connection_needs_it() -> None:
-    """The failure history records goes out as the call's result, and the exception is still raised."""
-    conn = _SendsFailedResults([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
+async def test_tool_exception_is_sent_as_a_failure() -> None:
+    """The failure history records goes out as the call's result, never the exception's message.
+
+    The exception is still raised to the consumer.
+    """
+    conn = _RecordsUnanswered([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         raise RuntimeError('kaboom')
@@ -3816,7 +3870,7 @@ async def test_tool_failure_stopped_by_a_usage_limit_sends_nothing() -> None:
 
     The connection is told no result will follow.
     """
-    conn = _SendsFailedResults([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
+    conn = _RecordsUnanswered([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
@@ -3831,7 +3885,7 @@ async def test_tool_failure_stopped_by_a_usage_limit_sends_nothing() -> None:
 async def test_tool_failure_that_cannot_be_sent_tells_the_connection() -> None:
     """The link drops as the failure goes out: the connection is told no result will follow, as for a limit."""
 
-    class _Dropped(_SendsFailedResults):
+    class _Dropped(_RecordsUnanswered):
         transport_errors = (ConnectionResetError,)
 
         async def send_input(self, content: RealtimeInput) -> None:
@@ -3860,7 +3914,9 @@ async def test_tool_runner_base_exception_ends_session() -> None:
     session = RealtimeSession(conn, runner)
     with pytest.raises(ToolFailure, match='kaboom'):
         await collect_events(session)
-    assert conn.sent == []
+    assert conn.sent == snapshot(
+        [ToolResult(tool_call_id='tc', output='{"error":"The tool raised an unhandled error."}', failed=True)]
+    )
 
 
 async def test_tool_runner_base_exception_wins_connection_completion_race() -> None:
@@ -3884,7 +3940,9 @@ async def test_tool_runner_base_exception_wins_connection_completion_race() -> N
     with pytest.raises(ToolFailure, match='kaboom'):
         await collect_events(session)
     assert connection_finished.is_set()
-    assert conn.sent == []
+    assert conn.sent == snapshot(
+        [ToolResult(tool_call_id='tc', output='{"error":"The tool raised an unhandled error."}', failed=True)]
+    )
 
 
 async def test_tool_runner_cancelled_call_ends_cleanly() -> None:
@@ -4534,7 +4592,7 @@ async def test_tool_error_does_not_preempt_send_for_an_active_iterator() -> None
 
 
 async def test_tool_error_delivered_to_send_is_skipped_by_the_iterator() -> None:
-    """Once the receive side has ended, a send raises the parked failure; the iterator then ends cleanly."""
+    """Once the receive side has ended, a send raises the parked failure; the iterator then skips it and ends cleanly."""
 
     async def runner(*args: Any) -> str:
         raise ValueError('tool exploded')
@@ -7859,9 +7917,127 @@ async def test_agent_realtime_session_allows_text_output_by_default() -> None:
     assert (model.last_model_settings or {}).get('output_modality') == 'text'
 
 
+async def test_agent_realtime_session_defaults_to_text_on_a_model_without_audio_output() -> None:
+    # A model that only writes text (a perception model, say) defaults to text output, which reaches the
+    # connection as the setting, and the session records its answer as text.
+    agent: Agent[None, str] = Agent()
+    conn = FakeRealtimeConnection([OutputTranscript(text='A kiwi.', is_final=True, output_text=True), ResponseDone()])
+    model = FakeRealtimeModel(conn, profile=RealtimeModelProfile(supports_audio_output=False))
+    async with agent.realtime(model).session() as session:
+        _ = [e async for e in session]
+        response = session.new_messages()[0]
+    assert (model.last_model_settings or {}).get('output_modality') == 'text'
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [TextPart(content='A kiwi.')]
+
+
+async def test_agent_realtime_session_rejects_audio_output_on_a_model_without_it() -> None:
+    agent: Agent[None, str] = Agent()
+    model = FakeRealtimeModel(
+        FakeRealtimeConnection([ResponseDone()]), profile=RealtimeModelProfile(supports_audio_output=False)
+    )
+    with pytest.raises(UserError, match="does not support `output_modality='audio'`; it only generates text"):
+        async with agent.realtime(model, model_settings=RealtimeModelSettings(output_modality='audio')).session():
+            pass  # pragma: no cover
+
+
 def _profile_without_text_output() -> RealtimeModelProfile:
     """A profile that never mentions `supports_text_output`, to pin the `True` default."""
     return RealtimeModelProfile(supports_session_seeding=True)
+
+
+class _SequentialToolCallsIgnoringModel(FakeRealtimeModel):
+    unsupported_settings = frozenset({'max_tokens', 'parallel_tool_calls'})
+
+
+async def test_agent_realtime_session_warns_when_parallel_tool_calls_false_is_ignored() -> None:
+    """As on a standard model, `parallel_tool_calls=False` is a guarantee, so a model that ignores it says so."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def lookup() -> str:  # pragma: no cover
+        return 'found'
+
+    model = _SequentialToolCallsIgnoringModel(
+        FakeRealtimeConnection([ResponseDone()]), settings=RealtimeModelSettings(parallel_tool_calls=False)
+    )
+    with pytest.warns(UnsupportedSettingWarning) as record:
+        async with agent.realtime(model, model_settings=RealtimeModelSettings(max_tokens=10)).session():
+            pass
+    # Once per session, wherever the setting was set, and silent about the tuning knob.
+    assert [str(warning.message) for warning in record] == snapshot(
+        ["The `parallel_tool_calls` setting is not supported by model 'fake:fake-realtime' and will be ignored."]
+    )
+
+
+def _async_profile(mode: AsyncToolCallMode) -> RealtimeModelProfile:
+    profile = _profile()
+    profile['async_tool_call_mode'] = mode
+    return profile
+
+
+def test_realtime_model_setting_name_lists_every_realtime_model_settings_field() -> None:
+    assert set(get_args(RealtimeModelSettingName.__value__)) == set(get_type_hints(RealtimeModelSettings))
+
+
+async def test_agent_realtime_session_warns_when_async_tool_calls_false_is_ignored() -> None:
+    """A model whose tool calls always run asynchronously can't honor `async_tool_calls=False`, so it says so."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def lookup() -> str:  # pragma: no cover
+        return 'found'
+
+    always = FakeRealtimeModel(
+        FakeRealtimeConnection([ResponseDone()]),
+        profile=_async_profile('always'),
+    )
+    with pytest.warns(UnsupportedSettingWarning, match='`async_tool_calls` setting .* always run asynchronously'):
+        async with agent.realtime(always, model_settings=RealtimeModelSettings(async_tool_calls=False)).session():
+            pass
+
+    # A model that offers the choice honors it, and `True` on an always-async model asks for what it does anyway.
+    optional = FakeRealtimeModel(
+        FakeRealtimeConnection([ResponseDone()]),
+        profile=_async_profile('optional'),
+    )
+    always = FakeRealtimeModel(
+        FakeRealtimeConnection([ResponseDone()]),
+        profile=_async_profile('always'),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        async with agent.realtime(optional, model_settings=RealtimeModelSettings(async_tool_calls=False)).session():
+            pass
+        async with agent.realtime(always, model_settings=RealtimeModelSettings(async_tool_calls=True)).session():
+            pass
+
+
+@pytest.mark.parametrize(
+    'settings,has_tools,declared',
+    [
+        (RealtimeModelSettings(parallel_tool_calls=True), True, True),
+        (RealtimeModelSettings(parallel_tool_calls=False), False, True),
+        (RealtimeModelSettings(parallel_tool_calls=False), True, False),
+    ],
+    ids=['true', 'no-function-tools', 'supported'],
+)
+async def test_agent_realtime_session_is_silent_when_parallel_tool_calls_holds(
+    settings: RealtimeModelSettings, has_tools: bool, declared: bool
+) -> None:
+    agent: Agent[None, str] = Agent()
+    if has_tools:
+
+        @agent.tool_plain
+        def lookup() -> str:  # pragma: no cover
+            return 'found'
+
+    model_class = _SequentialToolCallsIgnoringModel if declared else FakeRealtimeModel
+    model = model_class(FakeRealtimeConnection([ResponseDone()]))
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        async with agent.realtime(model, model_settings=settings).session():
+            pass
 
 
 async def test_agent_realtime_session_audio_retention_forwarded() -> None:
@@ -7956,6 +8132,163 @@ async def test_agent_realtime_session_ignores_seeded_history_instructions() -> N
     assert model.last_instructions == ''
 
 
+async def test_agent_realtime_session_system_prompt_joins_instructions() -> None:
+    """The agent's system prompts open the session instructions, ahead of its instructions, as in a standard run."""
+    agent: Agent[None, str] = Agent(system_prompt='Static system prompt.', instructions='Agent instructions.')
+
+    @agent.system_prompt
+    def dynamic_prompt() -> str:
+        return 'Dynamic system prompt.'
+
+    conn = FakeRealtimeConnection([ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model).session() as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == snapshot("""\
+Static system prompt.
+
+Dynamic system prompt.
+
+Agent instructions.\
+""")
+
+
+async def test_agent_realtime_session_seeded_system_prompt_joins_instructions() -> None:
+    """Seeded history's standing system prompt opens the session instructions; its request-level instructions don't.
+
+    As in a standard run, history is taken to carry its own system prompt, so the agent's isn't added.
+    """
+    agent: Agent[None, str] = Agent(system_prompt='Agent system prompt.', instructions='Agent instructions.')
+    seed = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='Seeded system prompt.'), UserPromptPart(content='earlier question')],
+            instructions='Client instructions',
+        ),
+        ModelResponse(parts=[TextPart(content='earlier answer')]),
+    ]
+    conn = FakeRealtimeConnection([ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, message_history=seed).session() as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == 'Seeded system prompt.\n\nAgent instructions.'
+
+
+async def test_agent_realtime_session_records_system_prompt_for_handoff() -> None:
+    """A fresh session records the agent's system prompt first, as a standard run's first request holds it.
+
+    So `new_messages()` includes it, a text run continuing the conversation sends it once (and doesn't add
+    the agent's again), and a session seeded with the history configures it as instructions rather than
+    replaying it.
+    """
+    agent: Agent[None, str] = Agent(system_prompt='Static system prompt.', instructions='Agent instructions.')
+
+    @agent.system_prompt(dynamic=True)
+    def dynamic_prompt() -> str:
+        return 'Dynamic system prompt.'
+
+    conn = FakeRealtimeConnection(
+        [
+            RealtimeInputSpeechStartEvent(item_id='u1'),
+            RealtimeInputSpeechEndEvent(item_id='u1'),
+            InputTranscript(text='question', is_final=True, item_id='u1'),
+            OutputTranscript(text='answer', is_final=True),
+            ResponseDone(),
+        ]
+    )
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        _ = [e async for e in session]
+    history = session.all_messages()
+    assert history == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Static system prompt.', timestamp=IsDatetime()),
+                    SystemPromptPart(
+                        content='Dynamic system prompt.',
+                        timestamp=IsDatetime(),
+                        dynamic_ref=dynamic_prompt.__qualname__,
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', transcript='question')],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='answer')],
+                model_name='fake-realtime',
+                timestamp=IsDatetime(),
+                provider_name='fake',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert session.new_messages() == history
+    assert session.result is not None and session.result.new_messages() == history
+
+    sent: list[ModelMessage] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.extend(messages)
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    await agent.run('next', model=FunctionModel(respond), message_history=history)
+    assert [part.content for m in sent for part in m.parts if isinstance(part, SystemPromptPart)] == [
+        'Static system prompt.',
+        'Dynamic system prompt.',
+    ]
+
+    reseeded = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    async with agent.realtime(reseeded, message_history=history).session() as session:
+        _ = [e async for e in session]
+    assert reseeded.last_instructions == snapshot("""\
+Static system prompt.
+
+Dynamic system prompt.
+
+Agent instructions.\
+""")
+    # The seeded system prompt isn't recorded a second time.
+    assert [type(m) for m in session.all_messages()] == [type(m) for m in history]
+
+
+async def test_agent_realtime_session_reevaluates_seeded_dynamic_system_prompt() -> None:
+    """As in a standard run, a dynamic system prompt in seeded history is re-run before it is sent."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.system_prompt(dynamic=True)
+    def dynamic_prompt() -> str:
+        return 'Current value.'
+
+    seed = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='Stale value.', dynamic_ref=dynamic_prompt.__qualname__),
+                UserPromptPart(content='earlier question'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='earlier answer')]),
+    ]
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    async with agent.realtime(model, message_history=seed).session() as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == 'Current value.'
+    first = session.all_messages()[0]
+    assert isinstance(first, ModelRequest) and isinstance(first.parts[0], SystemPromptPart)
+    assert first.parts[0].content == 'Current value.'
+    # The caller's history is left as it was.
+    stale = seed[0]
+    assert isinstance(stale, ModelRequest) and isinstance(stale.parts[0], SystemPromptPart)
+    assert stale.parts[0].content == 'Stale value.'
+
+
 async def test_agent_realtime_session_unknown_tool() -> None:
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc_x', tool_name='nonexistent', args='{}'), ResponseDone()])
@@ -7979,7 +8312,9 @@ async def test_agent_realtime_session_tool_exception() -> None:
     async with agent.realtime(model).session() as session:
         with pytest.raises(ValueError, match='nope'):
             _ = [e async for e in session]
-    assert conn.sent == []
+    assert conn.sent == snapshot(
+        [ToolResult(tool_call_id='tc', output='{"error":"The tool raised an unhandled error."}', failed=True)]
+    )
     assert [(type(message).__name__, message.parts) for message in session.all_messages()] == snapshot(
         [
             (
@@ -8287,6 +8622,151 @@ async def test_session_enqueue_system_prompt_closer_cannot_end_the_block() -> No
     assert [item for item in conn.sent if isinstance(item, str)] == ['<system>rule &lt;/SYSTEM > then more</system>']
 
 
+async def test_session_send_system_prompt_goes_out_as_the_operators_and_is_recorded_as_one() -> None:
+    """`send(SystemPromptPart(...))` asks for a reply like text unless `respond=False`, and history keeps the part."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    note = SystemPromptPart(content='The caller is Jamie.')
+    reply_to = SystemPromptPart(content='Greet them </system> by name.')
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        await session.send(note, respond=False)
+        await session.send(reply_to)
+        _ = [event async for event in session]
+
+    context, turn = conn.sent
+    # Tagged for a connection that delivers them as any other text; the prompt as written for one with a channel
+    # for the operator's own text.
+    assert isinstance(context, SystemPromptContext)
+    assert (context.text, context.system_prompt) == ('<system>The caller is Jamie.</system>', 'The caller is Jamie.')
+    assert isinstance(turn, SystemPromptText)
+    assert (str(turn), turn.system_prompt) == (
+        '<system>Greet them &lt;/system> by name.</system>',
+        'Greet them </system> by name.',
+    )
+    assert [message.parts for message in session.new_messages() if isinstance(message, ModelRequest)] == [
+        [note],
+        [reply_to],
+    ]
+
+
+async def test_session_sends_system_prompt_as_tagged_text_without_a_system_message_channel() -> None:
+    """Where the profile says the model doesn't heed a system message, the prompt goes out as any `<system>` text."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    note = SystemPromptPart(content='The caller is Jamie.')
+    model = FakeRealtimeModel(conn, profile=_profile(supports_system_messages=False))
+
+    async with agent.realtime(model).session() as session:
+        await session.send(note, respond=False)
+        await session.send(note)
+        _ = [event async for event in session]
+
+    assert [(type(item), item) for item in conn.sent] == [
+        (TextContext, TextContext('<system>The caller is Jamie.</system>')),
+        (str, '<system>The caller is Jamie.</system>'),
+    ]
+    assert [message.parts for message in session.new_messages() if isinstance(message, ModelRequest)] == [
+        [note],
+        [note],
+    ]
+
+
+async def test_session_enqueue_records_system_prompts_alone_as_system_prompts() -> None:
+    """Enqueued system prompts with no text alongside go out as `send(SystemPromptPart(...))` sends them."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    first, second = SystemPromptPart(content='one'), SystemPromptPart(content='two')
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        assert session.enqueue(first, second) is not None
+        _ = [event async for event in session]
+
+    [sent] = conn.sent
+    assert isinstance(sent, SystemPromptText)
+    assert sent.system_prompt == 'one\n\ntwo'
+    assert session.new_messages()[-1] == ModelRequest(
+        parts=[first, second], timestamp=IsDatetime(), conversation_id=IsStr(), run_id=IsStr()
+    )
+
+
+async def test_session_replays_a_system_prompt_sent_first_where_it_was_sent() -> None:
+    """A system prompt sent before anything else isn't the standing one a replay leaves to the instructions.
+
+    The connection keeps the instructions it opened with, so taken for the standing prompt the note would be lost.
+    """
+
+    class _RecordsConversation(FakeRealtimeConnection):
+        message_history: Callable[[], Sequence[ModelMessage]] | None = None
+
+        def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
+            self.message_history = message_history
+
+    note = SystemPromptPart(content='The caller is Jamie.')
+
+    fresh = _RecordsConversation([])
+    async with RealtimeSession(fresh, profile=_profile(supports_session_seeding=True)) as session:
+        assert fresh.message_history is not None
+        assert fresh.message_history() == []
+        await session.send(note, respond=False)
+        await session.send('hi')
+        replayed = fresh.message_history()
+    assert [message.parts for message in replayed if isinstance(message, ModelRequest)] == [
+        [UserPromptPart(content='<system>The caller is Jamie.</system>', timestamp=note.timestamp)],
+        [UserPromptPart(content='hi', timestamp=IsDatetime())],
+    ]
+    # History itself keeps the system prompt it is.
+    assert session.new_messages()[0].parts == [note]
+
+    # After a user turn, the note is a later system prompt, which every replay keeps in place already.
+    after_text = _RecordsConversation([])
+    async with RealtimeSession(after_text, profile=_profile(supports_session_seeding=True)) as session:
+        await session.send('hi')
+        await session.send(note, respond=False)
+        assert after_text.message_history is not None
+        assert [part for message in after_text.message_history() for part in message.parts][1] is note
+
+    # A conversation that opens with a request of its own: only that one's system prompt is the standing one.
+    seeded = _RecordsConversation([])
+    history = [ModelRequest(parts=[SystemPromptPart(content='Standing prompt.')])]
+    async with RealtimeSession(
+        seeded, profile=_profile(supports_session_seeding=True), message_history=history
+    ) as session:
+        await session.send(note, respond=False)
+        assert seeded.message_history is not None
+        assert [part for message in seeded.message_history() for part in message.parts] == [
+            history[0].parts[0],
+            note,
+        ]
+
+
+async def test_session_enqueue_delivers_text_content_and_keeps_its_metadata() -> None:
+    """Text-only `TextContent` crosses the live input channel, and history keeps the part with its metadata."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    tagged = UserPromptPart(
+        ['Report:', TextContent('<report>\nfound it\n</report>', metadata={'origin': 'app.report'})]
+    )
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        assert session.enqueue(tagged) is not None
+        _ = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['Report:\n<report>\nfound it\n</report>']
+    assert session.new_messages()[-1] == ModelRequest(
+        parts=[tagged], timestamp=IsDatetime(), conversation_id=IsStr(), run_id=IsStr()
+    )
+
+
+async def test_session_enqueue_rejects_text_content_mixed_with_media() -> None:
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
+        with pytest.raises(UserError, match=r'support text prompts \(a `str` or `TextContent`\)'):
+            session.enqueue(
+                UserPromptPart([TextContent('caption'), BinaryImage(data=b'image', media_type='image/png')])
+            )
+
+
 async def test_session_enqueue_empty_call_is_noop() -> None:
     agent: Agent[None, str] = Agent()
     async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
@@ -8306,7 +8786,9 @@ async def test_session_enqueue_rejects_invalid_content_immediately() -> None:
     async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
         with pytest.raises(UserError, match='Enqueued content must end with a `ModelRequest`'):
             session.enqueue(ModelResponse(parts=[TextPart(content='not a request')]))
-        with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
+        with pytest.raises(
+            UserError, match=r'support text prompts \(a `str` or `TextContent`\) and system-prompt parts only'
+        ):
             session.enqueue(BinaryImage(data=b'image', media_type='image/png'))
 
 
@@ -8406,7 +8888,9 @@ async def test_agent_realtime_session_rejects_non_text_enqueue() -> None:
 
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='queue_image', args='{}')])
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
-        with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
+        with pytest.raises(
+            UserError, match=r'support text prompts \(a `str` or `TextContent`\) and system-prompt parts only'
+        ):
             _ = [event async for event in session]
 
 
@@ -8423,7 +8907,9 @@ async def test_realtime_pending_messages_reject_unsupported_message_shapes(messa
     manager = session._tool_manager  # pyright: ignore[reportPrivateUsage]
     assert manager.ctx is not None
     assert manager.ctx.pending_messages is not None
-    with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
+    with pytest.raises(
+        UserError, match=r'support text prompts \(a `str` or `TextContent`\) and system-prompt parts only'
+    ):
         manager.ctx.pending_messages.append(PendingMessage(messages=messages))
 
 
@@ -8852,7 +9338,11 @@ async def test_agent_realtime_session_retry_limit_advances_across_tool_rounds() 
     retried = results[0]
     assert isinstance(retried, ToolReturnPart) and retried.outcome == 'retried'
     assert str(retried.content).startswith('1 is not allowed')
-    assert conn.sent == [ToolResult(tool_call_id='tc1', output=retried.model_response_str(), failed=True)]
+    # The call that exhausted its retries is answered with the generic failure, as a tool that raised is.
+    assert conn.sent == [
+        ToolResult(tool_call_id='tc1', output=retried.model_response_str(), failed=True),
+        ToolResult(tool_call_id='tc2', output='{"error":"The tool raised an unhandled error."}', failed=True),
+    ]
 
 
 async def test_agent_realtime_session_runs_args_validator() -> None:
@@ -11702,16 +12192,74 @@ async def test_wait_for_reply_counts_merged_response_requests_once() -> None:
         assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_wait_for_reply_returns_when_a_tool_fails_while_the_session_is_iterated() -> None:
-    """A tool that raised ends the session's reply: the result the model was waiting for never comes."""
+async def test_wait_for_reply_waits_for_the_answer_to_a_failed_tool() -> None:
+    """A tool that raised still answers its call, with the generic failure: the exchange goes on to the model's answer.
+
+    `wait_for_reply()` returns once that answer ends, the turn completes once, and the call is not left unanswered.
+    """
+    answered = asyncio.Event()
+
+    class _AnswersTheFailure(_RecordsUnanswered):
+        async def send_input(self, content: RealtimeInput) -> None:
+            await super().send_input(content)
+            if isinstance(content, ToolResult):
+                answered.set()
+
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield ToolCall(tool_call_id='c1', tool_name='boom', args='{}')
+            yield ResponseDone()
+            await answered.wait()
+            yield OutputTranscript(text='The tool failed.', is_final=True)
+            yield ResponseDone()
+            await asyncio.Event().wait()
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         raise ValueError('tool exploded')
 
+    conn = _AnswersTheFailure([])
+    session = RealtimeSession(conn, runner)
+    errors: list[BaseException] = []
+    turn_completes = 0
+
+    async def consume() -> None:
+        nonlocal turn_completes
+        while True:
+            try:
+                async for event in session:
+                    if isinstance(event, RealtimeTurnCompleteEvent):
+                        turn_completes += 1
+            except ValueError as e:
+                errors.append(e)
+            # Ends with the session, unless cancelled first.
+            else:  # pragma: lax no cover
+                return
+
+    async with session:
+        events = asyncio.create_task(consume())
+        await session.send('Go.')
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await session.wait_for_reply()
+        assert [str(e) for e in errors] == ['tool exploded']
+        assert answered.is_set()
+        assert session.all_messages()[-1].parts == [SpeechPart(speaker='assistant', transcript='The tool failed.')]
+        await _until(lambda: turn_completes == 1)
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert turn_completes == 1
+        events.cancel()
+    assert conn.unanswered == []
+
+
+async def test_wait_for_reply_returns_when_a_tool_hits_a_usage_limit_while_the_session_is_iterated() -> None:
+    """A tool stopped by a usage limit ends the session's reply: no result goes out, so the answer never comes."""
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
+
     session = RealtimeSession(
         BlockingRealtimeConnection([ToolCall(tool_call_id='c1', tool_name='boom', args='{}')]), runner
     )
-    with pytest.raises(ValueError, match='tool exploded'):
+    with pytest.raises(UsageLimitExceeded):
         async with session:
             await session.send('Go.')
             events = asyncio.create_task(drain_events(session))
@@ -11720,8 +12268,8 @@ async def test_wait_for_reply_returns_when_a_tool_fails_while_the_session_is_ite
             await events
 
 
-async def test_wait_for_reply_after_a_failed_tool_still_waits_for_a_later_reply() -> None:
-    """A failed tool ends only its own exchange: a reply asked for afterwards is waited for as usual."""
+async def test_wait_for_reply_after_an_abandoned_exchange_still_waits_for_a_later_reply() -> None:
+    """A tool stopped by a usage limit ends only its own exchange: a reply asked for later is waited for as usual."""
     answer = asyncio.Event()
 
     class _AnswersLater(FakeRealtimeConnection):
@@ -11732,7 +12280,7 @@ async def test_wait_for_reply_after_a_failed_tool_still_waits_for_a_later_reply(
             yield ResponseDone()
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
-        raise ValueError('tool exploded')
+        raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
 
     session = RealtimeSession(_AnswersLater([]), runner)
     errors: list[BaseException] = []
@@ -11743,7 +12291,7 @@ async def test_wait_for_reply_after_a_failed_tool_still_waits_for_a_later_reply(
             try:
                 async for _ in session:
                     pass
-            except ValueError as e:
+            except UsageLimitExceeded as e:
                 errors.append(e)
             else:
                 return
@@ -11766,8 +12314,8 @@ async def test_wait_for_reply_after_a_failed_tool_still_waits_for_a_later_reply(
             await events
 
 
-async def test_tool_failure_ends_the_wait_for_a_turn_sent_while_it_ran() -> None:
-    """A turn sent while a tool ran waits behind that tool's round, which the failure ends: so does the wait for it.
+async def test_usage_limited_tool_ends_the_wait_for_a_turn_sent_while_it_ran() -> None:
+    """A turn sent while a tool ran waits behind that tool's round, which a usage limit ends: so does the wait for it.
 
     The provider queues a reply asked for during a tool round behind it (SIM-15), so once the result never comes,
     nothing the session can see promises that reply: `wait_for_reply()` returns, and the reply, if it comes, is
@@ -11786,7 +12334,7 @@ async def test_tool_failure_ends_the_wait_for_a_turn_sent_while_it_ran() -> None
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         await fail_now.wait()
-        raise ValueError('tool exploded')
+        raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
 
     session = RealtimeSession(_AnswersTheQueuedTurn([]), runner)
     errors: list[BaseException] = []
@@ -11796,7 +12344,7 @@ async def test_tool_failure_ends_the_wait_for_a_turn_sent_while_it_ran() -> None
             try:
                 async for _ in session:
                     pass
-            except ValueError as e:
+            except UsageLimitExceeded as e:
                 errors.append(e)
             else:
                 return
@@ -11881,16 +12429,16 @@ async def test_reconnect_with_tools_running_leaves_no_reply_to_count() -> None:
         events.cancel()
 
 
-async def test_failed_tool_leaves_no_reply_to_count() -> None:
-    """A tool that raised settles its call without a result, so its response's results can't be answered."""
+async def test_usage_limited_tool_leaves_no_reply_to_count() -> None:
+    """A tool stopped by a usage limit settles its call without a result, so its response's results get no answer."""
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
-        raise ValueError('tool exploded')
+        raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
 
     conn = _ToolBatchConnection([ToolCall(tool_call_id='c1', tool_name='boom', args='{}', response_usage_follows=True)])
     conn.close_response.set()
     session = RealtimeSession(conn, runner)
-    with pytest.raises(ValueError, match='tool exploded'):
+    with pytest.raises(UsageLimitExceeded):
         async with session:
             events = asyncio.create_task(drain_events(session))
             await _until(lambda: bool(session._parked_errors))  # pyright: ignore[reportPrivateUsage]
@@ -11899,8 +12447,8 @@ async def test_failed_tool_leaves_no_reply_to_count() -> None:
             await asyncio.wait_for(events, _LIVENESS_TIMEOUT)
 
 
-async def test_tool_failure_while_another_exchange_streams_still_ends_its_exchange() -> None:
-    """A tool failing while an unrelated reply streams doesn't leave the failed exchange owed."""
+async def test_usage_limited_tool_while_another_exchange_streams_still_ends_its_exchange() -> None:
+    """A usage limit stopping a tool while an unrelated reply streams doesn't leave the abandoned exchange owed."""
     fail_now = asyncio.Event()
     finish_b = asyncio.Event()
 
@@ -11917,7 +12465,7 @@ async def test_tool_failure_while_another_exchange_streams_still_ends_its_exchan
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         await fail_now.wait()
-        raise ValueError('tool exploded')
+        raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
 
     session = RealtimeSession(_BStreamsWhileAFails([]), runner)
     errors: list[BaseException] = []
@@ -11927,7 +12475,7 @@ async def test_tool_failure_while_another_exchange_streams_still_ends_its_exchan
             try:
                 async for _ in session:
                     pass
-            except ValueError as e:
+            except UsageLimitExceeded as e:
                 errors.append(e)
             else:
                 return

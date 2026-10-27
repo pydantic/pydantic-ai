@@ -114,10 +114,11 @@ the run continues and the model can pick an allowed command instead. So does
 every other failure the model can act on: a working directory an earlier command
 deleted or replaced with a file, and a command the operating system refuses to
 spawn because it holds a NUL byte or contains a character the operating system
-cannot encode. Failures
+cannot encode, and a command too long for the operating system to start, which
+the model is asked to write to a file and run instead. Failures
 the model can do nothing about still abort the run: a host that cannot allocate
-a process, an argument or environment that exceeds the platform's combined
-size limit, and an invalid character in an application-supplied `env`. A command that runs past its timeout returns its output so far, ending in
+a process, an application-supplied `env` too large to start even a short
+command, and an invalid character in an application-supplied `env`. A command that runs past its timeout returns its output so far, ending in
 `[Command timed out after Ns]`. A workspace that is gone ends the run.
 
 !!! warning "Best-effort, not a security boundary"
@@ -152,6 +153,28 @@ partial files, shrink existing files, or prevent creating many smaller files.
 Use filesystem quotas or OS isolation for aggregate disk protection and
 untrusted commands. No additional telemetry spans are emitted; the existing
 tool-call result carries the failure and limit context.
+
+## Limit command logs
+
+The output logs of `start_command` and `shell` commands are bounded by
+`Shell(max_log_bytes=...)`, 100 MB by default. Each log is checked once a
+second while a command runs and once more when it ends; a log past the limit
+is emptied and gets the notice
+`[Log exceeded max_log_bytes=<n>; earlier output was cleared.]`. The command
+keeps running, so a dev server that logs a lot is not stopped, and later output
+is logged as usual. Pass `max_log_bytes=None` to turn it off.
+
+This also stops a command that reads its own log, such as
+`cat .pydantic-ai-harness/shell/*/output.log | grep failed`. Its output is
+appended to a log it is still reading, so without a limit it never reaches the
+end and the log grows until the disk is full. Once the log is emptied, the
+command reads to the end and exits.
+
+Unlike `max_file_bytes`, this works with `tools=['shell']` and only applies to
+the logs, not to files the command writes. A log can grow by up to one second
+of output past the limit before it is emptied. No telemetry spans are emitted
+for a clear: it shows as the notice in the log and, when it happens while a
+`shell` call waits, as `truncated=True` on its finished event.
 
 ## Environment control
 
@@ -275,10 +298,12 @@ Output events are emitted while a foreground call waits: at most the first
 means the tool stopped waiting, not that the command exited: `exit_code` is
 `None` while no status has been published, and `truncated` says the log held
 more than the events showed. `total_lines` counts logical lines in logs up to
-1 MiB and is `None` for larger logs, which are not scanned. A cancelled call may
-emit no finished event. Events carry command text and command output, so treat
-them as untrusted when rendering. They add no telemetry spans; core already
-traces the tool call.
+1 MiB and is `None` for larger logs, which are not scanned. If `max_log_bytes`
+empties the log during the call, output events start again from its notice,
+`truncated` is true and `total_lines` is `None`. A cancelled call may emit no
+finished event. Events carry command text and command output, so treat them as
+untrusted when rendering. They add no telemetry spans; core already traces the
+tool call.
 
 ## Working directory
 
@@ -325,6 +350,7 @@ Shell(
     default_timeout=30.0,          # seconds, per run_command
     max_output_chars=50_000,       # output cap returned to the model
     max_file_bytes=None,           # per-file size limit for commands (None = no limit)
+    max_log_bytes=100_000_000,     # background and `shell` log size limit (None = no limit)
     persist_cwd=False,             # make cd sticky across calls
     allow_interactive=False,       # allow TTY-style commands
     env=None,                      # variables added to the workspace's environment

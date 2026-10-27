@@ -12,6 +12,7 @@ from pydantic import JsonValue
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils
 from .._file_input import TEXT_DOCUMENT_MEDIA_TYPES
+from .._http import HTTPTimeout
 from .._run_context import RunContext
 from .._utils import (
     format_inlined_text_file as _format_inlined_text_file,
@@ -96,6 +97,8 @@ try:
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
         ReferenceChunk as MistralReferenceChunk,
+        ResourceChunk as MistralResourceChunk,
+        ResourceLinkChunk as MistralResourceLinkChunk,
         ResponseFormatTypedDict as MistralResponseFormatTypedDict,
         TextChunk as MistralTextChunk,
         ThinkChunk as MistralThinkChunk,
@@ -122,10 +125,6 @@ except ImportError as e:  # pragma: lax no cover
         'Please install `mistral` to use the Mistral model, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
     ) from e
-
-# Below the guard on purpose: `mistralai` requires `httpx`, so without the extra the error above
-# is what users should see, not `ModuleNotFoundError: httpx`.
-from httpx import Timeout
 
 
 @contextmanager
@@ -195,6 +194,7 @@ _MISTRAL_REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['none', 'high']] = {
     'medium': 'high',
     'high': 'high',
     'xhigh': 'high',
+    'max': 'high',
 }
 """Maps the unified `thinking` setting to Mistral's `reasoning_effort`.
 
@@ -628,7 +628,7 @@ class MistralModel(Model[Mistral]):
         return 'Any'
 
     @staticmethod
-    def _get_timeout_ms(timeout: Timeout | int | float | None) -> int | None:
+    def _get_timeout_ms(timeout: HTTPTimeout | int | float | None) -> int | None:
         """Convert a timeout to milliseconds."""
         if timeout is None:
             return None
@@ -651,8 +651,9 @@ class MistralModel(Model[Mistral]):
     ) -> Literal['none', 'high'] | MistralUnset:
         """Map the unified `thinking` setting to Mistral's `reasoning_effort`.
 
-        Only models with adjustable reasoning accept `reasoning_effort`; always-on models
-        (`magistral`) reason unconditionally and must not receive it.
+        Only models with adjustable reasoning accept `reasoning_effort`; always-on models (the dated
+        `magistral` ids) reason unconditionally and have no effort to turn down, so they receive nothing,
+        not even for `thinking=False`.
         """
         thinking = model_request_parameters.thinking
         if thinking is None or self.profile.get('thinking_always_enabled', False):
@@ -1088,7 +1089,12 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str 
                 pass
             elif isinstance(
                 chunk,
-                MistralImageURLChunk | MistralDocumentURLChunk | MistralFileChunk | MistralAudioChunk,
+                MistralImageURLChunk
+                | MistralDocumentURLChunk
+                | MistralFileChunk
+                | MistralAudioChunk
+                | MistralResourceChunk
+                | MistralResourceLinkChunk,
             ):  # pragma: no cover
                 pass
             elif isinstance(chunk, MistralUnknownContentChunk):  # pragma: no cover

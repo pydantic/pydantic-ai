@@ -13,6 +13,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, User
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_clai2.builtin_plugins.web.orchestrator import Orchestrator
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    PROTOCOL,
     ItemAdded,
     OrchestratorEvent,
     OrchestratorMessage,
@@ -89,7 +90,9 @@ def orchestrator_until(socket: WebSocketTestSession, kind: type[EventT]) -> tupl
 def test_the_orchestrator_chat_streams_asks_and_is_saved(make_web: MakeWeb, tmp_path: Path) -> None:
     """A message runs the orchestrator's own agent; its tool cards stream tagged for its chat, and it asks there."""
     web_ = orchestrated(make_web)
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         assert opened(socket) == OrchestratorState(
             enabled=True, running=False, model='function::orchestrating', items=[], questions=[]
         )
@@ -125,7 +128,7 @@ def test_the_orchestrator_chat_streams_asks_and_is_saved(make_web: MakeWeb, tmp_
     saved = tmp_path / 'state' / 'pydantic-clai2' / 'orchestrator.json'
     assert saved.is_file() and saved.stat().st_mode & 0o777 == 0o600
     # A restarted CLAI reads the same conversation; the session's own stays empty.
-    again = Orchestrator(host=web_.plugin.host, publish=lambda message: None)
+    again = Orchestrator(service=web_.plugin.service)
     assert [item.kind for item in web_.portal.call(again.state).items] == ['user', 'tool', 'tool', 'assistant']
     assert web_.get('/api/state').json()['items'] == []
     # Another CLAI starting a new chat starts one here too: the file is read again between turns.
@@ -138,7 +141,9 @@ def test_a_conversation_it_cannot_save(make_web: MakeWeb) -> None:
     web_ = orchestrated(make_web)
     path = web_.plugin.service.orchestrator.path
     path.mkdir(parents=True)  # A folder where the file goes: it reads as no conversation, and cannot be replaced.
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         opened(socket)
         web_.post('/api/orchestrator/input', {'text': 'Say hello'})
         ended = orchestrator_until(socket, TurnEnded)[1]
@@ -150,14 +155,16 @@ def test_a_conversation_it_cannot_save(make_web: MakeWeb) -> None:
         path.rmdir()
         web_.post('/api/orchestrator/input', {'text': 'Say hello again'})
         assert orchestrator_until(socket, TurnEnded)[1].outcome == 'completed'
-    assert len(web_.portal.call(Orchestrator(host=web_.plugin.host, publish=lambda message: None).state).items) == 4
+    assert len(web_.portal.call(Orchestrator(service=web_.plugin.service).state).items) == 4
 
 
 def test_stopping_failing_and_starting_over(make_web: MakeWeb, tmp_path: Path) -> None:
     web_ = orchestrated(make_web)
     orchestrator = web_.plugin.service.orchestrator
     assert web_.post('/api/orchestrator/interrupt').json() == {'interrupted': False}
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         opened(socket)
         assert web_.post('/api/orchestrator/input', {'text': 'Work until I stop you'}).status_code == 204
         orchestrator_until(socket, ItemAdded)
@@ -211,7 +218,9 @@ def test_the_session_agent_gets_no_workspace_tools(make_web: MakeWeb) -> None:
         yield 'Hello.'
 
     web_ = make_web(Agent(FunctionModel(stream_function=session_model), deps_type=type(None)), extra=[WORKSPACES])
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         running = web_.run()
         web_.post('/api/input', {'text': 'hi'})
         receive_until(socket, TurnEnded)
@@ -229,7 +238,9 @@ def test_its_state_names_the_saved_default_model_not_the_sessions(make_web: Make
     assert web_.get('/api/orchestrator/state').json()['model'] == 'test'
     # Named, not built: a saved chain since deleted still shows, and the page still connects.
     web_.shell.process.store.set('model', 'chain:gone')
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         assert opened(socket).model == 'chain:gone'
 
 
@@ -239,7 +250,9 @@ def test_a_conversation_it_cannot_read_or_without_a_model(make_web: MakeWeb) -> 
     orchestrator.path.parent.mkdir(parents=True)
     orchestrator.path.write_text('not json')
     assert web_.portal.call(orchestrator.load).messages == []
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         assert opened(socket).model is None
         assert web_.post('/api/orchestrator/input', {'text': 'Hi'}).status_code == 204
         ended = orchestrator_until(socket, TurnEnded)[1]
@@ -249,8 +262,10 @@ def test_a_conversation_it_cannot_read_or_without_a_model(make_web: MakeWeb) -> 
 def test_a_turn_another_clai_overtook_is_not_kept(make_web: MakeWeb) -> None:
     """A turn whose file another CLAI changed meanwhile fails rather than writing over that CLAI's chat."""
     web_ = orchestrated(make_web)
-    other = Orchestrator(host=web_.plugin.host, publish=lambda message: None)
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    other = Orchestrator(service=web_.plugin.service)
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         opened(socket)
         web_.post('/api/orchestrator/input', {'text': 'Say hello'})
         assert orchestrator_until(socket, TurnEnded)[1].outcome == 'completed'

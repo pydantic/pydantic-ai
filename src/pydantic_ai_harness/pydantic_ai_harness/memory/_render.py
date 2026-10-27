@@ -41,8 +41,14 @@ def render_memory_prompt(
     max_tokens: int,
     main_truncated: bool = False,
     files_truncated: bool = False,
+    read_main: str = f'read_memory("{MAIN_FILENAME}")',
+    location: str | None = None,
 ) -> str:
-    """Render a complete memory section within the strict approximate token budget."""
+    """Render a complete memory section within the strict approximate token budget.
+
+    `read_main` is the call that reads the full notebook, named when lines are dropped. `location` is the
+    workspace directory of the files, given when the run's file tools read them in place of `read_memory`.
+    """
     budget = max_tokens * _CHARS_PER_TOKEN
     rendered_guidance = guidance
     source_lines = main_content.rstrip().splitlines()
@@ -62,6 +68,8 @@ def render_memory_prompt(
         omitted_files,
         main_truncated,
         files_truncated,
+        read_main,
+        location,
     )
     while len(rendered) > budget and shown_files:
         shown_files.pop()
@@ -75,6 +83,8 @@ def render_memory_prompt(
             omitted_files,
             main_truncated,
             files_truncated,
+            read_main,
+            location,
         )
     while len(rendered) > budget and kept_lines:
         kept_lines.pop(0)
@@ -88,6 +98,8 @@ def render_memory_prompt(
             omitted_files,
             main_truncated,
             files_truncated,
+            read_main,
+            location,
         )
     if len(rendered) > budget and dropped_lines:
         dropped_lines = 0
@@ -100,6 +112,8 @@ def render_memory_prompt(
             omitted_files,
             main_truncated,
             files_truncated,
+            read_main,
+            location,
         )
     if len(rendered) > budget and rendered_guidance:
         rendered_guidance = rendered_guidance[: max(0, len(rendered_guidance) - (len(rendered) - budget))]
@@ -112,6 +126,8 @@ def render_memory_prompt(
             omitted_files,
             main_truncated,
             files_truncated,
+            read_main,
+            location,
         )
     if len(rendered) <= budget:
         return rendered
@@ -130,16 +146,20 @@ def _render_sections(
     omitted_files: int,
     main_truncated: bool,
     files_truncated: bool,
+    read_main: str,
+    location: str | None,
 ) -> str:
     sections = [f'## {heading}'] if heading else []
     if guidance:
         sections.append(guidance)
+    if location is not None:
+        sections.append(f'These files are in `{location}/` in the workspace.')
     if main_lines or dropped_lines or main_truncated:
         lines = list(main_lines)
         if dropped_lines:
             lines.insert(
                 0,
-                f'... [{dropped_lines} earlier lines; use read_memory("{MAIN_FILENAME}") for the full notebook] ...',
+                f'... [{dropped_lines} earlier lines; use {read_main} for the full notebook] ...',
             )
         if main_truncated:
             lines.append('... [notebook exceeds `max_memory_size`; bounded prefix shown] ...')

@@ -1,0 +1,137 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "210"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6.1-sol
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is 2+2? Reply with just the number.
+        reasoning:
+          effort: max
+          context: all_turns
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1601"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0807535b49bed7c6006ad906a2575487d28d4e669b8954654f
+        object: response
+        created_at: 1792607906
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1792607907
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6.1-sol
+        moderation: null
+        output:
+        - id: rs_0807535b49bed7c6006ad906a36d0487d2adc11534e3056787
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABq2QajQeaYiq5tB91waZppcx920DMV3hWAczrEcs2aHxw4anIBvLwQnXwUZDgLntBIb3WEZGhQJR14qBXfzOUmZiUYNOPyCq-QD8eU_XGdQFqJMXzQZ8xABteR-wQI2C0ErmogNSix42ZPu6D2Rp3-bH8t2groljuJqNOwnFwXdj3F-eYq1doIk2kZBaRdKUKT5biWah-23ZDkWxA0v9O52c8iF_a_FjjBLbhPSZcmMFMzjFeCCABQWa4zCWid6eRv8ApjizDvNqGdQbprCy695opkZDfiNTpWoOh-fL_I6d5YlM6_cc4dH4FRvIL4han091_z8r_7yyLin8ZTmhrAQUJPn133xm3ydMmijqEtTT-wZWsb_tuk-Cp4yEvWFNLYqs7_LQcNudeR7bHKt09Fi5ThJh59Orwv9wgX_LYmJGbXSzuEFW42bDPPUQTRIP8mjs__ErvY3DAl0vnNRHLh6EgdLb0OC_e4TLNBk_-L3JxDZbdvqHvMt-Zav5rvfl4dSoLZ7dbJsUM5vxM5I_yq1FHOriWO768CNoNubrp6Go5qRkOGuwsKJq5NuS3Vxg95SroMqusuC0Ky6UgPRngQ0FCSc_ajnHiByfL7u7iQevQEuRhyDB3JmIrtVJ1vEnN8L-pcBv1-AAYXFLtoISnBjapX_uM0IPbbit6Ap8O92VSo2os2e8lVQN0WV-XA-XDPF6-ykLeUJZs-C2ab3-WF-C8NuMrD4wNm9o58FrDsXSeokPURTCf9QpMCFJISqKtbg-i6eBazLKddop47lPn7y98-RioLJhETK9cVAIQQKKciYF-Qqm2Io4PeoXJt_TSiOz55RPpw0Ode0s2CEuY4lTkY0pAodZt6GRwP-a5p9e2xmvy1OEC4YRgfBmt3cIzcNdcZxpjfyro7c7CAczMOmppN5Nr-aXPsCN5v_X-xgktf41ULORskjfg5dUAjxjdQw0AcYkZM0A79vKw4X_PvYoh2vap3B2rvQrveYSFk-Jv9f6T_BcW6Nn4qAv3w4rzXg99GbICKz4rSDMZYHGQr_Qq9Bzu3e18hkmLzOXsillAGmx5Bsraii6WsTe1wu5rWOxrYu8lIeLFzp42eVIq3jx0O9Lrfoe7-_KNksp3VNB-1xQ1g0firu3V8Ofr0UqOIcCWmuj9hEDp1WAD_MDVmWQAlY6zXJ5zSjSrDnGJAMZAcH6BvJ8C_-FOnHP7p1Gi8dBClcHWD4hxZKEkptnzsf2sWYHl_hyRJxud4lQ2P4bHdhgevrsKOLFnIB1ezvgR3HiAnQdekpSgVeAhkTBFicX0aspJbjwF10SenN9aUvH3fd5kA7d_iwMD6RWLsMHOzH2LmOQ_ruRceaqHFhpkMtHSKz1wU8amn8OEfipVSbb3xEG77_YBFThqxek2gu9xA44KlTBVsnb2xH0yV52afx2q1FPnBQgc66e5adRtc47I5wY-AVNGSIH29f9Y_bbR2Lcbb89vHhZPf1yKjuOsWw7uCe2IJR3ei4EtnW6ou45uH2w4OvBtnuLT1_spMJMyx7QwjL-JLgJ7jHek9mXLF7VFLHA==
+          summary: []
+        - id: msg_0807535b49bed7c6006ad906a3ba4487d29ec365ff84743d13
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: "4"
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: max
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 19
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 21
+          output_tokens_details:
+            reasoning_tokens: 14
+          total_tokens: 40
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-21T18:38:28.016838+00:00

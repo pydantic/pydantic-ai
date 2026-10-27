@@ -506,7 +506,7 @@ def test_model_profile_fable_5():
         ('claude-opus-5', True, False),
         ('claude-sonnet-5', True, False),
         ('claude-opus-5-5', True, True),
-        ('claude-sonnet-5-5', True, True),
+        ('claude-sonnet-5-5', True, False),
         ('claude-haiku-5-5', True, False),
         ('claude-fable-5', True, True),
         ('claude-fable-5-1', True, True),
@@ -515,14 +515,15 @@ def test_model_profile_fable_5():
     ],
 )
 def test_model_profile_thinking_defaults(model_name: str, thinks_by_default: bool, always_thinks: bool):
-    """Which models think without a `thinking` setting, and which reject `{'type': 'disabled'}`.
+    """Which models think without a `thinking` setting, and which can't turn thinking off.
 
     Verified live for every model except Mythos. Haiku 5.5's adaptive default was verified with
     `anthropic_effort='high'` and no `thinking` parameter; the response included thinking tokens. Anthropic [documents
     Haiku 5.5 as adaptive-on by default](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide#configure-thinking)
     and accepts `thinking={'type': 'disabled'}` at effort `high` or below. With no `thinking` parameter,
     Claude Opus 5, Sonnet 5, Opus 5.5, Fable 5 and Fable 5.1 return thinking tokens where Sonnet 4.6 and Opus 4.8
-    return none; Opus 5.5, Fable 5 and Fable 5.1 reject `thinking={'type': 'disabled'}` with a 400.
+    return none; Opus 5.5, Fable 5 and Fable 5.1 reject both `thinking={'type': 'disabled'}` and
+    `{'type': 'between_tools'}` with a 400. Sonnet 5.5 rejects `disabled` but turns thinking off with `between_tools`.
     """
     profile = anthropic_model_profile(model_name)
     assert profile is not None
@@ -616,9 +617,11 @@ def test_model_profile_fable_5_1():
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_xhigh_effort': True,
+            'anthropic_supports_max_effort': True,
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disallows_sampling_settings': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
@@ -696,9 +699,11 @@ def test_model_profile_opus_5():
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_xhigh_effort': True,
+            'anthropic_supports_max_effort': True,
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disallows_sampling_settings': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': True,
+            'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
@@ -758,8 +763,8 @@ def test_model_profile_sonnet_5_5():
     Where Sonnet 5.5 diverges, it matches Opus 5.5: it returns a 400 for a forced `tool_choice` and for a
     thinking block replayed after the `system` prompt changes (with an explicit
     `prefix_mismatch_behavior` of `'error'`). It also rejects `thinking: {'type': 'disabled'}` in favor of
-    `{'type': 'between_tools'}`, which passes through `anthropic_thinking` unchanged, so thinking can't be
-    turned off.
+    `{'type': 'between_tools'}`, which turns thinking off and, like disabled thinking on Opus 5, returns a 400 for
+    `xhigh` and `max` effort; live on the Anthropic API and on Bedrock.
     """
     profile = anthropic_model_profile('claude-sonnet-5-5')
     sonnet_5 = anthropic_model_profile('claude-sonnet-5')
@@ -769,7 +774,8 @@ def test_model_profile_sonnet_5_5():
         **sonnet_5,
         'supports_forced_tool_choice': False,
         'anthropic_binds_thinking_blocks': True,
-        'thinking_always_enabled': True,
+        'anthropic_disallows_top_effort_when_thinking_disabled': True,
+        'anthropic_disables_thinking_with_between_tools': True,
     }
 
 

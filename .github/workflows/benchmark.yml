@@ -1,3 +1,4 @@
+# description: Runs CodSpeed benchmarks on pushes to main, on manual dispatch, and on pull requests that change benchmarked code.
 name: CodSpeed
 
 on:
@@ -50,7 +51,7 @@ jobs:
             exit 0
           fi
           if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
-            --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$RUNNER_TEMP/changed-files.txt"; then
+            --jq '.[] | [.filename, (.previous_filename // ""), .status] | @tsv' > "$RUNNER_TEMP/changed-files.txt"; then
             echo '::warning::Could not list the PR changed files; running benchmarks.'
             run_benchmarks
             exit 0
@@ -69,22 +70,83 @@ jobs:
               pyproject.toml|*/pyproject.toml|uv.lock|*/uv.lock|uv.toml|*/uv.toml|.python-version|*/.python-version) return 0 ;;
               requirements*.txt|*/requirements*.txt|requirements*.in|*/requirements*.in) return 0 ;;
               setup.py|*/setup.py|setup.cfg|*/setup.cfg|pytest.ini|*/pytest.ini|tox.ini|*/tox.ini) return 0 ;;
-              package.json|*/package.json|package-lock.json|*/package-lock.json|pnpm-lock.yaml|*/pnpm-lock.yaml|yarn.lock|*/yarn.lock|bun.lock|*/bun.lock) return 0 ;;
-              # These test inputs also include the root fixtures and their imports.
-              tests/harness/*|tests/clai2/*|tests/clai/*) return 1 ;;
-              tests/*) return 0 ;;
-              docs/*|agent_docs/*|examples/*.md|examples/*.mdc) return 1 ;;
+              # Only audited documentation skips; future Markdown workload fixtures remain inputs.
+              tests/benchmarks/README.md|tests/benchmarks/AGENTS.md) return 1 ;;
+              # Workloads and root collection/autouse fixtures execute even without timing.
+              tests/benchmarks/*|tests/__init__.py|tests/conftest.py|tests/cost_guards.py) return 0 ;;
+              # Root fixtures reset event-loop/instrumentation/cache state, track HTTP/test costs and check cache prefixes.
+              tests/_inline_snapshot.py|tests/cassette_hooks.py|tests/cassette_utils.py|tests/function_model_prefix.py) return 0 ;;
+              # Other suites, cassettes and binary assets are not collected or requested by the workloads.
+              tests/*) return 1 ;;
+              pydantic_ai_slim/pydantic_ai/*)
+                case "${1#pydantic_ai_slim/pydantic_ai/}" in
+                  *.md) return 1 ;;
+                  # Requests/replay use TestModel/FunctionModel; public exports also import these utilities.
+                  models/__init__.py|models/_abstract.py|models/_continuation.py|models/_known_model_names.py) return 0 ;;
+                  models/_prompt_cache.py|models/_request_timeout.py|models/_speech.py|models/concurrency.py) return 0 ;;
+                  models/fallback.py|models/function.py|models/instrumented.py|models/test.py|models/wrapper.py) return 0 ;;
+                  # `BatchModelRequests` and the `Model.batch_*` methods are exported, so these load with the core.
+                  models/_batch_codec.py|models/_batch_model.py|models/_batch_settings.py|models/_in_memory_batch.py) return 0 ;;
+                  models/batch.py) return 0 ;;
+                  # These entry modules are imported without loading provider implementations or profiles.
+                  profiles/__init__.py|profiles/decision.py|providers/__init__.py) return 0 ;;
+                  # Public exports import shared primitives without loading engine or live-provider integrations.
+                  durable_exec/__init__.py|durable_exec/_capability_operation.py|durable_exec/_codec.py) return 0 ;;
+                  durable_exec/_operation.py|durable_exec/_operation_backend.py|durable_exec/_operation_names.py) return 0 ;;
+                  embeddings/__init__.py|embeddings/base.py|embeddings/instrumented.py|embeddings/result.py) return 0 ;;
+                  embeddings/settings.py|embeddings/test.py|embeddings/wrapper.py) return 0 ;;
+                  images/__init__.py|images/_validation.py|images/base.py|images/instrumented.py) return 0 ;;
+                  images/result.py|images/settings.py|images/test.py|images/wrapper.py) return 0 ;;
+                  # Model instances bypass string dispatch; the remaining adapters/integrations stay unloaded.
+                  workspaces/conformance.py) return 1 ;;
+                  __main__.py|_mcp.py|_mcp_apps.py|_mcp_compat.py|_model_errors.py|_ssrf.py|_thinking_part.py) return 1 ;;
+                  direct.py|mcp.py|prices.py|retries.py) return 1 ;;
+                  _cli/*|common_tools/*|ext/*|durable_exec/*|embeddings/*|images/*) return 1 ;;
+                  models/*|profiles/*|providers/*|realtime/*|ui/*) return 1 ;;
+                esac
+                # Agent/history/tool-search execution and public exports load the remaining core modules.
+                return 0
+                ;;
+              # Curves use reporting/lifecycle helpers, not online emission, generation or LLM judges.
+              pydantic_evals/pydantic_evals/_online.py|pydantic_evals/pydantic_evals/_otel_emit.py) return 1 ;;
+              pydantic_evals/pydantic_evals/generation.py|pydantic_evals/pydantic_evals/online.py) return 1 ;;
+              pydantic_evals/pydantic_evals/online_capability.py|pydantic_evals/pydantic_evals/evaluators/llm_as_a_judge.py) return 1 ;;
+              # These sources are not imported during collection, fixtures or benchmark execution.
+              docs/*|agent_docs/*|examples/*) return 1 ;;
               .agents/*.md|.agents/*.tsv|.claude/*.md) return 1 ;;
+              # Harness/CLI packages and UI assets are unused; Python installation metadata above still runs.
               src/pydantic_ai_harness/*|src/pydantic_clai2/*|clai/*) return 1 ;;
               pydantic_ai_slim/*.md|pydantic_graph/*.md|pydantic_evals/*.md) return 1 ;;
+              # The job invokes uv/pytest directly, without make.
+              Makefile) return 1 ;;
               *.md) [[ "$1" == */* ]] ;;
+              # Graph execution and precision/ROC report construction load the other graph/evals helpers.
+              # Unknown paths stay conservative until audited.
               *) return 0 ;;
             esac
           }
 
           run_benchmarks=false
           for changed_file in "${changed_files[@]}"; do
-            IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
+            # Empty TSV fields collapse under Bash's whitespace IFS; use a non-whitespace separator.
+            IFS='|' read -r filename previous_filename status <<< "${changed_file//$'\t'/|}"
+            case "$status" in
+              added|copied|renamed)
+                # New source files have not been audited, including new files inside excluded directories.
+                case "$filename" in
+                  pydantic_ai_slim/*.py|pydantic_graph/*.py|pydantic_evals/*.py)
+                    run_benchmarks=true
+                    break
+                    ;;
+                esac
+                ;;
+              modified|removed) ;;
+              *)
+                echo '::warning::Unknown file status; running benchmarks.'
+                run_benchmarks=true
+                break
+                ;;
+            esac
             if affects_benchmarks "$filename" || \
               { [ -n "$previous_filename" ] && affects_benchmarks "$previous_filename"; }; then
               run_benchmarks=true
@@ -120,4 +182,7 @@ jobs:
         uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
         with:
           mode: simulation
-          run: uv run pytest tests/benchmarks --codspeed
+          # Simulation runs some benchmarks for minutes, past `faulthandler_timeout`. The stack dump it triggers reads
+          # the running thread's frames without the GIL, and under Valgrind that read is slow enough to hit a freed
+          # frame and segfault the process.
+          run: uv run pytest tests/benchmarks --codspeed -o faulthandler_timeout=0

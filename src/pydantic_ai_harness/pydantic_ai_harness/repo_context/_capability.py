@@ -16,8 +16,9 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, HarnessDeprecationWarning, warn_argument_ignored
-from pydantic_ai_harness._workspace import require_workspace, workspace_path
+from pydantic_ai_harness._workspace import in_working_dir, require_workspace, workspace_path
 from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
+from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
     discover_instruction_files,
@@ -31,6 +32,11 @@ from pydantic_ai_harness.repo_context._toolset import RepoContextToolset
 _INVENTORY_HINT = (
     'Call `{tool_name}` to map where this repo keeps its coding-assistant setup '
     '(instruction dirs, skills, sub-agents, and hooks) so you can inspect it.'
+)
+_ASSET_ROOTS_HINT = (
+    'This repo may keep its coding-assistant setup in {roots}: `skills/*/SKILL.md`, '
+    '`agents/*.md` (sub-agents), and `settings.json` (hooks). Inspect it with your file tools, '
+    'or call `{tool_name}` to map it when that tool is offered.'
 )
 _POINTER_NOTE = (
     'A directory you just accessed has an instruction file, not loaded here. Its path is in the '
@@ -65,7 +71,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     2. Asset inventory (`expose_inventory_tool`, off by default): a tool that
        reports where the repo's CE assets live (`.claude`/`.agents`/`.codex`/
        `.grok` and their `skills/`, `agents/`, `settings.json`). It locates
-       assets; it does not parse them.
+       assets; it does not parse them. It steps aside for `FileSystem`'s
+       `read_file` when the asset roots are inside the working directory, and
+       the instructions then point at the roots instead.
 
     3. Nested-on-traversal (`nested_traversal`, off by default): when the model
        lists or reads a directory through a filesystem capability event,
@@ -184,7 +192,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     def get_instructions(self) -> str | Callable[[RunContext[AgentDepsT]], str | None] | None:
         """Cache-stable instructions resolved after `before_run` loads workspace files."""
         if not self.autoload_instructions:
-            return _INVENTORY_HINT.format(tool_name=self.inventory_tool_name) if self.expose_inventory_tool else None
+            if not self.expose_inventory_tool:
+                return None
+            # The hint doesn't depend on the run, so it stays static and inside the cached prefix.
+            return self._inventory_hint()
 
         def instructions(_ctx: RunContext[AgentDepsT]) -> str | None:
             return self._render_instructions()
@@ -202,17 +213,38 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             assert self._cached_working_dir is not None, '`before_run` resolves it before loading files'
             parts.append(render_context_files(self._context_files, relative_to=self._cached_working_dir))
         if self.expose_inventory_tool:
-            parts.append(_INVENTORY_HINT.format(tool_name=self.inventory_tool_name))
+            parts.append(self._inventory_hint())
         return '\n\n'.join(parts) or None
+
+    def _inventory_hint(self) -> str:
+        """Point at the inventory tool, and at the asset roots when a file reader can replace it.
+
+        It names no reader, so it is the same whether or not `FileSystem` is on the agent.
+        """
+        if self._asset_roots_in_working_dir:
+            roots = ', '.join(f'`{root}/`' for root in self.asset_roots)
+            return _ASSET_ROOTS_HINT.format(roots=roots, tool_name=self.inventory_tool_name)
+        return _INVENTORY_HINT.format(tool_name=self.inventory_tool_name)
+
+    @property
+    def _asset_roots_in_working_dir(self) -> bool:
+        """Whether every asset root is inside the working directory, which `FileSystem`'s root contains.
+
+        The inventory reads the run's workspace, so this is all it takes for `read_file` to reach the same files.
+        """
+        return bool(self.asset_roots) and all(in_working_dir(root) for root in self.asset_roots)
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """The asset-inventory toolset, or `None` when the tool is disabled."""
         if not self.expose_inventory_tool:
             return None
         if self._toolset is None:
-            self._toolset = RepoContextToolset[AgentDepsT](
+            toolset = RepoContextToolset[AgentDepsT](
                 self.asset_roots, self.inventory_tool_name, id=self.id or 'repo_context'
             )
+            if self._asset_roots_in_working_dir:
+                toolset.tools[self.inventory_tool_name].prepare = step_aside_for_read_file
+            self._toolset = toolset
         return self._toolset
 
     async def after_tool_execute(

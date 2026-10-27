@@ -25,14 +25,11 @@ when the [canonical pre-push gate](../pushing-commits-to-the-repo/SKILL.md#befor
 Use that gate's [review scope](../pushing-commits-to-the-repo/SKILL.md#review-scope), exemptions, and budget.
 
 This is the local counterpart to the repository's high-judgment hosted review, run through the
-developer's model subscription. It is independent of the hosted review that runs after push.
+developer's model subscription. It is independent of any hosted review.
 
 ## Select the reviewer tier
 
-- In Claude Code, use an Opus reviewer.
-- In Codex, use the Terra-pinned `reviewer` agent.
-- Never use Fable or Sol for this review.
-- In other harnesses, use the normal reviewer selection.
+Follow [Model tiers](../pushing-commits-to-the-repo/SKILL.md#model-tiers).
 
 ## Decide whether to decompose the diff
 

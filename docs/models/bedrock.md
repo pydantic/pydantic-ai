@@ -136,9 +136,16 @@ The output mode is chosen on the run's first request and kept for the rest of th
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], where each model chooses on every request), so a thinking
 setting that changes from step to step doesn't add or remove the output tool between requests and
 [invalidate the prompt cache](../capabilities/caching.md#what-invalidates-a-cache). A Claude run that starts with tool
-output keeps it once thinking turns on, with the output tool offered under `toolChoice={'auto': {}}`. Models other than
-Claude don't accept output tools alongside thinking, so there a request that thinks switches to
+output keeps it once thinking turns on, with the output tool offered under `toolChoice={'auto': {}}`. OpenAI GPT-5.6
+and GPT-6 accept output tools while they think, so they keep tool output (offered without a forced `toolChoice`, as
+for these models without thinking). Models other than Claude, xAI Grok, and OpenAI GPT-5.6 and GPT-6 don't accept
+output tools alongside thinking, so there a request that thinks switches to
 [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
+
+xAI Grok 4.6 and 4.7 (`us.xai.grok-4.6`, `global.xai.grok-4.6`, `us.xai.grok-4.7`, `global.xai.grok-4.7`) always
+reason, and Pydantic AI keeps forcing tool choice with them, since Converse accepts a forced tool choice with Grok 4.6
+while it reasons. A `thinking` setting does not change this: `tool_choice='required'`, a single forced tool, and
+[`ToolOutput`][pydantic_ai.output.ToolOutput] keep working.
 
 ### Array constraints in structured output
 
@@ -192,7 +199,7 @@ The provider-agnostic way to enable it is the unified [`ModelSettings.cache`][py
 Beyond that, Pydantic AI provides four provider-specific ways to use prompt caching:
 
 1. **Cache User Messages with [`CachePoint`][pydantic_ai.messages.CachePoint]**: Insert a `CachePoint` marker to cache everything before it in the current user message. A `CachePoint` at the start of a user prompt part has nothing before it in that message, so it caches everything up to the end of the previous user message instead. Pass `CachePoint(ttl='1h')` to opt into the extended cache duration.
-2. **Cache System Instructions**: Set [`BedrockModelSettings.bedrock_cache_instructions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly. When you have both static and dynamic [instructions](../agent.md#instructions), the cache point is placed after the last static instruction, so dynamic instructions can change without invalidating the static cache.
+2. **Cache System Instructions**: Set [`BedrockModelSettings.bedrock_cache_instructions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_instructions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly. When you have both static and dynamic [instructions](../agent.md#instructions), the cache point is placed after the last static instruction, so dynamic instructions can change without invalidating the static cache. Dynamic instructions with [`on_change='append'`](../agent.md#appending-instruction-changes) sort between the two, since their changes are appended to the history rather than rewriting the prefix, and get a second cache point after them. The first one is what a new conversation reads even when its append-mode instructions differ, such as per-user memory, and the second also covers append-mode instructions that are the same in every conversation, such as the catalogs Pydantic AI computes.
 3. **Cache Tool Definitions**: Set [`BedrockModelSettings.bedrock_cache_tool_definitions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_tool_definitions] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly.
 4. **Cache All Messages**: Set [`BedrockModelSettings.bedrock_cache_messages`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_messages] to `True` (uses 5m TTL by default) or specify `'5m'` / `'1h'` directly to automatically cache the last user message.
 
@@ -311,15 +318,15 @@ Bedrock enforces a maximum of 4 cache points per request. Pydantic AI automatica
 
 Cache points can be placed in three locations:
 
-1. **System Prompt**: Via `bedrock_cache_instructions` setting (adds cache point to last system prompt block)
+1. **System Prompt**: Via `bedrock_cache_instructions` setting (adds cache point after the last static system prompt block, and a second one after any `on_change='append'` instructions)
 2. **Tool Definitions**: Via `bedrock_cache_tool_definitions` setting (adds cache point to last tool definition)
 3. **Messages**: Via `CachePoint` markers or `bedrock_cache_messages` setting (adds cache points to message content)
 
-Each setting uses **at most 1 cache point**, but you can combine them. The exception is `bedrock_cache_messages`: after a turn that adds more than about 20 content blocks, it also marks the end of the previous request, since Bedrock only looks back about 20 blocks for the previous request's cache entry.
+Each setting uses **at most 1 cache point**, but you can combine them. The exceptions are `bedrock_cache_instructions` with append-mode instructions, and `bedrock_cache_messages`: after a turn that adds more than about 20 content blocks, it also marks the end of the previous request, since Bedrock only looks back about 20 blocks for the previous request's cache entry.
 
 ##### Automatic Cache Point Limiting
 
-When cache points from all sources (settings + `CachePoint` markers) exceed 4, Pydantic AI automatically removes excess cache points from **older message content** (keeping the most recent ones).
+When cache points from all sources (settings + `CachePoint` markers) exceed 4, Pydantic AI automatically removes the cache point after the append-mode instructions first (when another one ends the static instructions or system prompt), then excess cache points from **older message content** (keeping the most recent ones).
 
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
@@ -353,7 +360,8 @@ print(result.output)
 
 **Key Points**:
 
-- System and tool cache points are **always preserved**
+- Tool cache points and the cache point after the static instructions are **always preserved**
+- When static instructions or a system prompt come before them, the cache point after `on_change='append'` instructions is dropped before any message cache point: within a conversation the message cache points already cover those instructions
 - The cache point created by `bedrock_cache_messages` is **always preserved** (as it's the newest message cache point)
 - Additional `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
@@ -420,6 +428,8 @@ model = BedrockConverseModel(
 
 agent = Agent(model)
 ```
+
+You don't need this for a system-defined (cross-region) inference profile ARN or a foundation model ARN: since Pydantic AI v2.59.0, you can pass either directly as the model name, and Pydantic AI detects the capabilities of the model it names. An application inference profile ARN doesn't name its model, so it still needs `bedrock_inference_profile`.
 
 ### Configuring Retries
 

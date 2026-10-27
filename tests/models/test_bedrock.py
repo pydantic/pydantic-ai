@@ -24,6 +24,9 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     BinaryContent,
     CachePoint,
+    Citation,
+    ContentCitationAnchor,
+    DocumentCitationSource,
     DocumentUrl,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -33,6 +36,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestAttempt,
     ModelResponse,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -44,6 +48,7 @@ from pydantic_ai import (
     RetryFeedbackPart,
     RetryInfo,
     RunContext,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -55,7 +60,9 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool
 from pydantic_ai.exceptions import (
@@ -71,6 +78,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     ToolAvailabilityDeltaPart,
     UploadedFile,
+    UserContent,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
@@ -81,7 +89,7 @@ from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers.gateway import gateway_provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 
@@ -305,12 +313,12 @@ async def test_bedrock_model_usage_limit_exceeded(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
 ):
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
     agent = Agent(model=model)
 
     with pytest.raises(
         UsageLimitExceeded,
-        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=23\\)',
+        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=40\\)',
     ):
         await agent.run(
             ['The quick brown fox jumps over the lazydog.', CachePoint(), 'What was next?'],
@@ -323,21 +331,27 @@ async def test_bedrock_model_usage_limit_not_exceeded(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
 ):
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
     agent = Agent(model=model)
 
     result = await agent.run(
         'The quick brown fox jumps over the lazydog.',
-        usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+        usage_limits=UsageLimits(input_tokens_limit=40, count_tokens_before_request=True),
     )
 
     assert result.output == snapshot(
-        'I notice there\'s a small typo in your message - it should be "lazy dog" (two words) rather than '
-        '"lazydog."\n\nThe corrected version is: "The quick brown fox jumps over the lazy dog."\n\n'
-        'This is a famous pangram - a sentence that contains every letter of the English alphabet at least once. '
-        "It's commonly used for testing typewriters, keyboards, fonts, and other applications where you want to "
-        "display all the letters.\n\nIs there something specific you'd like to know about this phrase, or were you "
-        'perhaps testing something?'
+        """\
+Here's a fun fact about your sentence:
+
+**"The quick brown fox jumps over the lazy dog"** is a famous **pangram** — a sentence that contains **every letter of the alphabet** at least once! (A-Z)
+
+It's widely used for:
+- 📝 **Typing practice**
+- 🖨️ **Testing fonts and printers**
+- ⌨️ **Keyboard testing**
+
+I noticed you wrote "lazydog" as one word — it's typically written as two words: **"lazy dog."** 😊\
+"""
     )
 
 
@@ -865,22 +879,20 @@ async def test_bedrock_inference_profile_converse(
 
 
 async def test_bedrock_inference_profile_count_tokens(
-    allow_model_requests: None,
-    bedrock_provider: BedrockProvider,
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ):
-    # count_tokens only uses model_name (not the inference profile), so the ARN doesn't
-    # matter here. Claude Sonnet is used because it's one of the few Bedrock models that
-    # supports the count_tokens API.
+    """`count_tokens` sends the base model id, not the `bedrock_inference_profile` ARN.
+
+    Claude Sonnet 4.6 is used because Bedrock CountTokens rejects every Claude 5-family id.
+    """
     inference_profile_arn = _bedrock_arn('application-inference-profile/mi1dadi0g15f')
     settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
-    model = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
-    )
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider, settings=settings)
     params = ModelRequestParameters()
 
     result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
     assert result.input_tokens > 0
-    assert model.model_name == 'us.anthropic.claude-sonnet-4-20250514-v1:0'
+    assert vcr.requests[0].path == snapshot('/model/anthropic.claude-sonnet-4-6/count-tokens')
 
 
 async def test_bedrock_count_tokens_additional_model_requests_fields(
@@ -893,9 +905,7 @@ async def test_bedrock_count_tokens_additional_model_requests_fields(
     settings: BedrockModelSettings = {
         'bedrock_additional_model_requests_fields': {'anthropic_beta': ['context-1m-2025-08-07']}
     }
-    model = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
-    )
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider, settings=settings)
     params = ModelRequestParameters()
 
     result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
@@ -909,7 +919,7 @@ async def test_bedrock_count_tokens_tool_config(
     allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ):
     """`count_tokens` forwards `toolConfig` to `input.converse`, mirroring the real request so tool schemas are counted."""
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
     tool_def = ToolDefinition(
         name='get_weather',
         description='Get the weather for a location',
@@ -1405,6 +1415,283 @@ async def test_bedrock_unified_service_tier_auto_omits(
     assert 'serviceTier' not in kwargs
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'citations', 'expected'),
+    [
+        pytest.param(
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            False,
+            {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Dummy TXT file\n'}},
+            id='claude-not-asked',
+        ),
+        pytest.param(
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            True,
+            {
+                'name': 'Document 1',
+                'format': 'txt',
+                'source': {'text': 'Dummy TXT file\n'},
+                'citations': {'enabled': True},
+            },
+            id='claude-asked',
+        ),
+        # Models without citation support reject a request that enables citations, so the setting is ignored.
+        pytest.param(
+            'us.amazon.nova-pro-v1:0',
+            True,
+            {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Dummy TXT file\n'}},
+            id='nova-asked',
+        ),
+    ],
+)
+async def test_bedrock_citations_request_setting(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    text_document_content: BinaryContent,
+    model_name: str,
+    citations: bool,
+    expected: dict[str, Any],
+) -> None:
+    """The shared setting is forwarded on Bedrock document blocks only when enabled and the model supports it.
+
+    Unit test: pins the document block sent, including the not-asked and unsupported-model cases no recording has.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'The document is a test.'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 5, 'outputTokens': 6},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    # An explicit `max_tokens` keeps the plain `Converse` call the mock patches.
+    await Agent(model, model_settings=ModelSettings(citations=citations, max_tokens=1024)).run(
+        ['What is in this document?', text_document_content]
+    )
+
+    assert mock_converse.call_args.kwargs['messages'][0]['content'][1]['document'] == expected
+
+
+async def test_bedrock_citations_off_for_structured_output(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, text_document_content: BinaryContent
+) -> None:
+    """The shared setting doesn't turn on citations when the output isn't text.
+
+    Anthropic models write their `<cite>` markup into tool output, as checked live. Unit test: it pins the request.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[UserPromptPart(content=['What is in this document?', text_document_content])])],
+        ModelRequestParameters(output_mode='tool', allow_text_output=False),
+        BedrockModelSettings(citations=True),
+    )
+    assert bedrock_messages[0]['content'][1] == {
+        'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Dummy TXT file\n'}}
+    }
+
+
+@pytest.mark.parametrize(
+    'tool_choice',
+    [pytest.param('required', id='required'), pytest.param(['save_summary'], id='named-tool')],
+)
+async def test_bedrock_citations_with_forced_tool_raises(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    text_document_content: BinaryContent,
+    tool_choice: Literal['required'] | list[str],
+) -> None:
+    """With a forced tool call, Anthropic models write their `<cite>` markup into the tool's arguments, so it's an error.
+
+    A request with no document is unchanged by the setting, so it's allowed.
+    Checked live: 3 of 3 forced calls got the markup with citations on, none without. Unit test: no request is sent.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    parameters = ModelRequestParameters(function_tools=[ToolDefinition(name='save_summary')], allow_text_output=True)
+    settings = BedrockModelSettings(citations=True, tool_choice=tool_choice)
+
+    with pytest.raises(UserError, match="`Citations\\(\\)` can't be used with a `tool_choice` that forces a tool call"):
+        await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+            [ModelRequest(parts=[UserPromptPart(content=['Summarise the policy.', text_document_content])])],
+            parameters,
+            settings,
+        )
+
+    _, messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[UserPromptPart(content='Summarise the policy.')])], parameters, settings
+    )
+    assert messages == [{'role': 'user', 'content': [{'text': 'Summarise the policy.'}]}]
+
+
+async def test_bedrock_citations_for_uploaded_document(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Bedrock rejects citations on a document read from S3, so the shared setting leaves them off.
+
+    Unit test: replaying a recording would need a real S3 object in the bucket. The rejection was checked live:
+    'S3 as a document source is not allowed when citations are enabled'.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'The document is a test.'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 5, 'outputTokens': 6},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    # An explicit `max_tokens` keeps the plain `Converse` call the mock patches.
+    await Agent(model, model_settings=ModelSettings(citations=True, max_tokens=1024)).run(
+        [
+            'What is in this document?',
+            UploadedFile(file_id='s3://bucket/report.pdf', provider_name='bedrock', media_type='application/pdf'),
+        ]
+    )
+
+    assert mock_converse.call_args.kwargs['messages'][0]['content'][1]['document'] == {
+        'name': 'Document 1',
+        'format': 'pdf',
+        'source': {'s3Location': {'uri': 's3://bucket/report.pdf'}},
+    }
+
+
+async def test_bedrock_citations_rejects_non_utf8_text_document(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Citations require text documents to be sent as UTF-8 text, rather than opaque bytes.
+
+    Unit test: the error is raised before any request is sent.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    mock_converse = mocker.patch.object(model.client, 'converse')
+
+    with pytest.raises(UserError, match='Bedrock citations require UTF-8 text documents'):
+        await Agent(model, model_settings=ModelSettings(citations=True)).run(
+            ['What is in this document?', BinaryContent(data=b'\xff', media_type='text/plain')]
+        )
+
+    mock_converse.assert_not_called()
+
+
+async def test_bedrock_citations_ignores_unsupported_document_format(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Bedrock document citations support TXT and PDF only; other formats remain ordinary documents.
+
+    Unit test: no recording sends a document other than TXT or PDF with citations on.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'Done.'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    # An explicit `max_tokens` keeps the plain `Converse` call the mock patches.
+    await Agent(model, model_settings=ModelSettings(citations=True, max_tokens=1024)).run(
+        ['What is in this document?', BinaryContent(data=b'column\nvalue\n', media_type='text/csv')]
+    )
+
+    assert mock_converse.call_args.kwargs['messages'][0]['content'][1]['document'] == {
+        'name': 'Document 1',
+        'format': 'csv',
+        'source': {'bytes': b'column\nvalue\n'},
+    }
+
+
+def _tool_return_documents_history() -> list[ModelMessage]:
+    return [
+        ModelRequest(parts=[UserPromptPart(content='Show me the reports.')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_reports', args={}, tool_call_id='tool-1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_reports',
+                    tool_call_id='tool-1',
+                    content=[
+                        BinaryContent(data=b'inline report', media_type='text/plain', identifier='inline-report'),
+                        UploadedFile(
+                            file_id='s3://bucket/uploaded.txt',
+                            provider_name='bedrock',
+                            identifier='uploaded-report',
+                        ),
+                    ],
+                )
+            ]
+        ),
+    ]
+
+
+async def test_bedrock_tool_return_documents_without_citation_support(bedrock_provider: BedrockProvider) -> None:
+    """Tool-return documents stay ordinary tool output on models that don't support citations.
+
+    Unit test: pins the request body for a model no citation recording uses.
+    """
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(_tool_return_documents_history()),
+        ModelRequestParameters(),
+        BedrockModelSettings(citations=True),
+    )
+
+    # Documents sit inside the tool result or follow it in the same turn.
+    tool_result, *after_tool_result = bedrock_messages[2]['content']
+    assert 'toolResult' in tool_result
+    blocks = [*tool_result['toolResult']['content'], *after_tool_result]
+    documents = [block['document'] for block in blocks if 'document' in block]
+    assert len(documents) == 2
+    assert not any('citations' in document for document in documents)
+
+
+async def test_bedrock_tool_return_document_citations_request(bedrock_provider: BedrockProvider) -> None:
+    """Tool-return documents get citations like user-prompt documents on models that support them.
+
+    Unit test: the recorded `test_bedrock_tool_return_document_citations` can't match on the body, so this pins it.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(_tool_return_documents_history()),
+        ModelRequestParameters(),
+        BedrockModelSettings(citations=True),
+    )
+
+    assert bedrock_messages[2] == snapshot(
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'toolResult': {
+                        'toolUseId': 'tool-1',
+                        'content': [
+                            {
+                                'document': {
+                                    'name': 'Document 1',
+                                    'format': 'txt',
+                                    'source': {'text': 'inline report'},
+                                    'citations': {'enabled': True},
+                                }
+                            },
+                            {
+                                'document': {
+                                    'name': 'Document 2',
+                                    'format': 'txt',
+                                    'source': {'s3Location': {'uri': 's3://bucket/uploaded.txt'}},
+                                }
+                            },
+                        ],
+                        'status': 'success',
+                    }
+                }
+            ],
+        }
+    )
+
+
 async def test_bedrock_usage_with_cached_tokens(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ):
@@ -1601,6 +1888,143 @@ async def test_bedrock_trace_streamed_metadata_before_stop(
         'trace': _BEDROCK_GUARDRAIL_TRACE,
     }
     assert message.finish_reason == 'content_filter'
+
+
+async def test_bedrock_citation_response_mapping(bedrock_provider: BedrockProvider) -> None:
+    """Bedrock maps list-valued `sourceContent` to public source excerpts.
+
+    Unit test: no recorded Bedrock answer has several `sourceContent` items or a web location.
+    """
+    text = 'The policy allows thirty days for returns.'
+    citations = [
+        {
+            'title': 'Returns policy',
+            'source': 'Document 1',
+            'sourceContent': [
+                {'text': 'Returns are accepted within thirty days.'},
+                {'text': 'Proof of purchase is required.'},
+            ],
+            'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
+        },
+        {'title': 'Pydantic AI', 'location': {'web': {'url': 'https://ai.pydantic.dev'}}},
+    ]
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    response = await model._process_response(  # pyright: ignore[reportPrivateUsage]
+        cast(
+            Any,
+            {
+                'output': {
+                    'message': {
+                        'role': 'assistant',
+                        'content': [{'citationsContent': {'content': [{'text': text}], 'citations': citations}}],
+                    }
+                },
+                'stopReason': 'end_turn',
+                'usage': {'inputTokens': 10, 'outputTokens': 9, 'totalTokens': 19},
+                'ResponseMetadata': {'HTTPStatusCode': 200},
+            },
+        )
+    )
+
+    assert response.parts == [
+        TextPart(
+            text,
+            provider_name='bedrock',
+            provider_details={'citations': citations},
+            citations=[
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Returns policy',
+                            excerpts=[
+                                'Returns are accepted within thirty days.',
+                                'Proof of purchase is required.',
+                            ],
+                        ),
+                        WebCitationSource(
+                            url='https://ai.pydantic.dev',
+                            title='Pydantic AI',
+                        ),
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=len(text)),
+                )
+            ],
+        )
+    ]
+
+
+_RETURNS_POLICY_CITATION = {
+    'title': 'Returns policy',
+    'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
+}
+
+
+@pytest.mark.parametrize(
+    'citations_content,expected',
+    [
+        # Sent back, the empty text would be rejected.
+        pytest.param({'content': [], 'citations': [_RETURNS_POLICY_CITATION]}, None, id='citation-without-text'),
+        pytest.param(
+            {'content': [{'text': 'No citation.'}], 'citations': []},
+            TextPart('No citation.'),
+            id='text-without-citation',
+        ),
+        pytest.param(
+            {'content': [{'text': 'Empty citation.'}], 'citations': [cast(dict[str, Any], {})]},
+            TextPart('Empty citation.'),
+            id='citation-without-source-fields',
+        ),
+        pytest.param({'content': [], 'citations': []}, None, id='empty'),
+    ],
+)
+async def test_bedrock_partial_citation_block(
+    bedrock_provider: BedrockProvider, citations_content: dict[str, Any], expected: TextPart | None
+) -> None:
+    """A citations block without citations keeps its text, and one without text makes no part.
+
+    Unit test: these degenerate blocks are synthetic, as no recorded Bedrock answer has one.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    response = await model._process_response(  # pyright: ignore[reportPrivateUsage]
+        cast(
+            Any,
+            {
+                'output': {'message': {'role': 'assistant', 'content': [{'citationsContent': citations_content}]}},
+                'stopReason': 'end_turn',
+                'usage': {'inputTokens': 10, 'outputTokens': 9, 'totalTokens': 19},
+                'ResponseMetadata': {'HTTPStatusCode': 200},
+            },
+        )
+    )
+
+    assert response.parts == ([expected] if expected else [])
+
+
+async def test_bedrock_stream_empty_citation_mapping(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """A streamed citation block without text makes no part, like a non-streamed one.
+
+    Unit test: no recorded Bedrock stream has a citation block without text.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'citation': _RETURNS_POLICY_CITATION}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {'messageStop': {'stopReason': 'end_turn'}}
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {'stream': _stream(), 'ResponseMetadata': {'RequestId': 'stub'}}
+
+    async with model.request_stream(
+        [ModelRequest.user_text_prompt('What is the return window?')], None, ModelRequestParameters()
+    ) as stream:
+        async for _ in stream:
+            pass
+
+    assert stream.get().parts == []
 
 
 async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -2661,6 +3085,20 @@ async def test_bedrock_opus_5_thinking_uses_native_output(
     assert result.output == 42
 
 
+async def test_bedrock_anthropic_unified_max_effort(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Sonnet 4.6 accepts `max` but not `xhigh`, so unified `thinking='max'` reaches Converse as `effort='max'`."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking='max'))
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run('What is 2+2? Reply with just the number.')
+
+    assert result.output
+    assert [sent['additionalModelRequestFields'] for sent in sent_requests] == snapshot(
+        [{'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'max'}}]
+    )
+
+
 async def test_bedrock_fable_5_thinking_offers_output_tool_unforced(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
@@ -2712,7 +3150,10 @@ async def test_bedrock_model_thinking_part_anthropic_adaptive_effort(
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime()),
+                    ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True),
+                ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4033,7 +4474,10 @@ async def test_bedrock_thinking_high_openai_variant(
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Reply with the single word: ok', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='Reply with the single word: ok', timestamp=IsDatetime()),
+                    ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True),
+                ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4070,17 +4514,96 @@ async def test_bedrock_thinking_true_openai_variant(
     assert sent['additionalModelRequestFields'] == {'reasoning_effort': 'medium'}
 
 
-async def test_bedrock_thinking_false_openai_variant_silent_drop(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+@pytest.mark.parametrize('thinking', [False, 'minimal'])
+async def test_bedrock_thinking_openai_variant_lowest_effort(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette, thinking: ThinkingLevel
 ) -> None:
-    """`thinking=False` on gpt-oss is silently dropped — Converse rejects
-    `reasoning_effort='none'`, so the profile is always-on."""
+    """`thinking=False` and `'minimal'` on gpt-oss send `reasoning_effort='low'`: Converse rejects `'none'` as
+    unsupported and `'minimal'` as invalid, so `low` is the least reasoning gpt-oss accepts."""
     model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
-    agent = Agent(model, model_settings=ModelSettings(thinking=False))
+    agent = Agent(model, model_settings=ModelSettings(thinking=thinking))
     await agent.run('Reply with the single word: ok')
 
     sent = single_request_body(vcr)
-    assert 'reasoning_effort' not in sent.get('additionalModelRequestFields', {})
+    assert sent['additionalModelRequestFields'] == {'reasoning_effort': 'low'}
+
+
+@pytest.mark.parametrize(
+    ('thinking', 'reasoning'),
+    [
+        (False, {'effort': 'none'}),
+        ('minimal', {'effort': 'low'}),
+        ('xhigh', {'effort': 'xhigh'}),
+    ],
+)
+async def test_bedrock_thinking_openai_responses_variant(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    vcr: Cassette,
+    thinking: ThinkingLevel,
+    reasoning: dict[str, str],
+) -> None:
+    """GPT-5.6 on Converse takes unified `thinking` as the Responses API `reasoning` object.
+
+    `thinking=False` sends `effort='none'` and the model answers without reasoning; `'minimal'`, which
+    GPT-5.6 rejects, maps to `'low'`.
+    """
+    model = BedrockConverseModel('us.openai.gpt-5.6-luna', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=thinking))
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run(
+            'How many positive integers below 10000 have a digit sum of exactly 20? Reply with only the number.'
+        )
+
+    assert [sent['additionalModelRequestFields'] for sent in sent_requests] == [{'reasoning': reasoning}]
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert any(isinstance(part, ThinkingPart) for part in response.parts) is (thinking is not False)
+
+
+async def test_bedrock_thinking_openai_responses_variant_keeps_tool_output(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """GPT-5.6 and GPT-6 accept output tools while they reason, so `thinking` leaves Tool Output in place.
+
+    The guards for the other non-Anthropic variants would raise a `UserError` here or switch to prompted output. The
+    profile doesn't enable forced tool choice for these models, so the output tool is offered without forcing it.
+    """
+
+    class DigitCount(BaseModel):
+        count: int
+
+    model = BedrockConverseModel('us.openai.gpt-5.6-luna', provider=bedrock_provider)
+    agent = Agent(model, output_type=ToolOutput(DigitCount), model_settings=ModelSettings(thinking='low'))
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run('How many positive integers below 10000 have a digit sum of exactly 20?')
+
+    assert result.output == snapshot(DigitCount(count=633))
+    assert [
+        (
+            sent['additionalModelRequestFields'],
+            [tool['toolSpec']['name'] for tool in sent['toolConfig']['tools']],
+            sent['toolConfig'].get('toolChoice'),
+        )
+        for sent in sent_requests
+    ] == snapshot(
+        [
+            ({'reasoning': {'effort': 'low'}}, ['final_result'], None),
+            ({'reasoning': {'effort': 'low'}}, ['final_result'], None),
+        ]
+    )
+
+
+async def test_bedrock_thinking_false_openai_responses_variant_always_on(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """GPT-6 Astra rejects `effort='none'`, so `thinking=False` sends its lowest effort instead."""
+    model = BedrockConverseModel('global.openai.gpt-6-astra', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=False))
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        await agent.run('Reply with the single word: ok')
+
+    assert [sent['additionalModelRequestFields'] for sent in sent_requests] == [{'reasoning': {'effort': 'low'}}]
 
 
 async def test_bedrock_thinking_high_qwen_variant(
@@ -4102,17 +4625,17 @@ async def test_bedrock_thinking_high_qwen_variant(
     assert any(isinstance(p, ThinkingPart) for p in result.response.parts)
 
 
-async def test_bedrock_thinking_false_qwen_variant_silent_drop(
+async def test_bedrock_thinking_false_qwen_variant(
     allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ) -> None:
-    """`thinking=False` on qwen3 is silently dropped — Converse exposes only
-    `reasoning_config ∈ {low, high}` with no disable, so the profile is always-on."""
+    """`thinking=False` on qwen3 sends `reasoning_config='none'`, and the response carries no reasoning."""
     model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
     agent = Agent(model, model_settings=ModelSettings(thinking=False))
-    await agent.run('Reply with the single word: ok')
+    result = await agent.run('Reply with the single word: ok')
 
     sent = single_request_body(vcr)
-    assert 'reasoning_config' not in sent.get('additionalModelRequestFields', {})
+    assert sent['additionalModelRequestFields'] == {'reasoning_config': 'none'}
+    assert not any(isinstance(p, ThinkingPart) for p in result.response.parts)
 
 
 async def test_bedrock_thinking_true_qwen_variant(
@@ -5062,6 +5585,38 @@ async def test_bedrock_cache_messages_trailing_pdf_document(
 
 
 @pytest.mark.vcr()
+@pytest.mark.parametrize(
+    ('content', 'expected'),
+    [
+        pytest.param(
+            ['Summarize this:', BinaryContent(data=b'Report text.', media_type='text/plain')],
+            [['text', 'document', 'cachePoint']],
+            id='automatic',
+        ),
+        pytest.param(
+            ['Summarize this:', BinaryContent(data=b'Report text.', media_type='text/plain'), CachePoint()],
+            [['text', 'document', 'cachePoint']],
+            id='explicit',
+        ),
+    ],
+)
+async def test_bedrock_cache_point_after_document_with_citations(
+    bedrock_provider: BedrockProvider, content: list[UserContent], expected: list[list[str]]
+):
+    """A cache point goes right after a document with citations on, which Bedrock keeps in place, like a PDF.
+
+    Moving the document ahead of the text, as for other documents, would make the next request, which no longer has
+    this cache point, miss the cache. Unit test: checked live, a moved citations document missed on the second turn.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[UserPromptPart(content=content)])],
+        ModelRequestParameters(),
+        BedrockModelSettings(citations=True, bedrock_cache_messages=True),
+    )
+    assert _block_kinds({'messages': bedrock_messages}) == expected
+
+
 async def test_bedrock_cache_point_after_trailing_pdf_document(
     allow_model_requests: None, bedrock_provider: BedrockProvider, document_content: BinaryContent
 ):
@@ -5968,6 +6523,74 @@ async def test_bedrock_cache_instructions_mixed_static_dynamic(
             {'text': 'Static instructions.'},
             {'cachePoint': {'type': 'default'}},
             {'text': 'Dynamic context.'},
+        ]
+    )
+
+
+async def test_bedrock_cache_instructions_add_a_point_after_appending_blocks(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """The append blocks between the static and dynamic instructions get a second cache point, which goes first.
+
+    Over the budget of four, `_limit_cache_points` drops the point after the append blocks before any message point,
+    and keeps the one after the static instructions that every conversation shares.
+    """
+    from pydantic_ai.messages import AgentInstructionSource, InstructionId, InstructionPart
+
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Context 1', CachePoint(), 'Context 2', CachePoint(), 'Question'])])
+    ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[
+            InstructionPart(content='Static instructions.', dynamic=False),
+            InstructionPart(
+                content='Catalog.',
+                dynamic=True,
+                on_change='append',
+                id=InstructionId(AgentInstructionSource(), name='catalog'),
+            ),
+            InstructionPart(content='Dynamic context.', dynamic=True),
+        ],
+    )
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_request_parameters,
+        BedrockModelSettings(bedrock_cache_instructions=True, bedrock_cache_messages=True),
+    )
+    assert system_prompt == snapshot(
+        [
+            {'text': 'Static instructions.'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Catalog.'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Dynamic context.'},
+        ]
+    )
+
+    model._limit_cache_points(system_prompt, bedrock_messages, [])  # pyright: ignore[reportPrivateUsage]
+
+    assert system_prompt == snapshot(
+        [
+            {'text': 'Static instructions.'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Catalog.'},
+            {'text': 'Dynamic context.'},
+        ]
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Context 1'},
+                    {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+                    {'text': 'Context 2'},
+                    {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+                    {'text': 'Question'},
+                    {'cachePoint': {'type': 'default'}},
+                ],
+            }
         ]
     )
 
@@ -7222,6 +7845,22 @@ async def test_document_url_unsupported_format(bedrock_provider: BedrockProvider
         await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
 
 
+async def test_response_speech_part_raises_user_error(bedrock_provider: BedrockProvider):
+    """An unconverted `SpeechPart` in a response raises the `UserError` that names `prepare_messages`.
+
+    `Agent` runs `prepare_messages`, which converts it, so only a direct `Model.request()` reaches this mapping.
+    """
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Hi there')]),
+    ]
+
+    with pytest.raises(UserError, match='`SpeechPart` cannot be sent to this model as-is'):
+        await model._map_messages(messages, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+
 async def test_uploaded_file_unsupported_video_media_type(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
@@ -7379,7 +8018,7 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
         prepared, ModelRequestParameters(), BedrockModelSettings()
     )
 
-    assert system_prompt == [{'text': 'You are helpful.'}]
+    assert system_prompt == [{'text': 'You are helpful.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}]
     text_blocks = [
         block['text']
         for msg in cast(list[Any], bedrock_messages)
@@ -8042,7 +8681,7 @@ async def test_bedrock_empty_history_prepended_for_anthropic(bedrock_provider: B
     system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         model.prepare_messages(messages), ModelRequestParameters(), BedrockModelSettings()
     )
-    assert system_prompt == [{'text': 'Generate a short greeting.'}]
+    assert system_prompt == [{'text': 'Generate a short greeting.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}]
     assert bedrock_messages == snapshot([{'role': 'user', 'content': [{'text': '.'}]}])
 
 
@@ -8178,9 +8817,24 @@ async def test_bedrock_agent_output_tool_with_thinking_is_unforced(
     [
         # Opus 5 thinks by default but can turn it off, and then the output tool is forced as usual.
         pytest.param('us.anthropic.claude-opus-5', {'thinking': {'type': 'disabled'}}, {'any': {}}, id='opus-5'),
-        # Fable 5 and Opus 5.5 can't turn thinking off, so `thinking=False` is ignored and forcing gives way.
-        pytest.param('us.anthropic.claude-fable-5', None, {'auto': {}}, id='fable-5'),
-        pytest.param('us.anthropic.claude-opus-5-5', None, {'auto': {}}, id='opus-5-5'),
+        # Sonnet 5.5 turns thinking off with `between_tools`, but rejects a forced choice.
+        pytest.param(
+            'global.anthropic.claude-sonnet-5-5', {'thinking': {'type': 'between_tools'}}, {'auto': {}}, id='sonnet-5-5'
+        ),
+        # Fable 5 and Opus 5.5 can't turn thinking off, so `thinking=False` thinks at the lowest effort and forcing
+        # gives way.
+        pytest.param(
+            'us.anthropic.claude-fable-5',
+            {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}},
+            {'auto': {}},
+            id='fable-5',
+        ),
+        pytest.param(
+            'us.anthropic.claude-opus-5-5',
+            {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}},
+            {'auto': {}},
+            id='opus-5-5',
+        ),
     ],
 )
 async def test_bedrock_thinking_false_on_models_that_think_by_default(
@@ -8191,8 +8845,9 @@ async def test_bedrock_thinking_false_on_models_that_think_by_default(
     expected_fields: dict[str, Any] | None,
     expected_tool_choice: dict[str, Any],
 ) -> None:
-    """`thinking=False` sends `disabled` where omitting `thinking` would leave it on. Mocked because the payload is
-    the claim, and restricted-access models can't all be recorded here."""
+    """`thinking=False` turns thinking off where omitting `thinking` would leave it on, or asks for the least thinking
+    where it can't be turned off. Mocked because the payload is the claim, and restricted-access models can't all be
+    recorded here; `test_bedrock_claude_thinking_false` records Opus 5.5 and Sonnet 5.5."""
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
     stream_bedrock_converse_mock(mocker, model.client)
     converse = mocker.patch.object(
@@ -8217,6 +8872,33 @@ async def test_bedrock_thinking_false_on_models_that_think_by_default(
     assert result.output == 42
     assert converse.call_args.kwargs.get('additionalModelRequestFields') == expected_fields
     assert converse.call_args.kwargs['toolConfig']['toolChoice'] == expected_tool_choice
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected_fields'),
+    [
+        pytest.param(
+            'us.anthropic.claude-opus-5-5',
+            {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}},
+            id='opus-5-5',
+        ),
+        pytest.param('global.anthropic.claude-sonnet-5-5', {'thinking': {'type': 'between_tools'}}, id='sonnet-5-5'),
+    ],
+)
+async def test_bedrock_claude_thinking_false(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    vcr: Cassette,
+    model_name: str,
+    expected_fields: dict[str, Any],
+) -> None:
+    """Bedrock accepts what `thinking=False` sends on Claude models that reject `{'type': 'disabled'}`: the lowest
+    effort on Opus 5.5, which can't turn thinking off, and `between_tools` on Sonnet 5.5."""
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    result = await Agent(model).run('What is 2+2?', model_settings={'thinking': False})
+
+    assert '4' in result.output
+    assert single_request_body(vcr)['additionalModelRequestFields'] == expected_fields
 
 
 class _CityInfo(BaseModel):
@@ -8575,6 +9257,26 @@ async def test_bedrock_openai_gpt_oss_keeps_sampling_settings(
     assert result.output.strip() == snapshot('4')
     sent = single_request_body(vcr)
     assert sent['inferenceConfig'] == snapshot({'maxTokens': 256, 'temperature': 0.2, 'topP': 0.3})
+
+
+@pytest.mark.parametrize('model_name', ['us.xai.grok-4.6', 'global.xai.grok-4.7'])
+def test_bedrock_xai_grok_drops_sampling_settings(bedrock_provider: BedrockProvider, model_name: str):
+    """Converse rejects `temperature`, `topP` and `top_k` on Grok 4.6 with a `ValidationException`, and Grok 4.7 is
+    assumed to match, so they're dropped for both.
+
+    Not a VCR test: the recording account has no Grok access on Converse.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    settings = BedrockModelSettings(max_tokens=64, temperature=0.2, top_p=0.3, top_k=5)
+
+    with pytest.warns(UserWarning, match='Sampling parameters') as recorded:
+        prepared, _ = model.prepare_request(settings, ModelRequestParameters())
+
+    assert prepared == snapshot({'max_tokens': 64})
+    assert [str(w.message) for w in recorded] == [
+        f"Sampling parameters ['temperature', 'top_p', 'top_k'] are not supported by "
+        f"'{model_name}'. These settings will be ignored."
+    ]
 
 
 class _CountTokensCapturingClient:

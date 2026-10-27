@@ -49,7 +49,7 @@ These are the same values accepted by the underlying `cache` model setting, whic
 
 ### Caching only the stable prefix
 
-By default, caching covers the tool definitions, the static instructions, and the conversation. When an agent handles many short, one-off conversations that share long instructions or tools, writing each conversation to the cache costs more than it saves, because it's never read back. Pass `messages=False` to cache only the stable prefix:
+By default, caching covers the tool definitions, the static instructions and (except on OpenAI) the [`on_change='append'`](../agent.md#appending-instruction-changes) instructions after them, and the conversation. When an agent handles many short, one-off conversations that share long instructions or tools, writing each conversation to the cache costs more than it saves, because it's never read back. Pass `messages=False` to cache only the stable prefix:
 
 ```python {title="caching_stable_prefix.py"}
 from pydantic_ai import Agent
@@ -81,7 +81,7 @@ agent = Agent(
 
 ### Provider translation
 
-Pydantic AI places cache breakpoints, markers that end the content eligible for caching, at the end of the tool definitions, the static instructions, and the conversation, so the stable prefix is shared between conversations and each request reads back everything the previous one cached. Where the provider has an automatic caching mode, the conversation is cached with it instead of an explicit breakpoint. When explicit `CachePoint`s would push a request over the provider's breakpoint limit, the oldest message breakpoints are dropped first; on OpenAI, which doesn't trim the request client-side, the server instead drops the earliest breakpoints first, starting with the instruction breakpoint (see [OpenAI prompt caching](../models/openai.md#prompt-caching)).
+Pydantic AI places cache breakpoints, markers that end the content eligible for caching, at the end of the tool definitions, the static instructions, any [`on_change='append'`](../agent.md#appending-instruction-changes) instructions after them (except on OpenAI, see below), and the conversation, so the stable prefix is shared between conversations and each request reads back everything the previous one cached. Append-mode instructions are part of that shared prefix only when their first value is the same in every conversation, as for the catalogs Pydantic AI computes but not for per-user state such as memory; the breakpoint at the end of the static instructions keeps those shared either way. Where the provider has an automatic caching mode, the conversation is cached with it instead of an explicit breakpoint. When explicit `CachePoint`s would push a request over the provider's breakpoint limit, the breakpoint after the append-mode instructions is dropped first (unless there are no static instructions or system prompt before them, making it the only instruction breakpoint), then the oldest message breakpoints; on OpenAI, which doesn't trim the request client-side, the server instead drops the earliest breakpoints first, starting with the instruction breakpoint (see [OpenAI prompt caching](../models/openai.md#prompt-caching)).
 
 | Provider | `Caching()` | `Caching('1h')` | `Caching(messages=False)` | Notes |
 |---|---|---|---|---|
@@ -125,7 +125,7 @@ OpenAI caches prompts implicitly once they pass a minimum length (1,024 tokens o
 
 On models before GPT-5.6, how long a cached prefix lives depends on the retention policy, which [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] overrides per request.
 
-On GPT-5.6 and later, a cached prefix stays eligible for reuse for 30 minutes after its most recent write or read. [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_options] sets the TTL and the mode: in the default implicit mode OpenAI also places a breakpoint of its own, in explicit mode only the request's breakpoints are cached. A [`CachePoint`][pydantic_ai.messages.CachePoint] adds a breakpoint after a user content block, and [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_cache_instructions] adds one after the static instructions. OpenAI writes at most four breakpoints per request.
+On GPT-5.6 and later, a cached prefix stays eligible for reuse for 30 minutes after its most recent write or read. [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_options] sets the TTL and the mode: in the default implicit mode OpenAI also places a breakpoint of its own, in explicit mode only the request's breakpoints are cached. A [`CachePoint`][pydantic_ai.messages.CachePoint] adds a breakpoint after a user content block, and [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_cache_instructions] adds one after the static instructions, but none after the `on_change='append'` instructions that follow them. OpenAI writes at most four breakpoints per request and drops the earliest first, so a second instruction breakpoint would push out the one after the static instructions first.
 
 On any model, [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_key] groups requests that share a prefix to improve hit rates.
 
@@ -164,7 +164,7 @@ So a 5-minute cache (1.25x) breaks even after one read and Anthropic's 1-hour ca
 
 - Minute-precision timestamps or other per-request values in instructions or system prompts. Prefer date-only granularity when the exact time is not required.
 - Instructions whose text changes mid-conversation, such as a todo list or memory. Opt them into [`on_change='append'`](../agent.md#appending-instruction-changes) so changes are appended to the history instead of rewriting the prefix, and [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
-- Reordering or changing tool definitions between steps.
+- Reordering or changing tool definitions between steps. A tool that [appears mid-run](../tools-advanced.md#mid-run-tool-additions) is recorded in the message history instead, which keeps the prefix on OpenAI Responses and Anthropic.
 - History processors that rewrite already-sent messages on every request.
 - Switching models or providers during a conversation. Each provider maintains a separate cache.
 
@@ -178,7 +178,7 @@ Provider caches expire after idle gaps. This is unavoidable, but it creates a us
 
 Pydantic AI makes the following guarantees about the prompt prefix it sends to providers:
 
-- [Instructions are assembled deterministically](../agent.md#instructions) for each request. Static instructions from `Agent(instructions=...)` always sort before dynamic instructions, preserving the static prefix when dynamic content changes.
+- [Instructions are assembled deterministically](../agent.md#instructions) for each request. Static instructions from `Agent(instructions=...)` always sort first, then dynamic ones with `on_change='append'`, then the dynamic instructions that rewrite the prefix, preserving the stable prefix when that content changes.
 - Instructions with [`on_change='append'`](../agent.md#appending-instruction-changes) keep the prefix the conversation started with: a change is appended to the history, and the prefix only moves when a new baseline starts, for example when a block that rewrites changes or the history is compacted. See [Appending instruction changes](../agent.md#appending-instruction-changes) for every case.
 - Message history is append-only within a run: Pydantic AI does not rewrite or reorder settled messages. [History processors](../message-history.md#processing-message-history) you add, and capabilities that rewrite history such as [compaction](compaction.md), are the exception.
 - The [output mode](../output.md) a structured `output_type` gets when it doesn't pick one is chosen on the run's first request to each model and kept for the rest of the run (except behind a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], where each model chooses on every request), so a [thinking](thinking.md) setting that changes between steps doesn't add or remove the output tool. A new run, including one continuing the same conversation, chooses again.

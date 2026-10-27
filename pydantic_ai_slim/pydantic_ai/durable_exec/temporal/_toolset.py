@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Self, cast, get_type_hints
+from typing import TYPE_CHECKING, Any, Literal, Required, Self, cast, get_type_hints
 
 import anyio
 from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
@@ -14,8 +14,8 @@ from pydantic.errors import PydanticUserError
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
-from temporalio.workflow import ActivityConfig
-from typing_extensions import TypedDict
+from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
+from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.durable_exec._toolset import (
@@ -246,8 +246,7 @@ def model_response_payload_errors(model_name: str) -> Generator[None]:
     """Guard a model-request activity's response against Temporal's payload size limit."""
     with payload_size_errors(
         f'The response from model {model_name!r} is too large for Temporal',
-        'A generated image is the usual cause, so ask the model for a smaller one through the model '
-        'settings; a streamed segment can also overflow on its buffered events alone.',
+        'A generated image is the usual cause, so ask the model for a smaller one through the model settings.',
     ):
         yield
 
@@ -289,6 +288,35 @@ def validate_activity_config(config: ActivityConfig, source: str) -> ActivityCon
         return _activity_config_adapter.validate_python(config)
     except ValidationError as e:
         raise UserError(f'Invalid Temporal `ActivityConfig` in {source}: {e}') from e
+
+
+_ValidatedChildWorkflowConfig = with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(
+    TypedDict(
+        '_ValidatedChildWorkflowConfig',
+        get_type_hints(ChildWorkflowConfig, include_extras=True),  # pyright: ignore[reportArgumentType]
+        total=ChildWorkflowConfig.__total__,
+    )
+)
+_child_workflow_config_adapter = cast('TypeAdapter[ChildWorkflowConfig]', TypeAdapter(_ValidatedChildWorkflowConfig))
+
+
+class ChildWorkflowOperationConfig(TypedDict, total=False):
+    """Select a child workflow for a tool-call operation."""
+
+    child_workflow: Required[ChildWorkflowConfig]
+
+
+def is_child_workflow_metadata(value: object) -> TypeIs[ChildWorkflowOperationConfig]:
+    """Whether a tool's `'temporal'` metadata value selects a child workflow."""
+    return isinstance(value, dict) and 'child_workflow' in value
+
+
+def validate_child_workflow_config(config: ChildWorkflowConfig, source: str) -> ChildWorkflowConfig:
+    """Return `config` validated into Temporal's own types, or raise a `UserError`."""
+    try:
+        return _child_workflow_config_adapter.validate_python(config)
+    except ValidationError as e:
+        raise UserError(f'Invalid Temporal `ChildWorkflowConfig` in {source}: {e}') from e
 
 
 def resolve_tool_activity_config(

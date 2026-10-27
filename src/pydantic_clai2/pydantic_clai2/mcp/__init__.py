@@ -9,15 +9,16 @@ settings (`/plugins add mcp pydantic_clai2.mcp JSON`) still load, read-only.
 
 from collections.abc import Sequence
 from functools import partial
+from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AgentCapability, Toolset
 from pydantic_ai.toolsets import DynamicToolset
 from pydantic_clai2.commands import Command
-from pydantic_clai2.mcp._command import HELP, MCPCommand
-from pydantic_clai2.mcp._form import EXAMPLES, ServerForm, edit_form, edit_in_editor, install_form, run_form
-from pydantic_clai2.mcp._menu import ServersSource, servers_menu
-from pydantic_clai2.mcp._runtime import MCPServers, ServerEntry, State
-from pydantic_clai2.mcp._settings import (
+from pydantic_clai2.mcp.command import HELP, MCPCommand
+from pydantic_clai2.mcp.form import EXAMPLES, ServerForm, edit_form, edit_in_editor, install_form, run_form
+from pydantic_clai2.mcp.menu import ServersSource, servers_menu
+from pydantic_clai2.mcp.runtime import MCPServers, ServerEntry, State
+from pydantic_clai2.mcp.settings import (
     OAUTH_TIMEOUT,
     HTTPServer,
     MCPSettings,
@@ -26,11 +27,13 @@ from pydantic_clai2.mcp._settings import (
     ServerSettings,
     SSEServer,
     StdioServer,
-    http_client,
 )
-from pydantic_clai2.mcp._store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
-from pydantic_clai2.mcp._tokens import OAuthSignIn, SignIn, TokenStore
+from pydantic_clai2.mcp.store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
+from pydantic_clai2.mcp.tokens import OAuthSignIn, TokenStore
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd
+
+if TYPE_CHECKING:
+    from pydantic_clai2.mcp._client import SignIn, http_client
 
 __all__ = [
     'CLAUDE_MCP_FILE',
@@ -65,6 +68,15 @@ __all__ = [
     'run_form',
     'servers_menu',
 ]
+
+
+def __getattr__(name: str) -> object:
+    # FastMCP loads the MCP SDK, so it is imported on first use, not when this plugin loads at startup.
+    if name in ('SignIn', 'http_client'):
+        from pydantic_clai2.mcp import _client
+
+        return getattr(_client, name)
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 
 class MCPPlugin(Plugin[MCPSettings]):

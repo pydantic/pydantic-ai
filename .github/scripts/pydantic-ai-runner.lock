@@ -21,6 +21,7 @@ listentome = false
 logfire = false
 logfire-api = false
 pillow = "2026-10-16T22:19:00Z"
+prefect = "2026-10-21T03:46:00Z"
 pydantic = false
 pydantic-ai-harness = false
 pydantic-core = false
@@ -60,20 +61,21 @@ wheels = [
 
 [[package]]
 name = "anthropic"
-version = "1.12.1"
+version = "1.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "docstring-parser" },
     { name = "httpx2" },
     { name = "jiter" },
+    { name = "opentelemetry-api" },
     { name = "pydantic" },
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bd/cc/0da23e94020c62c0077c17648252f32d575b187710faaf3b85145e8e555d/anthropic-1.12.1.tar.gz", hash = "sha256:10f720ab6ddf40ef12e0e5743412c3a6dfac1109c244e633c9a2dbd36778ad30", size = 1555908, upload-time = "2026-10-08T03:42:00.588Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/10/37/5a2a4316df8babd28f096477a707cd75f240b4264c97fb128c32375105d6/anthropic-1.15.0.tar.gz", hash = "sha256:90caa9df83e2fc8bddb4ddeb83b7191bce255f635c03eae055deec521741df08", size = 1726101, upload-time = "2026-10-15T19:45:34.635Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/35/1ccdc3e950dd869b66de15035e15d9614607fcef9664dec403fe639f01df/anthropic-1.12.1-py3-none-any.whl", hash = "sha256:1c1469bb3f4118291756816b7850cc839f17b2be5cdc99c8fde3890a61a49ca2", size = 1919752, upload-time = "2026-10-08T03:41:58.596Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/65/54437e7edea49a3be9ef56f6b5965999bfdc52b9dadc9b448124ca51a594/anthropic-1.15.0-py3-none-any.whl", hash = "sha256:10189a7993c5c71a0a2d4bb80020ca6a2fd27679f51e627405da37251d15ff49", size = 2047755, upload-time = "2026-10-15T19:45:32.951Z" },
 ]
 
 [[package]]
@@ -1188,8 +1190,8 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["spec"], marker = "extra == 'logfire'", editable = "../../pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["temporal"], marker = "extra == 'temporal'", editable = "../../pydantic_ai_slim" },
     { name = "pydantic-handlebars", marker = "extra == 'logfire'", specifier = ">=0.2.1" },
-    { name = "pydantic-monty", marker = "extra == 'code-mode'", specifier = ">=1.0.0,<2" },
-    { name = "pydantic-monty", marker = "extra == 'codemode'", specifier = ">=1.0.0,<2" },
+    { name = "pydantic-monty", marker = "extra == 'code-mode'", specifier = ">=1.4.0,<2" },
+    { name = "pydantic-monty", marker = "extra == 'codemode'", specifier = ">=1.4.0,<2" },
     { name = "pydantic-monty", marker = "extra == 'dynamic-workflow'", specifier = ">=1.0.0,<2" },
     { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.17.0" },
     { name = "pyyaml", marker = "extra == 'skills'", specifier = ">=6.0.2" },
@@ -1236,8 +1238,8 @@ retries = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.10,<1" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=1.12.1" },
+    { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.10" },
+    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=1.15.0" },
     { name = "anyio", specifier = ">=4.7.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.42.63" },
@@ -1260,20 +1262,20 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'huggingface'", specifier = ">=1.3.4,<2.0.0" },
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.39.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
-    { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.9.2" },
-    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.26.0" },
-    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.26.0" },
-    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.26.0" },
-    { name = "openai", marker = "extra == 'elevenlabs-realtime'", specifier = ">=3.26.0" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.26.0" },
-    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.26.0" },
-    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.26.0" },
-    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.26.0" },
-    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.26.0" },
-    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.26.0" },
+    { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=3.1.0" },
+    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.31.0" },
+    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.31.0" },
+    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.31.0" },
+    { name = "openai", marker = "extra == 'elevenlabs-realtime'", specifier = ">=3.31.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.31.0" },
+    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.31.0" },
+    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.31.0" },
+    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.31.0" },
+    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.31.0" },
+    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.31.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'logfire'", specifier = ">=0.65b0" },
-    { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7.5" },
+    { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.9.0" },
     { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "pydantic-evals", marker = "extra == 'evals'", editable = "../../pydantic_evals" },

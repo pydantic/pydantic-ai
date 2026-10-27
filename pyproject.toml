@@ -236,6 +236,10 @@ pillow = "2026-10-16T22:19:00Z"
 # boxlite 0.10.7 is the `boxlite` floor: 0.10.6 has no wheels for Python 3.13 or 3.14.
 # TODO(adtyavrdhn): Remove after 2026-10-25 01:35 UTC.
 boxlite = "2026-10-18T01:35:01Z"
+# prefect 3.9.0 is the `prefect` floor: it is the first release that imports on a current FastAPI.
+# TODO(DouweM): Remove after 2026-10-28 03:46 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+prefect = "2026-10-21T03:46:00Z"
 
 [dependency-groups]
 dev = [
@@ -293,7 +297,8 @@ dev = [
     # Records and replays provider traffic: its pytest plugin owns `@pytest.mark.vcr` and the `vcr` fixture.
     "cassetter>=0.13.0",
     # Drives the deterministic realtime session simulator in `tests/realtime/simulation/`: randomized
-    # interleavings of client operations and provider events, shrunk to a minimal failing trace.
+    # interleavings of client operations and provider events, shrunk to a minimal failing trace. Also draws
+    # the message histories of the property tests in `tests/test_history_properties.py`.
     "hypothesis>=6.153.2",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
@@ -307,10 +312,12 @@ coverage = [
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@6c644106e03138abae01d8d60105d4a7ad4916a1",
 ]
 lint = [
-    "griffecli>=2.1.0,<3",
     "mypy>=1.11.2",
     "pyright>=1.1.414",
     "ruff>=0.14.14",
+]
+clai2-browser = [
+    "playwright>=1.45",
 ]
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
@@ -337,6 +344,7 @@ include = [
     "docs/**/*.py",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/durable_exec_contract.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
@@ -362,7 +370,9 @@ include = [
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
     ".github/scripts/test_ci_content_classifier.py",
+    ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
+    ".github/scripts/test_clai2_web_bundle.py",
 ]
 
 [tool.ruff.lint]
@@ -451,7 +461,9 @@ quote-style = "single"
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
+".github/scripts/test_ci_matrix.py" = ["D"]
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
+".github/scripts/test_clai2_web_bundle.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
 "!tests/**/*.py" = ["TID253"]
@@ -481,6 +493,7 @@ include = [
     "src/pydantic_clai2",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/durable_exec_contract.py",
 ]
 # Pyright always skips paths under a dot directory, even ones named here or on its command line, so
 # `.github/scripts` is its own project: `.github/scripts/pyrightconfig.json` extends this one, and
@@ -490,6 +503,9 @@ venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
 executionEnvironments = [
+    # Imports `scripts/durable_exec_contract.py` by name. Pyright applies the first entry whose root
+    # contains a file, so this one precedes `tests`.
+    { root = "tests/durable_exec/test_durable_exec_contract_manifest.py", extraPaths = ["scripts", "examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = "tests", extraPaths = ["examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     # `scripts/typecheck_changed.py` reads `tomllib`, which is 3.11+. These two are
     # developer tooling rather than shipped code, and the script falls back to the full
@@ -613,6 +629,7 @@ include = [
     "pydantic_graph/**/*.py",
     "src/pydantic_ai_harness/pydantic_ai_harness/**/*.py",
     "tests/**/*.py",
+    "scripts/durable_exec_contract.py",
 ]
 omit = [
     "tests/example_modules/*.py",
@@ -622,6 +639,7 @@ omit = [
     "tests/kw_only_walker.py",  # pauses coverage while importing modules with excluded dependency guards
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
     "tests/harness/**/*_live.py",  # live sandbox tiers; run only with provider credentials
+    "tests/ui_roundtrip/*.py",  # need Node and the JS UI clients; run only in `ui-roundtrip.yml`
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:

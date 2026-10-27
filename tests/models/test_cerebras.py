@@ -263,3 +263,20 @@ async def test_cerebras_clear_thinking_default_for_tags_path():
     zai_override, _ = zai.prepare_request(CerebrasModelSettings(cerebras_clear_thinking=True), params)
     assert zai_override is not None
     assert cast(dict[str, Any], zai_override.get('extra_body', {})).get('clear_thinking') is True
+
+
+async def test_cerebras_thinking_false_by_model():
+    """`thinking=False` turns reasoning off where Cerebras can (zai/GLM), and sends gpt-oss's lowest effort, since it
+    can't stop reasoning. Not recorded (no Cerebras key at hand): the efforts come from
+    https://inference-docs.cerebras.ai/capabilities/reasoning."""
+    provider = CerebrasProvider(api_key='mock-api-key')
+    efforts = {
+        model_name: (
+            CerebrasModel(model_name, provider=provider).prepare_request(
+                CerebrasModelSettings(thinking=False), ModelRequestParameters()
+            )[0]
+            or {}
+        ).get('openai_reasoning_effort')
+        for model_name in ('zai-glm-4.7', 'gpt-oss-120b')
+    }
+    assert efforts == {'zai-glm-4.7': 'none', 'gpt-oss-120b': 'low'}

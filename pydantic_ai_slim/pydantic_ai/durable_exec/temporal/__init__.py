@@ -9,10 +9,10 @@ except ImportError as _import_error:
     ) from _import_error
 
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from importlib.util import find_spec
-from typing import Any
+from typing import Any, cast
 
 from pydantic.errors import PydanticUserError
 from temporalio import workflow
@@ -29,7 +29,7 @@ from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
 from ...workspaces import WorkspaceError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
-from ._durability import TemporalDurability
+from ._durability import ContinueAsNewHandler, TemporalDurability, worker_registrations
 from ._event_stream import (
     AgentEventStream,
     DurableAgentRunEvents,
@@ -47,6 +47,7 @@ from ._workflow import PydanticAIWorkflow
 __all__ = [
     'TemporalAgent',
     'TemporalDurability',
+    'ContinueAsNewHandler',
     'PydanticAIPlugin',
     'LogfirePlugin',
     'AgentPlugin',
@@ -217,8 +218,14 @@ class PydanticAIPlugin(SimplePlugin):
     def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
         config = super().configure_worker(config)
 
-        workflows = list(config.get('workflows', []))  # type: ignore[reportUnknownMemberType]
-        activities = list(config.get('activities', []))  # type: ignore[reportUnknownMemberType]
+        workflows = list(config.get('workflows', []))  # pyright: ignore[reportUnknownMemberType]
+        activities = list(
+            cast(
+                Sequence[Callable[..., object]],
+                config.get('activities', []),  # pyright: ignore[reportUnknownMemberType]
+            )
+        )
+        child_workflows: list[type] = []
 
         for workflow_class in workflows:
             agents = getattr(workflow_class, '__pydantic_ai_agents__', None)
@@ -233,7 +240,7 @@ class PydanticAIPlugin(SimplePlugin):
                     # Deprecated path: `TemporalAgent` is being phased out in favor of
                     # `capabilities=[TemporalDurability(...)]` on a regular `Agent`. Kept
                     # working so existing workers keep loading without changes.
-                    activities.extend(agent.temporal_activities)  # type: ignore[reportUnknownMemberType]
+                    activities.extend(agent.temporal_activities)
                 elif isinstance(agent, AbstractAgent):
                     durability = TemporalDurability.from_agent(agent)  # type: ignore[reportUnknownArgumentType]
                     if durability is None:
@@ -241,15 +248,18 @@ class PydanticAIPlugin(SimplePlugin):
                             f'Agent {agent.name!r} listed in `__pydantic_ai_agents__` has no '
                             '`TemporalDurability` capability; add one to `capabilities=[...]`.'
                         )
-                    activities.extend(durability.temporal_activities)  # type: ignore[reportUnknownMemberType]
+                    agent_activities, agent_workflows = worker_registrations(durability)
+                    activities.extend(agent_activities)
+                    child_workflows.extend(agent_workflows)
                 else:
                     raise TypeError(  # pragma: no cover
                         f'__pydantic_ai_agents__ items must be TemporalAgent or AbstractAgent, got {type(agent)}'  # type: ignore[reportUnknownVariableType]
                     )
 
         config['activities'] = activities
+        config['workflows'] = [*workflows, *child_workflows]
 
-        return config
+        return _dedupe_registrations(config)
 
 
 class AgentPlugin(SimplePlugin):
@@ -263,6 +273,7 @@ class AgentPlugin(SimplePlugin):
     """
 
     def __init__(self, agent: AbstractAgent[Any, Any]):
+        workflows: list[type] = []
         if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
             activities = agent.temporal_activities
         else:
@@ -272,8 +283,21 @@ class AgentPlugin(SimplePlugin):
                     f'Agent {agent.name!r} has no `TemporalDurability` capability; '
                     'add one to `capabilities=[...]` before constructing the plugin.'
                 )
-            activities = durability.temporal_activities
+            activities, workflows = worker_registrations(durability)
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='AgentPlugin',
             activities=activities,
+            workflows=workflows,
         )
+
+    def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
+        return _dedupe_registrations(super().configure_worker(config))
+
+
+def _dedupe_registrations(config: WorkerConfig) -> WorkerConfig:
+    # An agent can be listed on several workflows, or also registered via `AgentPlugin`, contributing the same
+    # activity callables and child workflow classes more than once; Temporal rejects duplicate names, so keep each
+    # registration once.
+    config['activities'] = list(dict.fromkeys(config.get('activities', [])))  # type: ignore[reportUnknownMemberType]
+    config['workflows'] = list(dict.fromkeys(config.get('workflows', [])))  # type: ignore[reportUnknownMemberType]
+    return config

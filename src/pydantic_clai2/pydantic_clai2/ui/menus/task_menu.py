@@ -14,7 +14,7 @@ from pydantic_ai_harness.subagents import DelegationTask
 from pydantic_clai2.runtime.tasks import Tasks, task_tree
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 
@@ -171,7 +171,7 @@ async def open_tasks(tasks: Tasks, *, runners: Runners = TERMINAL) -> str:
             await tasks.owner.cancel(task_id)
             await tasks.owner.save(tasks.owner.records[task_id])
         else:
-            tasks.owner.background(task_id)
+            tasks.background(task_id)
 
     def run() -> None:
         picker = TaskMenu(

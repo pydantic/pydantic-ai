@@ -9,11 +9,12 @@ import re
 import secrets
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Annotated, Any, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Any, TypeAlias
 
 from pydantic import Field, TypeAdapter
 
 from pydantic_ai import Agent
+from pydantic_ai._framing import neutralize_tags
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
@@ -37,6 +38,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._durable import in_durable_context
 
 if TYPE_CHECKING:
     from pydantic_ai.agent import AgentRunResult
@@ -112,16 +114,17 @@ def _steering_note(ref: str) -> str:
     )
 
 
-# TODO: switch to `pydantic_ai._framing.wrap()` once it lands (#10547); this matches its escaping of
-# data frames, which neutralizes the framework's `system` voice tag as well as the frame's own tag.
+# TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
+# `judge_feedback` as a framing tag there.
 # The slash is grouped with the whitespace after it, so the two whitespace runs can't overlap and
 # backtrack quadratically on a long run of spaces after a `<`. A tag name at the very end of the
 # message also matches: the wrapper's own text right after it would otherwise complete the tag.
-_NEUTRALIZED_TAG_OPENER = re.compile(rf'<(?=\s*(?:/\s*)?(?:system|{_STEERING_TAG})(?:[\s/>]|$))', re.IGNORECASE)
-"""The `<` that opens anything a parser could read as a `system` or `judge_feedback` tag, opening or closing.
+_STEERING_TAG_OPENER = re.compile(rf'<(?=\s*(?:/\s*)?{_STEERING_TAG}(?:[\s/>]|$))', re.IGNORECASE)
+"""The `<` that opens anything a parser could read as a `judge_feedback` tag, opening or closing.
 
-`system` is the framework's voice tag: on a model without inline system prompts, real framework notes
-reach it as `<system>…</system>` user text, so a judge message must not be able to imitate one.
+Core's own framing tags, `system` among them, are left to `neutralize_tags`. `system` is the framework's
+voice tag: on a model without inline system prompts, real framework notes reach it as `<system>…</system>`
+user text, so a judge message must not be able to imitate one.
 """
 
 
@@ -253,7 +256,7 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         durable-capable agent run outside its workflow or flow is unaffected, matching how
         core's durability capabilities scope their own `before_run` rejections.
         """
-        if _in_durable_context(ctx):
+        if in_durable_context(ctx):
             raise UserError(
                 '`TrajectoryJudge` cannot be used inside a durable workflow or flow: the judge '
                 'evaluation runs in orchestration context, so its model calls are not checkpointed '
@@ -422,10 +425,10 @@ def _steering_parts(judge: str, message: str) -> tuple[SystemPromptPart, TextCon
 
     The note is the framework's own fixed wording, so it is a `SystemPromptPart`. The message comes
     from the judge model, which read the run's tool results, so it is untrusted and goes on the user
-    channel, quoted in a `<judge_feedback>` tag. It can't forge that tag's end, or the `<system>` tag the framework's own
-    voice is rendered in on models without inline system prompts. Both keep the default
-    conversation scope: a course correction should keep applying on later requests, not only the
-    one it arrives with. Both carry the same metadata, which survives merged requests and
+    channel, quoted in a `<judge_feedback>` tag. It can't write that tag's end, any other framing tag core
+    writes, or the `<system>` tag the framework's own voice is rendered in on models without inline system
+    prompts. Both keep the default conversation scope: a course correction should keep applying on later
+    requests, not only the one it arrives with. Both carry the same metadata, which survives merged requests and
     continued conversations.
 
     A random `ref`, made once here, ties the note to its frame. Both parts store it in their text (and in
@@ -433,7 +436,7 @@ def _steering_parts(judge: str, message: str) -> tuple[SystemPromptPart, TextCon
     """
     ref = secrets.token_hex(8)
     metadata = {'origin': _STEERING_ORIGIN, 'judge': judge, 'ref': ref}
-    body = _NEUTRALIZED_TAG_OPENER.sub('&lt;', message)
+    body = _STEERING_TAG_OPENER.sub('&lt;', neutralize_tags(message))
     data = f'<{_STEERING_TAG} judge="{html.escape(judge)}" ref="{ref}">\n{body}\n</{_STEERING_TAG}>'
     return SystemPromptPart(_steering_note(ref), metadata=metadata), TextContent(data, metadata=dict(metadata))
 
@@ -561,25 +564,6 @@ def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str
             elif isinstance(part, SpeechPart) and part.transcript:
                 (user_lines if part.speaker == 'user' else lines).append(f'{part.speaker}: {part.transcript}')
     return request, lines
-
-
-@runtime_checkable
-class _Durability(Protocol):
-    """The part of the durable-execution capabilities' shared base this check needs."""
-
-    in_durable_context: bool
-
-
-# `_monty_exec.in_temporal_workflow` asks Temporal directly, because only Temporal replays
-# `run_code`. This one covers every engine because the judge launch is unsafe under all of them.
-def _in_durable_context(ctx: RunContext[AgentDepsT]) -> bool:
-    """Whether this run executes inside a durable workflow or flow, without importing the optional extras."""
-    return any(
-        any(base.__module__.startswith('pydantic_ai.durable_exec') for base in type(capability).__mro__)
-        and isinstance(capability, _Durability)
-        and capability.in_durable_context
-        for capability in ctx.capabilities.values()
-    )
 
 
 def _prompt_text(content: str | Sequence[object]) -> str:

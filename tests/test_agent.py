@@ -52,6 +52,7 @@ from pydantic_ai import (
     TemplateStr,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -102,6 +103,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_graph import End
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 if TYPE_CHECKING:
     from pydantic_ai.providers.alibaba import AlibabaProvider
@@ -8517,6 +8519,7 @@ def test_binary_content_serializable():
                         'provider_name': None,
                         'part_kind': 'text',
                         'provider_details': None,
+                        'citations': None,
                     }
                 ],
                 'usage': {
@@ -8598,6 +8601,7 @@ def test_image_url_serializable_missing_media_type():
                         'provider_name': None,
                         'part_kind': 'text',
                         'provider_details': None,
+                        'citations': None,
                     }
                 ],
                 'usage': {
@@ -8685,6 +8689,7 @@ def test_image_url_serializable():
                         'provider_name': None,
                         'part_kind': 'text',
                         'provider_details': None,
+                        'citations': None,
                     }
                 ],
                 'usage': {
@@ -9966,7 +9971,8 @@ def test_adding_tools_during_run():
                         content='foo tool added',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    ToolAvailabilityDeltaPart(tools_added=['foo']),
                 ],
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
@@ -9974,7 +9980,7 @@ def test_adding_tools_during_run():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foo', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=60, output_tokens=4),
+                usage=RequestUsage(input_tokens=67, output_tokens=4),
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -9995,7 +10001,7 @@ def test_adding_tools_during_run():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done')],
-                usage=RequestUsage(input_tokens=63, output_tokens=5),
+                usage=RequestUsage(input_tokens=70, output_tokens=5),
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -10005,6 +10011,7 @@ def test_adding_tools_during_run():
     )
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 def test_prepare_output_tools():
     @dataclass
     class AgentDeps:
