@@ -11,6 +11,7 @@ from pathlib import Path
 
 from pydantic_ai.framing import neutralize_tags
 from pydantic_ai.workspaces import Workspace
+from pydantic_ai_harness import _framing_tags  # noqa: F401  # pyright: ignore[reportUnusedImport]  # registers every harness tag
 
 # TODO: register `context-file` in `pydantic_ai_harness._framing_tags` and render it with `wrap`, or rename it, once
 # #11497 settles whether framing tag names may have hyphens.

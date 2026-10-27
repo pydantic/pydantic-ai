@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 from pydantic_ai.framing import close_tag, neutralize_tags, open_tag
 from pydantic_ai.messages import TextContent, UserContent
+from pydantic_ai_harness import _framing_tags  # noqa: F401  # pyright: ignore[reportUnusedImport]  # registers every harness tag
 from pydantic_ai_harness._provenance import tagged_text
 
 _BACKGROUND_RESULT_ORIGIN = 'pydantic-ai-harness.background_tools.result.v1'

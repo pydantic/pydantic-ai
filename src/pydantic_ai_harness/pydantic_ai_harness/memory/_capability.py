@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness import _framing_tags  # noqa: F401  # pyright: ignore[reportUnusedImport]  # registers every harness tag
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
 from pydantic_ai_harness.memory._file import FileStore

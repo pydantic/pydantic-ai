@@ -21,6 +21,7 @@ from pydantic_ai import Agent
 from pydantic_ai.framing import neutralize_tags, wrap
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import RunContext
+from pydantic_ai_harness import _framing_tags  # noqa: F401  # pyright: ignore[reportUnusedImport]  # registers every harness tag
 from pydantic_ai_harness._judge import claim_request, claimed_request_limits
 from pydantic_ai_harness.smart_search._chunks import Chunk
 

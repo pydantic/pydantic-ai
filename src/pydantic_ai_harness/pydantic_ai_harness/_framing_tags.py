@@ -2,11 +2,12 @@
 
 Registering a tag makes core's own data frames, such as `<tool_result>`, and every other registered
 frame neutralize it, so content in one frame can't close another. The registry is process-wide, so
-the tags are registered together here rather than by each capability's module: the first capability
-that frames text imports this module and registers them all, so which tags are registered doesn't
-depend on which other capabilities a process imports, or when, and the same text always renders the
-same bytes. It isn't imported by `pydantic_ai_harness` itself, which must stay importable without
-loading `pydantic_ai`.
+the tags are registered together here rather than by each capability's module, and every harness
+module that renders or escapes text with `pydantic_ai.framing` imports this one, even when it uses no
+harness tag itself: the first of them registers them all, so which tags are registered doesn't depend
+on which capabilities a process imports, or when, and the same text always renders the same bytes. It
+isn't imported by `pydantic_ai_harness` itself, which must stay importable without loading
+`pydantic_ai`.
 
 Render them with `pydantic_ai.framing.wrap`, or `open_tag`/`close_tag` around a body that is escaped
 some other way, never by hand.
