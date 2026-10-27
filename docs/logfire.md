@@ -336,6 +336,8 @@ Agent run spans record what the run was made of: `pydantic_ai.capabilities` list
 }
 ```
 
+Each toolset is listed once however many steps used it. Under [durable execution](durable_execution/overview.md), a `DynamicToolset` is listed as `pydantic_ai.toolsets.DynamicToolset` rather than as the toolsets it resolves to, since the engine resolves it outside the run's own toolset tree.
+
 `active` says whether the capability was in force on any of the run's model requests, which tells a [deferred capability](capabilities/on-demand.md) the model loaded from one it was offered and never loaded. Each model request span also lists the ids of the capabilities active on that step in `pydantic_ai.active_capabilities`.
 
 The key is the Pydantic AI or [Pydantic AI Harness](harness/index.md) class the capability or toolset is, or extends, under the path it's imported from. A class of your own is listed under the class it extends, with its own module-qualified name in `user_class`. That name, and an id the run assigned to a capability without one (which is built from the class name), are only recorded when [`include_content`](#excluding-prompts-and-completions) is enabled; an `id` you chose is always recorded. An id derived from an MCP server's URL is never recorded, since a URL can carry credentials.

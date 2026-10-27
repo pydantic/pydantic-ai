@@ -418,7 +418,7 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'the same id replaces the earlier one and stays in effect until '
                     'replaced again."}]',
                     'pydantic_ai.capabilities': '{"pydantic_ai_harness.logfire.ManagedPrompt":[{"id":"managed-prompt-baggage_slug","defer_loading":false,"active":true}],"pydantic_ai.capabilities.ToolSearch":[{"id":"tool_search","defer_loading":false,"active":true}],"pydantic_ai.capabilities.Instrumentation":[{"id":"instrumentation","defer_loading":false,"active":true}]}',
-                    'pydantic_ai.toolsets': '{"pydantic_ai.toolsets.FunctionToolset":[{"id":"<agent>"}]}',
+                    'pydantic_ai.toolsets': '{}',
                     'logfire.json_schema': '{"type":"object","properties":{"pydantic_ai.all_messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"pydantic_ai.capabilities":{"type":"object"},"pydantic_ai.toolsets":{"type":"object"},"final_result":{"type":"object"}}}',
                 },
             },

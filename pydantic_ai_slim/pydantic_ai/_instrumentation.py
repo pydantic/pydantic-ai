@@ -522,8 +522,11 @@ def _component_record(
     return record
 
 
-def _is_framework_internal(cls: type[AbstractCapability[Any]]) -> bool:
-    """Whether `cls` is Pydantic AI or Harness plumbing that no user configures, so isn't worth recording."""
+def _is_framework_internal(cls: type[AbstractCapability[Any]] | type[AbstractToolset[Any]]) -> bool:
+    """Whether `cls` is Pydantic AI or Harness plumbing, like the agent's own function and output toolsets, so isn't worth recording.
+
+    Recording it under the public class it extends would put it alongside the user's own instances of that class.
+    """
     return (
         cls.__module__.partition('.')[0] in _PUBLIC_PACKAGES
         and public_class_path(cls).rpartition('.')[2] != cls.__name__
@@ -582,11 +585,14 @@ def add_toolset_records(
 ) -> None:
     """Add the leaf toolsets of a resolved toolset tree not yet in `records`, by class, for the agent run span.
 
-    Ids follow the same rules as capability ids: never one derived from an MCP server URL, and one
-    the toolset derived for itself only with `include_content`.
+    Records are distinct rather than one per instance, so a factory that builds an equal toolset on
+    every step adds it once. Ids follow the same rules as capability ids: never one derived from an
+    MCP server URL, and one the toolset derived for itself only with `include_content`.
     """
 
     def add(leaf: AbstractToolset[Any]) -> None:
+        if _is_framework_internal(type(leaf)):
+            return
         toolset_id = leaf.id
         if toolset_id in url_ids or not (include_content or leaf._explicit_id is not None):  # pyright: ignore[reportPrivateUsage]
             toolset_id = None

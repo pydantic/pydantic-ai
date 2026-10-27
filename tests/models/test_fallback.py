@@ -454,7 +454,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                             {'id': 'tool_search', 'defer_loading': False, 'active': True}
                         ],
                     },
-                    'pydantic_ai.toolsets': {'pydantic_ai.toolsets.FunctionToolset': [{'id': '<agent>'}]},
+                    'pydantic_ai.toolsets': {},
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
@@ -728,7 +728,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                             {'id': 'tool_search', 'defer_loading': False, 'active': True}
                         ],
                     },
-                    'pydantic_ai.toolsets': {'pydantic_ai.toolsets.FunctionToolset': [{'id': '<agent>'}]},
+                    'pydantic_ai.toolsets': {},
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
@@ -924,7 +924,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                             {'id': 'tool_search', 'defer_loading': False, 'active': True}
                         ],
                     },
-                    'pydantic_ai.toolsets': {'pydantic_ai.toolsets.FunctionToolset': [{'id': '<agent>'}]},
+                    'pydantic_ai.toolsets': {},
                     'pydantic_ai.all_messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],
                     'logfire.json_schema': {
                         'type': 'object',
@@ -1915,10 +1915,7 @@ Don't include any text or Markdown fencing before or after.
                             {'id': 'tool_search', 'defer_loading': False, 'active': True}
                         ],
                     },
-                    'pydantic_ai.toolsets': {
-                        'pydantic_ai.toolsets.AbstractToolset': [{'id': '<output>'}],
-                        'pydantic_ai.toolsets.FunctionToolset': [{'id': '<agent>'}],
-                    },
+                    'pydantic_ai.toolsets': {},
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {

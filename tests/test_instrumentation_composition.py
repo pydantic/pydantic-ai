@@ -12,6 +12,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import httpx
+import httpx2
 import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, TextPart, ToolCallPart
@@ -30,6 +32,14 @@ with try_import() as otel_sdk_installed:
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+with try_import() as mcp_installed:
+    from fastmcp import FastMCP
+
+    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
+    from pydantic_ai.mcp import MCPToolset
+
+MCP_SDK_V2 = mcp_installed() and is_mcp_sdk_v2()
 
 pytestmark = [pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed')]
 
@@ -112,7 +122,7 @@ async def test_run_records_capabilities_and_toolsets(mode: Literal['run', 'strea
                     }
                 ],
             },
-            'toolsets': {'pydantic_ai.toolsets.FunctionToolset': [{'id': '<agent>'}, {'id': 'crm'}]},
+            'toolsets': {'pydantic_ai.toolsets.FunctionToolset': [{'id': 'crm'}]},
         }
     )
     assert active_capabilities_per_step(exporter) == snapshot(
@@ -140,7 +150,7 @@ async def test_without_content_only_explicit_ids_are_recorded() -> None:
                 'pydantic_ai.capabilities.Thinking': [{'id': 'thinking', 'defer_loading': False, 'active': True}],
                 'pydantic_ai.capabilities.AbstractCapability': [{'defer_loading': False, 'active': True}],
             },
-            'toolsets': {'pydantic_ai.toolsets.FunctionToolset': [{'id': '<agent>'}, {'id': 'crm'}]},
+            'toolsets': {'pydantic_ai.toolsets.FunctionToolset': [{'id': 'crm'}]},
         }
     )
     assert active_capabilities_per_step(exporter) == snapshot(
@@ -198,7 +208,7 @@ async def test_dynamic_toolset_is_recorded_as_resolved_on_each_step() -> None:
     await agent.run('Hello')
 
     assert run_span_composition(exporter)['toolsets'] == snapshot(
-        {'pydantic_ai.toolsets.FunctionToolset': [{'id': '<agent>'}, {'id': 'first'}, {'id': 'crm'}]}
+        {'pydantic_ai.toolsets.FunctionToolset': [{'id': 'first'}, {'id': 'crm'}]}
     )
 
 
@@ -220,3 +230,36 @@ async def test_url_derived_mcp_id_is_never_recorded(include_content: bool) -> No
     )
     assert all('mcp.example.test' not in ids for ids in active_capabilities_per_step(exporter))
     assert 'mcp.example.test' not in str([span.attributes for span in exporter.get_finished_spans()])
+
+
+@pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_url_derived_mcp_toolset_id_is_never_recorded(include_content: bool) -> None:
+    """An `MCPToolset` built from a URL without an `id` takes its hostname, which isn't recorded even with content."""
+    server = FastMCP('test')
+
+    @server.tool
+    def ping() -> str:
+        return 'pong'  # pragma: no cover
+
+    app = server.http_app(stateless_http=True, json_response=True)
+    client: httpx.AsyncClient | httpx2.AsyncClient
+    if MCP_SDK_V2:
+        client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
+    else:
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
+    toolset = MCPToolset('http://testserver/mcp', http_client=client)
+    capability, exporter = instrumentation(include_content=include_content)
+    agent = Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Done.')])),
+        capabilities=[capability],
+        toolsets=[toolset],
+    )
+    try:
+        async with app.router.lifespan_context(app):
+            await agent.run('Hello')
+    finally:
+        await client.aclose()
+
+    assert run_span_composition(exporter)['toolsets'] == snapshot({'pydantic_ai.mcp.MCPToolset': [{}]})
+    assert 'testserver' not in str([span.attributes for span in exporter.get_finished_spans()])
