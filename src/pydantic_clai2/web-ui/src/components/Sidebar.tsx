@@ -1,12 +1,30 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import { ApiError, api } from '../api'
 import { MOD } from '../platform'
 import { Logo } from './Logo'
-import type { LiveEntry, Project, SessionEntry, TaskEntry, ThemeInfo, Worktree } from '../protocol'
+import type { LiveEntry, Project, SessionEntry, TaskEntry, ThemeInfo } from '../protocol'
+import {
+  REMOVED,
+  WORKING,
+  ambiguous,
+  flatten,
+  isUnread,
+  loadSeen,
+  markSeen,
+  sections,
+  short,
+  status,
+  stored,
+  type Row,
+  type Section,
+  type Status,
+  type View,
+} from '../sidebarModel'
+import { useNow } from '../workers'
 import { WorkersTree } from './WorkersTree'
 import {
   ArchiveIcon,
-  BranchIcon,
   ChevronIcon,
   ComposeIcon,
   FolderIcon,
@@ -25,6 +43,8 @@ export interface SidebarHandle {
   focusSearch: () => void
   /** Focus the first row of the Workers tree; `false` when the session has no delegated tasks. */
   focusWorkers: () => boolean
+  /** Switch to the sessions that need you, or back to the view before. */
+  toggleAttention: () => void
 }
 
 interface Props {
@@ -34,7 +54,7 @@ interface Props {
   /** The sessions live in this CLAI, by conversation ID, whose rows show what each is doing. */
   live: Record<string, LiveEntry>
   viewing: string | null
-  /** The session being opened, which shows a spinner. */
+  /** The session being opened: its row is highlighted at once, as the selection. */
   opening: string | null
   theme: 'dark' | 'light'
   connected: boolean
@@ -69,47 +89,44 @@ export function ago(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-type Dot = SessionEntry['state'] | 'queued' | 'asking'
+const VIEWS: { view: View; label: string; title: string }[] = [
+  { view: 'projects', label: 'Projects', title: 'Sessions by project' },
+  { view: 'recent', label: 'Recent', title: 'Every project, newest first' },
+  { view: 'attention', label: 'Attention', title: `Running, waiting for you, or unread (${MOD}Alt+U)` },
+  { view: 'archived', label: 'Archived', title: 'Archived sessions; nothing archived is deleted' },
+]
 
-const DOT_LABELS: Partial<Record<Dot, string>> = {
+const LABELS: Record<Exclude<Status, null>, string> = {
   running: 'Running',
   queued: 'Running, with input queued',
-  asking: 'Waiting for your answer',
+  asking: 'Needs input',
   busy: 'Running in another CLAI',
   failed: 'Last turn failed',
   cancelled: 'Last turn interrupted',
+  unread: 'Unread',
 }
 
-/** What a session's dot shows: a live session's state from this CLAI, else what its saved row says. */
-function dot(session: SessionEntry, live: Record<string, LiveEntry>): Dot {
-  const state = live[session.id]?.state
-  if (state === undefined) return session.state
-  if (state !== 'idle') return state
-  // An idle live session's row may still say `running` until the list is fetched again.
-  return session.state === 'running' ? 'ready' : session.state
+/** A row's one glyph: a spinner while it runs here, a ring while another CLAI runs it, else a dot or nothing. */
+function Glyph({ state, pid }: { state: Status; pid: number | null }) {
+  if (state === null || state === 'asking') return <span className="state" />
+  const label = state === 'busy' && pid !== null ? `Running in clai2 pid ${pid}` : LABELS[state]
+  if (state === 'running' || state === 'queued') {
+    return <span className={`spinner row-spinner ${state}`} role="img" aria-label={label} title={label} />
+  }
+  return <span className={`state ${state}`} role="img" aria-label={label} title={label} />
 }
 
-/** The dots of a session with a turn running, here or in another CLAI, the most urgent first. */
-const WORKING: readonly Dot[] = ['asking', 'queued', 'running', 'busy']
-
-/** The most urgent dot among these sessions, so a collapsed group still shows it; `null` when none works. */
-function strongest(worktrees: Worktree[], live: Record<string, LiveEntry>): Dot | null {
-  const found = new Set(worktrees.flatMap((worktree) => worktree.sessions.map((s) => dot(s, live))))
-  return WORKING.find((state) => found.has(state)) ?? null
+/** The most urgent glyph among a folded section's rows, so it still shows that one works or waits. */
+function strongest(states: Status[]): Status {
+  return WORKING.find((state) => states.includes(state)) ?? null
 }
 
-/** A collapsed group's dot, if a session in it works. */
-function GroupDot({ state }: { state: Dot | null }) {
-  return state === null ? null : <StateDot state={state} />
-}
+const SEARCH_KEYS = new Set(['ArrowDown', 'Enter'])
 
-/** A session's status dot, named for screen readers; none for a session that is not doing anything. */
-function StateDot({ state }: { state: Dot }) {
-  const label = DOT_LABELS[state]
-  return <span className={`state ${state}`} role={label ? 'img' : undefined} aria-label={label} title={label} />
-}
-
-/** Saved sessions grouped by project, then worktree, as `/resume` lists them, with search and per-session actions. */
+/**
+ * Saved sessions, by project or newest first, in an order only creation changes: activity, renames, polling, and
+ * selection never move a row. Each row has one status glyph, and folders that are gone fold away at the bottom.
+ */
 export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   {
     version,
@@ -138,16 +155,31 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   ref,
 ) {
   const [query, setQuery] = useState('')
-  /** Whether archived sessions are listed too, muted, and searched. */
-  const [archived, setArchived] = useState(false)
-  const [projects, setProjects] = useState<Project[]>([])
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [view, setView] = useState<View>(() => stored<View>('clai-sidebar-view', 'projects'))
+  const previous = useRef<View>('projects')
+  // The list paints from the last one fetched while it is fetched again.
+  const [projects, setProjects] = useState<Project[]>(() => stored<Project[]>('clai-sidebar-cache', []))
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() =>
+    stored<Record<string, boolean>>('clai-sidebar-collapsed', {}),
+  )
   const [menu, setMenu] = useState<string | null>(null)
   const [menuUp, setMenuUp] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [unsaved, setUnsaved] = useState(false)
+  const [seen, setSeen] = useState(loadSeen)
   const search = useRef<HTMLInputElement>(null)
   const aside = useRef<HTMLElement>(null)
+  const archived = view === 'archived'
+
+  useEffect(() => localStorage.setItem('clai-sidebar-view', JSON.stringify(view)), [view])
+  useEffect(() => localStorage.setItem('clai-sidebar-collapsed', JSON.stringify(collapsed)), [collapsed])
+
+  const pick = useCallback((next: View) => {
+    setView((current) => {
+      if (current !== next) previous.current = current
+      return next
+    })
+  }, [])
 
   useImperativeHandle(
     ref,
@@ -159,6 +191,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         first?.focus()
         return Boolean(first)
       },
+      toggleAttention: () => setView((current) => (current === 'attention' ? previous.current : 'attention')),
     }),
     [],
   )
@@ -169,7 +202,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     const id = ++loading.current
     try {
       const found = await api.sessions(query, archived)
-      if (id === loading.current) setProjects(found)
+      if (id !== loading.current) return
+      setProjects(found)
+      if (!query && !archived) localStorage.setItem('clai-sidebar-cache', JSON.stringify(found))
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) setUnsaved(true)
       else onError(error instanceof Error ? error.message : String(error))
@@ -181,7 +216,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     return () => window.clearTimeout(timer)
   }, [load, version, query])
 
-  // Other CLAIs save sessions too; list them again now and then.
+  // Other CLAIs save sessions too; list them again now and then. Rows keep their places, so this moves nothing.
   useEffect(() => {
     if (unsaved) return
     const interval = window.setInterval(() => void load(), 15000)
@@ -205,6 +240,41 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     }
   }, [menu])
 
+  const rows = useMemo(() => flatten(projects), [projects])
+  // The row picked last is the selection, highlighted at once, before its session opens.
+  const selected = opening ?? viewing ?? shown
+
+  // What the shown session says is read as it changes.
+  const shownRow = rows.find((row) => row.id === shown)
+  useEffect(() => {
+    if (shownRow) setSeen((current) => markSeen(current, [shownRow]))
+  }, [shownRow])
+
+  const states = useMemo(() => {
+    const found: Record<string, Status> = {}
+    for (const row of rows) found[row.id] = status(row, live, row.id !== shown && isUnread(row, seen))
+    return found
+  }, [rows, live, shown, seen])
+  const needsYou = useCallback(
+    (row: Row) => {
+      const state = states[row.id] ?? null
+      return state === 'unread' || WORKING.includes(state)
+    },
+    [states],
+  )
+  const shownSections = useMemo(() => sections(rows, view, needsYou), [rows, view, needsYou])
+  const attention = useMemo(() => rows.filter((row) => !row.archived && needsYou(row)).length, [rows, needsYou])
+
+  // Each running row's elapsed time, from when this page first saw it run.
+  const started = useRef(new Map<string, number>())
+  const anyWorking = rows.some((row) => WORKING.includes(states[row.id] ?? null))
+  const now = useNow(anyWorking)
+  for (const row of rows) {
+    if (WORKING.includes(states[row.id] ?? null)) {
+      if (!started.current.has(row.id)) started.current.set(row.id, Date.now())
+    } else started.current.delete(row.id)
+  }
+
   const act = async (action: () => Promise<unknown>) => {
     setMenu(null)
     try {
@@ -214,16 +284,48 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     }
   }
 
-  const isShown = (session: SessionEntry) => session.id === shown
+  /** Whether a row can be archived: not the open session, nor one running here or elsewhere. */
+  const archivable = (row: Row) => row.id !== shown && !(row.id in live) && !WORKING.includes(states[row.id] ?? null)
+  const archiveAll = (found: Row[]) =>
+    act(() => api.archiveMany(found.filter((row) => !row.archived && archivable(row)).map((row) => row.id)))
+  const markRead = (found: Row[]) => {
+    setMenu(null)
+    setSeen((current) => markSeen(current, found))
+  }
 
-  const row = (session: SessionEntry) => {
-    const state = dot(session, live)
-    const current = isShown(session)
+  const toggle = (key: string, open: boolean) => setCollapsed((current) => ({ ...current, [key]: !open }))
+  const isClosed = (section: Section) =>
+    section.kind !== 'list' && !query && (collapsed[section.key] ?? section.kind === 'removed')
+
+  const openMenu = (key: string, target: HTMLElement) => {
+    // The list scrolls and clips the menu, so a row in its lower half opens the menu upwards.
+    const list = target.closest('.projects')?.getBoundingClientRect()
+    const rect = target.getBoundingClientRect()
+    setMenuUp(list !== undefined && rect.bottom > list.top + list.height / 2)
+    setMenu(menu === key ? null : key)
+  }
+
+  const row = (session: Row, section: Section, twins: Set<string>) => {
+    const state = states[session.id] ?? null
+    const current = session.id === selected
     const working = WORKING.includes(state)
+    const chip = section.kind === 'project' ? (section.branches ? session.branch : null) : session.projectName
+    const siblings = section.rows.filter((other) => other.branch === session.branch && !other.archived)
+    const begun = started.current.get(session.id)
+    const time =
+      state === 'asking' ? (
+        <span className="needs-input">Needs input</span>
+      ) : working && begun !== undefined ? (
+        short(Math.max(0, (now - begun) / 1000))
+      ) : (
+        ago(session.updated_at)
+      )
     return (
       <div
         key={session.id}
-        className={`session ${current ? 'current' : ''} ${viewing === session.id ? 'viewing' : ''} ${opening === session.id ? 'opening' : ''} ${session.archived ? 'archived' : ''}`}
+        className={`session ${current ? 'current' : ''} ${state === 'unread' ? 'unread' : ''} ${session.archived ? 'archived' : ''} ${session.missing ? 'missing' : ''}`}
+        data-session={session.id}
+        aria-busy={session.id === opening || undefined}
       >
         {renaming === session.id ? (
           <input
@@ -244,25 +346,22 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
             }}
           />
         ) : (
-          <button className="session-main" onClick={() => onView(session)} title={session.workspace}>
-            <StateDot state={state} />
+          <button
+            className="session-main"
+            onClick={() => onView(session)}
+            title={`${session.title}\n${session.workspace}`}
+            aria-current={current ? 'true' : undefined}
+          >
+            <Glyph state={state} pid={session.pid} />
             <span className="session-title">{session.title}</span>
-            {session.archived && <span className="worktree-tag">archived</span>}
-            {opening === session.id && <span className="spinner" aria-label="Opening" />}
-            <span className="session-time">
-              {state === 'running' || state === 'queued' || state === 'asking' ? '' : ago(session.updated_at)}
-            </span>
+            {chip && <span className="session-chip">{chip}</span>}
+            {twins.has(session.id) && <span className="session-chip mono">#{session.id.slice(0, 6)}</span>}
+            <span className="session-time">{time}</span>
           </button>
         )}
         <button
           className="session-more"
-          onClick={(event) => {
-            // The list scrolls and clips the menu, so a row in its lower half opens the menu upwards.
-            const list = event.currentTarget.closest('.projects')?.getBoundingClientRect()
-            const rect = event.currentTarget.getBoundingClientRect()
-            setMenuUp(list !== undefined && rect.bottom > list.top + list.height / 2)
-            setMenu(menu === session.id ? null : session.id)
-          }}
+          onClick={(event) => openMenu(session.id, event.currentTarget)}
           title="Session actions"
           aria-label="Session actions"
         >
@@ -274,27 +373,35 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
             <button onClick={() => void act(async () => onView({ id: (await api.fork(session.id)).id, title: session.title }))}>
               Fork
             </button>
+            {state === 'unread' && <button onClick={() => markRead([session])}>Mark as read</button>}
             {session.archived ? (
               <button onClick={() => void act(() => api.unarchive(session.id))}>Unarchive</button>
             ) : (
-              <button
-                disabled={current || working}
-                title={
-                  current
-                    ? 'The open session cannot be archived'
-                    : working
-                      ? 'A running session cannot be archived'
-                      : 'Hide it; nothing is deleted'
-                }
-                onClick={() => void act(() => api.archive(session.id))}
-              >
-                Archive
-              </button>
+              <>
+                <button
+                  disabled={!archivable(session)}
+                  title={
+                    current || session.id === shown
+                      ? 'The open session cannot be archived'
+                      : !archivable(session)
+                        ? 'A running session cannot be archived'
+                        : 'Hide it; nothing is deleted'
+                  }
+                  onClick={() => void act(() => api.archive(session.id))}
+                >
+                  Archive
+                </button>
+                {section.branches && siblings.length > 1 && (
+                  <button onClick={() => void archiveAll(siblings)} title="Archive every session of this branch you can">
+                    Archive all in {session.branch}
+                  </button>
+                )}
+              </>
             )}
             <button
               className="danger"
-              disabled={session.id in live || current}
-              title={session.id in live || current ? 'A session open in CLAI cannot be deleted' : undefined}
+              disabled={session.id in live || session.id === shown}
+              title={session.id in live || session.id === shown ? 'A session open in CLAI cannot be deleted' : undefined}
               onClick={() =>
                 window.confirm(`Delete "${session.title}"? This cannot be undone.`) &&
                 void act(() => api.remove(session.id))
@@ -308,21 +415,84 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     )
   }
 
-  // A lone checkout needs no heading of its own, unless it is gone.
-  const isNested = (project: Project) =>
-    project.worktrees.length > 1 || project.worktrees.some((worktree) => worktree.missing)
-
   // The tree sits under the current session, or above the list while that row is hidden.
-  const listed = projects.some(
-    (project) =>
-      !(!query && (collapsed[project.key] ?? false)) &&
-      project.worktrees.some(
-        (worktree) =>
-          !(isNested(project) && !query && (collapsed[`${project.key}\0${worktree.root}`] ?? false)) &&
-          worktree.sessions.some(isShown),
-      ),
-  )
+  const listed = shownSections.some((section) => !isClosed(section) && section.rows.some((row) => row.id === shown))
   const workers = tasks.length > 0 && <WorkersTree key="workers" tasks={tasks} selected={worker} onOpen={onWorker} />
+
+  const heading = (section: Section, closed: boolean): ReactNode => {
+    if (section.kind === 'list') return null
+    const key = `section:${section.key}`
+    const unread = section.rows.filter((row) => states[row.id] === 'unread')
+    const removed = section.key === REMOVED
+    return (
+      <div className="project-head">
+        <button
+          className="project-title"
+          onClick={() => toggle(section.key, closed)}
+          aria-expanded={!closed}
+          title={removed ? 'Sessions whose folder is gone' : section.key.includes('\0') ? undefined : section.key}
+        >
+          {removed ? <ArchiveIcon size={14} /> : <FolderIcon size={14} />}
+          <span className="project-name">{section.name}</span>
+          {closed && <Glyph state={strongest(section.rows.map((row) => states[row.id] ?? null))} pid={null} />}
+          <ChevronIcon size={12} className={`chevron ${closed ? '' : 'down'}`} />
+        </button>
+        {!archived && (
+          <button
+            className="session-more"
+            onClick={(event) => openMenu(key, event.currentTarget)}
+            title={`${section.name} actions`}
+            aria-label={`${section.name} actions`}
+            >
+            <MoreIcon size={14} />
+          </button>
+        )}
+        {menu === key && (
+          <div className={`menu session-menu ${menuUp ? 'up' : ''}`} role="menu">
+            <button onClick={() => void archiveAll(section.rows)} title="Archive every session here you can">
+              Archive chats
+            </button>
+            {unread.length > 0 && <button onClick={() => markRead(unread)}>Mark all as read</button>}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  /** Up and Down move between headings and rows, Right and Left open and fold a project, Enter opens. */
+  const navigate = (event: ReactKeyboardEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement
+    const items = [...(aside.current?.querySelectorAll<HTMLElement>('.projects .project-title, .projects .session-main') ?? [])]
+    const index = items.indexOf(target)
+    if (index < 0) return
+    const step = { ArrowDown: 1, ArrowUp: -1 }[event.key]
+    if (step !== undefined) {
+      event.preventDefault()
+      const next = index + step
+      if (next < 0) search.current?.focus()
+      else items[Math.min(next, items.length - 1)]?.focus()
+      return
+    }
+    const expanded = target.getAttribute('aria-expanded')
+    if (event.key === 'ArrowRight' && expanded === 'false') {
+      event.preventDefault()
+      target.click()
+    } else if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      if (expanded === 'true') target.click()
+      else target.closest('section')?.querySelector<HTMLElement>('.project-title')?.focus()
+    }
+  }
+
+  const empty = unsaved
+    ? 'This CLAI does not save sessions'
+    : query
+      ? 'No matching sessions'
+      : view === 'attention'
+        ? 'Nothing needs you'
+        : archived
+          ? 'No archived sessions'
+          : 'No saved sessions yet'
 
   return (
     <aside ref={aside} className={`sidebar ${orchestrating ? 'orchestrating' : ''}`}>
@@ -362,72 +532,42 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
             if (event.key === 'Escape') {
               event.preventDefault()
               setQuery('')
+            } else if (SEARCH_KEYS.has(event.key)) {
+              // Down moves to the first result; Enter opens it, as a command palette does.
+              const first = aside.current?.querySelector<HTMLElement>('.projects .session-main')
+              if (!first) return
+              event.preventDefault()
+              if (event.key === 'Enter') first.click()
+              else first.focus()
             }
           }}
         />
-        <button
-          className={`archived-toggle ${archived ? 'on' : ''}`}
-          onClick={(event) => {
-            event.preventDefault()
-            setArchived((on) => !on)
-          }}
-          title={archived ? 'Hide archived sessions' : 'Show and search archived sessions'}
-          aria-label="Archived"
-          aria-pressed={archived}
-        >
-          <ArchiveIcon size={14} />
-        </button>
         <kbd>{MOD}K</kbd>
       </label>
-      <nav className="projects">
+      <div className="sidebar-views" role="group" aria-label="Sessions view">
+        {VIEWS.map((item) => (
+          <button
+            key={item.view}
+            className={view === item.view ? 'on' : ''}
+            aria-pressed={view === item.view}
+            title={item.title}
+            onClick={() => pick(view === item.view && item.view !== 'projects' ? 'projects' : item.view)}
+          >
+            {item.label}
+            {item.view === 'attention' && attention > 0 && <span className="view-count">{attention}</span>}
+          </button>
+        ))}
+      </div>
+      <nav className="projects" onKeyDown={navigate}>
         {!listed && workers}
-        {projects.length === 0 && (
-          <div className="empty-list">
-            {unsaved ? 'This CLAI does not save sessions' : query ? 'No matching sessions' : 'No saved sessions yet'}
-          </div>
-        )}
-        {projects.map((project) => {
-          // A search shows every match, whatever is collapsed.
-          const closed = !query && (collapsed[project.key] ?? false)
-          const nested = isNested(project)
+        {shownSections.length === 0 && <div className="empty-list">{empty}</div>}
+        {shownSections.map((section) => {
+          const closed = isClosed(section)
+          const twins = ambiguous(section.rows)
           return (
-            <section key={project.key} className="project">
-              <button
-                className="project-title"
-                onClick={() => setCollapsed((current) => ({ ...current, [project.key]: !closed }))}
-                title={project.key.includes('\0') ? undefined : project.key}
-              >
-                <FolderIcon size={14} />
-                <span className="project-name">{project.name}</span>
-                {closed && <GroupDot state={strongest(project.worktrees, live)} />}
-                <ChevronIcon size={12} className={`chevron ${closed ? '' : 'down'}`} />
-              </button>
-              {!closed &&
-                project.worktrees.map((worktree) => {
-                  const id = `${project.key}\0${worktree.root}`
-                  const shut = nested && !query && (collapsed[id] ?? false)
-                  return (
-                    <div
-                      key={worktree.root}
-                      className={`worktree ${nested ? 'nested' : ''} ${worktree.sessions.some(isShown) ? 'current' : ''} ${worktree.missing ? 'missing' : ''}`}
-                    >
-                      {nested && (
-                        <button
-                          className="worktree-title"
-                          onClick={() => setCollapsed((current) => ({ ...current, [id]: !shut }))}
-                          title={worktree.missing ? `${worktree.root} (removed)` : worktree.root}
-                        >
-                          <BranchIcon size={12} />
-                          <span className="worktree-name">{worktree.label}</span>
-                          {worktree.missing && <span className="worktree-tag">removed</span>}
-                          {shut && <GroupDot state={strongest([worktree], live)} />}
-                          <ChevronIcon size={10} className={`chevron ${shut ? '' : 'down'}`} />
-                        </button>
-                      )}
-                      {!shut && worktree.sessions.flatMap((session) => [row(session), isShown(session) && workers])}
-                    </div>
-                  )
-                })}
+            <section key={section.key} className={`project ${section.kind}`}>
+              {heading(section, closed)}
+              {!closed && section.rows.flatMap((session) => [row(session, section, twins), session.id === shown && workers])}
             </section>
           )
         })}

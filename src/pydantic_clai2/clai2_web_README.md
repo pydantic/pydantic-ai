@@ -24,23 +24,32 @@ session's directory. A session left idle for an hour, with nothing running or qu
 watching it (a page watches the last five sessions it showed), closes, except the one CLAI started
 with; it stays saved, and clicking it resumes it. The launch directory's `.env` stays loaded.
 
-The sidebar lists the sessions `/resume` shows, grouped by project (the Git repository, named
-after its main checkout's folder), then by worktree (each checkout, labelled with its branch), with
-the current ones first and search across all of them. A folder outside Git is a project of its own.
-A session remembers its checkout when it is saved, so one from a worktree you have since removed
-stays under its project, marked removed; an older session from a removed folder is placed by
-where it was, or listed under Removed folders. Click one to switch to it, even while other sessions
-run turns: each session you open stays live and keeps working while you look at another. A dot by
-a live session shows that it runs a turn, pulsing; runs one with input queued behind it, ringed; or
-waits for your answer to a question, amber. Use a session's menu to rename, fork, archive, or delete
-it. Archiving hides a session from the sidebar and `/resume` without deleting anything; the archive
-button beside the search lists archived sessions too, muted, and searches them, each with
-**Unarchive** in its menu. The shown session and running ones cannot be archived, and resuming an
-archived one, or a new turn in it, unarchives it. A session open in CLAI cannot be deleted. A
+The sidebar lists the sessions `/resume` shows. **Projects** groups them by project (the Git
+repository, named after its main checkout's folder), each row showing its branch when the project
+has sessions on more than one; **Recent** lists every project's sessions in one list. A folder
+outside Git is a project of its own. Projects are listed by name and sessions newest created
+first, so a row never moves when you select it, a turn ends, a session is renamed, or the list
+refreshes; a new session appears at the top. Sessions whose folder is gone, such as a removed
+worktree, fold into **Removed worktrees** at the bottom. When two rows share a title, each shows a
+short ID. Click one to switch to it, even while other sessions run turns: the row is selected at
+once, and each session you open stays live and keeps working while you look at another.
+
+Each row has one status mark. A spinner, with how long the turn has run, means a turn runs here
+(ringed when input waits behind it); a hollow ring means another CLAI runs it, named with its process
+ID in the tooltip; **Needs input** means it waits for your answer; a bold title with a dot means it
+changed since you last looked (open it, or use **Mark as read**); a red or amber dot means its last
+turn failed or was interrupted. **Attention** (Cmd/Ctrl+Alt+U) lists only the sessions running,
+waiting for you, or unread. Use a session's menu to rename, fork, archive, or delete it, and a
+project's menu to archive all its chats. Archiving hides a session from the sidebar and `/resume`
+without deleting anything; **Archived** lists archived sessions, each with **Unarchive** in its
+menu. The shown session and running ones cannot be archived, and resuming an archived one, or a new
+turn in it, unarchives it. A session open in CLAI cannot be deleted. A
 session whose directory is gone, such as a removed worktree, opens read-only; so does, with `/web`
 from a terminal, a session saved in another directory, since the terminal works where it started.
 Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and no
-other, Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
+other, Cmd/Ctrl+K searches sessions (Down moves to the results, Enter opens the first), Cmd/Ctrl+Shift+O
+starts a new one, Cmd/Ctrl+B hides the sidebar. In the session list, Up and Down move between rows,
+Enter opens one, and Left and Right fold and open a project.
 As in the terminal, Up on the composer's first line recalls the session's sent prompts, newest first,
 and Down on its last line steps back toward your unsent draft.
 

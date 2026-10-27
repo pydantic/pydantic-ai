@@ -2411,8 +2411,13 @@ with `/web`, it starts in the folder of the session you are looking at.
 CLAI never changes its own working directory to do this. There is no limit on how
 many sessions run at once.
 
-- **Status dots.** A dot beside a live session in the sidebar shows that it runs a
-  turn, that input waits behind its turn, or that it asks you a question.
+- **A stable sidebar.** Sessions are listed by project, or all together under
+  **Recent**, newest created first. Selecting, renaming, or a turn ending never
+  moves a row. Sessions whose folder is gone fold into **Removed worktrees**.
+- **Status marks.** Each row has one: a spinner and elapsed time while it runs a
+  turn here, a hollow ring while another CLAI runs it, **Needs input** while it asks
+  you a question, and a bold title while it has changes you have not seen.
+  **Attention** (Cmd/Ctrl+Alt+U) lists only those sessions.
 - **Esc** and the stop button interrupt the session you are looking at, and only it.
 - **Steering and the queue.** As at the terminal's prompt, Enter queues a message
   while a turn runs and Alt+Enter (Option+Enter), or the bolt button, steers the turn

@@ -368,6 +368,10 @@ export function App() {
     setSidebar(true)
     window.setTimeout(() => sidebarRef.current?.focusSearch())
   }, [])
+  const toggleAttention = useCallback(() => {
+    setSidebar(true)
+    window.setTimeout(() => sidebarRef.current?.toggleAttention())
+  }, [])
   const focusWorkers = useCallback(() => {
     setSidebar(true)
     window.setTimeout(() => sidebarRef.current?.focusWorkers() || showNotice('This session has no delegated tasks yet.'))
@@ -499,6 +503,9 @@ export function App() {
       } else if (mod && event.key === ',') {
         event.preventDefault()
         openSettings()
+      } else if (mod && event.altKey && event.code === 'KeyU') {
+        event.preventDefault()
+        toggleAttention()
       } else if (mod && event.key === 'b') {
         event.preventDefault()
         setSidebar((open) => !open)
@@ -520,7 +527,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, openSettings, newSession, focusSessions])
+  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, openSettings, newSession, focusSessions, toggleAttention])
 
   const status = chat.status
   const title = workerTask

@@ -150,6 +150,27 @@ async def test_metadata_saved_before_archiving_existed_is_not_archived(tmp_path:
     assert (await store.get(conversation_id=saved.id)).summary == saved
 
 
+async def test_creation_time_survives_later_saves(tmp_path: Path) -> None:
+    """`created_at` is set by the first save and kept by later ones, whatever summary they pass."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
+    assert first.created_at == first.updated_at
+    second = await store.save(summary=replace(first, created_at=None), messages=[])
+    assert second.created_at == first.created_at
+    assert second.updated_at > first.updated_at
+    assert (await store.get(conversation_id=first.id)).summary.created_at == first.created_at
+
+
+async def test_metadata_saved_before_creation_time_existed_keeps_its_last_activity(tmp_path: Path) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    saved = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])
+    with closing(sqlite3.connect(store.database)) as conn, conn:
+        conn.execute("UPDATE conversations SET metadata = json_remove(metadata, '$.created_at')")
+    [legacy] = await store.listing()
+    assert legacy.created_at is None
+    assert (await store.save(summary=legacy, messages=[])).created_at == saved.updated_at
+
+
 async def test_stale_delete_does_not_erase_new_content(tmp_path: Path) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     first = await store.save(summary=ConversationSummary(workspace='/a'), messages=[])

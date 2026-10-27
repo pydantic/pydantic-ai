@@ -213,6 +213,18 @@ class Forked(BaseModel):
     id: str
 
 
+class ArchiveMany(BaseModel):
+    """Sessions to archive together, such as every one of a project or a branch."""
+
+    ids: list[str] = Field(max_length=1000)
+
+
+class ArchivedMany(BaseModel):
+    """Which of the sessions asked for were archived; the open session and running ones are left as they were."""
+
+    archived: list[str]
+
+
 class Steered(BaseModel):
     """Whether a running turn or task took the message; a finished task can be prompted instead."""
 
@@ -476,6 +488,10 @@ def _sessions(app: FastAPI, service: WebService) -> None:
     @app.post('/api/sessions/new')
     async def new(body: NewSession | None = None) -> Opened:
         return Opened(id=await _wait(service.new(None if body is None else body.workspace)))
+
+    @app.post('/api/sessions/archive')
+    async def archive_many(body: ArchiveMany) -> ArchivedMany:
+        return ArchivedMany(archived=await _wait(service.archive_many(body.ids)))
 
     @app.get('/api/sessions/{conversation_id}')
     async def transcript(conversation_id: str) -> Transcript:

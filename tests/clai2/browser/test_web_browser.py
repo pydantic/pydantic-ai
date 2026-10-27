@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import os
+import re
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 
@@ -13,6 +15,7 @@ from pydantic_ai import Agent, ModelRetry, models
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins.web.app import create_app
 from pydantic_clai2.builtin_plugins.web.server import WebServer
 from tests.clai2.test_web import TOKEN
@@ -130,6 +133,10 @@ class WebUI:
     gamma: str
     delta: str
     epsilon: str
+    elsewhere: str
+    """Saved as running in another live process."""
+    removed: str
+    """Saved in a folder that is gone."""
 
 
 @pytest.fixture(scope='module')
@@ -171,6 +178,23 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                 portal.call(fleet.runtimes[name].session.commit_messages, messages)
                 response = fleet.post(f'/api/sessions/{conversation}/rename', {'title': title})
                 assert response.status_code == 204, response.text
+            store = fleet.launch.sessions.store
+            elsewhere = portal.call(
+                lambda: store.save(
+                    summary=ConversationSummary(
+                        workspace=str(fleet.folder('elsewhere')),
+                        title='Browser Elsewhere',
+                        outcome='running',
+                        owner_pid=os.getppid(),
+                    ),
+                    messages=[],
+                )
+            )
+            removed = portal.call(
+                lambda: store.save(
+                    summary=ConversationSummary(workspace=str(root / 'gone'), title='Browser Removed'), messages=[]
+                )
+            )
             server = portal.call(
                 lambda: WebServer.serve(
                     lambda port: create_app(service=fleet.service, token=TOKEN, hosts=frozenset({f'127.0.0.1:{port}'})),
@@ -187,6 +211,8 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                     gamma=gamma,
                     delta=delta,
                     epsilon=epsilon,
+                    elsewhere=elsewhere.id,
+                    removed=removed.id,
                 )
             finally:
                 portal.call(server.stop)
@@ -223,7 +249,7 @@ async def test_hostile_markdown_and_external_links(page: Page, web_ui: WebUI) ->
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Alpha', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Alpha')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
     await composer.fill('Render the hostile example')
@@ -266,7 +292,7 @@ async def test_single_line_breaks_survive_like_the_tui(page: Page, web_ui: WebUI
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Lines', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Lines')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
     await composer.fill('Print one item per line')
@@ -348,7 +374,7 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
     await composer.fill('Only Beta should receive this')
@@ -358,7 +384,7 @@ async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
     await expect(page.locator('.markdown').filter(has_text='Beta answer')).to_be_visible()
     await page.locator('.sidebar').get_by_text('Browser Alpha', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Alpha')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     await expect(composer).to_be_enabled()
     await expect(page.locator('.markdown').filter(has_text='Beta answer', visible=True)).to_have_count(0)
     await page.clock.install()
@@ -400,7 +426,7 @@ async def test_composer_recalls_sent_prompts(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
     for prompt in ('Recall the first prompt', 'Recall the second prompt\non two lines'):
@@ -482,7 +508,7 @@ async def test_a_failed_tool_leads_with_its_error(
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Delta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Delta')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
     await composer.fill(prompt)
@@ -557,7 +583,7 @@ async def test_switching_back_to_a_watched_session_shows_it_at_once(page: Page, 
     for title, conversation in (('Browser Beta', web_ui.beta), ('Browser Alpha', web_ui.alpha)):
         await sidebar.get_by_text(title, exact=True).click()
         await expect(page.locator('.session.current .session-title')).to_have_text(title)
-        await expect(page.locator('.session.opening')).to_have_count(0)
+        await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
         await expect(composer).to_be_enabled()
         await composer.fill(f'Keep {title}')
         async with page.expect_response(f'**/api/sessions/{conversation}/input') as sent:
@@ -580,7 +606,7 @@ async def test_switching_back_to_a_watched_session_shows_it_at_once(page: Page, 
         await sidebar.get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.transcript[data-kept="yes"]')).to_be_visible()
     await expect(page.locator('.transcript').filter(has_text='Keep Browser Alpha')).to_be_hidden()
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     assert await page.evaluate('window.claiTestSnapshots.length') == snapshots, 'it was watched all along'
     [route] = held
     await route.continue_()
@@ -609,7 +635,7 @@ async def test_a_watched_session_switching_conversation_in_the_background_stays_
     for title in ('Browser Alpha', 'Browser Beta'):
         await sidebar.get_by_text(title, exact=True).click()
         await expect(page.locator('.session.current .session-title')).to_have_text(title)
-        await expect(page.locator('.session.opening')).to_have_count(0)
+        await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     async with page.expect_response(f'**/api/sessions/{web_ui.alpha}/input') as sent:
         await page.evaluate(
             """([id, token]) => fetch(`/api/sessions/${id}/input`, {
@@ -628,7 +654,7 @@ async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: 
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Epsilon', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Epsilon')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     await expect(composer).to_be_enabled()
     await composer.fill('Write the forbidden file')
@@ -655,7 +681,7 @@ async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI
     await expect(current).to_have_text('Browser Gamma')
     await sidebar.get_by_text('Browser Beta', exact=True).click()
     await expect(current).to_have_text('Browser Beta')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     await expect(composer).to_be_focused()
     # Typing right away lands in the prompt box.
     await page.keyboard.type('typed after switching')
@@ -670,14 +696,173 @@ async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI
 
     await page.route(f'**/api/sessions/{web_ui.delta}/open', hold)
     await sidebar.get_by_text('Browser Delta', exact=True).click()
-    await expect(page.locator('.session.opening')).to_have_count(1)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(1)
+    # The row picked is the selection at once, while its session still opens, and shows no spinner of its own.
+    await expect(current).to_have_text('Browser Delta')
+    await expect(page.locator('.session[aria-busy="true"] .spinner')).to_have_count(0)
     search = page.get_by_placeholder('Search sessions')
     await search.focus()
     release.set()
     await expect(current).to_have_text('Browser Delta')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     await expect(search).to_be_focused()
     # A watched session shows at once without opening, and takes focus all the same.
     await sidebar.get_by_text('Browser Gamma', exact=True).click()
     await expect(current).to_have_text('Browser Gamma')
     await expect(composer).to_be_focused()
+
+
+async def opened(page: Page, title: str) -> None:
+    """Wait for the session picked to be the one shown, not only the row selected."""
+    await expect(page.locator('.session.current .session-title')).to_have_text(title)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
+
+
+async def send(page: Page, conversation: str, text: str) -> None:
+    """Prompt a session that the page does not show, as another tab or the terminal would."""
+    async with page.expect_response(f'**/api/sessions/{conversation}/input') as sent:
+        await page.evaluate(
+            """([id, token, text]) => fetch(`/api/sessions/${id}/input`, {
+              method: 'POST', headers: {'x-clai-token': token, 'content-type': 'application/json'},
+              body: JSON.stringify({text}),
+            })""",
+            [conversation, TOKEN, text],
+        )
+    assert (await sent.value).ok
+
+
+async def test_sidebar_rows_keep_their_places(page: Page, web_ui: WebUI) -> None:
+    """Activity, renames, and selection move no row: each keeps its height in the list."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    await sidebar.get_by_role('button', name='Projects', exact=True).click()
+    await expect(sidebar.get_by_text('Browser Epsilon', exact=True)).to_be_visible()
+    await sidebar.get_by_text('Browser Beta', exact=True).click()
+    await opened(page, 'Browser Beta')
+    rows = sidebar.locator('.session')
+
+    async def places() -> list[tuple[str, float]]:
+        return await rows.evaluate_all(
+            'rows => rows.map(row => [row.dataset.session, Math.round(row.getBoundingClientRect().top)])'
+        )
+
+    before = await places()
+    # Projects are listed by name, whichever is current, and removed folders fold away last.
+    assert [title for title in await sidebar.locator('.project-name').all_inner_texts()][-1] == 'Removed worktrees (1)'
+
+    # A turn in a session not shown saves it, which used to move its row to the top.
+    await send(page, web_ui.gamma, 'Activity elsewhere')
+    gamma = sidebar.locator(f'.session[data-session="{web_ui.gamma}"]')
+    await expect(gamma).to_have_class(re.compile(r'\bunread\b'))
+    assert await places() == before
+
+    response = await page.evaluate(
+        """([id, token]) => fetch(`/api/sessions/${id}/rename`, {
+          method: 'POST', headers: {'x-clai-token': token, 'content-type': 'application/json'},
+          body: JSON.stringify({title: 'Browser Delta renamed'}),
+        }).then(response => response.status)""",
+        [web_ui.delta, TOKEN],
+    )
+    assert response == 204
+    await expect(sidebar.get_by_text('Browser Delta renamed', exact=True)).to_be_visible()
+    assert await places() == before
+
+    await sidebar.get_by_text('Browser Alpha', exact=True).click()
+    await opened(page, 'Browser Alpha')
+    assert await places() == before
+    # Opening the unread session marks it read.
+    await gamma.locator('.session-main').click()
+    await opened(page, 'Browser Gamma')
+    await expect(gamma).not_to_have_class(re.compile(r'\bunread\b'))
+    assert await places() == before
+
+    # Recent lists every project's sessions newest created first.
+    await sidebar.get_by_role('button', name='Recent', exact=True).click()
+    created = [web_ui.removed, web_ui.elsewhere, web_ui.epsilon, web_ui.delta, web_ui.gamma, web_ui.lines]
+    listed = [conversation for conversation, _ in await places() if conversation in created]
+    assert listed == [web_ui.elsewhere, web_ui.epsilon, web_ui.delta, web_ui.gamma, web_ui.lines], (
+        'the removed one is folded away'
+    )
+    await page.evaluate(
+        """([id, token]) => fetch(`/api/sessions/${id}/rename`, {
+          method: 'POST', headers: {'x-clai-token': token, 'content-type': 'application/json'},
+          body: JSON.stringify({title: 'Browser Delta'}),
+        })""",
+        [web_ui.delta, TOKEN],
+    )
+    await expect(sidebar.get_by_text('Browser Delta', exact=True)).to_be_visible()
+    await sidebar.get_by_role('button', name='Recent', exact=True).click()
+    await expect(sidebar.get_by_role('button', name='Projects', exact=True)).to_have_attribute('aria-pressed', 'true')
+
+
+async def test_a_session_another_clai_runs_shows_a_ring(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    row = sidebar.locator(f'.session[data-session="{web_ui.elsewhere}"]')
+    ring = row.locator('.state.busy')
+    await expect(ring).to_have_attribute('title', f'Running in clai2 pid {os.getppid()}')
+    await expect(row.locator('.spinner')).to_have_count(0)
+    # It is running, so the attention view lists it, and the archived view does not.
+    await sidebar.get_by_role('button', name=re.compile('^Attention')).click()
+    await expect(row).to_be_visible()
+    await expect(sidebar.locator('.session').filter(has_text='Browser Beta')).to_have_count(0)
+    await sidebar.get_by_role('button', name='Archived', exact=True).click()
+    await expect(row).to_have_count(0)
+    await sidebar.get_by_role('button', name='Projects', exact=True).click()
+    await expect(row).to_be_visible()
+
+
+async def test_removed_worktrees_fold_away(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    bucket = sidebar.get_by_role('button', name='Removed worktrees (1)')
+    await expect(bucket).to_have_attribute('aria-expanded', 'false')
+    removed = sidebar.get_by_text('Browser Removed', exact=True)
+    await expect(removed).to_have_count(0)
+    await bucket.click()
+    await expect(removed).to_be_visible()
+    # What is opened or folded is kept across reloads.
+    await page.reload()
+    await expect(removed).to_be_visible()
+    await bucket.click()
+    await expect(removed).to_have_count(0)
+
+
+async def test_sidebar_keyboard(page: Page, web_ui: WebUI) -> None:
+    """Search moves to its results with Down and opens the first with Enter; the arrows move between rows."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    search = sidebar.get_by_role('textbox', name='Search sessions', exact=True)
+    await search.fill('Browser Gamma')
+    gamma = sidebar.locator(f'.session[data-session="{web_ui.gamma}"] .session-main')
+    await expect(sidebar.locator('.session')).to_have_count(1)
+    await expect(gamma).to_be_visible()
+    await search.press('ArrowDown')
+    await expect(gamma).to_be_focused()
+    # Up goes back through the project's heading to the search.
+    await page.keyboard.press('ArrowUp')
+    gamma_project = sidebar.locator('.project', has=page.locator(f'[data-session="{web_ui.gamma}"]'))
+    await expect(gamma_project.locator('.project-title')).to_be_focused()
+    await page.keyboard.press('ArrowUp')
+    await expect(search).to_be_focused()
+    await search.fill('Browser Lines')
+    lines = sidebar.locator(f'.session[data-session="{web_ui.lines}"] .session-main')
+    await expect(sidebar.locator('.session')).to_have_count(1)
+    await expect(lines).to_be_visible()
+    await search.press('Enter')
+    await opened(page, 'Browser Lines')
+    await search.fill('')
+    await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_be_visible()
+    await lines.focus()
+    await page.keyboard.press('ArrowDown')
+    await expect(lines).not_to_be_focused()
+    await page.keyboard.press('ArrowUp')
+    await expect(lines).to_be_focused()
+    # Left moves to the project's heading, which Left folds and Right opens again.
+    await page.keyboard.press('ArrowLeft')
+    heading = sidebar.locator('.project-title:has(.project-name:text-is("lines"))')
+    await expect(heading).to_be_focused()
+    await page.keyboard.press('ArrowLeft')
+    await expect(heading).to_have_attribute('aria-expanded', 'false')
+    await page.keyboard.press('ArrowRight')
+    await expect(heading).to_have_attribute('aria-expanded', 'true')

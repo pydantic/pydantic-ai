@@ -58,6 +58,11 @@ class ConversationSummary:
     checkout: GitCheckout | None = None
     """The Git checkout `workspace` was in when saved; `None` outside Git or when the application records none."""
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime | None = None
+    """When the conversation was first saved, which saving more content keeps; `None` until then.
+
+    A conversation saved before this field existed gets its activity time from before its next save.
+    """
     revision: int = 0
     title: str = 'New session'
     subtitle: str = ''
@@ -211,6 +216,7 @@ class SqliteConversationStore:
             if row is None:
                 if expected != 0:
                     raise ConversationConflict('Session was deleted. Start a new session before saving.')
+                summary = replace(summary, created_at=summary.created_at or summary.updated_at)
                 conn.execute(
                     'INSERT INTO conversations VALUES (?, ?, ?, ?, ?, ?)',
                     (
@@ -238,6 +244,7 @@ class SqliteConversationStore:
                 named_revision=prior.named_revision,
                 naming_tokens=prior.naming_tokens,
                 archived_at=None,
+                created_at=prior.created_at or prior.updated_at,
             )
             conn.execute(
                 'UPDATE conversations SET revision=?, metadata=?, messages=?, search_text=?, updated_at=? WHERE id=?',

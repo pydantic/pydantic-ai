@@ -569,6 +569,11 @@ An application may set `ConversationSummary.checkout` to a `GitCheckout` (reposi
 name, checkout root, branch) for the workspace, so a browser can still group the
 conversation by repository after that folder is removed; the store saves it as given.
 
+`ConversationSummary.created_at` records when the conversation was first saved;
+later saves keep it, so a browser can list conversations in a stable order. A
+conversation saved before the field existed takes its last activity time at its
+next save.
+
 Metadata naming uses a separate version. `name(source=..., title=..., ...)` cannot
 overwrite a newer content revision, newer name, or a manual title. Naming does not
 change the activity timestamp. `delete(source=...)` removes the conversation and

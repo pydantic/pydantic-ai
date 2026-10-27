@@ -169,6 +169,8 @@ export const api = {
   rename: (id: string, title: string) => call<void>('POST', `/api/sessions/${id}/rename`, { title }),
   fork: (id: string) => call<{ id: string }>('POST', `/api/sessions/${id}/fork`),
   archive: (id: string) => call<void>('POST', `/api/sessions/${id}/archive`),
+  /** Archive several sessions; the open one and running ones are skipped. It answers the IDs archived. */
+  archiveMany: (ids: string[]) => call<{ archived: string[] }>('POST', '/api/sessions/archive', { ids }),
   unarchive: (id: string) => call<void>('POST', `/api/sessions/${id}/unarchive`),
   remove: (id: string) => call<void>('DELETE', `/api/sessions/${id}`),
   /** Answer a settings menu's dialog, which belongs to the page rather than to one session. */

@@ -7,6 +7,7 @@ import hashlib
 import html
 import io
 import json
+import os
 import re
 import shutil
 import sys
@@ -15,6 +16,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, S
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AbstractContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypeVar
 from urllib.parse import urlparse
@@ -84,6 +86,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnStarted,
     image_id,
 )
+from pydantic_clai2.builtin_plugins.web.sidebar import busy_elsewhere, process_started
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -869,7 +872,6 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
     """A live session's turn shows as running; one another live process runs, as busy; a dead one, as cancelled."""
     web_ = make_web(Agent(TestModel()))
     store = web_.shell.sessions.store
-    import os
 
     for title, pid in (('Live', os.getppid()), ('Mine', os.getpid()), ('Dead', 2**22 + 12345)):
         web_.portal.call(
@@ -884,6 +886,11 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
         'Mine': 'cancelled',
         'Dead': 'cancelled',
     }, "this process's own turn is never busy elsewhere: no live session here holds it, so it ended unsaved"
+    assert {entry['title']: entry['pid'] for entry in removed['sessions']} == {
+        'Live': os.getppid(),
+        'Mine': None,
+        'Dead': None,
+    }, 'the sidebar names the process another turn runs in'
     web_.shell.turning = True
     web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
     current = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions'][0]
@@ -1054,6 +1061,79 @@ def test_archived_sessions_leave_the_sidebar_until_it_lists_them(make_web: 'Make
         assert web_.post(f'/api/sessions/{old.id}/unarchive').status_code == 204
         receive_until(socket, SessionsChanged)
     assert listed('/api/sessions') == {'New session': False, 'Stale': False}
+
+
+def test_archive_many_skips_what_cannot_be_archived(make_web: 'MakeWeb') -> None:
+    """A project's or branch's "Archive chats" archives what it can and answers which; the rest stay listed."""
+    web_ = make_web(Agent(TestModel()))
+    store = web_.shell.sessions.store
+    stale, older = (
+        web_.portal.call(
+            lambda title=title: store.save(summary=ConversationSummary(workspace='/x', title=title), messages=[])
+        )
+        for title in ('Stale', 'Older')
+    )
+    web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
+    current = web_.shell.session.conversation_id
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
+        socket.receive_text()
+        answer = web_.post('/api/sessions/archive', {'ids': [stale.id, current, 'missing', older.id]})
+        assert answer.json() == {'archived': [stale.id, older.id]}
+        receive_until(socket, SessionsChanged)
+    assert [entry.id for entry in web_.portal.call(lambda: store.listing(archived=True))] == [older.id, stale.id]
+    assert web_.client.post('/api/sessions/archive', json={'ids': []}).status_code == 403, 'the token is checked'
+    web_.plugin.host.sessions = None
+    assert web_.post('/api/sessions/archive', {'ids': [current]}).status_code == 404
+
+
+def test_sessions_list_in_the_order_they_were_created(make_web: 'MakeWeb') -> None:
+    """Each row carries its creation time, which later saves keep, so the sidebar's order never changes."""
+    web_ = make_web(Agent(TestModel()))
+    store = web_.shell.sessions.store
+    first = web_.portal.call(
+        lambda: store.save(summary=ConversationSummary(workspace='/x', title='First'), messages=[])
+    )
+    second = web_.portal.call(
+        lambda: store.save(summary=ConversationSummary(workspace='/x', title='Second'), messages=[])
+    )
+    later = web_.portal.call(lambda: store.save(summary=first, messages=[]))
+
+    def entries() -> dict[str, tuple[str, str]]:
+        return {
+            entry['title']: (entry['created_at'], entry['updated_at'])
+            for project in web_.get('/api/sessions').json()
+            for worktree in project['worktrees']
+            for entry in worktree['sessions']
+        }
+
+    listed = entries()
+    assert TypeAdapter(datetime).validate_python(listed['First'][0]) == first.created_at
+    assert TypeAdapter(datetime).validate_python(listed['First'][1]) == later.updated_at
+    assert TypeAdapter(datetime).validate_python(listed['Second'][0]) == second.created_at
+    assert first.created_at is not None and second.created_at is not None and first.created_at < second.created_at
+
+
+def test_a_reused_pid_is_not_busy_elsewhere(tmp_path: Path) -> None:
+    """A turn whose process has gone and whose PID a later process took is not running anywhere."""
+    if sys.platform != 'linux':  # pragma: no cover
+        pytest.skip('Process start times come from Linux `/proc`.')
+    parent = os.getppid()
+    started = process_started(parent)
+    assert started is not None
+    running = ConversationSummary(workspace='/x', outcome='running', owner_pid=parent, updated_at=started)
+    assert busy_elsewhere(running)
+    assert not busy_elsewhere(replace(running, updated_at=started - timedelta(minutes=1))), 'saved before it started'
+    assert not busy_elsewhere(replace(running, owner_pid=None))
+
+    # The command name, in parentheses, may hold spaces and parentheses of its own.
+    (tmp_path / '42').mkdir()
+    fields = ' '.join(['S', *['0'] * 18, '250'])
+    (tmp_path / '42' / 'stat').write_text(f'42 (a (b) c) {fields} 0 0\n')
+    (tmp_path / 'stat').write_text('cpu 0\nbtime 1000\n')
+    assert process_started(42, tmp_path) == datetime.fromtimestamp(1000 + 250 / os.sysconf('SC_CLK_TCK'), UTC)
+    assert process_started(43, tmp_path) is None
 
 
 def test_a_shell_without_saved_sessions(make_web: 'MakeWeb') -> None:

@@ -747,6 +747,19 @@ class WebService:
         await (catalog.archive(conversation_id) if archived else catalog.unarchive(conversation_id))
         self.hub.publish(SessionsChanged())
 
+    async def archive_many(self, conversation_ids: Sequence[str]) -> list[str]:
+        """Archive these sessions, skipping the open one and running ones, and answer the IDs archived."""
+        catalog = self.catalog
+        archived: list[str] = []
+        for conversation_id in conversation_ids:
+            try:
+                await catalog.archive(conversation_id)
+            except (ValueError, LookupError):
+                continue
+            archived.append(conversation_id)
+        self.hub.publish(SessionsChanged())
+        return archived
+
 
 async def _view(panel: SidePanel) -> PanelView:
     """What `panel` shows now; a failing view, or a page that is not on the web, shows why instead."""
