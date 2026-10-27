@@ -535,6 +535,11 @@ pre {
   background: var(--lithium);
 }
 
+/* A folded project with a session waiting for your answer. */
+.state.asking {
+  background: var(--amber);
+}
+
 /* A row's turn running here: its glyph spins, at a dot's footprint. */
 .spinner.row-spinner {
   width: 10px;

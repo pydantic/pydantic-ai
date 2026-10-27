@@ -571,8 +571,8 @@ conversation by repository after that folder is removed; the store saves it as g
 
 `ConversationSummary.created_at` records when the conversation was first saved;
 later saves keep it, so a browser can list conversations in a stable order. A
-conversation saved before the field existed takes its last activity time at its
-next save.
+conversation saved without it, by a version before the field existed, takes its
+last activity time at its next save.
 
 Metadata naming uses a separate version. `name(source=..., title=..., ...)` cannot
 overwrite a newer content revision, newer name, or a manual title. Naming does not
@@ -580,7 +580,9 @@ change the activity timestamp. `delete(source=...)` removes the conversation and
 associated run records from the same SQLite database atomically, retaining shared
 media. It is not secure erasure. A local live PID marks an unfinished conversation
 as busy; this is not a distributed lease and the database must not be shared
-between hosts. PID reuse is conservatively treated as busy.
+between hosts. On Linux, a process that started after the conversation was last
+saved has reused the recorded PID, so the conversation is not busy; elsewhere PID
+reuse is conservatively treated as busy.
 
 `set_archived(conversation_id=..., archived=...)` archives or unarchives a
 conversation through `ConversationSummary.archived_at`, a metadata-only change that

@@ -16,7 +16,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, S
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AbstractContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import TypeVar
 from urllib.parse import urlparse
@@ -86,7 +86,6 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnStarted,
     image_id,
 )
-from pydantic_clai2.builtin_plugins.web.sidebar import busy_elsewhere, process_started
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -1113,27 +1112,6 @@ def test_sessions_list_in_the_order_they_were_created(make_web: 'MakeWeb') -> No
     assert TypeAdapter(datetime).validate_python(listed['First'][1]) == later.updated_at
     assert TypeAdapter(datetime).validate_python(listed['Second'][0]) == second.created_at
     assert first.created_at is not None and second.created_at is not None and first.created_at < second.created_at
-
-
-def test_a_reused_pid_is_not_busy_elsewhere(tmp_path: Path) -> None:
-    """A turn whose process has gone and whose PID a later process took is not running anywhere."""
-    if sys.platform != 'linux':  # pragma: no cover
-        pytest.skip('Process start times come from Linux `/proc`.')
-    parent = os.getppid()
-    started = process_started(parent)
-    assert started is not None
-    running = ConversationSummary(workspace='/x', outcome='running', owner_pid=parent, updated_at=started)
-    assert busy_elsewhere(running)
-    assert not busy_elsewhere(replace(running, updated_at=started - timedelta(minutes=1))), 'saved before it started'
-    assert not busy_elsewhere(replace(running, owner_pid=None))
-
-    # The command name, in parentheses, may hold spaces and parentheses of its own.
-    (tmp_path / '42').mkdir()
-    fields = ' '.join(['S', *['0'] * 18, '250'])
-    (tmp_path / '42' / 'stat').write_text(f'42 (a (b) c) {fields} 0 0\n')
-    (tmp_path / 'stat').write_text('cpu 0\nbtime 1000\n')
-    assert process_started(42, tmp_path) == datetime.fromtimestamp(1000 + 250 / os.sysconf('SC_CLK_TCK'), UTC)
-    assert process_started(43, tmp_path) is None
 
 
 def test_a_shell_without_saved_sessions(make_web: 'MakeWeb') -> None:

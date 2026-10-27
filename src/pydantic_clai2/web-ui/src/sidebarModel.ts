@@ -131,12 +131,14 @@ const SEEN_LIMIT = 1000
 export function loadSeen(): Seen {
   try {
     const saved = JSON.parse(localStorage.getItem(SEEN_KEY) ?? 'null') as Seen | null
-    if (saved && typeof saved.since === 'string' && typeof saved.sessions === 'object') return saved
+    if (saved && typeof saved.since === 'string' && typeof saved.sessions === 'object' && saved.sessions !== null) {
+      return saved
+    }
   } catch {
     // A corrupt record starts over.
   }
   const fresh = { since: new Date().toISOString(), sessions: {} }
-  localStorage.setItem(SEEN_KEY, JSON.stringify(fresh))
+  keep(SEEN_KEY, fresh)
   return fresh
 }
 
@@ -149,7 +151,7 @@ export function markSeen(seen: Seen, rows: Pick<Row, 'id' | 'updated_at'>[]): Se
     .sort(([, a], [, b]) => Date.parse(b) - Date.parse(a))
     .slice(0, SEEN_LIMIT)
   const next = { since: seen.since, sessions: Object.fromEntries(kept) }
-  localStorage.setItem(SEEN_KEY, JSON.stringify(next))
+  keep(SEEN_KEY, next)
   return next
 }
 
@@ -165,5 +167,14 @@ export function stored<T>(key: string, fallback: T): T {
     return saved === null ? fallback : (JSON.parse(saved) as T)
   } catch {
     return fallback
+  }
+}
+
+/** Save a small JSON value in `localStorage`; a full or disabled store only loses it. */
+export function keep(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // Nothing to do: the page works without it.
   }
 }

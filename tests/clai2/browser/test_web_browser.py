@@ -851,6 +851,12 @@ async def test_sidebar_keyboard(page: Page, web_ui: WebUI) -> None:
     await expect(lines).to_be_visible()
     await search.press('Enter')
     await opened(page, 'Browser Lines')
+    # Enter right after typing opens the first result for what was typed, not for the search before.
+    await search.fill('Browser Epsilon')
+    await search.press('Enter')
+    await opened(page, 'Browser Epsilon')
+    await search.fill('Browser Lines')
+    await expect(sidebar.locator('.session')).to_have_count(1)
     await search.fill('')
     await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_be_visible()
     await lines.focus()

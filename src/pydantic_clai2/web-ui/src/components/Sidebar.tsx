@@ -20,6 +20,7 @@ import {
   type Section,
   type Status,
   type View,
+  keep,
 } from '../sidebarModel'
 import { useNow } from '../workers'
 import { WorkersTree } from './WorkersTree'
@@ -108,7 +109,7 @@ const LABELS: Record<Exclude<Status, null>, string> = {
 
 /** A row's one glyph: a spinner while it runs here, a ring while another CLAI runs it, else a dot or nothing. */
 function Glyph({ state, pid }: { state: Status; pid: number | null }) {
-  if (state === null || state === 'asking') return <span className="state" />
+  if (state === null) return <span className="state" />
   const label = state === 'busy' && pid !== null ? `Running in clai2 pid ${pid}` : LABELS[state]
   if (state === 'running' || state === 'queued') {
     return <span className={`spinner row-spinner ${state}`} role="img" aria-label={label} title={label} />
@@ -159,6 +160,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const previous = useRef<View>('projects')
   // The list paints from the last one fetched while it is fetched again.
   const [projects, setProjects] = useState<Project[]>(() => stored<Project[]>('clai-sidebar-cache', []))
+  /** The search the listed sessions answer, so Enter never opens a result of an earlier one. */
+  const [answered, setAnswered] = useState('')
+  const openFirst = useRef(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() =>
     stored<Record<string, boolean>>('clai-sidebar-collapsed', {}),
   )
@@ -171,8 +175,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const aside = useRef<HTMLElement>(null)
   const archived = view === 'archived'
 
-  useEffect(() => localStorage.setItem('clai-sidebar-view', JSON.stringify(view)), [view])
-  useEffect(() => localStorage.setItem('clai-sidebar-collapsed', JSON.stringify(collapsed)), [collapsed])
+  useEffect(() => keep('clai-sidebar-view', view), [view])
+  useEffect(() => keep('clai-sidebar-collapsed', collapsed), [collapsed])
 
   const pick = useCallback((next: View) => {
     setView((current) => {
@@ -191,7 +195,12 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         first?.focus()
         return Boolean(first)
       },
-      toggleAttention: () => setView((current) => (current === 'attention' ? previous.current : 'attention')),
+      toggleAttention: () =>
+        setView((current) => {
+          if (current === 'attention') return previous.current
+          previous.current = current
+          return 'attention'
+        }),
     }),
     [],
   )
@@ -204,7 +213,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
       const found = await api.sessions(query, archived)
       if (id !== loading.current) return
       setProjects(found)
-      if (!query && !archived) localStorage.setItem('clai-sidebar-cache', JSON.stringify(found))
+      setAnswered(query)
+      if (!query && !archived) keep('clai-sidebar-cache', found)
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) setUnsaved(true)
       else onError(error instanceof Error ? error.message : String(error))
@@ -240,21 +250,27 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     }
   }, [menu])
 
+  useEffect(() => {
+    if (!openFirst.current || answered !== query) return
+    openFirst.current = false
+    aside.current?.querySelector<HTMLElement>('.projects .session-main')?.click()
+  }, [projects, answered, query])
+
   const rows = useMemo(() => flatten(projects), [projects])
   // The row picked last is the selection, highlighted at once, before its session opens.
   const selected = opening ?? viewing ?? shown
 
-  // What the shown session says is read as it changes.
-  const shownRow = rows.find((row) => row.id === shown)
+  // What the shown or previewed session says is read as it changes.
+  const readRow = rows.find((row) => row.id === (viewing ?? shown))
   useEffect(() => {
-    if (shownRow) setSeen((current) => markSeen(current, [shownRow]))
-  }, [shownRow])
+    if (readRow) setSeen((current) => markSeen(current, [readRow]))
+  }, [readRow])
 
   const states = useMemo(() => {
     const found: Record<string, Status> = {}
-    for (const row of rows) found[row.id] = status(row, live, row.id !== shown && isUnread(row, seen))
+    for (const row of rows) found[row.id] = status(row, live, row.id !== readRow?.id && isUnread(row, seen))
     return found
-  }, [rows, live, shown, seen])
+  }, [rows, live, readRow, seen])
   const needsYou = useCallback(
     (row: Row) => {
       const state = states[row.id] ?? null
@@ -262,16 +278,23 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     },
     [states],
   )
-  const shownSections = useMemo(() => sections(rows, view, needsYou), [rows, view, needsYou])
+  // The row picked from Attention stays there while it opens and shows, though it no longer needs you.
+  const shownSections = useMemo(
+    () => sections(rows, view, (row) => row.id === selected || needsYou(row)),
+    [rows, view, selected, needsYou],
+  )
   const attention = useMemo(() => rows.filter((row) => !row.archived && needsYou(row)).length, [rows, needsYou])
 
-  // Each running row's elapsed time, from when this page first saw it run.
+  // Each running row's elapsed time: from its turn's start, which a turn saves, or else from when this page saw it run.
   const started = useRef(new Map<string, number>())
   const anyWorking = rows.some((row) => WORKING.includes(states[row.id] ?? null))
   const now = useNow(anyWorking)
   for (const row of rows) {
     if (WORKING.includes(states[row.id] ?? null)) {
       if (!started.current.has(row.id)) started.current.set(row.id, Date.now())
+      if (row.state === 'running' || row.state === 'busy') {
+        started.current.set(row.id, Math.min(started.current.get(row.id) ?? Infinity, Date.parse(row.updated_at)))
+      }
     } else started.current.delete(row.id)
   }
 
@@ -352,7 +375,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
             title={`${session.title}\n${session.workspace}`}
             aria-current={current ? 'true' : undefined}
           >
-            <Glyph state={state} pid={session.pid} />
+            {/* A row that needs input says so with its pill instead. */}
+            <Glyph state={state === 'asking' ? null : state} pid={session.pid} />
             <span className="session-title">{session.title}</span>
             {chip && <span className="session-chip">{chip}</span>}
             {twins.has(session.id) && <span className="session-chip mono">#{session.id.slice(0, 6)}</span>}
@@ -381,7 +405,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                 <button
                   disabled={!archivable(session)}
                   title={
-                    current || session.id === shown
+                    session.id === shown
                       ? 'The open session cannot be archived'
                       : !archivable(session)
                         ? 'A running session cannot be archived'
@@ -537,8 +561,10 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
               const first = aside.current?.querySelector<HTMLElement>('.projects .session-main')
               if (!first) return
               event.preventDefault()
-              if (event.key === 'Enter') first.click()
-              else first.focus()
+              if (event.key !== 'Enter') first.focus()
+              else if (answered === query) first.click()
+              // The results for what was typed are still on their way: open the first once they arrive.
+              else openFirst.current = true
             }
           }}
         />

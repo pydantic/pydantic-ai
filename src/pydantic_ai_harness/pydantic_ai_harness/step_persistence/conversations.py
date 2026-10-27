@@ -11,7 +11,7 @@ import sys
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path, PureWindowsPath
 from typing import Literal
 from uuid import uuid4
@@ -87,8 +87,9 @@ class ConversationSummary:
 def ensure_inactive(summary: ConversationSummary) -> None:
     """Local SQLite sessions cannot be resumed while their recorded process is running.
 
-    PID reuse is conservatively treated as busy. This is not a distributed lease;
-    do not share this database between hosts.
+    On Linux, a process that started after the conversation was last saved reuses the recorded PID, so the
+    conversation is not busy; elsewhere PID reuse is conservatively treated as busy. This is not a distributed
+    lease; do not share this database between hosts.
     """
     if summary.outcome != 'running' or summary.owner_pid is None:
         return
@@ -106,9 +107,32 @@ def ensure_inactive(summary: ConversationSummary) -> None:
         if not any(len(row) > 1 and row[1] == str(summary.owner_pid) for row in csv.reader(result.stdout.splitlines())):
             return
     else:
+        started = _process_started(summary.owner_pid)
+        if started is not None and started > summary.updated_at + _CLOCK_SLACK:
+            return
         ensure_posix_inactive(pid=summary.owner_pid)
         return
     raise ConversationConflict(f'Session is busy in process {summary.owner_pid}.')
+
+
+_CLOCK_SLACK = timedelta(seconds=2)
+"""How much later than a save its own process may seem to start: Linux times processes in whole seconds and ticks."""
+
+
+def _process_started(pid: int, proc: Path = Path('/proc')) -> datetime | None:
+    """When process `pid` started, from Linux's `/proc`; `None` elsewhere or when it cannot be read."""
+    if sys.platform != 'linux':  # pragma: no cover
+        return None
+    try:
+        stat = (proc / str(pid) / 'stat').read_text()
+        boot = next(
+            int(line.split()[1]) for line in (proc / 'stat').read_text().splitlines() if line.startswith('btime ')
+        )
+    except (OSError, StopIteration):
+        return None
+    # The command name, in parentheses, may hold spaces; `starttime` is the 22nd field, the 20th after it.
+    ticks = int(stat.rpartition(')')[2].split()[19])
+    return datetime.fromtimestamp(boot + ticks / os.sysconf('SC_CLK_TCK'), UTC)
 
 
 def ensure_posix_inactive(*, pid: int) -> None:

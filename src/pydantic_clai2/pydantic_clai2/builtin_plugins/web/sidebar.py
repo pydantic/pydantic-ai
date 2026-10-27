@@ -1,10 +1,8 @@
 """The sidebar's saved sessions: each one's row, and the checkouts of a project."""
 
 import os
-import sys
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
-from pathlib import Path, PurePath
+from pathlib import PurePath
 
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
@@ -59,37 +57,13 @@ def worktrees(
     return sorted(worktrees, key=lambda worktree: not worktree.current)
 
 
-CLOCK_SLACK = timedelta(seconds=2)
-"""How much later than a turn's save its process may seem to start: `/proc` times it in whole seconds and ticks."""
-
-
 def busy_elsewhere(summary: ConversationSummary) -> bool:
-    """Whether another live CLAI process runs this saved session now, rather than one that died mid-turn.
-
-    A process that started after the turn was saved reuses the PID of the one that ran it, which is gone.
-    """
-    if summary.owner_pid is None or summary.owner_pid == os.getpid():
+    """Whether another live CLAI process runs this saved session now, rather than one that died mid-turn."""
+    if summary.owner_pid == os.getpid():
         # Not live here, so this process's turn in it ended without saving its outcome.
         return False
     try:
         ensure_inactive(summary)
     except ConversationConflict:
-        started = process_started(summary.owner_pid)
-        return started is None or started <= summary.updated_at + CLOCK_SLACK
+        return True
     return False
-
-
-def process_started(pid: int, proc: Path = Path('/proc')) -> datetime | None:
-    """When process `pid` started, from Linux's `/proc`; `None` elsewhere or when it cannot be read."""
-    if sys.platform != 'linux':  # pragma: no cover
-        return None
-    try:
-        stat = (proc / str(pid) / 'stat').read_text()
-        boot = next(
-            int(line.split()[1]) for line in (proc / 'stat').read_text().splitlines() if line.startswith('btime ')
-        )
-    except (OSError, StopIteration):
-        return None
-    # The command name, in parentheses, may hold spaces; `starttime` is the 22nd field, the 20th after it.
-    ticks = int(stat.rpartition(')')[2].split()[19])
-    return datetime.fromtimestamp(boot + ticks / os.sysconf('SC_CLK_TCK'), UTC)

@@ -6,6 +6,7 @@ import subprocess
 import sys
 from contextlib import closing
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
     SqliteConversationStore,
+    _process_started,  # pyright: ignore[reportPrivateUsage]
     conversation_text,
     ensure_inactive,
 )
@@ -212,6 +214,31 @@ def test_live_owner_is_not_a_recovery_point(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(os, 'kill', denied)
     with pytest.raises(ConversationConflict):
         ensure_inactive(running)
+
+
+@pytest.mark.skipif(sys.platform != 'linux', reason='Process start times come from Linux `/proc`.')
+def test_a_pid_reused_since_the_save_is_not_busy() -> None:
+    """A turn saved before its recorded PID's process started belongs to a process that has gone."""
+    parent = os.getppid()
+    started = _process_started(parent)
+    assert started is not None
+    running = ConversationSummary(workspace='/a', outcome='running', owner_pid=parent, updated_at=started)
+    with pytest.raises(ConversationConflict, match='busy'):
+        ensure_inactive(running)
+    ensure_inactive(replace(running, updated_at=started - timedelta(minutes=1)))
+
+
+def test_process_start_time_from_proc(tmp_path: Path) -> None:
+    # The command name, in parentheses, may hold spaces and parentheses of its own.
+    (tmp_path / '42').mkdir()
+    fields = ' '.join(['S', *['0'] * 18, '250'])
+    (tmp_path / '42' / 'stat').write_text(f'42 (a (b) c) {fields} 0 0\n')
+    (tmp_path / 'stat').write_text('cpu 0\nbtime 1000\n')
+    if sys.platform != 'linux':  # pragma: no cover
+        assert _process_started(42, tmp_path) is None
+        return
+    assert _process_started(42, tmp_path) == datetime.fromtimestamp(1000 + 250 / os.sysconf('SC_CLK_TCK'), UTC)
+    assert _process_started(43, tmp_path) is None
 
 
 async def test_delete_removes_run_data_but_not_other_conversations(tmp_path: Path) -> None:

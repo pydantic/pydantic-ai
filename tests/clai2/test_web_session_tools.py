@@ -10,10 +10,13 @@ from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.step_persistence import conversations
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.builtin_plugins.web.protocol import PROTOCOL, ServerMessage, SessionsChanged, ToolDone, TurnEnded
 from pydantic_clai2.builtin_plugins.web.session_tools import SessionTools
@@ -76,8 +79,16 @@ async def cleaning(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterat
         yield 'Archived the old sessions.'
 
 
-def test_the_orchestrator_archives_sessions_older_than_three_days(make_web: MakeWeb, tmp_path: Path) -> None:
+def test_the_orchestrator_archives_sessions_older_than_three_days(
+    make_web: MakeWeb, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Old sessions of every project leave the sidebar, listed again under archived; open and running ones stay."""
+
+    # `Busy`'s turn is backdated to before this process started, which would make its PID look reused.
+    def unknown(pid: int) -> None:
+        return None
+
+    monkeypatch.setattr(conversations, '_process_started', unknown)
     web_ = make_web(Agent(FunctionModel(stream_function=cleaning), deps_type=type(None)), extra=[WORKSPACES])
     alpha, feature, beta = tmp_path / 'alpha', tmp_path / 'alpha-feature', tmp_path / 'beta'
     repository(alpha, linked=feature, branch='feature')
