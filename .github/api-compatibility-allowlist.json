@@ -484,5 +484,15 @@
       "path": "pydantic_ai_slim/pydantic_ai/realtime/settings.py",
       "symbol": "KnownRealtimeTranscriptionModelName"
     }
+  ],
+  "growing_collections": [
+    {
+      "path": "src/pydantic_clai2/pydantic_clai2/config/__init__.py",
+      "symbol": "SETTING_FIELDS"
+    },
+    {
+      "path": "src/pydantic_clai2/pydantic_clai2/config/__init__.py",
+      "symbol": "STRING_SETTINGS"
+    }
   ]
 }

@@ -88,7 +88,7 @@ def task_tree(records: Sequence[DelegationTask]) -> list[tuple[int, DelegationTa
     return result
 
 
-def task_row(event: AgentStreamEvent) -> Text | None:
+def task_row(event: AgentStreamEvent, *, model_name: str | None = None, show_model: bool = True) -> Text | None:
     """Compact lifecycle rows, with child output reserved for the inspector."""
     if isinstance(event, DelegationStartEvent):
         name = _display_name(event.agent_name)
@@ -96,7 +96,8 @@ def task_row(event: AgentStreamEvent) -> Text | None:
         # Styled like a tool-call header: muted marker, accent name, then dim details on one line.
         row = Text('● ', style=theme.color(theme.MUTED), no_wrap=True, overflow='ellipsis')
         row.append(name, style=theme.color(theme.ACCENT))
-        row.append(f' [{(event.task_id or "")[:8]}] {prompt}', style=theme.color(theme.MUTED))
+        model = f' · {terminal_text(model_name, keep="")}' if show_model and model_name else ''
+        row.append(f' [{(event.task_id or "")[:8]}]{model} {prompt}', style=theme.color(theme.MUTED))
         return row
     if isinstance(event, TaskQuestionEvent):
         return question_row(event)
@@ -248,6 +249,7 @@ class Tasks:
         listening: Callable[[], bool] = lambda: True,
         send_input: Callable[[str], None] | None = None,
         prompt_task: PromptTask | None = None,
+        show_task_models: Callable[[], bool] = lambda: True,
     ) -> None:
         """`fire` tells plugins about the current conversation's tasks, while `listening` says one handles them.
 
@@ -263,6 +265,11 @@ class Tasks:
         self.listening = listening
         self.send_input = send_input
         self.prompt_task = prompt_task
+        self.show_task_models = show_task_models
+        self._pending_rows: dict[str, DelegationStartEvent] = {}
+        """Start rows held until their child names its model, by task ID."""
+        self._row_models: dict[str, str | None] = {}
+        """The model that released each running task's start row, so a resumed task never shows an earlier run's."""
         self._prompts: dict[str, asyncio.Task[Exception | None]] = {}
         """The runs `prompt` started, by task ID: nothing else waits for these tasks."""
         self._starting: dict[str, asyncio.Event] = {}
@@ -328,12 +335,34 @@ class Tasks:
         if isinstance(event, TaskQuestionEvent) and event.task_id != record.id:
             # The copy in a parent task's stream: it shows once, as the asking task's own event.
             return
-        if not isinstance(event, (DelegationStartEvent, DelegationEndEvent, TaskQuestionEvent)):
+        if isinstance(event, DelegationStartEvent) and self.show_task_models():
+            # Held until the child's own stream names its model; a child that ends or asks first gets its row without one.
+            self._pending_rows[record.id] = event
             return
+        held = self._pending_rows.get(record.id)
+        if held is not None and (
+            update.model_name is not None or isinstance(event, (DelegationEndEvent, TaskQuestionEvent))
+        ):
+            del self._pending_rows[record.id]
+            self._row_models[record.id] = update.model_name
+            await self._show_row(held)
+        if isinstance(event, (DelegationStartEvent, DelegationEndEvent, TaskQuestionEvent)):
+            await self._show_row(event)
+        if isinstance(event, DelegationEndEvent):
+            self._row_models.pop(record.id, None)
+
+    async def _show_row(self, event: DelegationStartEvent | DelegationEndEvent | TaskQuestionEvent) -> None:
         if self.sink is not None:
             await self.sink(event)
-        elif (row := task_row(event)) is not None:
+        elif (row := self.row(event)) is not None:
             self.console.print(row)
+
+    def row(self, event: AgentStreamEvent) -> Text | None:
+        """Render a lifecycle row with the child's observed model, when available."""
+        model_name = (
+            self._row_models.get(event.task_id) if isinstance(event, DelegationStartEvent) and event.task_id else None
+        )
+        return task_row(event, model_name=model_name, show_model=self.show_task_models())
 
     def waiting(self, conversation_id: str) -> bool:
         """Whether the main run of `conversation_id` has a task report to read, or a task question to answer."""

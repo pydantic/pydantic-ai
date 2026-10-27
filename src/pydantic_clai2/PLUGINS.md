@@ -1230,7 +1230,10 @@ host hooks. The shell keeps plugin resources alive until children settle; `/plug
 changes are refused while managed children run. Exit/reload drains them before
 `session_end`. Child questions use `host.full_screen()` and name the child in the picker's title.
 Typed delegation lifecycle events supply compact transcript rows; raw child events
-update the task inspector rather than entering the parent's transcript. Core hooks
+update the task inspector rather than entering the parent's transcript. A start row appears
+when the child first reports its model name; `/set display.task_models false` shows start
+rows immediately without model names. A child that ends or asks a question before reporting
+a model gets its start row without one, just before that row. Core hooks
 and guardrails bound to the stock agent still run on general-purpose children.
 Explore/Plan are separate read-only agents and do not inherit plugin tools.
 

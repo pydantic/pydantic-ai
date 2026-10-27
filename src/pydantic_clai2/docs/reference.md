@@ -83,6 +83,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `model` | `openai-codex:gpt-6-astra` | Provider-qualified model for every turn. Overrides the model baked into the agent. |
 | `run.request_limit` | `10000` | Most model requests one prompt may make before the turn stops. |
 | `display.thinking` | `true` | Show the model's thinking as it streams. |
+| `display.task_models` | `true` | Name the model each subagent runs on in its start row, which waits for the child to report it. Off, the row prints at once without it. |
 | `display.theme` | `default` | Keep CLAI colours, or select a bundled Termflow palette with /theme. |
 | `display.spinner` | `working` | Working animation; /spinner previews the choices. An unknown name shows working. |
 | `display.splash` | `true` | Animate the startup splash. Takes effect next start. |
@@ -1935,6 +1936,12 @@ Definition files are read as data and never executed.
   parent to continue the saved child. Explore and Plan cannot resume. The parent
   uses `delegate_task` with the same ID and agent name; it remains responsible
   for reviewing the child's result.
+
+The transcript shows a task's start row once the child first streams an event with its model name,
+for example `● Explore [ab12cd34] · claude-sonnet-4-5 inspect files`. The name is the model
+actually used by the child, not a delegation menu key. A child that ends or asks a question before
+reporting a model gets its start row without one, just before that row. Set `/set display.task_models false` to show
+start rows immediately without the model name instead.
 
 The editor panel shows the task tree, activity, elapsed time, and descendant
 counts. The footer shows the context of the newest foreground child; see
