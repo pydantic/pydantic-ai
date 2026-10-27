@@ -269,7 +269,7 @@ class Tasks:
         self._pending_rows: dict[str, DelegationStartEvent] = {}
         """Start rows held until their child names its model, by task ID."""
         self._row_models: dict[str, str | None] = {}
-        """The model that released each task's latest start row, so a resumed task never shows an earlier run's."""
+        """The model that released each running task's start row, so a resumed task never shows an earlier run's."""
         self._prompts: dict[str, asyncio.Task[Exception | None]] = {}
         """The runs `prompt` started, by task ID: nothing else waits for these tasks."""
         self._starting: dict[str, asyncio.Event] = {}
@@ -348,6 +348,8 @@ class Tasks:
             await self._show_row(held)
         if isinstance(event, (DelegationStartEvent, DelegationEndEvent, TaskQuestionEvent)):
             await self._show_row(event)
+        if isinstance(event, DelegationEndEvent):
+            self._row_models.pop(record.id, None)
 
     async def _show_row(self, event: DelegationStartEvent | DelegationEndEvent | TaskQuestionEvent) -> None:
         if self.sink is not None:

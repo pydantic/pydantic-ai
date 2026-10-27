@@ -70,7 +70,13 @@ class Settings(BaseModel):
         description='Working animation; /spinner previews the choices. An unknown name shows working.',
     )
     thinking: bool = Field(default=True, description="Show the model's thinking as it streams.")
-    task_models: bool = Field(default=True, description='Show the model used by each subagent in its transcript row.')
+    task_models: bool = Field(
+        default=True,
+        description=(
+            'Name the model each subagent runs on in its start row, which waits for the child to report it. '
+            'Off, the row prints at once without it.'
+        ),
+    )
     splash: bool = Field(default=True, description='Animate the startup splash. Takes effect next start.')
     tool_calls: ToolCallDisplay = Field(
         default='detailed',
