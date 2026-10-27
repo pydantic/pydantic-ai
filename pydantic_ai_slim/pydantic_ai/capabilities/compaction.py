@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.messages import CompactionPart, CompactionReason, ModelMessage
 from pydantic_ai.usage import RequestUsage
@@ -96,4 +96,11 @@ class CompactionResult:
     Set it to where your handler's kept tail starts: after the summary when you keep the latest turns as they
     were, or at the request being answered, the last message, when you keep nothing else. When it's `None`, core
     uses the longest tail after the message holding `part` that matches the end of the history it was given.
+    """
+
+    metadata: dict[str, Any] | None = None
+    """Additional data about the compaction, reported on [`CompactionRecord.metadata`][pydantic_ai.messages.CompactionRecord.metadata].
+
+    For example what a later request needs to know about the compaction, like the provider-side state it relies on.
+    It's serialized with the run result, so keep it to JSON-compatible values.
     """

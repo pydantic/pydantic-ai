@@ -1050,7 +1050,9 @@ def test_sync_streamed_runs_report_compactions():
 def _explicit_kept_from(kept_from: int) -> Any:
     def build(request: CompactionRequest) -> CompactionResult:
         messages, part = summary_window(request, 'summary')
-        return CompactionResult(messages=messages, part=part, handler='h', kept_from=kept_from)
+        return CompactionResult(
+            messages=messages, part=part, handler='h', kept_from=kept_from, metadata={'kept': kept_from}
+        )
 
     return build
 
@@ -1073,6 +1075,8 @@ async def test_kept_from(build: Any, kept_from: int):
     [record] = result.compactions
     assert record.kept_from == kept_from
     assert record.summarized == history
+    # A handler's metadata is reported on the record.
+    assert record.metadata == ({'kept': 2} if build is not _rebuilt_tail else None)
 
 
 @pytest.mark.parametrize('kept_from', [0, 4])

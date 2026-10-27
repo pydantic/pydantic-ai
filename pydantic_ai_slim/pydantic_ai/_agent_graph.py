@@ -3409,9 +3409,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # A response that is only a compaction leaves behind just its summary, not the history it was given, so
             # its context size is the summary's: a size trigger reading it doesn't fire again straight away.
             mark_context_input_tokens(holder, 0)
-        # Re-record here, once for any capability, the `load_capability` exchanges and tool search discoveries the
-        # compaction dropped, through the shared helper from #11394 once it's in core. Until then, a capability loaded
-        # or a tool discovered before the compaction has to be loaded or discovered again after it.
+        # TODO(#11394): re-record here, once for any capability, the `load_capability` exchanges and tool search
+        # discoveries the compaction dropped, through the shared helper once it's in core. Until then, a capability
+        # loaded or a tool discovered before the compaction has to be loaded or discovered again after it.
         compaction.result = result
         compaction.record = _messages.CompactionRecord(
             part=result.part,
@@ -3423,6 +3423,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             messages_after=len(result.messages),
             kept_from=kept_from,
             replaced=request.messages,
+            metadata=result.metadata,
         )
         # Committed at the provider boundary, like a response: billed whether or not the attempt is accepted.
         compaction.billed = _messages.ModelResponse(

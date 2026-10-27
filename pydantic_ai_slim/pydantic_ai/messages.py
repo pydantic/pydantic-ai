@@ -7117,7 +7117,7 @@ class CompactionRecord:
     """
 
     metadata: dict[str, Any] | None = None
-    """Additional data about the compaction, like what a later request needs to know about the model it was made for."""
+    """Additional data about the compaction, from [`CompactionResult.metadata`][pydantic_ai.capabilities.CompactionResult.metadata]."""
 
     @property
     def summarized(self) -> list[ModelMessage] | None:
