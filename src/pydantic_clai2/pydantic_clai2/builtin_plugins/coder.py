@@ -38,7 +38,6 @@ from pydantic_clai2.builtin_plugins.coder_folders import edit_agent_folders, is_
 from pydantic_clai2.builtin_plugins.coder_skills import edit_skills
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.project_settings import repository_directories
-from pydantic_clai2.models.model_settings import ModelSettingsForm
 from pydantic_clai2.models.profiles import parse_model
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
@@ -73,7 +72,16 @@ class DelegateModel(BaseModel):
 
     model: str
     description: str | None = None
-    settings: ModelSettingsForm = Field(default_factory=ModelSettingsForm)
+    settings: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @field_validator('settings')
+    @classmethod
+    def valid_settings(cls, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        # The model settings menu stays unloaded until delegate overrides are configured.
+        from pydantic_clai2.models.model_settings import ModelSettingsForm
+
+        ModelSettingsForm.model_validate(value)
+        return value
 
     @model_serializer(mode='plain')
     def _only_chosen(self) -> dict[str, JsonValue]:
@@ -81,7 +89,7 @@ class DelegateModel(BaseModel):
         if 'description' in self.model_fields_set:
             values['description'] = self.description
         if 'settings' in self.model_fields_set:
-            values['settings'] = self.settings.model_dump(mode='json', exclude_unset=True)
+            values['settings'] = self.settings
         return values
 
     @field_validator('model')
@@ -421,6 +429,8 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
         )
         capabilities: list[AgentCapability[DepsT]] = [coder]
         if settings.sub_agents and settings.delegate_models:
+            from pydantic_clai2.models.model_settings import ModelSettingsForm
+
             reviewer = Agent(
                 deps_type=object,
                 name='Review',
@@ -434,7 +444,9 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             )
             models: dict[str, ModelOption] = {
                 key: ModelOption(
-                    option.model, description=option.description, settings=option.settings.to_model_settings()
+                    option.model,
+                    description=option.description,
+                    settings=ModelSettingsForm.model_validate(option.settings).to_model_settings(),
                 )
                 for key, option in settings.delegate_models.items()
             }
