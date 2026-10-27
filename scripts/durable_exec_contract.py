@@ -48,12 +48,18 @@ matches an entry when the changed definition's qualname is the entry's qualname 
 an entry for `Model` matches a change to `Model.request`; an entry for `RunContext.usage` matches
 only that field. A matched entry gates review only when `gates` holds for it: an engine that names a
 class only in a signature does not depend on it at runtime, so an entry whose only kind is
-`annotation_only` stays in the manifest but does not gate. Nothing reads `gates` yet. TODO:
-https://github.com/pydantic/pydantic-ai/issues/11174
+`annotation_only` stays in the manifest but does not gate.
+
+`--touched` prints the gating entries a pull request touches, in the manifest's shape, reading the
+pull request through `gh api` and only parsing what it reads (`touched_entries` has the rules).
+`.github/workflows/bots.yml` labels a pull request that touches any `needs-durable-exec-review`, and
+`scripts/gather-pydantic-ai-review-context.sh` hands the entries to CI Review. Both run this file and
+the manifest as the base branch has them, never the pull request's copies.
 
 Usage:
     uv run python scripts/durable_exec_contract.py          # exit 1 if the manifest is stale
     uv run python scripts/durable_exec_contract.py --write  # regenerate it
+    uv run python scripts/durable_exec_contract.py --touched REPO PR BASE_SHA HEAD_SHA
 """
 
 from __future__ import annotations
@@ -61,9 +67,13 @@ from __future__ import annotations
 import argparse
 import ast
 import importlib.util
+import io
 import json
+import re
+import subprocess
 import sys
-from collections.abc import Iterator, Mapping, Sequence
+import tokenize
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, NamedTuple
@@ -92,6 +102,15 @@ ENGINES: dict[str, str] = {
 _TYPE_WRAPPERS = frozenset(
     {'Annotated', 'ClassVar', 'Final', 'NotRequired', 'Optional', 'ReadOnly', 'Required', 'Type', 'Union', 'type'}
 )
+
+# What `--touched` accepts before it makes any request: a pull request's repository, number and commits, and the
+# manifest's core files, which are the only paths it fetches.
+_REPOSITORY = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+')
+_PULL_REQUEST = re.compile(r'[1-9][0-9]*')
+_COMMIT = re.compile(r'[0-9a-f]{40}')
+_CORE_FILE = re.compile(r'(?:[A-Za-z0-9_]+/)+[A-Za-z0-9_]+\.py')
+
+_HUNK_HEADER = re.compile(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
 
 Kind = Literal['import', 'annotation_only', 'override', 'attribute_read', 'projected_field']
 Manifest = dict[str, dict[str, dict[str, list[str]]]]
@@ -859,16 +878,219 @@ def gates(entry: Mapping[str, Sequence[str]]) -> bool:
     return any(kind != 'annotation_only' for kind in entry['kinds'])
 
 
+@dataclass(frozen=True)
+class ChangedFile:
+    """A file a pull request changes, as GitHub's `pulls/{number}/files` endpoint lists it."""
+
+    filename: str
+    status: str
+    """`added`, `removed`, `modified`, `renamed`, `copied`, `changed` or `unchanged`."""
+    previous_filename: str | None = None
+    """The path a `renamed` or `copied` file had before."""
+    patch: str | None = None
+    """The diff's hunks, which GitHub leaves out when the diff is too large to show."""
+
+
+def touched_entries(
+    manifest: Manifest, files: Iterable[ChangedFile], read_base: Callable[[str], str], read_head: Callable[[str], str]
+) -> Manifest:
+    """The entries of `manifest` that gate review and that a pull request changing `files` touches.
+
+    `read_base` and `read_head` return a core file's source at the pull request's merge base and head. They are
+    only called with a path that is both a manifest key and in `files`.
+
+    A removed line is placed in the merge-base source and an added line in the head source, each in the innermost
+    definition around it. A line of a `self.name = ...` assignment in a method is also placed in `Class.name`,
+    where the generator records an instance attribute. A comment, docstring or blank line changes no behavior and
+    is placed nowhere. A change placed in qualname `T` touches entry `Q` when `T == Q` or `T` is nested under `Q`.
+
+    A core file the pull request removes or renames touches all of its entries: the engines import its
+    definitions from the path it leaves. So does one whose lines cannot be placed, because GitHub left its patch
+    out, the patch does not match the fetched source, or the source does not parse.
+    """
+    changed: dict[str, set[str]] = {}
+    for file in files:
+        left = {'removed': file.filename, 'renamed': file.previous_filename}.get(file.status)
+        if left in manifest:
+            changed.setdefault(left, set()).update(manifest[left])
+        if file.status == 'removed' or file.filename not in manifest:
+            continue
+        definitions = changed.setdefault(file.filename, set())
+        if file.patch is None:
+            definitions.update(manifest[file.filename])
+            continue
+        removed, added = _changed_lines(file.patch)
+        # Only a `modified` or `changed` file's patch compares it with its own merge-base version.
+        sides = [(read_head, added), *([(read_base, removed)] if file.status in {'modified', 'changed'} else [])]
+        for read, lines in sides:
+            if not lines:
+                continue
+            placed = _definitions_at(read(file.filename), lines)
+            if placed is None:
+                definitions.update(manifest[file.filename])
+                break
+            definitions.update(placed)
+    return {
+        core_file: touched
+        for core_file, qualnames in changed.items()
+        if (
+            touched := {
+                qualname: entry
+                for qualname, entry in manifest[core_file].items()
+                if gates(entry) and any(name == qualname or name.startswith(f'{qualname}.') for name in qualnames)
+            }
+        )
+    }
+
+
+def _changed_lines(patch: str) -> tuple[dict[int, str], dict[int, str]]:
+    """A patch's removed lines by their merge-base line number, and its added lines by their head line number."""
+    removed: dict[int, str] = {}
+    added: dict[int, str] = {}
+    old = new = 0
+    for line in patch.split('\n'):
+        if header := _HUNK_HEADER.match(line):
+            old, new = int(header[1]), int(header[2])
+        elif line.startswith('-'):
+            removed[old] = line[1:]
+            old += 1
+        elif line.startswith('+'):
+            added[new] = line[1:]
+            new += 1
+        elif not line.startswith('\\'):  # `\ No newline at end of file` belongs to neither side.
+            old += 1
+            new += 1
+    return removed, added
+
+
+def _definitions_at(source: str, lines: Mapping[int, str]) -> set[str] | None:
+    """The qualnames `lines` of `source` are placed in, or `None` if they cannot be placed in it."""
+    source_lines = source.split('\n')
+    if any(not 0 < number <= len(source_lines) or source_lines[number - 1] != text for number, text in lines.items()):
+        return None
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    code = {
+        line
+        for token in tokenize.generate_tokens(io.StringIO(source).readline)
+        if token.type not in {tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT}
+        for line in range(token.start[0], token.end[0] + 1)
+    }
+    spans = _Spans()
+    spans.collect(tree.body, '', None)
+    return {qualname for number in lines if number in code for qualname in spans.at(number)}
+
+
+@dataclass
+class _Spans:
+    """The line spans of a module's definitions, as `(first line, last line, qualname)`."""
+
+    definitions: list[tuple[int, int, str]] = field(default_factory=list[tuple[int, int, str]])
+    attributes: list[tuple[int, int, str]] = field(default_factory=list[tuple[int, int, str]])
+    """`self.name = ...` assignments in methods, each spanning the instance attribute `Class.name`."""
+    docstrings: set[int] = field(default_factory=set[int])
+    """The lines of string statements, which do nothing when run."""
+
+    def collect(self, body: list[ast.stmt], prefix: str, owner: str | None) -> None:
+        """Record the definitions in `body`, nested ones included; `owner` is the class whose body it is."""
+        for statement in _top_level(body):
+            start, end = statement.lineno, statement.end_lineno or statement.lineno
+            match statement:
+                case ast.Expr(value=ast.Constant(value=str())):
+                    self.docstrings.update(range(start, end + 1))
+                case ast.ClassDef(name=name, decorator_list=decorators):
+                    self.definitions.append((min([start, *(d.lineno for d in decorators)]), end, prefix + name))
+                    self.collect(statement.body, f'{prefix}{name}.', prefix + name)
+                case (
+                    ast.FunctionDef(name=name, decorator_list=decorators)
+                    | ast.AsyncFunctionDef(name=name, decorator_list=decorators)
+                ):
+                    self.definitions.append((min([start, *(d.lineno for d in decorators)]), end, prefix + name))
+                    arguments = [*statement.args.posonlyargs, *statement.args.args]
+                    if owner is not None and arguments:
+                        self.collect_instance_attributes(statement, owner, arguments[0].arg)
+                    self.collect(statement.body, f'{prefix}{name}.', None)
+                case ast.AnnAssign(target=ast.Name(id=name)):
+                    self.definitions.append((start, end, prefix + name))
+                case ast.Assign(targets=targets):
+                    self.definitions.extend((start, end, prefix + t.id) for t in targets if isinstance(t, ast.Name))
+                case _:
+                    pass
+
+    def collect_instance_attributes(self, method: FunctionNode, owner: str, instance: str) -> None:
+        """Record the attributes `method` assigns on its first parameter, as `_collect_instance_attributes` reads them."""
+        for node in ast.walk(method):
+            match node:
+                case (
+                    ast.AnnAssign(target=ast.Attribute(value=ast.Name(id=name), attr=attribute))
+                    | ast.Assign(targets=[ast.Attribute(value=ast.Name(id=name), attr=attribute)])
+                ) if name == instance:
+                    self.attributes.append((node.lineno, node.end_lineno or node.lineno, f'{owner}.{attribute}'))
+                case _:
+                    pass
+
+    def at(self, line: int) -> set[str]:
+        """The qualnames a change to `line` is placed in."""
+        if line in self.docstrings:
+            return set()
+        around = [(start, qualname) for start, end, qualname in self.definitions if start <= line <= end]
+        innermost = max((start for start, _ in around), default=None)
+        return {qualname for start, qualname in around if start == innermost} | {
+            qualname for start, end, qualname in self.attributes if start <= line <= end
+        }
+
+
+def _gh(*arguments: str) -> str:  # pragma: no cover - runs `gh`; the tests pass a fake
+    """What `gh api` prints for `arguments`."""
+    return subprocess.run(['gh', 'api', *arguments], stdout=subprocess.PIPE, check=True, encoding='utf-8').stdout
+
+
 def render_manifest(manifest: Manifest) -> str:
     """The manifest as the committed JSON text."""
     return json.dumps(manifest, indent=2, sort_keys=True) + '\n'
 
 
-def main(argv: Sequence[str] | None = None, *, root: Path = REPO_ROOT) -> int:
-    """Check the committed manifest is current, or rewrite it with `--write`."""
+def main(argv: Sequence[str] | None = None, *, root: Path = REPO_ROOT, gh: Callable[..., str] = _gh) -> int:
+    """Check the committed manifest is current, rewrite it with `--write`, or print what `--touched` names."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--write', action='store_true', help='regenerate the manifest instead of checking it')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--write', action='store_true', help='regenerate the manifest instead of checking it')
+    mode.add_argument(
+        '--touched',
+        nargs=4,
+        metavar=('REPO', 'PR', 'BASE_SHA', 'HEAD_SHA'),
+        help='print the entries pull request PR touches that gate review; BASE_SHA is the base branch commit',
+    )
     args = parser.parse_args(argv)
+    if args.touched:
+        repository, pull_request, base, head = args.touched
+        manifest: Manifest = json.loads((root / MANIFEST_PATH).read_text(encoding='utf-8'))
+        shapes = [(repository, _REPOSITORY), (pull_request, _PULL_REQUEST), (base, _COMMIT), (head, _COMMIT)]
+        shapes += [(core_file, _CORE_FILE) for core_file in manifest]
+        if invalid := [value for value, pattern in shapes if not pattern.fullmatch(value)]:
+            parser.error(f'refusing to request anything for {", ".join(map(repr, invalid))}')
+        merge_base = gh(f'repos/{repository}/compare/{base}...{head}', '--jq', '.merge_base_commit.sha').strip()
+        pages = json.loads(gh('--paginate', '--slurp', f'repos/{repository}/pulls/{pull_request}/files?per_page=100'))
+        files = [
+            ChangedFile(item['filename'], item['status'], item.get('previous_filename'), item.get('patch'))
+            for page in pages
+            for item in page
+        ]
+        if not _COMMIT.fullmatch(merge_base) or len(files) >= 3000:
+            # GitHub lists at most 3000 files, so a pull request at the cap may change core files it leaves out.
+            print(f'cannot classify: merge base {merge_base!r}, {len(files)} files listed', file=sys.stderr)
+            return 1
+        raw = ('-H', 'Accept: application/vnd.github.raw+json')
+        touched = touched_entries(
+            manifest,
+            files,
+            lambda path: gh(*raw, f'repos/{repository}/contents/{path}?ref={merge_base}'),
+            lambda path: gh(*raw, f'repos/{repository}/contents/{path}?ref={head}'),
+        )
+        print(render_manifest(touched), end='')
+        return 0
     expected = render_manifest(build_manifest(root))
     manifest_path = root / MANIFEST_PATH
     if args.write:
