@@ -1867,20 +1867,38 @@ def test_import_generate_dataset():
     assert generate_dataset
 
 
-async def test_generate_dataset_bare_none_type_argument_completes():
+@pytest.mark.parametrize(
+    ('dataset_type', 'inputs', 'expected_output', 'metadata'),
+    [
+        pytest.param(Dataset[None, str, str], None, 'out', 'meta', id='inputs'),
+        pytest.param(Dataset[str, None, str], 'in', None, 'meta', id='output'),
+        pytest.param(Dataset[str, str, None], 'in', 'out', None, id='metadata'),
+    ],
+)
+async def test_generate_dataset_bare_none_type_argument_completes(
+    dataset_type: type[Dataset[str | None, str | None, str | None]],
+    inputs: str | None,
+    expected_output: str | None,
+    metadata: str | None,
+):
     """`generate_dataset` completes for a dataset type parametrized with a bare `None` type argument."""
     from pydantic_ai.models.test import TestModel
     from pydantic_evals.generation import generate_dataset
 
     dataset = await generate_dataset(
-        dataset_type=Dataset[str, str, None],
-        model=TestModel(custom_output_text='{"cases": [{"inputs": "in", "expected_output": "out", "metadata": null}]}'),
+        dataset_type=dataset_type,
+        model=TestModel(
+            custom_output_text=json.dumps(
+                {'cases': [{'inputs': inputs, 'expected_output': expected_output, 'metadata': metadata}]}
+            )
+        ),
+        n_examples=1,
     )
     assert isinstance(dataset, Dataset)
     assert len(dataset.cases) == 1
-    assert dataset.cases[0].inputs == 'in'
-    assert dataset.cases[0].expected_output == 'out'
-    assert dataset.cases[0].metadata is None
+    assert dataset.cases[0].inputs == inputs
+    assert dataset.cases[0].expected_output == expected_output
+    assert dataset.cases[0].metadata == metadata
 
 
 @needs_logfire
