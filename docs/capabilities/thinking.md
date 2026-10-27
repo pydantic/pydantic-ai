@@ -101,11 +101,12 @@ The request-level effort is part of the provider's [prompt cache](caching.md) ke
 | API | How the change is sent | Models |
 |---|---|---|
 | OpenAI Responses | a `configuration_update` input item | GPT-6 family |
-| Anthropic | an effort-only `system` entry with a per-message `output_config`, under the `mid-conversation-output-config-2026-07-01` beta | Claude Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5 on the Claude API and Google Cloud; Fable 5.1 and Opus 5.5 on the legacy Bedrock InvokeModel client |
+| Anthropic | an effort-only `system` entry with a per-message `output_config`, under the `mid-conversation-output-config-2026-07-01` beta | Claude Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5 on the Claude API and Google Cloud; Fable 5.1 and Opus 5.5 on the legacy Bedrock InvokeModel client; Opus 5.5 on the Bedrock Messages API client |
+| OpenRouter | a content-less `system` message carrying a `configuration_update`, which OpenRouter sends on in the routed model's own form | Claude Fable 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5; GPT-6 Astra, Sol and Luna and GPT-6.1 Sol, but not their `-pro` variants |
 
 Every other API and model gets the new level as the request-level setting, as before. So do these cases, where the API doesn't take a mid-conversation change:
 
-- A provider-specific effort setting such as `openai_reasoning_effort` or `anthropic_effort` is set.
+- A provider-specific effort setting such as `openai_reasoning_effort`, `anthropic_effort` or `openrouter_reasoning` is set.
 - OpenAI truncation (`openai_truncation='auto'`) or server-side compaction is in use.
 - Anthropic thinking isn't adaptive, such as `between_tools` on Claude Sonnet 5.5 or `disabled` on Claude Haiku 5.5.
 - The change is to or from `True` or `False`, which names no effort level.
@@ -113,7 +114,7 @@ Every other API and model gets the new level as the request-level setting, as be
 The framework records each change in message history as a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] at the end of the request it applies to, and the first request that names an effort level records one too. The part holds the changed settings by their unified [`ModelSettings`][pydantic_ai.settings.ModelSettings] keys, such as `{'thinking': 'high'}`; [`RecordedModelSettings`][pydantic_ai.settings.RecordedModelSettings] lists the keys that can be recorded, which today is only the `thinking` effort level. Each model adapter sends the keys it can change mid-conversation in place and the rest as request-level settings. A later run that continues from `message_history` reads the parts to know which effort the conversation started with and which changes to send again. The Vercel AI adapter carries them through the client. The AG-UI adapter streams and dumps them as `pydantic_ai_model_settings_delta` activity messages, which `@ag-ui/client` doesn't send back; see [Records carried as activity messages](../ui/ag-ui.md#activity-records).
 
 !!! note "Anthropic applies a change at the next user turn"
-    Anthropic applies a per-message effort change from the next user turn with new input. A change recorded on a step that only returns tool results takes effect at the next user prompt, so changing effort between the steps of one run is supported on OpenAI Responses only.
+    Anthropic applies a per-message effort change from the next user turn with new input. OpenRouter documents that it sends a change for a Claude model as this per-message `output_config`, so the same should apply to Claude models on OpenRouter. A change recorded on a step that only returns tool results takes effect at the next user prompt, so changing effort between the steps of one run is supported on OpenAI Responses only.
 
 ## OpenAI
 
@@ -180,7 +181,7 @@ Reasoning that can't ride Anthropic's native reasoning channel — see [Thinking
 !!! warning "Claude imitates formatting it sees in assistant turns"
     Sending that text in the assistant turn teaches Claude that writing thinking tags is part of its own house style, and it starts emitting them in the answers your users read — which, once persisted to history, reinforces itself every turn.
 
-    Pydantic AI therefore carries such reasoning in a *user message ahead of the assistant turn* for models whose profile sets [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting], which stops the imitation. That flag is set for the whole Anthropic family, and is honored by [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] and [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel].
+    Pydantic AI therefore carries such reasoning in a *user message ahead of the assistant turn* for models whose profile sets [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting], which stops the imitation. That flag is set for the whole Anthropic family, and is honored by [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel], [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], so it also covers Claude served through an [OpenAI-compatible provider](../models/openai.md#openai-compatible-models).
 
     Reasoning sent in a user message would read as something you thought, so it is wrapped in an `<assistant_thinking>` tag rather than the model's own thinking tags. The tag carries no attributes, so a history that comes back through a [UI adapter](../ui/overview.md) renders the same and keeps the [prompt cache](../models/anthropic.md#prompt-caching). The tag is rendered for each request and never stored in your message history, and a closing `</assistant_thinking>` inside the reasoning is escaped so it can't end the block early. The trade-off is that Claude can't tell who wrote carried reasoning, and claims it as its own if you ask (measured on `claude-opus-4-5`).
 

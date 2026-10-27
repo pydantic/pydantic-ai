@@ -8,6 +8,7 @@ import check_api_compatibility
 import pytest
 from check_api_compatibility import (
     Finding,
+    collection_entry_changes,
     emit_annotation,
     literal_member_changes,
     load_allowlist,
@@ -109,16 +110,18 @@ def test_load_allowlist(tmp_path: Path):
                     }
                 ],
                 'model_name_literals': [{'path': 'models/foo.py', 'symbol': 'LatestFooModelNames'}],
+                'growing_collections': [{'path': 'config.py', 'symbol': 'SETTINGS'}],
             }
         ),
         encoding='utf-8',
     )
 
-    waivers, model_name_literals = load_allowlist(path)
+    waivers, model_name_literals, growing_collections = load_allowlist(path)
     assert waivers[('v2.32.1', finding.fingerprint)].reason == (
         'The version policy permits adding public union members.'
     )
     assert model_name_literals == {('models/foo.py', 'LatestFooModelNames')}
+    assert growing_collections == {('config.py', 'SETTINGS')}
 
 
 _LITERAL_MEMBER_CHANGES: list[tuple[str, tuple[set[str], set[str]] | None]] = [
@@ -193,6 +196,78 @@ def test_main_allows_listed_model_name_literal_changes(
         return [finding]
 
     monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_ai': 'pydantic_ai_slim'})
+    monkeypatch.setattr(check_api_compatibility, 'run_griffe', run_griffe)
+    monkeypatch.setattr('sys.argv', ['check_api_compatibility.py', '--against', 'v2.32.1', '--allowlist', str(path)])
+
+    if annotation == '::error':
+        with pytest.raises(SystemExit, match='1'):
+            check_api_compatibility.main()
+    else:
+        check_api_compatibility.main()
+
+    assert annotation in capsys.readouterr().out
+
+
+_COLLECTION_ENTRY_CHANGES: list[tuple[str, tuple[list[str], list[str]] | None]] = [
+    ("{'a': 'x'} -> {'a': 'x', 'b': 'y'}", (["'b': 'y'"], [])),
+    ("{'a': 'x', 'b': 'y'} -> {'b': 'y', 'a': 'x'}", ([], [])),
+    ("{'a': 'x', 'b': 'y'} -> {'a': 'x'}", ([], ["'b': 'y'"])),
+    ("{'a': 'x'} -> {'a': 'z'}", (["'a': 'z'"], ["'a': 'x'"])),
+    ("{'a -> b': 'x'} -> {'a -> b': 'x', 'c': 'y'}", (["'c': 'y'"], [])),
+    ("frozenset({'a'}) -> frozenset({'a', 'b'})", (["'b'"], [])),
+    ("{'a'} -> {'b'}", (["'b'"], ["'a'"])),
+    ("{'a': 'x'} -> frozenset({'a'})", None),
+    ("{'a': Name} -> {'a': Name, 'b': Other}", None),
+    ("['a'] -> ['a', 'b']", None),
+    ("frozenset({'a'}, key=1) -> frozenset({'a', 'b'})", None),
+    ("{'a': 'x' -> {'a': 'x', 'b': 'y'}", None),
+]
+
+
+@pytest.mark.parametrize('values, changes', _COLLECTION_ENTRY_CHANGES)
+def test_collection_entry_changes(values: str, changes: tuple[list[str], list[str]] | None):
+    assert collection_entry_changes(f'SETTINGS: Attribute value was changed: {values}') == changes
+
+
+@pytest.mark.parametrize(
+    'message, listed, annotation',
+    [
+        (
+            "SETTINGS: Attribute value was changed: {'a': 'x'} -> {'a': 'x', 'b': 'y'}",
+            True,
+            "::notice file=config.py,line=12::SETTINGS: entries added: [\"'b': 'y'\"]. "
+            'Additions to a growing collection need no waiver.\n',
+        ),
+        ("SETTINGS: Attribute value was changed: {'a': 'x'} -> {'a': 'x', 'b': 'y'}", False, '::error'),
+        ("SETTINGS: Attribute value was changed: {'a': 'x', 'b': 'y'} -> {'a': 'x'}", True, '::error'),
+        ("SETTINGS: Attribute value was changed: {'a': 'x'} -> {'a': 'z'}", True, '::error'),
+        ('SETTINGS: Public object was removed', True, '::error'),
+    ],
+)
+def test_main_allows_additions_to_listed_growing_collections(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    message: str,
+    listed: bool,
+    annotation: str,
+):
+    finding = Finding('pydantic_clai2', 'config.py', 12, message)
+    path = tmp_path / 'allowlist.json'
+    path.write_text(
+        json.dumps(
+            {
+                'allowed_breakages': [],
+                'growing_collections': [{'path': 'config.py', 'symbol': 'SETTINGS'}] if listed else [],
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
+        return [finding]
+
+    monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_clai2': 'src/pydantic_clai2'})
     monkeypatch.setattr(check_api_compatibility, 'run_griffe', run_griffe)
     monkeypatch.setattr('sys.argv', ['check_api_compatibility.py', '--against', 'v2.32.1', '--allowlist', str(path)])
 

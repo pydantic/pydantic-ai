@@ -64,6 +64,7 @@ from pydantic_ai.messages import (
     RetryFeedbackPart,
     RetryInfo,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -7760,7 +7761,8 @@ async def test_adapter_load_dump_ui_message_id_on_merged_and_split_messages():
     """A `UIMessage.id` is kept per `ModelMessage`, so it follows how messages merge and split.
 
     A system + user pair merges into one `ModelRequest`, which keeps the last id written and dumps it
-    on both `UIMessage`s, as the `run_id` derived id already does for a split request. An assistant
+    back on the last `UIMessage` of the split request, the one it came from, so the system message
+    gets a generated id rather than a duplicate of the user's. An assistant
     message with a tool call followed by text splits into two `ModelResponse`s, so its id is kept on
     the leading one and the trailing `UIMessage` gets a generated id.
     """
@@ -7786,12 +7788,16 @@ async def test_adapter_load_dump_ui_message_id_on_merged_and_split_messages():
     dumped = VercelAIAdapter.dump_messages(VercelAIAdapter.load_messages(ui_messages))
 
     assert [(m.role, m.id) for m in dumped] == [
-        ('system', 'usr-1'),
+        ('system', IsStr()),
         ('user', 'usr-1'),
         ('assistant', 'asst-1'),
         ('assistant', IsStr()),
     ]
+    uuid.UUID(dumped[0].id)
     uuid.UUID(dumped[3].id)
+
+    # Hydrated with that dump, a client sends the ids back, and they stay distinct.
+    assert len({m.id for m in VercelAIAdapter.dump_messages(VercelAIAdapter.load_messages(dumped))}) == len(dumped)
 
 
 async def test_event_stream_server_message_id():
@@ -8698,6 +8704,87 @@ async def test_convert_user_prompt_part_text_content():
     assert ui_parts == snapshot(
         [TextUIPart(text='Just some text', state='done'), TextUIPart(text='More text', state='done')]
     )
+
+
+async def test_structured_content_round_trips_as_text_with_its_value():
+    """A structured item is a text part a frontend shows like any user text, with its value in the part's metadata.
+
+    The payload is a JSON string, so a float like `949.0` survives a JavaScript client unchanged.
+    """
+    item = StructuredContent({'url': '/products/42', 'total': 949.0})
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item, 'Why did the total jump?'])])]
+
+    [ui_message] = VercelAIAdapter.dump_messages(messages)
+    assert ui_message.parts == snapshot(
+        [
+            TextUIPart(
+                text='{"url":"/products/42","total":949.0}',
+                state='done',
+                provider_metadata={
+                    'pydantic_ai': {'structured_content': '{"value": {"url": "/products/42", "total": 949.0}}'}
+                },
+            ),
+            TextUIPart(text='Why did the total jump?', state='done'),
+        ]
+    )
+    [request] = VercelAIAdapter.load_messages([ui_message])
+    assert request.parts == [UserPromptPart(content=[item, 'Why did the total jump?'], timestamp=IsDatetime())]
+
+
+async def test_load_messages_keeps_text_with_a_malformed_structured_content_payload():
+    """A client-sent payload that doesn't validate is noise: the text part loads as plain text."""
+    [request] = VercelAIAdapter.load_messages(
+        [
+            UIMessage(
+                id='u1',
+                role='user',
+                parts=[
+                    TextUIPart(text='Hi', provider_metadata={'pydantic_ai': {'structured_content': 'not json'}}),
+                    TextUIPart(text='there', provider_metadata={'pydantic_ai': {'structured_content': '"a string"'}}),
+                    TextUIPart(text='you', provider_metadata={'pydantic_ai': {'structured_content': '{"tag": "a b"}'}}),
+                    TextUIPart(text='all', provider_metadata={'pydantic_ai': {'structured_content': {'value': 1}}}),
+                    TextUIPart(
+                        text='!',
+                        provider_metadata={'pydantic_ai': {'structured_content': '[' * 100_000 + ']' * 100_000}},
+                    ),
+                ],
+            )
+        ]
+    )
+    assert request.parts == [UserPromptPart(content=['Hi', 'there', 'you', 'all', '!'], timestamp=IsDatetime())]
+
+
+async def test_enqueued_structured_content_round_trips_through_stream():
+    """An enqueued structured item reaches a client that rebuilds history from the stream, and loads back whole."""
+    item = StructuredContent({'job': 42, 'status': 'done'}, tag='job')
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='work', json_args='{}', tool_call_id='work-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool
+    def work(ctx: RunContext[object]) -> str:
+        ctx.enqueue(item, 'Background job finished.')
+        return 'started'
+
+    user = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Go')])
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat-1', messages=[user]), sdk_version=6)
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in encoded
+    ]
+
+    loaded = VercelAIAdapter.load_messages([user, _reduce_assistant_message(chunks, 'assistant-1')])
+    assert [item, 'Background job finished.'] in [
+        part.content for part in iter_message_parts(loaded, ModelRequest, UserPromptPart)
+    ]
 
 
 async def test_adapter_dump_messages_thinking_with_metadata():
@@ -13184,6 +13271,32 @@ def test_allowed_content_types_visible_in_vercel_adapter_signatures():
 
     assert 'allowed_content_types' in dispatch_request_parameters
     assert dispatch_request_parameters['allowed_content_types'].default == DEFAULT_ALLOWED_CONTENT_TYPES
+
+
+async def test_adapter_roundtrip_request_side_compaction_part_first():
+    """A summary that opens the user message loads back ahead of the prompt."""
+    summary = CompactionPart(content='the gist')
+    messages: list[ModelMessage] = [ModelRequest(parts=[summary, UserPromptPart(content='next')])]
+
+    [request] = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages))
+
+    assert isinstance(request, ModelRequest)
+    assert [type(part) for part in request.parts] == [CompactionPart, UserPromptPart]
+
+
+async def test_adapter_roundtrip_request_side_compaction_part():
+    """A summary the application wrote rides the user message and loads back into the request, in place."""
+    summary = CompactionPart(content='the gist', metadata={'app': 'summary'})
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='first'), summary, UserPromptPart(content='next')])
+    ]
+
+    loaded = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages))
+
+    [request] = loaded
+    assert isinstance(request, ModelRequest)
+    assert [type(part) for part in request.parts] == [UserPromptPart, CompactionPart, UserPromptPart]
+    assert request.parts[1] == summary
 
 
 @pytest.mark.parametrize('inline', [True, False], ids=['inline-system', 'system-wrapped'])

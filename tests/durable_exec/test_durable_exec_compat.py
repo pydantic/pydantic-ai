@@ -900,6 +900,9 @@ def test_model_request_context_projection_is_exhaustive() -> None:
         # Private usage record the agent graph appends to caller-side as the model responds; `apply`
         # updates the caller's own context in place, so the record stays with the run.
         '_usage_response_ledger',
+        # The live wrapper a capability's `get_wrapper_model` built around `model`, with the model it wraps; the
+        # durable unit re-applies the hook to the model it rebuilds, so it's never carried across.
+        '_serving_wrapper',
     }
     projected = {field.name for field in fields(ModelRequestContextProjection)}
     context_fields = {field.name for field in fields(ModelRequestContext)}
@@ -1003,6 +1006,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         ModelSettingsDeltaPart(settings={'thinking': 'high'}),
         InstructionDeltaPart(id=None, content='delta'),
         InstructionBaselinePart(instructions=[InstructionPart('baseline')]),
+        CompactionPart(content='summary'),
     ]
     response_parts: list[ModelResponsePart] = [
         TextPart('text'),

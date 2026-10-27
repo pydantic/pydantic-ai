@@ -24,6 +24,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.builtin_plugins.web.app import HEADER, create_app
 from pydantic_clai2.builtin_plugins.web.host_session import HostSessions
+from pydantic_clai2.builtin_plugins.web.protocol import PROTOCOL
 from pydantic_clai2.builtin_plugins.web.service import Observer, WebService
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -134,7 +135,9 @@ class Fleet:
         return self.client.get(path, headers={HEADER: TOKEN})
 
     def socket(self) -> WebSocketTestSession:
-        return self.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'})
+        return self.client.websocket_connect(
+            f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+        )
 
     def exit(self) -> None:
         """End the launch session, and with it the process's others and the web UI."""
@@ -265,11 +268,11 @@ def test_each_browser_gets_only_the_sessions_it_watches(make_fleet: MakeFleet) -
         }
         assert (sidebar[a], sidebar[b]) == ('running', 'running'), 'live turns are running, never busy elsewhere'
         fleet.portal.call(gates['home'].release.set)
-        first = messages(one, until=kind('turn_end', session=a))
+        first = messages(one, until=kind('turn_ended', session=a))
         fleet.portal.call(gates['b'].release.set)
         # The queued input runs as a second turn once the first ends.
-        second = messages(two, until=kind('turn_end', session=b))
-        second += messages(two, until=kind('turn_end', session=b))
+        second = messages(two, until=kind('turn_ended', session=b))
+        second += messages(two, until=kind('turn_ended', session=b))
         assert gates['b'].calls == 2
     for received, mine, answer in ((first, a, 'home answered'), (second, b, 'b answered')):
         scoped = [message for message in received if message['type'] not in GLOBAL]
@@ -336,6 +339,7 @@ def test_a_session_that_switches_conversation_takes_its_watchers(make_fleet: Mak
         renamed = at(snapshot, 'session', 'id')
         assert isinstance(renamed, str)
         assert renamed != b and snapshot['items'] == []
+        assert snapshot['replaces'] == b, 'it names the conversation it replaces, for a browser keeping several'
         assert renamed in live_states(
             messages(socket, until=lambda m: m['type'] == 'live' and renamed in live_states(m))[-1]
         )
@@ -383,7 +387,7 @@ def test_session_routes(make_fleet: MakeFleet) -> None:
         fleet.portal.call(gate[0].started.wait)
         assert fleet.post(f'/api/sessions/{a}/interrupt').json() == {'interrupted': False}
         assert fleet.post(f'/api/sessions/{b}/interrupt').json() == {'interrupted': True}
-        ended = messages(socket, until=kind('turn_end', session=b))[-1]
+        ended = messages(socket, until=kind('turn_ended', session=b))[-1]
         assert ended['outcome'] == 'cancelled'
 
         q = fleet.new('q')
@@ -404,7 +408,7 @@ def test_session_routes(make_fleet: MakeFleet) -> None:
         assert fleet.post(f'/api/sessions/{a}/questions/{request}', answers).status_code == 404, "another session's"
         assert fleet.post(f'/api/sessions/{q}/questions/{request}', answers).status_code == 204
         assert messages(socket, until=kind('question_closed', session=q))[-1]['id'] == request
-        messages(socket, until=kind('turn_end', session=q))
+        messages(socket, until=kind('turn_ended', session=q))
 
 
 def test_open_makes_a_saved_session_live_once(make_fleet: MakeFleet) -> None:
@@ -608,6 +612,8 @@ def test_a_browser_connecting_while_no_session_is_live(tmp_path: Path, monkeypat
     service = WebService(host=host)
     monkeypatch.setattr(service.live, 'listing', list)
     client = TestClient(create_app(service=service, token=TOKEN, hosts=HOSTS, static=static_dir(tmp_path)))
-    with client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         assert json.loads(socket.receive_text()) == {'type': 'live', 'sessions': []}
         assert json.loads(socket.receive_text())['type'] == 'orchestrator'

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from typing import Any, Generic, Literal, TypeVar, cast
+from collections.abc import Awaitable, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
 from dbos import DBOS
 
@@ -38,6 +38,10 @@ from pydantic_ai.tools import RunContext, ToolDefinition
 from ._operation_names import DBOSOperationNamer
 from ._utils import StepConfig
 
+if TYPE_CHECKING:
+    from dbos import StepOptions
+    from dbos._context import DBOSContext
+
 ParamsT = TypeVar('ParamsT')
 WireT = TypeVar('WireT')
 ResultT = TypeVar('ResultT')
@@ -73,10 +77,13 @@ class DBOSBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic
         operation: DurableOperation[ParamsT, WireT, ResultT],
         *,
         step: Callable[..., Any],
-        dispatch: Callable[[Callable[..., Any], ParamsT], Any],
+        step_options: StepOptions,
+        dispatch: Callable[[Callable[..., Any], ParamsT], Awaitable[ResultT]],
     ) -> None:
         self._operation = operation
-        self.step = step
+        self._step_function = step
+        self._step_options = step_options
+        self.step = DBOS.step(**step_options)(step)
         self._dispatch = dispatch
 
     @property
@@ -84,7 +91,20 @@ class DBOSBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic
         return self._operation
 
     async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
-        return cast(ResultT, await self._dispatch(self.step, params))
+        return await self._dispatch(self.step, params)
+
+    async def call_reserved(self, step_ctx: DBOSContext, params: ParamsT) -> ResultT:
+        # TODO: Replace the private reservation/dispatch calls with the public DBOS API:
+        # https://github.com/dbos-inc/dbos-transact-py/issues/915
+        from dbos._core import run_step_async
+        from dbos._dbos import _get_dbos_instance  # pyright: ignore[reportPrivateUsage]
+
+        async def reserved_step(*args: object, **kwargs: object) -> object:
+            return await run_step_async(
+                _get_dbos_instance(), step_ctx, self._step_function, self._step_options, args, kwargs
+            )
+
+        return await self._dispatch(reserved_step, params)
 
 
 class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
@@ -101,53 +121,50 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
         config: StepConfig,
     ) -> tuple[BoundDurableOperation[ParamsT, WireT, ResultT], Sequence[Callable[..., object]]]:
         if isinstance(operation.operation_id, CapabilityOperationId):
-            step, dispatch = self._bind_capability(operation, name, config)
+            step, dispatch = self._bind_capability(operation)
         elif isinstance(
             operation.operation_id,
             (ModelRequestId, ModelCompactMessagesId, ModelCancelSuspendedResponseId, EventStreamHandlerId),
         ):
-            step, dispatch = self._bind_model_or_event(operation, name, config)
+            step, dispatch = self._bind_model_or_event(operation)
         elif isinstance(
             operation.operation_id,
             (ToolsetGetToolsId, ToolsetGetInstructionsId, ToolsetCallToolId, ToolsetValidateToolArgumentsId),
         ):
-            step, dispatch = self._bind_toolset(operation, name, config)
+            step, dispatch = self._bind_toolset(operation)
         else:
             # The branches above are the frozen compatibility surface for operations whose recorded
             # step signatures shipped. New operation ids use this generic shape and need no edits here.
-            step, dispatch = self._bind_generic(operation, name, config)
+            step, dispatch = self._bind_generic(operation)
 
-        bound_operation = DBOSBoundOperation(operation, step=step, dispatch=dispatch)
-        return bound_operation, (step,)
+        step_options: StepOptions = {'name': name, **config}
+        bound_operation = DBOSBoundOperation(operation, step=step, step_options=step_options, dispatch=dispatch)
+        return bound_operation, (bound_operation.step,)
 
     def _bind_generic(
-        self, operation: DurableOperation[ParamsT, WireT, ResultT], name: str, step_config: StepConfig
+        self, operation: DurableOperation[ParamsT, WireT, ResultT]
     ) -> tuple[Callable[..., Any], Callable[[Callable[..., Any], ParamsT], Any]]:
         async def operation_step(params: ParamsT) -> object:
             return operation.result_codec.dump(await operation.handler(params))
 
-        step = DBOS.step(name=name, **step_config)(operation_step)
-
         async def dispatch(step: Callable[..., Any], params: ParamsT) -> ResultT:
             return operation.result_codec.load(await step(params))
 
-        return step, dispatch
+        return operation_step, dispatch
 
     def _bind_capability(
-        self, operation: DurableOperation[ParamsT, WireT, ResultT], name: str, step_config: StepConfig
+        self, operation: DurableOperation[ParamsT, WireT, ResultT]
     ) -> tuple[Callable[..., Any], Callable[[Callable[..., Any], ParamsT], Any]]:
         async def capability_step(params: CapabilityOperationParams) -> object:
             return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
 
-        step = DBOS.step(name=name, **step_config)(capability_step)
-
         async def dispatch(step: Callable[..., Any], params: ParamsT) -> ResultT:
             return operation.result_codec.load(await step(params))
 
-        return step, dispatch
+        return capability_step, dispatch
 
     def _bind_model_or_event(
-        self, operation: DurableOperation[ParamsT, WireT, ResultT], name: str, step_config: StepConfig
+        self, operation: DurableOperation[ParamsT, WireT, ResultT]
     ) -> tuple[Callable[..., Any], Callable[[Callable[..., Any], ParamsT], Any]]:
 
         match operation.operation_id:
@@ -169,7 +186,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                     )
                     return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
 
-                step = DBOS.step(name=name, **step_config)(model_step)
+                step = model_step
 
                 async def dispatch_model(step: Callable[..., Any], params: ParamsT) -> ResultT:
                     model_params = cast(ModelRequestParams, params)
@@ -192,7 +209,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                     params = ModelCancelSuspendedResponseParams(model_id, response=response, run_context=run_context)
                     return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
 
-                step = DBOS.step(name=name, **step_config)(cancel_step)
+                step = cancel_step
 
                 async def dispatch_cancel(step: Callable[..., Any], params: ParamsT) -> ResultT:
                     cancel_params = cast(ModelCancelSuspendedResponseParams, params)
@@ -217,7 +234,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                     )
                     return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
 
-                step = DBOS.step(name=name, **step_config)(compact_step)
+                step = compact_step
 
                 async def dispatch_compact(step: Callable[..., Any], params: ParamsT) -> ResultT:
                     compact_params = cast(ModelCompactMessagesParams, params)
@@ -237,7 +254,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                     params = EventStreamHandlerParams(event, run_context=run_context)
                     return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
 
-                step = DBOS.step(name=name, **step_config)(event_step)
+                step = event_step
 
                 async def dispatch_event(step: Callable[..., Any], params: ParamsT) -> ResultT:
                     event_params = cast(EventStreamHandlerParams, params)
@@ -252,7 +269,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
         return step, dispatch
 
     def _bind_toolset(
-        self, operation: DurableOperation[ParamsT, WireT, ResultT], name: str, step_config: StepConfig
+        self, operation: DurableOperation[ParamsT, WireT, ResultT]
     ) -> tuple[Callable[..., Any], Callable[[Callable[..., Any], ParamsT], Any]]:
         match operation.operation_id:
             case ToolsetGetToolsId() | ToolsetGetInstructionsId():
@@ -261,7 +278,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                     params = ToolsetGetToolsParams(run_context)
                     return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
 
-                step = DBOS.step(name=name, **step_config)(discovery_step)
+                step = discovery_step
 
                 async def dispatch_discovery(step: Callable[..., Any], params: ParamsT) -> ResultT:
                     discovery_params = cast(ToolsetGetToolsParams, params)
@@ -281,7 +298,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                     params = ToolsetCallToolParams(tool_name, tool_args=tool_args, ctx=run_context, tool=tool)
                     return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
 
-                step = DBOS.step(name=name, **step_config)(mcp_call_step)
+                step = mcp_call_step
 
                 async def dispatch_mcp_call(step: Callable[..., Any], params: ParamsT) -> ResultT:
                     call_params = cast(ToolsetCallToolParams, params)
@@ -303,7 +320,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                     )
                     return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
 
-                step = DBOS.step(name=name, **step_config)(dynamic_call_step)
+                step = dynamic_call_step
 
                 async def dispatch_dynamic_call(step: Callable[..., Any], params: ParamsT) -> ResultT:
                     call_params = cast(DynamicToolsetCallToolParams, params)

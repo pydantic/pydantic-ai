@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_clai2.plugins import DepsT, Plugin
-from pydantic_clai2.runtime._session import supports_local_workspace
+from pydantic_clai2.runtime.session import supports_local_workspace
 
 
 class RepoContextSettings(BaseModel):

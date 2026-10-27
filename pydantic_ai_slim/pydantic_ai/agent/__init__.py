@@ -81,7 +81,7 @@ from .._cancel import (
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._run_context import dispatch_event_stream, set_current_run_context
+from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -104,7 +104,7 @@ from ..capabilities.abstract import (
     leaf_capabilities,
     select_workspace,
 )
-from ..capabilities.combined import bind_capabilities_tier
+from ..capabilities.combined import bind_capabilities_tier, is_deferred_group
 from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..capabilities.wrapper import WrapperCapability
@@ -143,6 +143,7 @@ from ..tools import (
     ToolsPrepareFunc,
 )
 from ..toolsets import AbstractToolset, AgentToolset
+from ..toolsets._deferred_capability_loader import resolve_loaded_capability_instructions
 from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
@@ -3983,6 +3984,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # functions and capability `for_run` hooks see the prior conversation. KEEP IN SYNC with `iter`.
             messages=list(message_history) if message_history else [],
             max_retries=max_tool_retries,
+            # Only a session is a run that `emit` can deliver into; signaling just resolves configuration.
+            _event_stream_buffer=RealtimeEventBuffer() if run_lifecycle else None,
         )
         # Both need the context that only exists once it's built, so they're assigned rather than passed —
         # the graph does the same via `replace`. Without them a tool validated in a session sees a
@@ -4237,6 +4240,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             # Nothing appends here, so an empty append-mode block has no withdrawal to record.
             instruction_parts = _messages.InstructionPart.sorted([part for part in instruction_parts if part.content])
+            # A standard run states a loaded deferred capability's instructions in history, after its load return,
+            # which seeding skips: a session has no channel for them. They join the session's own instructions
+            # instead, after the rest, resolved as the graph resolves them before each request.
+            # KEEP IN SYNC with the graph's `_get_loaded_instructions`.
+            for capability_id in _instructions.LoadedInstructionValues.of(message_history or ()).stated_in_history:
+                capability = run_context.capabilities.get(capability_id)
+                if capability is not None and capability.defer_loading is True:
+                    loaded_parts = await resolve_loaded_capability_instructions(
+                        capability_id, tool_manager.toolset, run_context
+                    )
+                    instruction_parts.extend(part for part in loaded_parts if part.content)
             resolved_instructions = _messages.InstructionPart.join(instruction_parts)
             # As in a standard run (`UserPromptNode`), the agent's system prompts open a fresh conversation,
             # while seeded history is taken to carry its own, with its dynamic system prompts re-evaluated.
@@ -4504,6 +4518,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     f"The {resolved.model.model_name!r} realtime model does not support `output_modality='audio'`; "
                     "it only generates text. Leave `output_modality` unset, or set it to `'text'`."
                 )
+
+            resolved.model._warn_unsupported_settings(  # pyright: ignore[reportPrivateUsage]
+                resolved.model_settings, resolved.model_request_parameters
+            )
 
             connection_manager = (
                 resolved.model.connect(
@@ -4910,7 +4928,6 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                     timer = loop.call_later(remaining, graph_deps.cancellation.expire)
                     stack.callback(timer.cancel)
 
-            self.model_resources.bind_stack(stack)
             task_id = anyio.get_current_task().id
             if isinstance(self.concurrency_limiter, _concurrency.ConcurrencyLimiter) and any(
                 active_task_id == task_id and limiter is self.concurrency_limiter
@@ -4928,6 +4945,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                     (*_ACTIVE_AGENT_LIMITERS.get(), (task_id, self.concurrency_limiter))
                 )
                 stack.callback(_ACTIVE_AGENT_LIMITERS.reset, limiter_token)
+            # On a stack of their own, so a model selected later in the run, whose exit is registered then, is still
+            # exited after the run's pending response is settled below.
+            self.model_resources.bind_stack(await stack.enter_async_context(AsyncExitStack()))
             if self.capability_owns_current_model:
                 if self.graph_deps.model_selected_for_step == 1:
                     # The run's model selector already chose the model for the first step.
@@ -4937,6 +4957,21 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             # Including one the run's capabilities replaced, which would otherwise never be closed.
             for built_model in self.run_built_models:
                 await self.model_resources.enter_model(built_model)
+
+            agent_run: AgentRun[_PreparedDepsT, _PreparedOutputT] | None = None
+
+            async def settle_pending_at_run_end(exc_type: type[BaseException] | None, *_: object) -> None:
+                # After the run's hooks and the caller's block, so it knows how the run ended, and before any model it
+                # entered is exited, so a pending response the run didn't end with can still be withdrawn through it.
+                if graph_deps.accepted_pending is None:
+                    return
+                assert agent_run is not None
+                result = agent_run.result
+                await _agent_graph.settle_accepted_pending(
+                    graph_deps, result.output if result is not None else None, failed=exc_type is not None
+                )
+
+            stack.push_async_exit(settle_pending_at_run_end)
             graph_run = await stack.enter_async_context(
                 self.graph.iter(
                     inputs=self.user_prompt_node,
@@ -5202,12 +5237,38 @@ def _reject_second_of_a_kind(capabilities: Sequence[AbstractCapability[Any]]) ->
                 capability = capability.wrapped
             if (kind := capability._one_per_agent) is not None:  # pyright: ignore[reportPrivateUsage]
                 by_kind.setdefault(kind, []).append(capability)
+            if is_deferred_group(capability):
+                _reject_one_per_agent_in_group(capability)
     for kind, found in by_kind.items():
         if len(found) > 1:
             names = ', '.join(f'`{type(capability).__name__}`' for capability in found)
             raise exceptions.UserError(
                 f'An agent can have only one {kind}, but this one would have {len(found)}: {names}. '
                 "That counts the agent's own capabilities together with any passed for a run. Keep one."
+            )
+
+
+def _reject_one_per_agent_in_group(group: CombinedCapability[Any]) -> None:
+    """Reject a durable execution engine inside a deferred group: it must wrap every toolset from the first request."""
+    for inner in leaf_capabilities(group):
+        while isinstance(inner, WrapperCapability):
+            inner = inner.wrapped
+        if (kind := inner._one_per_agent) is not None:  # pyright: ignore[reportPrivateUsage]
+            raise exceptions.UserError(
+                f'`{type(inner).__name__}` is inside capability {group.id!r}, but a {kind} must be passed to '
+                'the agent directly, so it can wrap every toolset the agent has.'
+            )
+
+
+def _reject_nested_deferral(capability: AbstractCapability[Any]) -> None:
+    """Reject a deferred capability inside another one: loading the outer one reveals everything in it."""
+    for inner in leaf_capabilities(capability):
+        # One without an `id` is left to the explicit-`id` check, which names the actual problem.
+        if inner is not capability and inner.defer_loading is True and inner.id is not None:
+            raise exceptions.UserError(
+                f'Deferred capability {inner.id!r} is inside deferred capability {capability.id!r}. '
+                f'Loading {capability.id!r} already loads everything in it, so remove `defer_loading=True` '
+                f'from {inner.id!r}, or pass it to the agent separately to load it on its own.'
             )
 
 
@@ -5238,6 +5299,8 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
                 'Deferred capabilities must use stable explicit `id` values. '
                 'Pass `id=...` when using `defer_loading=True`.'
             )
+        if cap.defer_loading is True:
+            _reject_nested_deferral(cap)
         if cap.id is None:
             continue
         _instructions.validate_instruction_id_segment(cap.id, kind='Capability id')

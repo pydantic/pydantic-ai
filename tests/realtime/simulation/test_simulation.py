@@ -514,7 +514,8 @@ def _live_history(sim: LiveSimulation) -> list[list[str]]:
 
 def test_live_reply_goes_on_across_a_delegated_round() -> None:
     """SIM-18: Live goes on speaking while the backend waits for its tool's result ("Okay, checking ... now.", seen
-    live): what it says is the reply that called the tool, ahead of the result, and only the answer follows it."""
+    live): what it says is the reply that called the tool, ahead of the result, and only the answer follows it. The
+    call lands mid-sentence, so the speech is one part, ahead of the call."""
 
     def scenario(sim: LiveSimulation) -> None:
         sim.speak()
@@ -529,7 +530,39 @@ def test_live_reply_goes_on_across_a_delegated_round() -> None:
 
     history: list[list[str]] = []
     run_clean(LiveSimulation(), scenario)
-    assert history == snapshot([['r1w1', 'tool-call call_1', ' r1w2'], ['tool-return call_1'], ['r2w1']])
+    assert history == snapshot([['r1w1 r1w2', 'tool-call call_1'], ['tool-return call_1'], ['r2w1']])
+
+
+@pytest.mark.parametrize('ended_by', ['pause', 'user'])
+def test_live_reply_that_delegated_ends_at_the_models_next_pause(ended_by: str) -> None:
+    """Live goes on with its sentence as the backend answers ("I'll tell you in just a sec."), and only then speaks the
+    answer: the reply that called the tool ends where the model next pauses, or at whatever else happens first."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.speak()
+        sim.delegate()
+        sim.backend_call()
+        sim.backend_finish()
+        sim.finish_tool()
+        sim.speak()
+        # The continuation settles the delegation while the model is mid-sentence: the rest of it is still the reply.
+        sim.backend_finish()
+        sim.speak()
+        if ended_by == 'pause':
+            sim.advance_time(0.5)
+        else:
+            sim.user_says()
+        sim.speak()
+        sim.settle()
+        history.extend(_live_history(sim))
+
+    history: list[list[str]] = []
+    run_clean(LiveSimulation(), scenario)
+    expected = [['r1w1 r1w2 r1w3', 'tool-call call_1'], ['tool-return call_1']]
+    if ended_by == 'pause':
+        assert history == [*expected, ['r2w1']]
+    else:
+        assert history == [*expected, ['u1'], ['r2w1']]
 
 
 def test_live_continuation_call_is_a_response_of_its_own() -> None:
@@ -1509,6 +1542,34 @@ def test_gemini_typed_turn_lost_to_a_drop_is_settled() -> None:
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
         sim.drop()
+
+    run_clean(GeminiSimulation(), scenario)
+
+
+def test_gemini_typed_turn_lost_before_a_handle_is_answered_after_the_replay() -> None:
+    """With no handle to resume from, the re-dial replays the conversation and asks again for the lost turn's reply."""
+    sim = GeminiSimulation()
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.drop()
+
+    run_clean(sim, scenario)
+    turn = sim.truth.input('t1')
+    assert turn is not None and turn.answered_by is not None
+    assert sim.truth.responses[turn.answered_by].connection == 2
+    [waiter] = sim.waiters
+    assert waiter.returned is not None and waiter.error is None
+
+
+def test_gemini_reply_asked_again_is_settled_when_the_reconnect_fails() -> None:
+    """A reply the re-dial would have asked for again is lost when no re-dial succeeds."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.drop(refuse_dials=3)
 
     run_clean(GeminiSimulation(), scenario)
 

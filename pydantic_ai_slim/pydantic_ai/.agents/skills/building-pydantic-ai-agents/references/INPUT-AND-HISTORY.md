@@ -1,6 +1,6 @@
 # Input and History
 
-Read this file when the user wants multimodal input, message history, `run_id` / `conversation_id` correlation, or context trimming.
+Read this file when the user wants multimodal or structured input, message history, `run_id` / `conversation_id` correlation, or context trimming.
 
 ## Send Images, Audio, Video, or Documents to the Model
 
@@ -26,6 +26,24 @@ Not every model supports every input type. Keep provider expectations in mind wh
 For Gemini models that support agentic video processing, set `vendor_metadata={'media_processing': 'AGENTIC'}` on a `VideoUrl`, video `BinaryContent`, or video `UploadedFile`. See Google's [agentic video understanding guide](https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding).
 
 On follow-up requests, Pydantic AI omits Gemini media-processing response parts while keeping the ordinary final response and thought signature. When follow-up history still includes the original video, it is sent and processed again, which can incur additional video-processing tokens.
+
+## Send Structured Data in the Prompt
+
+Wrap a structured value (UI state, a record to judge) in `StructuredContent` instead of serializing it yourself. It stays structured in message history, and the model is sent text rendered once when the item is created: compact JSON by default, wrapped in `tag` when given, with `<`, `>` and `&` escaped.
+
+```python
+from pydantic_ai import Agent, StructuredContent
+
+agent = Agent(model='openai:gpt-5.2')
+result = agent.run_sync(
+    [StructuredContent({'url': '/products/42', 'cart_total': 949.0}, tag='ui_state'), 'Why did the total jump?']
+)
+```
+
+- `format='xml'` renders with `format_as_xml`; a function `value -> str` renders custom text; or subclass `StructuredContent` and override `render()`.
+- The rendered text is stored in `content`, so a reloaded history is sent byte-for-byte as before. It is not re-rendered when `value` changes: build a new item, or `dataclasses.replace(item, value=..., content='')` (pass `format=` again if it was created with one). After loading from JSON, `value` is JSON-compatible data (a dict, not the original Pydantic model), and a subclass comes back as `StructuredContent`.
+- It is a `TextContent` subclass, so text readers handle it unchanged. Decision models (`DecisionModel`, e.g. TypeSafe) are sent `value` natively when the prompt is a single `StructuredContent`. When rewriting a prompt's text (redaction, truncation), replace the item with a plain `TextContent`.
+- It works in `ctx.enqueue(...)` like any user content. The Vercel AI and AG-UI adapters dump it as visible user text, with the value in the text part's `providerMetadata.pydantic_ai` (Vercel) or the `UserMessage.encrypted_value` (AG-UI, from ag-ui-protocol 0.1.11; plain text before that), and load it back whole.
 
 ## Work with Message History
 
@@ -122,7 +140,7 @@ Good uses:
 
 - trimming long conversations
 - removing PII before provider calls
-- summarizing old messages
+- summarizing old messages: put the summary in a `ModelRequest(parts=[CompactionPart(content=summary)])` that replaces the messages it summarizes, not in a `SystemPromptPart`. Every provider model receives it as framed user-voice text that says a separate model wrote it, so a model-written summary stays out of the system prompt.
 - applying app-specific history policies
 
 To decide *when* to trim or summarize, a context-aware processor can check `ctx.context_window_used` — the fraction of the model's context window occupied as of the last response. Treat `None` as unknown and leave history unchanged; it means there is no response yet or the window or usage is unknown. The window size itself is `model.context_window`, read from the profile's `context_window` (filled automatically from genai-prices data, or set explicitly via `profile={'context_window': 128_000}` for custom/local models); a `FallbackModel` reports the smallest window among its candidates.
@@ -131,7 +149,7 @@ To decide *when* to trim or summarize, a context-aware processor can check `ctx.
 
 Use `RunContext.enqueue(...)` (from a tool or capability hook), `AgentRun.enqueue(...)` (from external code driving `agent.iter()`), or `RealtimeSession.enqueue(...)` (from external code driving a realtime session) to add content to the conversation while a run is in progress — e.g. a tool adding follow-up context, or an external event "steering" the agent.
 
-`enqueue` is variadic; each positional arg is one item: a piece of `UserContent` (a `str` or multi-modal content like an `ImageUrl`), a `ModelRequestPart` (e.g. a `SystemPromptPart`), or a complete `ModelRequest`/`ModelResponse`. Adjacent user content is gathered into one `UserPromptPart`. Pass an existing list by spreading it (`enqueue(*items)`). All three entry points return an `enqueue_id` (`str`) for non-empty calls, or `None` for empty calls. Standard-run and realtime event streams yield an `EnqueuedMessagesEvent` (with that `enqueue_id` and the delivered messages) once those messages enter history, so a client can observe when its steering message took effect. Parts enqueued with `'asap'` during a tool call go into the request carrying that call's `ToolReturnPart`, right after it, and the event's `parts` holds them as they sit in history (its `messages` still holds them, as a request of their own). The Vercel AI and AG-UI adapters stream them to the frontend as history it keeps and sends back without rendering (a `data-enqueued-messages` data part, a `pydantic_ai_enqueued_messages` activity), and `load_messages` restores them in place when the frontend sends them back. `@ag-ui/client` leaves activity messages out of its requests, so on AG-UI keep the history on the server or re-add the activities in a client middleware (see [Records carried as activity messages](https://pydantic.dev/docs/ai/integrations/ui/ag-ui/#activity-records)). Under the default `manage_system_prompt='server'`, enqueued `SystemPromptPart`s are not sent. Realtime sessions accept text and `SystemPromptPart`s only, render system parts as `<system>…</system>`, and record the delivered content as one `UserPromptPart`. A system part marks provenance, not silence: the model still gets a turn on it (use `session.send(text, respond=False)` for context that should not prompt a turn).
+`enqueue` is variadic; each positional arg is one item: a piece of `UserContent` (a `str` or multi-modal content like an `ImageUrl`), a `ModelRequestPart` (e.g. a `SystemPromptPart`), or a complete `ModelRequest`/`ModelResponse`. Adjacent user content is gathered into one `UserPromptPart`. Pass an existing list by spreading it (`enqueue(*items)`). All three entry points return an `enqueue_id` (`str`) for non-empty calls, or `None` for empty calls. Standard-run and realtime event streams yield an `EnqueuedMessagesEvent` (with that `enqueue_id` and the delivered messages) once those messages enter history, so a client can observe when its steering message took effect. Parts enqueued with `'asap'` during a tool call go into the request carrying that call's `ToolReturnPart`, right after it, and the event's `parts` holds them as they sit in history (its `messages` still holds them, as a request of their own). The Vercel AI and AG-UI adapters stream them to the frontend as history it keeps and sends back without rendering (a `data-enqueued-messages` data part, a `pydantic_ai_enqueued_messages` activity), and `load_messages` restores them in place when the frontend sends them back. `@ag-ui/client` leaves activity messages out of its requests, so on AG-UI keep the history on the server or re-add the activities in a client middleware (see [Records carried as activity messages](https://pydantic.dev/docs/ai/integrations/ui/ag-ui/#activity-records)). Under the default `manage_system_prompt='server'`, enqueued `SystemPromptPart`s are not sent. Realtime sessions accept text and `SystemPromptPart`s only. System parts enqueued alone are delivered like `session.send(SystemPromptPart(...))`, on the provider's operator channel, and recorded as `SystemPromptPart`s; next to text they're rendered as `<system>…</system>` in the user turn, recorded as one `UserPromptPart`. A system part marks provenance, not silence: the model still gets a turn on it (use `session.send(text, respond=False)` for context that should not prompt a turn).
 
 An enqueued `SystemPromptPart` is a mid-conversation instruction: it's sent at its position in the history rather than hoisted into the provider's top-level system prompt, so it doesn't invalidate a cached prefix ahead of it. This does not enable caching by itself; configure prompt caching (the unified `cache` model setting — see [Configure Prompt Caching Across Providers](./CAPABILITIES-AND-HOOKS.md#configure-prompt-caching-across-providers) — or a provider-specific setting) or include a `CachePoint`. On models that honor `CachePoint`, one at the end of an `enqueue(...)` batch covers every preceding item in that batch, including a `SystemPromptPart`; one with more content after it caches up to where you put it and leaves the instruction outside, since the instruction is sent after the content it accompanies. Where the provider's API accepts a system message inline it's sent as one, with real operator authority; elsewhere it's rendered as `<system>`-tagged user content at that position, which a model treats as a strong preference rather than a system-level rule. Support varies by model *and* transport, and Pydantic AI picks the rendering automatically — don't gate your own code on a model list.
 
