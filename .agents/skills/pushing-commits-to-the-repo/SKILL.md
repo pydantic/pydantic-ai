@@ -24,7 +24,7 @@ Choose by the session's model family, not by the harness.
 | Other | session's model | session's model |
 
 Use the strong tier to drive a PR.
-Use the light tier for `review-branch` and the metadata check.
+Use the light tier for local `/review-branch` runs, when your environment provides that skill, and the metadata check.
 Use the light tier for pre-push review until hosted review has commented on two earlier pushes.
 Then use the strong tier for pre-push review.
 Pass the model explicitly when the dispatch accepts one.
@@ -448,7 +448,7 @@ The required reviews are not on this menu. Step 3 applies the merge bar to both 
 and fork PRs. `CI Review` starts on a write-access approval of the head, a `final-review` label,
 or a dispatch. Green CI alone never starts `CI Review`.
 
-What this section chooses is a second opinion on top of that one, and the choice belongs to the
+What this section chooses is a second opinion on top of the required reviews, and the choice belongs to the
 person whose PR it is, not to you.
 
 Report the diff first: its size label, how many files it changes, and where the change lands on the
@@ -463,7 +463,7 @@ cheap to review, so take one when the call is close.
 |---|---|
 | `pydanty:review-branch` | The diff reaches widely and you want findings fixed rather than only reported. It runs a fixed reviewer roster and pushes remediation commits to the branch. It waits on green CI. |
 | `pydanty:review-lite` | The diff is narrow or unusual enough that a fixed roster would look past it. It writes review charters for this diff, dispatches one reviewer per charter, and adjudicates before posting. It reports and never remediates, and it has no CI precondition. |
-| `douwebot` | One last high-judgment pass. Inline findings and a formal verdict, one review per label application. On a fork this is a second application of the reviewer that already gated the PR, against the diff as it now stands. |
+| `douwebot` | One last high-judgment pass. Inline findings and a formal verdict, one review per label application. Unless the trivial-S exception applied, this is a second application of the reviewer that already gated the PR, against the diff as it now stands. |
 | local | No hosted surface fits, or you want a read before the PR moves again. Dispatch `pre-push-review` under the context contract above and triage its findings like any other. |
 | none | No second opinion. The merge bar still gates the PR. |
 
