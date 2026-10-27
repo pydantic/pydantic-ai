@@ -216,6 +216,14 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
 
   const isShown = (session: SessionEntry) => session.id === shown
 
+  const toggleMenu = (button: HTMLElement, id: string) => {
+    // The list scrolls and clips the menu, so a row in its lower half opens the menu upwards.
+    const list = button.closest('.projects')?.getBoundingClientRect()
+    const rect = button.getBoundingClientRect()
+    setMenuUp(list !== undefined && rect.bottom > list.top + list.height / 2)
+    setMenu(menu === id ? null : id)
+  }
+
   const row = (session: SessionEntry) => {
     const state = dot(session, live)
     const current = isShown(session)
@@ -256,13 +264,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         )}
         <button
           className="session-more"
-          onClick={(event) => {
-            // The list scrolls and clips the menu, so a row in its lower half opens the menu upwards.
-            const list = event.currentTarget.closest('.projects')?.getBoundingClientRect()
-            const rect = event.currentTarget.getBoundingClientRect()
-            setMenuUp(list !== undefined && rect.bottom > list.top + list.height / 2)
-            setMenu(menu === session.id ? null : session.id)
-          }}
+          onClick={(event) => toggleMenu(event.currentTarget, session.id)}
           title="Session actions"
           aria-label="Session actions"
         >
@@ -312,16 +314,79 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const isNested = (project: Project) =>
     project.worktrees.length > 1 || project.worktrees.some((worktree) => worktree.missing)
 
+  // A project's removed worktrees fold into one group after its live ones, closed until opened.
+  const removedKey = (project: Project) => `${project.key}\0removed`
+  const folds = (project: Project) =>
+    project.worktrees.some((worktree) => worktree.missing) && project.worktrees.some((worktree) => !worktree.missing)
+  const removedClosed = (project: Project) => !query && folds(project) && (collapsed[removedKey(project)] ?? true)
+
   // The tree sits under the current session, or above the list while that row is hidden.
   const listed = projects.some(
     (project) =>
       !(!query && (collapsed[project.key] ?? false)) &&
       project.worktrees.some(
         (worktree) =>
+          !(worktree.missing && removedClosed(project)) &&
           !(isNested(project) && !query && (collapsed[`${project.key}\0${worktree.root}`] ?? false)) &&
           worktree.sessions.some(isShown),
       ),
   )
+
+  const group = (project: Project, worktree: Worktree, nested: boolean) => {
+    const id = `${project.key}\0${worktree.root}`
+    const shut = nested && !query && (collapsed[id] ?? false)
+    const menuId = `worktree\0${id}`
+    // As from a session's own menu, the open session and running ones are not archived.
+    const archivable = worktree.sessions.filter(
+      (session) => !session.archived && !isShown(session) && !WORKING.includes(dot(session, live)),
+    )
+    return (
+      <div
+        key={worktree.root}
+        className={`worktree ${nested ? 'nested' : ''} ${worktree.sessions.some(isShown) ? 'current' : ''} ${worktree.missing ? 'missing' : ''}`}
+      >
+        {nested && (
+          <div className="worktree-head">
+            <button
+              className="worktree-title"
+              onClick={() => setCollapsed((current) => ({ ...current, [id]: !shut }))}
+              title={worktree.missing ? `${worktree.root} (removed)` : worktree.root}
+            >
+              <BranchIcon size={12} />
+              <span className="worktree-name">{worktree.label}</span>
+              {worktree.missing && <span className="worktree-tag">removed</span>}
+              {shut && <GroupDot state={strongest([worktree], live)} />}
+              <ChevronIcon size={10} className={`chevron ${shut ? '' : 'down'}`} />
+            </button>
+            <button
+              className="session-more"
+              onClick={(event) => toggleMenu(event.currentTarget, menuId)}
+              title="Worktree actions"
+              aria-label="Worktree actions"
+            >
+              <MoreIcon size={14} />
+            </button>
+            {menu === menuId && (
+              <div className={`menu session-menu ${menuUp ? 'up' : ''}`} role="menu">
+                <button
+                  disabled={archivable.length === 0}
+                  title={
+                    archivable.length === 0
+                      ? 'No session here can be archived'
+                      : 'Hide every session here but the open and running ones; nothing is deleted'
+                  }
+                  onClick={() => void act(() => api.archiveAll(archivable.map((session) => session.id)))}
+                >
+                  Archive all sessions in this worktree
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {!shut && worktree.sessions.flatMap((session) => [row(session), isShown(session) && workers])}
+      </div>
+    )
+  }
   const workers = tasks.length > 0 && <WorkersTree key="workers" tasks={tasks} selected={worker} onOpen={onWorker} />
 
   return (
@@ -390,6 +455,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
           // A search shows every match, whatever is collapsed.
           const closed = !query && (collapsed[project.key] ?? false)
           const nested = isNested(project)
+          const removed = folds(project) ? project.worktrees.filter((worktree) => worktree.missing) : []
+          const kept = project.worktrees.filter((worktree) => !removed.includes(worktree))
+          const foldClosed = removedClosed(project)
           return (
             <section key={project.key} className="project">
               <button
@@ -402,32 +470,24 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                 {closed && <GroupDot state={strongest(project.worktrees, live)} />}
                 <ChevronIcon size={12} className={`chevron ${closed ? '' : 'down'}`} />
               </button>
-              {!closed &&
-                project.worktrees.map((worktree) => {
-                  const id = `${project.key}\0${worktree.root}`
-                  const shut = nested && !query && (collapsed[id] ?? false)
-                  return (
-                    <div
-                      key={worktree.root}
-                      className={`worktree ${nested ? 'nested' : ''} ${worktree.sessions.some(isShown) ? 'current' : ''} ${worktree.missing ? 'missing' : ''}`}
+              {!closed && kept.map((worktree) => group(project, worktree, nested))}
+              {!closed && removed.length > 0 && (
+                <div className="worktree nested missing">
+                  <div className="worktree-head">
+                    <button
+                      className="worktree-title"
+                      onClick={() => setCollapsed((current) => ({ ...current, [removedKey(project)]: !foldClosed }))}
+                      title="Worktrees whose folders are gone"
                     >
-                      {nested && (
-                        <button
-                          className="worktree-title"
-                          onClick={() => setCollapsed((current) => ({ ...current, [id]: !shut }))}
-                          title={worktree.missing ? `${worktree.root} (removed)` : worktree.root}
-                        >
-                          <BranchIcon size={12} />
-                          <span className="worktree-name">{worktree.label}</span>
-                          {worktree.missing && <span className="worktree-tag">removed</span>}
-                          {shut && <GroupDot state={strongest([worktree], live)} />}
-                          <ChevronIcon size={10} className={`chevron ${shut ? '' : 'down'}`} />
-                        </button>
-                      )}
-                      {!shut && worktree.sessions.flatMap((session) => [row(session), isShown(session) && workers])}
-                    </div>
-                  )
-                })}
+                      <BranchIcon size={12} />
+                      <span className="worktree-name">Removed worktrees ({removed.length})</span>
+                      {foldClosed && <GroupDot state={strongest(removed, live)} />}
+                      <ChevronIcon size={10} className={`chevron ${foldClosed ? '' : 'down'}`} />
+                    </button>
+                  </div>
+                  {!foldClosed && removed.map((worktree) => group(project, worktree, true))}
+                </div>
+              )}
             </section>
           )
         })}

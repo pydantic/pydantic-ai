@@ -368,6 +368,25 @@ pre {
   border-radius: 6px;
 }
 
+.worktree-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.worktree-head > .worktree-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.worktree-head > .session-more {
+  height: 22px;
+}
+
+.worktree-head:hover > .session-more {
+  display: grid;
+}
+
 .worktree-title:hover,
 .worktree.current > .worktree-title {
   color: var(--text-soft);

@@ -956,6 +956,75 @@ def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', t
     assert [(w['label'], w['missing']) for w in found['worktrees']] == [('old', True)]
 
 
+def test_sidebar_lists_removed_worktrees_after_live_ones(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """A removed worktree comes after the project's live checkouts, even when its session is the newest."""
+    web_ = make_web(Agent(TestModel()))
+    repo, feature, gone = tmp_path / 'repo', tmp_path / 'wt' / 'feature', tmp_path / 'wt' / 'gone'
+    repository(repo, linked=feature, branch='feature')
+    git('-C', str(repo), 'worktree', 'add', '-b', 'gone', str(gone))
+    for title, workspace in [('Feature', feature), ('Main', repo), ('Gone', gone)]:
+        folder = str(workspace.resolve())
+        summary = ConversationSummary(workspace=folder, title=title, checkout=git_checkout(project_identity(folder)))
+        web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    git('-C', str(repo), 'worktree', 'remove', str(gone))
+    plain = tmp_path / 'plain'
+    plain.mkdir()
+    web_.shell.session.workspace = str(plain.resolve())
+
+    [project] = [p for p in web_.get('/api/sessions').json() if p['name'] == 'repo']
+    assert [(w['label'], w['missing']) for w in project['worktrees']] == [
+        ('main', False),
+        ('feature', False),
+        ('gone', True),
+    ]
+
+
+def test_archiving_a_worktree_archives_every_session_in_it(make_web: 'MakeWeb') -> None:
+    """One request archives a group's sessions and lists them no more; ones it refuses stay, with the reasons."""
+    web_ = make_web(Agent(TestModel()))
+    old = [
+        web_.portal.call(
+            lambda title=title: web_.shell.sessions.store.save(
+                summary=ConversationSummary(workspace='/gone', title=title), messages=[]
+            )
+        )
+        for title in ('One', 'Two')
+    ]
+    web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
+    current = web_.shell.session.conversation_id
+
+    def listed() -> list[str]:
+        return [
+            entry['title']
+            for project in web_.get('/api/sessions').json()
+            for worktree in project['worktrees']
+            for entry in worktree['sessions']
+        ]
+
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
+        socket.receive_text()
+        ids = [summary.id for summary in old]
+        assert web_.client.post('/api/sessions/archive', json={'ids': ids}).status_code == 403, 'the token is checked'
+        assert web_.post('/api/sessions/archive', {'ids': ids}).status_code == 204
+        receive_until(socket, SessionsChanged)
+        assert listed() == ['New session']
+        assert web_.post(f'/api/sessions/{old[0].id}/unarchive').status_code == 204
+        receive_until(socket, SessionsChanged)
+        refused = web_.post('/api/sessions/archive', {'ids': [current, old[0].id, 'missing']})
+        assert (refused.status_code, refused.json()['detail']) == (
+            400,
+            f'Archived 1 of 3 sessions. {current}: The current session cannot be archived. Switch to another one '
+            'first. missing: No saved session: missing',
+        )
+        receive_until(socket, SessionsChanged)
+        assert web_.post('/api/sessions/archive', {'ids': ['missing']}).json()['detail'] == (
+            'Archived 0 of 1 sessions. missing: No saved session: missing'
+        )
+    assert listed() == ['New session']
+
+
 def test_new_session_offers_every_worktree_of_a_known_repository(
     make_web: 'MakeWeb', tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

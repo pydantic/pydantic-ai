@@ -28,8 +28,9 @@ The sidebar lists the sessions `/resume` shows, grouped by project (the Git repo
 after its main checkout's folder), then by worktree (each checkout, labelled with its branch), with
 the current ones first and search across all of them. A folder outside Git is a project of its own.
 A session remembers its checkout when it is saved, so one from a worktree you have since removed
-stays under its project, marked removed; an older session from a removed folder is placed by
-where it was, or listed under Removed folders. Click one to switch to it, even while other sessions
+stays under its project, marked removed, in one **Removed worktrees** group after the live ones,
+closed until you open it; an older session from a removed folder is placed by where it was, or
+listed under Removed folders. A worktree's menu archives all of its sessions at once. Click one to switch to it, even while other sessions
 run turns: each session you open stays live and keeps working while you look at another. A dot by
 a live session shows that it runs a turn, pulsing; runs one with input queued behind it, ringed; or
 waits for your answer to a question, amber. Use a session's menu to rename, fork, archive, or delete
@@ -360,7 +361,8 @@ optional body as before (`{"workspace": "/abs/path"}`), starts a new live sessio
 the same `{"id": "<conversation id>"}`. Opening a session whose folder is gone answers 400. Where CLAI
 opens no other sessions (a host built outside CLAI's shell), both switch the one session instead,
 with `/resume` or `/new`, and answer its ID. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
-delete) and `/api/tasks/{task_id}/…` are unchanged.
+delete) and `/api/tasks/{task_id}/…` are unchanged. `POST /api/sessions/archive` with `{"ids": [...]}` archives several sessions at once,
+and answers 400 naming any it refused once it has archived the rest.
 
 A command menu (`/model`, `/effort`, `/set`, `/keys`, …) reads and changes the session it is built from:
 choosing a model in session B's `/model` menu switches B alone, and B's `/effort` shows B's model. Settings
