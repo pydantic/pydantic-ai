@@ -161,6 +161,8 @@ export const api = {
     call<Project[]>('GET', `/api/sessions?q=${encodeURIComponent(query)}${archived ? '&include_archived=true' : ''}`),
   /** The sidebar's projects, with every worktree Git lists for each, for New session to offer. */
   checkouts: () => call<Project[]>('GET', '/api/sessions?include_worktrees=true'),
+  /** The directories a typed absolute path completes to, each repository with every worktree Git lists, for New session. */
+  directories: (path: string) => call<Project[]>('GET', `/api/directories?path=${encodeURIComponent(path)}`),
   transcript: (id: string) => call<Transcript>('GET', `/api/sessions/${id}`),
   /** Start a live session, in `workspace` when given; it answers the new session's conversation ID. */
   newSession: (workspace?: string) =>
