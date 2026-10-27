@@ -112,14 +112,22 @@ class Sessions(Generic[DepsT, OutputT]):
         """
         if (shown := await self.show_live(conversation_id)) is not None:
             return shown
+        # One another process runs continues in its existing fork, if any, which is then the one to show or hold.
+        continuation = await self.session.continuation(conversation_id)
+        target = continuation.conversation_id
+        if target != conversation_id and (shown := await self.show_live(target)) is not None:
+            return shown
         # Held from before moving directory, so no other session resumes it meanwhile.
-        with self.session.claim(conversation_id):
+        with self.session.claim(target):
             if self.relocate is not None and not allow_other_workspace:
-                workspace = (await self.store.get(conversation_id=conversation_id)).summary.workspace
+                workspace = (await self.store.get(conversation_id=target)).summary.workspace
                 if workspace != self.session.workspace:
                     await self.relocate(workspace)
             notice = await self.session.resume(
-                conversation_id, allow_other_workspace=allow_other_workspace, unarchive=unarchive
+                conversation_id,
+                allow_other_workspace=allow_other_workspace,
+                unarchive=unarchive,
+                continuation=continuation,
             )
         await self.show_resumed()
         return notice

@@ -560,7 +560,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         for c in cls.__mro__:
             metadata = getattr(c, '__pydantic_generic_metadata__', {})
             if len(args := (metadata.get('args', ()) or getattr(c, '__args__', ()))) == 3:  # pragma: no branch
-                return args
+                # A bare `None` type argument arrives here as the `None` singleton; normalize it to
+                # `NoneType` so postponed annotations like `metadata: MetadataT | None` can resolve.
+                # Pyright cannot correlate the normalized arguments with the generic return types.
+                return tuple(type(None) if arg is None else arg for arg in args)  # pyright: ignore[reportReturnType]
         else:
             warnings.warn(
                 f'Could not determine the generic parameters for {cls}; using `Any` for each.'

@@ -80,6 +80,7 @@ from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_TOOL_NAME,
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -1586,7 +1587,9 @@ def _call_secret_op_once(messages: list[ModelMessage], _info: AgentInfo) -> Mode
     return ModelResponse(parts=[ToolCallPart('secret_op', {}, tool_call_id='call-1')])
 
 
-@pytest.mark.parametrize('inject_load', [False, True])
+@pytest.mark.parametrize(
+    'inject_load', [False, pytest.param(True, marks=pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN))]
+)
 async def test_processor_injected_load_lets_capability_prepare_tools_govern_its_tools(inject_load: bool) -> None:
     """A capability made active by history processing still has `prepare_tools` over its own tools.
 
@@ -1736,6 +1739,9 @@ async def test_processor_removed_load_leaves_advertisement_and_gate_in_agreement
     )
 
 
+@pytest.mark.moves_cache_prefix(
+    reason="the hand-built history resumes a suspended response that was sent without the agent's instructions"
+)
 async def test_processor_injected_load_is_governed_when_resuming_a_suspended_response() -> None:
     """The same governance holds on the request that resumes a provider-suspended turn.
 
