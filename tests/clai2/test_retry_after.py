@@ -547,21 +547,35 @@ async def test_fork_resolves_a_guarded_client(tmp_path: Path, sdk_sleeps: list[f
     assert sdk_sleeps == []
 
 
-@pytest.mark.parametrize('failure', [OverflowError, ValueError])
-async def test_unrepresentable_retry_date_does_not_break_the_response_hook(
-    monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
+@pytest.mark.parametrize('guarded', [False, True])
+@pytest.mark.parametrize(
+    ('header', 'failure'),
+    [
+        ('Fri, 23 Oct 10000 00:02:00', ValueError),
+        ('Fri, 23 Oct 999999999999999999999999 00:02:00', OverflowError),
+    ],
+)
+async def test_unrepresentable_retry_date_preserves_sdk_failure(
+    header: str, failure: type[Exception], guarded: bool, sdk_sleeps: list[float]
 ) -> None:
-    def unrepresentable(parsed: tuple[int, ...]) -> float:
-        raise failure('unrepresentable date')
+    calls = 0
 
-    monkeypatch.setattr(retry_after, 'mktime_tz', unrepresentable)
-    async with httpx2.AsyncClient() as client:
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        return rejection(headers={'retry-after': header})
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as client:
         model = claude_model(client)
-        retry_after.limit_retry_after(model=model)
-        response = rejection(headers={'retry-after': 'Fri, 23 Oct 2026 00:02:00 GMT'})
-        response.request = httpx2.Request('POST', 'https://api.anthropic.com/v1/messages')
-        await retry_after._limit_retry_after(response)  # pyright: ignore[reportPrivateUsage]
-        assert 'x-should-retry' not in response.headers
+        if guarded:
+            await plugin_resolver(model=model).resolve('claude-code:claude-sonnet-4-5')
+        with override_allow_model_requests(True), pytest.raises(failure) as caught:
+            await Agent(model).run('go', model_settings={'max_tokens': 20})
+        # The SDK itself cannot convert these dates: preserve its raw error rather than
+        # raising from the HTTP hook and causing SDK connection-error retries instead.
+        assert 'CLAI skipped' not in error_message(caught.value)
+    assert calls == 1
+    assert sdk_sleeps == []
 
 
 def test_unrelated_rate_limit_errors_keep_their_message() -> None:
