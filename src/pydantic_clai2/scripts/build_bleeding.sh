@@ -3,7 +3,7 @@
 # an sdist of CLAI and of each workspace package it pins exactly, named `<package>-<commit>.tar.gz`,
 # and `clai2-bleeding.json`, which names the commit. The `clai2-bleeding` workflow publishes them to
 # the `clai2-bleeding` GitHub release. To try them locally, serve OUT_DIR over HTTP and start CLAI
-# with `CLAI_BLEEDING_URL` pointing at it (see "Updating" in the README).
+# with `CLAI_BLEEDING_URL` pointing at it (see "Updating" in docs/reference.md).
 #
 # The version comes from Git tags and history, so the checkout needs both. Each sdist records it,
 # with exact pins between the packages, so installing needs no Git.

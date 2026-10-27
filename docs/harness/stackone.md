@@ -52,7 +52,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import StackOne
 
 agent = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[
         StackOne(account_id=os.environ['STACKONE_ACCOUNT_ID']),
     ],
@@ -127,7 +127,7 @@ from pydantic_ai.capabilities import PrefixTools
 from pydantic_ai_harness import StackOne
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     capabilities=[
         PrefixTools(StackOne(account_id='hr-account'), prefix='hr'),
         PrefixTools(StackOne(account_id='crm-account'), prefix='crm'),
@@ -150,7 +150,7 @@ from pydantic_ai_harness import StackOne, ToolOutputLimits
 from pydantic_ai_harness.tool_output_limits import LocalFileStore
 
 agent = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[
         StackOne(account_id='your-linked-account-id'),
         ToolOutputLimits(store=LocalFileStore()),
@@ -174,7 +174,7 @@ stackone_tools = StackOneToolset(
     actions=['workday_create_worker'],
 ).approval_required()
 
-agent = Agent('openai:gpt-5', toolsets=[stackone_tools])
+agent = Agent('{{ openai:medium }}', toolsets=[stackone_tools])
 ```
 
 Handle the resulting deferred approval requests as described in the linked guide.
@@ -186,7 +186,7 @@ Keep the API key in `STACKONE_API_KEY` rather than storing it in the file:
 
 ```yaml
 # agent.yaml
-model: openai:gpt-5
+model: {{ openai:medium }}
 capabilities:
   - StackOne:
       account_id: 'your-linked-account-id'

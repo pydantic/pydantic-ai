@@ -11,6 +11,7 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
+from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
 from termflow.tui.pager import Pager
 
@@ -18,21 +19,24 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_clai2._app import create_shell, create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
-from pydantic_clai2.runtime._session import Session
-from pydantic_clai2.ui.menus.field_menu import SAVE_AND_CLOSE_DETAILS, save_and_close_item
+from pydantic_clai2.runtime.session import Session
+from pydantic_clai2.runtime.session_runtime import create_shell
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners, save_and_close_item
 from pydantic_clai2.ui.menus.system_prompt_menu import (
-    Action,
-    SystemPromptMenu,
-    TextEditor,
-    build_pager,
-    run_system_prompt_menu,
+    APPEND,
+    INSTRUCTIONS,
+    PROMPT,
+    SystemPromptSource,
+    summary,
     system_prompt_command,
+    system_prompt_menu,
 )
-from pydantic_clai2.ui.menus.text_editor import EditorApp, build_text_area, edit_text
+from pydantic_clai2.ui.menus.text_editor import EditorApp, TextEditor, build_text_area, edit_text
+from tests.clai2.dialog_script import Back, ScriptedDialogs, Type
 from tests.clai2.menu_script import Script, make_context, pick
 
 CLOSE = MenuResult(item=save_and_close_item())
@@ -60,6 +64,11 @@ def replying(*replies: str | None) -> tuple[list[tuple[str, str]], TextEditor]:
     return opened, editor
 
 
+def reset(menu: FieldMenu, key: str) -> MenuResult:
+    """What the terminal list's R key hands back for the row `key`."""
+    return menu.reset_marker(None, MenuItem(key, value=key))
+
+
 @pytest.mark.parametrize('stock', [True, False], ids=['stock-agent', 'supplied-agent'])
 async def test_saved_instructions_follow_plugin_instructions_and_reach_the_next_request(
     tmp_path: Path, stock: bool
@@ -82,6 +91,9 @@ async def test_saved_instructions_follow_plugin_instructions_and_reach_the_next_
     )
     assert shell.commands.runs_during_turn('/system_prompt')
     assert '/system_prompt: View the system prompt' in shell.commands.help([])
+    declared = shell.commands.get('system_prompt')
+    assert declared is not None and declared.menu is not None
+    assert declared.menu().source.title == 'System prompt', 'the web UI shows the same menu'
 
     async def turn(text: str) -> str:
         ended = await shell.run_turn(TurnStart(text=text), headless=True)
@@ -100,11 +112,10 @@ async def test_saved_instructions_follow_plugin_instructions_and_reach_the_next_
     async def menu(*lists: MenuResult, replies: tuple[str | None, ...] = ()) -> str:
         _, editor = replying(*replies)
         script = Script(lists=list(lists), choices=[], texts=[])
-        return await system_prompt_command(
-            shell.context, [], history=lambda: shell.session.messages, runners=script.runners, editor=editor
-        )
+        runners = Runners(run_list=script.run_list, edit=editor)
+        return await system_prompt_command(shell.context, [], history=lambda: shell.session.messages, runners=runners)
 
-    assert await menu(pick(Action.EDIT), CLOSE, replies=('Edited in the menu.\n',)) == (
+    assert await menu(pick(INSTRUCTIONS), CLOSE, replies=('Edited in the menu.\n',)) == (
         'Saved your instructions. They apply from your next prompt.'
     )
     second = await turn('second')
@@ -112,7 +123,10 @@ async def test_saved_instructions_follow_plugin_instructions_and_reach_the_next_
     assert shell.session.agent is agent, 'new text does not rebuild the agent'
     assert SettingsStore(tmp_path / 'config.db').load().instructions == 'Edited in the menu.'
 
-    assert await menu(pick(Action.RESET), CLOSE) == 'Removed your instructions. They apply from your next prompt.'
+    assert (
+        await menu(reset(FieldMenu(declared.menu().source), INSTRUCTIONS), CLOSE)
+        == 'Removed your instructions. They apply from your next prompt.'
+    )
     assert await turn('third') == first.removesuffix('\n\nSaved before launch.')
     assert 'run.instructions' not in SettingsStore(tmp_path / 'config.db').overrides()
     assert await menu(MenuResult(cancelled=True)) == 'No changes.'
@@ -132,29 +146,44 @@ async def test_arguments_are_refused(tmp_path: Path) -> None:
         await system_prompt_command(context, ['show'], history=lambda: ())
 
 
-def test_menu_shows_yours_as_editable_and_the_full_prompt_as_read_only(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(sys, 'platform', 'linux')
-    monkeypatch.setattr('pydantic_clai2.ui.menus.system_prompt_menu.terminal_size', lambda: (120, 30))
-    monkeypatch.delenv('VISUAL', raising=False)
-    monkeypatch.setenv('EDITOR', 'vim -u NONE')
+def test_rows_summarize_yours_and_take_values_only_there(tmp_path: Path) -> None:
+    context, _ = make_context(tmp_path)
+    source = SystemPromptSource(context, history=lambda: ())
+    rows = {row.key: row for row in source.rows()}
+    assert list(rows) == [INSTRUCTIONS, APPEND, PROMPT]
+    assert [row.button for row in rows.values()] == ['Edit…', 'Append…', 'View…']
+    assert source.current(rows[INSTRUCTIONS]) == rows[INSTRUCTIONS].default == 'none', 'nothing to reset'
+    assert source.current(rows[APPEND]) == source.current(rows[PROMPT]) == ''
+    assert rows[INSTRUCTIONS].note == ''
+    assert source.reset(rows[INSTRUCTIONS]) == 'You have no instructions to remove.'
+
+    assert source.problem(rows[INSTRUCTIONS], 'One line') is None
+    assert (
+        source.apply(rows[INSTRUCTIONS], '  One line ') == 'Saved your instructions. They apply from your next prompt.'
+    )
+    assert source.current(rows[INSTRUCTIONS]) == 'One line (1 line)'
+    assert source.problem(rows[PROMPT], 'x') == 'Full system prompt takes no value; open it instead.'
+    with pytest.raises(ValueError, match='takes no value'):
+        source.apply(rows[APPEND], 'x')
+    assert source.reset(rows[APPEND]) == 'Append to yours has nothing to reset.'
+    assert context.settings.instructions == 'One line', 'only its own row removes them'
+
+    context.project = ProjectSettings(overrides={'run.instructions': 'From the project.'})
+    assert 'project file' in {row.key: row for row in source.rows()}[INSTRUCTIONS].note
+
+
+def test_summary_fits_a_row_and_disarms_control_characters() -> None:
+    assert summary('') == 'none'
+    assert summary(f'First line {"word " * 20}\nSecond') == 'First line word word word word word wor… (2 lines)'
+    shown = summary('From a repository: \x1b]52;c;ZXZpbA==\x07')
+    assert '\x1b' not in shown and '\x07' not in shown, 'control characters cannot reach the terminal'
+
+
+def test_the_full_prompt_is_what_the_latest_answered_request_sent(tmp_path: Path) -> None:
     context, _ = make_context(tmp_path)
     history: list[ModelMessage] = []
-    menu = SystemPromptMenu(context, history=lambda: history)
-    items = menu.items()
-    assert [item.label for item in items] == [action.value for action in Action] + ['Save & close']
-    assert items[0].description.endswith('none')
-    assert items[2].disabled, 'nothing to reset'
-    edit = menu.details(items[0])
-    assert edit.startswith('Your instructions (editable)\n\n(none)\n')
-    assert "Sent after CLAI's built-in instructions, AGENTS.md, and plugin instructions" in ' '.join(edit.split())
-    assert 'Opens in vim -u NONE.' in edit
-    assert 'project file' not in edit
-    assert 'Nothing was sent in this conversation yet.' in menu.details(items[3])
-    assert menu.details(items[4]) == SAVE_AND_CLOSE_DETAILS
-    assert menu.build(1) is not None
-
+    source = SystemPromptSource(context, history=lambda: history)
+    assert source.full_prompt().startswith('Nothing was sent in this conversation yet.')
     done = ModelResponse(parts=[TextPart('done')])
     history += [
         ModelRequest(parts=[UserPromptPart('hello')], instructions='Built-in guidance.\n\nYours.'),
@@ -162,106 +191,66 @@ def test_menu_shows_yours_as_editable_and_the_full_prompt_as_read_only(
         # A final tool return after the latest response was never sent.
         ModelRequest(parts=[UserPromptPart('never sent')], instructions='Unsent.'),
     ]
-    assert menu.full_prompt() == 'Built-in guidance.\n\nYours.'
+    assert source.full_prompt() == 'Built-in guidance.\n\nYours.'
     history.insert(0, ModelRequest(parts=[SystemPromptPart('Agent system prompt.'), UserPromptPart('first')]))
-    assert menu.full_prompt() == 'Agent system prompt.\n\nBuilt-in guidance.\n\nYours.'
-    assert SystemPromptMenu(context, history=lambda: [history[0], done]).full_prompt() == 'Agent system prompt.'
-    view = menu.details(items[3])
-    assert view.startswith('Full system prompt (read-only)\n')
-    assert view.endswith('Built-in guidance.\n\nYours.')
+    assert source.full_prompt() == 'Agent system prompt.\n\nBuilt-in guidance.\n\nYours.'
+    assert SystemPromptSource(context, history=lambda: [history[0], done]).full_prompt() == 'Agent system prompt.'
     # Instructions removed since an earlier request are not shown as sent.
-    reset = [*history[1:3], ModelRequest(parts=[UserPromptPart('again')]), done]
-    assert SystemPromptMenu(context, history=lambda: reset).full_prompt() == 'The latest request had no system prompt.'
-    history += [ModelRequest(parts=[], instructions='\n'.join(f'Rule {n}.' for n in range(100))), done]
-    view = menu.details(items[3]).splitlines()
-    assert len(view) < 30, 'the panel fits the screen'
-    assert view[-2:] == ['Rule 14.', '…'], 'Enter opens the rest'
-
-    context.set_setting(['run.instructions', 'Single line'])
-    assert menu.items()[0].description.endswith('1 line')
-    context.set_setting(['run.instructions', f'First line\n{"word " * 60}'])
-    items = menu.items()
-    assert items[0].description.endswith('2 lines')
-    assert not items[2].disabled
-    wrapped = menu.details(items[0]).splitlines()
-    assert wrapped[2] == 'First line'
-    assert len([line for line in wrapped if line.startswith('word')]) > 1, 'long lines wrap to the panel'
-
-    context.set_setting(['run.instructions', 'From a repository: \x1b]52;c;ZXZpbA==\x07'])
-    shown = menu.details(items[0])
-    assert '\x1b' not in shown and '\x07' not in shown, 'control characters cannot reach the terminal'
-    assert 'From a repository: \\x1b]52;c;ZXZpbA==\\x07' in shown
-
-    monkeypatch.delenv('EDITOR')
-    context.project = ProjectSettings(overrides={'run.instructions': 'From the project.'})
-    edit = ' '.join(menu.details(items[1]).split())
-    assert 'Opens in the built-in editor: ctrl-s save · esc cancel.' in edit
-    assert 'The project file sets them again at next start.' in edit
+    removed = [*history[1:3], ModelRequest(parts=[UserPromptPart('again')]), done]
+    assert SystemPromptSource(context, history=lambda: removed).full_prompt() == (
+        'The latest request had no system prompt.'
+    )
 
 
-def test_flow_edits_appends_resets_and_views(tmp_path: Path) -> None:
+async def test_actions_edit_append_and_view_through_dialogs(tmp_path: Path) -> None:
     context, applied = make_context(tmp_path)
-    menu = SystemPromptMenu(context, history=lambda: ())
-    opened, editor = replying(
-        '  First.\n',  # Saved without the surrounding whitespace.
-        None,  # Cancelled.
-        'First.\n',  # Unchanged.
-        'Second.',
-        '  \n',  # Nothing to add.
-        None,
-        'Only.',
-        '',  # Emptied: removes them.
-    )
-    script = Script(
-        lists=[
-            pick(Action.EDIT),
-            pick(Action.EDIT),
-            pick(Action.EDIT),
-            pick(Action.APPEND),
-            pick(Action.APPEND),
-            pick(Action.APPEND),
-            pick(Action.VIEW),
-            pick(Action.RESET),
-            pick(Action.APPEND),
-            pick(Action.EDIT),
-            MenuResult(cancelled=True),
-        ],
-        choices=[],
-        texts=[],
-    )
+    history = [ModelRequest(parts=[UserPromptPart('hi')], instructions='Built-in.'), ModelResponse(parts=[])]
+    menu = system_prompt_menu(context, history=lambda: history)
+    edit, append, view = (menu.actions[key] for key in (INSTRUCTIONS, APPEND, PROMPT))
+    saved = ['Saved your instructions. They apply from your next prompt.']
+
+    assert await edit(ScriptedDialogs([Back()])) == []
+    dialogs = ScriptedDialogs([Type(text='  First.\n')])
+    assert await edit(dialogs) == saved
+    [asked] = dialogs.asked
+    assert (asked.kind, asked.title, asked.multiline, asked.initial) == ('text', 'Edit your instructions', True, '')
+    unchanged = ScriptedDialogs([Type(text='First.')])
+    assert await edit(unchanged) == [], 'nothing changed'
+    assert unchanged.asked[0].initial == 'First.'
+
+    assert await append(ScriptedDialogs([Type(text='Second.')])) == saved
+    assert context.settings.instructions == 'First.\n\nSecond.', 'a blank line between paragraphs'
+    assert await append(ScriptedDialogs([Type(text='  ')])) == []
+    assert await append(ScriptedDialogs([Back()])) == []
+
+    viewed = ScriptedDialogs([])
+    assert await view(viewed) == []
+    assert [(asked.kind, asked.text) for asked in viewed.asked] == [('view', 'Built-in.')]
+
+    assert await edit(ScriptedDialogs([Type(text='')])) == [
+        'Removed your instructions. They apply from your next prompt.'
+    ], 'emptying them removes them'
+    assert await append(ScriptedDialogs([Type(text='Only.')])) == saved
+    assert context.settings.instructions == 'Only.'
+    assert applied == ['run.instructions'] * 4
+
+
+async def test_the_terminal_runs_the_same_menu_with_its_editor_and_pager(tmp_path: Path) -> None:
+    context, _ = make_context(tmp_path)
+    opened, editor = replying('Mine.\n', None, 'More.')
     viewed: list[Pager] = []
-    messages = run_system_prompt_menu(menu, runners=script.runners, editor=editor, view=viewed.append)
-    saved = 'Saved your instructions. They apply from your next prompt.'
-    removed = 'Removed your instructions. They apply from your next prompt.'
-    assert messages == [saved, saved, removed, saved, removed]
+    script = Script(lists=[pick(INSTRUCTIONS), pick(APPEND), pick(APPEND), pick(PROMPT), CLOSE], choices=[], texts=[])
+    runners = Runners(run_list=script.run_list, edit=editor, run_pager=viewed.append)
+    message = await system_prompt_command(context, [], history=lambda: (), runners=runners)
+    assert message == '\n'.join(['Saved your instructions. They apply from your next prompt.'] * 2)
     assert opened == [
         ('Edit your instructions', ''),
-        ('Edit your instructions', 'First.'),
-        ('Edit your instructions', 'First.'),
         ('Append to your instructions', ''),
         ('Append to your instructions', ''),
-        ('Append to your instructions', ''),
-        ('Append to your instructions', ''),
-        ('Edit your instructions', 'Only.'),
     ]
     [pager] = viewed
-    assert pager.line_count == 2  # The not-yet-sent note, wrapped.
-    assert applied == ['run.instructions'] * 5
-    assert context.settings.instructions == ''
-    assert 'run.instructions' not in context.store.overrides()
-
-
-def test_appending_keeps_a_blank_line_between_paragraphs(tmp_path: Path) -> None:
-    context, _ = make_context(tmp_path)
-    context.set_setting(['run.instructions', 'First.'])
-    _, editor = replying('Second.\n')
-    assert SystemPromptMenu(context, history=lambda: ()).append(editor) is not None
-    assert context.store.load().instructions == 'First.\n\nSecond.'
-
-
-def test_pager_wraps_the_full_prompt() -> None:
-    pager = build_pager('short\n\n' + 'word ' * 100)
-    assert pager.line_count > 3
+    assert pager.line_count >= 1
+    assert context.settings.instructions == 'Mine.\n\nMore.'
 
 
 def _editor(tmp_path: Path, name: str) -> str:

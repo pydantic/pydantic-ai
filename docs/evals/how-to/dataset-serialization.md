@@ -412,7 +412,7 @@ evaluators:
     max_length: 20
 - LLMJudge:
     rubric: "Response is accurate"
-    model: "openai:gpt-5"
+    model: "{{ openai:medium }}"
     include_input: true
 ```
 

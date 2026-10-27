@@ -21,7 +21,6 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -29,7 +28,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
+from pydantic_ai.capabilities import AbstractCapability, Hooks, WrapModelRequestHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.conversation import Conversation
 from pydantic_ai.exceptions import (
@@ -54,6 +53,7 @@ from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics, try_import
+from .continuation_utils import ScriptedContinuationModel, StreamSegment
 
 with try_import():
     # `opentelemetry-sdk` arrives with the `logfire` extra, so it is not importable in the
@@ -473,6 +473,7 @@ def test_logfire(
                                 'toolset_id': None,
                                 'unless_native': None,
                                 'with_native': None,
+                                'unless_tool_kind': None,
                                 'tool_kind': None,
                                 'return_schema': None,
                                 'include_return_schema': None,
@@ -482,6 +483,7 @@ def test_logfire(
                         'native_tools': [],
                         'tool_visibility': {'my_ret': 'visible'},
                         'revealed_tool_names': [],
+                        'introduced_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_tools': [],
@@ -490,6 +492,7 @@ def test_logfire(
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     }
@@ -957,6 +960,32 @@ async def test_chat_span_records_response_rejected_by_after_hook(capfire: Captur
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_chat_span_records_a_stream_the_consumer_stopped(capfire: CaptureLogfire) -> None:
+    model = ScriptedContinuationModel(
+        segments=[
+            StreamSegment(texts=['A', 'B'], state='complete', provider_response_id='a', input_tokens=7, output_tokens=3)
+        ]
+    )
+    agent = Agent(model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
+
+    async with agent.iter('hello') as run:
+        with pytest.raises(RuntimeError, match='stop'):
+            async for node in run:  # pragma: no branch
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        async for text in stream.stream_text(debounce_by=None):  # pragma: no branch
+                            if 'A' in text:
+                                raise RuntimeError('stop')
+
+    [chat_span] = [span for span in _get_spans(capfire) if span['name'].startswith('chat ')]
+    assert chat_span['attributes']['gen_ai.output.messages'] == snapshot(
+        [{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'A'}]}]
+    )
+    assert chat_span['attributes']['gen_ai.usage.input_tokens'] == 7
+    assert chat_span['attributes']['gen_ai.usage.output_tokens'] == 3
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
 async def test_nested_instrumentation_capabilities_capture_request_and_response(capfire: CaptureLogfire) -> None:
     settings = InstrumentationSettings()
@@ -1249,6 +1278,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'introduced_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'tool',
                         'output_object': None,
@@ -1272,6 +1302,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'toolset_id': '<output>',
                                 'unless_native': None,
                                 'with_native': None,
+                                'unless_tool_kind': None,
                                 'tool_kind': None,
                                 'return_schema': None,
                                 'include_return_schema': None,
@@ -1284,11 +1315,13 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                         'instruction_parts': [
                             {
                                 'dynamic': False,
+                                'on_change': 'rewrite',
                                 'name': None,
                                 'id': 'agent',
                                 'part_kind': 'instruction',
                             }
                         ],
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     }
@@ -1559,6 +1592,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'introduced_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -1567,6 +1601,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': None,
+                        'instruction_visibility': None,
                         'thinking': None,
                         'cache': None,
                     },
@@ -1728,11 +1763,10 @@ def test_include_tool_args_span_attributes(
                     'gen_ai.conversation.id': IsStr(),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.tool.call.result': """\
-Tool error
-
-Fix the errors and try again.\
-""",
+                    'gen_ai.tool.call.result': 'Tool error',
+                    'pydantic_ai.tool.retry.cause': 'model_retry',
+                    'pydantic_ai.tool.retry.attempt': 1,
+                    'pydantic_ai.tool.retry.max_retries': 1,
                     'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                 }
@@ -1788,6 +1822,9 @@ Fix the errors and try again.\
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
                     'gen_ai.agent.call.id': IsStr(),
+                    'pydantic_ai.tool.retry.cause': 'model_retry',
+                    'pydantic_ai.tool.retry.attempt': 1,
+                    'pydantic_ai.tool.retry.max_retries': 1,
                     'logfire.level_num': 17,
                 }
             )
@@ -1866,6 +1903,13 @@ def test_tool_argument_validation_failure_emits_span(
     assert tool_spans[0]['logfire.level_num'] == 17
     assert tool_spans[0]['logfire.msg'] == 'invalid tool call: double'
     assert tool_spans[0]['pydantic_ai.tool.failure_stage'] == 'validation'
+    # Recorded whether or not content is captured.
+    assert {key: value for key, value in tool_spans[0].items() if '.retry.' in key} == {
+        'pydantic_ai.tool.retry.cause': 'validation_error' if failure_source == 'schema' else 'model_retry',
+        'pydantic_ai.tool.retry.attempt': 1,
+        'pydantic_ai.tool.retry.max_retries': 1,
+    }
+    assert not [key for key in tool_spans[1] if '.retry.' in key]
     assert 'logfire.level_num' not in tool_spans[1]
     assert tool_spans[1]['logfire.msg'] == 'running tool: double'
     assert 'pydantic_ai.tool.failure_stage' not in tool_spans[1]
@@ -1876,6 +1920,44 @@ def test_tool_argument_validation_failure_emits_span(
     else:
         assert all('gen_ai.tool.call.result' not in span for span in tool_spans)
         assert 'private-invalid-value' not in str(capfire.exporter.exported_spans_as_dict())
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('failure_source', ['schema', 'validator'])
+def test_tool_argument_validation_failure_past_the_budget_records_its_cause_alone(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    failure_source: Literal['schema', 'validator'],
+) -> None:
+    """A validation failure with no retry left ends the run, so its span claims no attempt."""
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        x: Any = 'not a number' if failure_source == 'schema' else 2
+        return ModelResponse(parts=[ToolCallPart('double', {'x': x})])
+
+    def validate_args(ctx: RunContext[Any], x: int) -> None:
+        raise ModelRetry(f'reject {x}')
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        retries={'tools': 0},
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
+    )
+
+    @agent.tool_plain(args_validator=validate_args)
+    def double(x: int) -> int:
+        return x * 2  # pragma: no cover
+
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries'):
+        agent.run_sync('Use the tool')
+
+    [tool_span] = [
+        attributes
+        for attributes in get_logfire_summary().attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    assert {key: value for key, value in tool_span.items() if '.retry.' in key} == {
+        'pydantic_ai.tool.retry.cause': 'validation_error' if failure_source == 'schema' else 'model_retry'
+    }
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -1924,9 +2006,9 @@ def test_raw_mode_validation_failure_emits_span(
 ) -> None:
     """Sandboxed dispatch (`handle_call(wrap_validation_errors=False)`) still emits the failure span.
 
-    The raw exception surfaces to the dispatching code rather than the model: no
-    `RetryPromptPart` enters message history, so the span's recorded retry prompt is a
-    rendered description of the failure, not a message the model received.
+    The raw exception surfaces to the dispatching code rather than the model: no retry enters
+    message history at all, so the span's recorded retry prompt is a rendered description of the
+    failure, not a message the model received.
     """
 
     def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
@@ -1962,7 +2044,11 @@ def test_raw_mode_validation_failure_emits_span(
     assert len(failure_spans) == 1
     assert failure_spans[0]['logfire.level_num'] == 17
     assert failure_spans[0]['logfire.msg'] == 'invalid tool call: double'
-    assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
+    assert not any(
+        isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        for message in result.all_messages()
+        for part in message.parts
+    )
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -2354,6 +2440,9 @@ def test_output_type_function_with_retry_logfire_attributes(
                     'gen_ai.tool.call.arguments': '"New York City"',
                     'logfire.json_schema': '{"type":"object","properties":{"gen_ai.tool.call.arguments":{"type":"object"},"gen_ai.tool.call.result":{"type":"object"},"gen_ai.tool.name":{},"gen_ai.tool.call.id":{}}}',
                     'logfire.span_type': 'span',
+                    'pydantic_ai.tool.retry.cause': 'model_retry',
+                    'pydantic_ai.tool.retry.attempt': 1,
+                    'pydantic_ai.tool.retry.max_retries': 1,
                     'logfire.level_num': 17,
                 },
                 {
@@ -2384,6 +2473,9 @@ def test_output_type_function_with_retry_logfire_attributes(
                     'gen_ai.tool.call.id': IsStr(),
                     'logfire.json_schema': '{"type":"object","properties":{"gen_ai.tool.name":{},"gen_ai.tool.call.id":{}}}',
                     'logfire.span_type': 'span',
+                    'pydantic_ai.tool.retry.cause': 'model_retry',
+                    'pydantic_ai.tool.retry.attempt': 1,
+                    'pydantic_ai.tool.retry.max_retries': 1,
                     'logfire.level_num': 17,
                 },
                 {
@@ -2929,6 +3021,9 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                     'gen_ai.tool.call.arguments': '"New York City"',
                     'logfire.json_schema': '{"type":"object","properties":{"gen_ai.tool.call.arguments":{"type":"object"},"gen_ai.tool.call.result":{"type":"object"},"gen_ai.tool.name":{}}}',
                     'logfire.span_type': 'span',
+                    'pydantic_ai.output.retry.cause': 'model_retry',
+                    'pydantic_ai.output.retry.attempt': 1,
+                    'pydantic_ai.output.retry.max_retries': 1,
                     'logfire.level_num': 17,
                 },
                 {
@@ -2957,6 +3052,9 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
                     'logfire.msg': 'running output function: get_weather_with_retry',
                     'logfire.json_schema': '{"type":"object","properties":{"gen_ai.tool.name":{}}}',
                     'logfire.span_type': 'span',
+                    'pydantic_ai.output.retry.cause': 'model_retry',
+                    'pydantic_ai.output.retry.attempt': 1,
+                    'pydantic_ai.output.retry.max_retries': 1,
                     'logfire.level_num': 17,
                 },
                 {
@@ -5240,3 +5338,127 @@ def test_run_span_reports_the_runs_own_usage_when_a_conversation_carries_the_tot
     ]
     assert reported == snapshot([51, 52])
     assert second.conversation.usage.input_tokens == snapshot(103)
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_retried_tool_and_output_spans_carry_the_retry_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    """A span whose call or output has to be made again says why and which attempt that is.
+
+    A tool's own `ModelRetry` reaches the span already wrapped as the retry; one a hook raises, and one
+    an output function raises, is turned into the retry outside the span, so its attempt is the next on
+    the counter the span's `RunContext` reports.
+    """
+    hook_calls = 0
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        step = len([m for m in messages if isinstance(m, ModelResponse)])
+        if step == 0:
+            return ModelResponse(parts=[ToolCallPart('flaky', {}, tool_call_id='c1')])
+        if step == 1:
+            return ModelResponse(parts=[ToolCallPart('hooked', {}, tool_call_id='c2')])
+        return ModelResponse(parts=[TextPart('bad' if step == 2 else 'good')])
+
+    def shout(text: str) -> str:
+        if text == 'bad':
+            raise ModelRetry('the answer has to be good')
+        return text.upper()
+
+    hooks = Hooks()
+
+    @hooks.on.after_tool_execute
+    async def reject_once(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, result: Any
+    ):
+        nonlocal hook_calls
+        if call.tool_name == 'hooked':
+            hook_calls += 1
+            if hook_calls == 1:
+                raise ModelRetry('hook says no')
+        return result
+
+    agent = Agent(
+        FunctionModel(respond),
+        output_type=TextOutput(shout),
+        retries={'tools': 2, 'output': 3},
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), hooks],
+    )
+    flaky_calls = 0
+
+    @agent.tool_plain
+    def flaky() -> str:
+        nonlocal flaky_calls
+        flaky_calls += 1
+        if flaky_calls == 1:
+            raise ModelRetry('try again')
+        return 'ok'  # pragma: no cover
+
+    @agent.tool_plain
+    def hooked() -> str:
+        return 'ok'
+
+    assert agent.run_sync('go').output == 'GOOD'
+
+    retry_attributes = [
+        {key: value for key, value in attributes.items() if '.retry.' in key}
+        for attributes in get_logfire_summary().attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    assert [attributes for attributes in retry_attributes if attributes] == snapshot(
+        [
+            {
+                'pydantic_ai.tool.retry.cause': 'model_retry',
+                'pydantic_ai.tool.retry.attempt': 1,
+                'pydantic_ai.tool.retry.max_retries': 2,
+            },
+            {
+                'pydantic_ai.tool.retry.cause': 'model_retry',
+                'pydantic_ai.tool.retry.attempt': 1,
+                'pydantic_ai.tool.retry.max_retries': 2,
+            },
+            {
+                'pydantic_ai.output.retry.cause': 'model_retry',
+                'pydantic_ai.output.retry.attempt': 1,
+                'pydantic_ai.output.retry.max_retries': 3,
+            },
+        ]
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_a_retry_past_the_budget_records_its_cause_alone(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    """A failure past the budget ends the run instead of retrying, so its span claims no attempt."""
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('hooked', {}, tool_call_id='c1')])
+
+    hooks = Hooks()
+
+    @hooks.on.after_tool_execute
+    async def reject(ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, result: Any):
+        raise ModelRetry('hook says no')
+
+    agent = Agent(
+        FunctionModel(respond),
+        retries={'tools': 0},
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), hooks],
+    )
+
+    @agent.tool_plain
+    def hooked() -> str:
+        return 'ok'
+
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries'):
+        agent.run_sync('go')
+
+    [tool_span] = [
+        attributes
+        for attributes in get_logfire_summary().attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    assert {key: value for key, value in tool_span.items() if '.retry.' in key} == {
+        'pydantic_ai.tool.retry.cause': 'model_retry'
+    }

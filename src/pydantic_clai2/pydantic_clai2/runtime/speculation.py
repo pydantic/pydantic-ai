@@ -17,6 +17,7 @@ from rich.console import Console
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.ui.rendering import theme
 
 SETTING = 'run.speculative_code_mode'
@@ -70,6 +71,8 @@ class Speculation:
     context: CommandContext
     console: Console
     counters: SpeculationCounters = field(default_factory=SpeculationCounters)
+    repl_states: ReplStates | None = None
+    """Where each session's `run_code` REPL is kept between prompts; `None` keeps it to one run."""
     _running: bool | None = field(default=None, init=False, repr=False)
     """The switch as the running turn bound it, or `None` between turns."""
 
@@ -128,7 +131,7 @@ class Speculation:
         except ImportError as exc:
             self.console.print(f'Code mode is unavailable: {exc}', style=theme.color(theme.WARNING), markup=False)
             return []
-        return speculative_capabilities(self.counters, granted, speculate=self.enabled)
+        return speculative_capabilities(self.counters, granted, speculate=self.enabled, repl_states=self.repl_states)
 
 
 def _lit(on: bool, text: str, role: str) -> str:

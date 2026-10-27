@@ -8,7 +8,7 @@ and blocks 'required' and list[str] values before they reach the model-specific 
 from __future__ import annotations
 
 import re
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -354,8 +354,9 @@ def test_resolve_tool_choice_filters_hidden_names_when_one_is_available() -> Non
 
 
 def test_resolve_tool_choice_keeps_via_history_names() -> None:
-    """A `'via_history'` definition travels on the tool-addition channel and stays forcible
-    (live-verified against OpenAI Responses), so it must survive the hidden-name filter."""
+    """A `'via_history'` definition travels on the tool-addition channel and stays forcible, so it must survive the
+    hidden-name filter: GPT-5.6 and later accept the item-only name, and `OpenAIResponsesModel` redeclares it in
+    `tools` for earlier models when the request uses no server-side state."""
     params = ModelRequestParameters(
         function_tools=[make_tool('visible'), make_tool('revealed')],
         tool_visibility={'visible': 'visible', 'revealed': 'via_history'},
@@ -563,6 +564,50 @@ def test_bedrock_explicit_tool_forcing_non_anthropic_thinking_errors():
 
 
 @skip_if_no_bedrock
+@pytest.mark.parametrize(
+    ('tool_choice_value', 'expected_tool_choice'),
+    [
+        pytest.param('required', {'any': {}}, id='required'),
+        pytest.param(['tool_a'], {'tool': {'name': 'tool_a'}}, id='single_tool'),
+    ],
+)
+def test_bedrock_xai_grok_forces_tools_with_thinking(tool_choice_value: Any, expected_tool_choice: dict[str, Any]):
+    """Grok always reasons on Converse and accepts `toolChoice` `any`/`tool`, so thinking does not block forcing.
+
+    Not a VCR test: the recording account has no Grok access on Converse.
+    """
+    provider = BedrockProvider(bedrock_client=MagicMock())
+    model = BedrockConverseModel('us.xai.grok-4.6', provider=provider)
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], thinking='high')
+
+    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice=tool_choice_value), [])  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config is not None
+    assert tool_config.get('toolChoice') == expected_tool_choice
+
+
+@skip_if_no_bedrock
+@pytest.mark.parametrize('output_mode', ['auto', 'tool'])
+def test_bedrock_xai_grok_keeps_tool_output_with_thinking(output_mode: Literal['auto', 'tool']):
+    """Grok keeps tool output while it thinks, since Converse accepts the forced `toolChoice` Tool Output relies on.
+
+    Not a VCR test: the recording account has no Grok access on Converse.
+    """
+    provider = BedrockProvider(bedrock_client=MagicMock())
+    model = BedrockConverseModel('us.xai.grok-4.6', provider=provider)
+    params = ModelRequestParameters(
+        output_mode=output_mode,
+        output_tools=[make_tool('final_result')],
+        allow_text_output=False,
+        thinking='high',
+    )
+
+    _, prepared = model.prepare_request(None, params)
+
+    assert prepared.output_mode == 'tool'
+
+
+@skip_if_no_bedrock
 def test_bedrock_anthropic_tool_choice_profile_override_disables_forcing():
     profile = cast(
         BedrockModelProfile,
@@ -758,7 +803,7 @@ def test_bedrock_single_tool_fallback_filters_when_unsupported():
         thinking=True,
     )
 
-    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice='none'))  # pyright: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice='none'), [])  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config is not None
     assert tool_config.get('toolChoice') == {'auto': {}}
@@ -810,7 +855,7 @@ def test_bedrock_tool_or_output_single_resolved_preserves_cache(
         allow_text_output=False,
     )
 
-    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice=tool_choice_value))  # pyright: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice=tool_choice_value), [])  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config is not None
     assert tool_config.get('toolChoice') == {'tool': {'name': expected_forced_name}}
@@ -885,6 +930,43 @@ def test_google_allowed_function_names_ignore_unavailable_tools():
     config = tool_config['function_calling_config']  # pyright: ignore[reportTypedDictNotRequiredAccess]
     assert config is not None
     assert config['allowed_function_names'] == ['get_time']  # pyright: ignore[reportTypedDictNotRequiredAccess]
+
+
+@skip_if_no_openai
+@pytest.mark.parametrize(
+    'tool_choice,expected_names',
+    [
+        pytest.param(['tool_b', 'typo', 'tool_c'], ['tool_c', 'tool_b'], id='list'),
+        pytest.param(ToolOrOutput(function_tools=['tool_b', 'typo']), ['tool_b', 'final_result'], id='tool_or_output'),
+    ],
+)
+def test_openai_responses_allowed_tools_ignore_unavailable_tools(tool_choice: ToolChoice, expected_names: list[str]):
+    """`allowed_tools` drops the names `resolve_tool_choice` warns it will ignore, and keeps declaration order.
+
+    A unit test rather than VCR: cassette replay doesn't match on the request body, so only the built payload shows
+    an unknown name or a changed order. The live API returns a 400 for an `allowed_tools` name the request doesn't
+    define. `tool_b` is revealed via history, so it is absent from `declared_tool_defs`, and GPT-5.6 accepts it in
+    `allowed_tools` all the same; earlier models get it redeclared in `tools` without server-side state, which
+    `test_tool_availability_delta_resolves_tool_choice_from_revealed_tools` covers.
+    """
+    m = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=MagicMock()))
+    params = ModelRequestParameters(
+        function_tools=[make_tool('tool_c'), make_tool('tool_a'), make_tool('tool_b')],
+        output_tools=[make_tool('final_result')],
+        tool_visibility={'tool_b': 'via_history'},
+        allow_text_output=False,
+    )
+    settings: OpenAIResponsesModelSettings = {'tool_choice': tool_choice}
+
+    with pytest.warns(UserWarning, match=re.escape("will be ignored: ['typo']")):
+        resolved_tool_choice = resolve_tool_choice(settings, params)
+    _, responses_tool_choice = m._get_responses_tool_choice(resolved_tool_choice, settings, params)  # pyright: ignore[reportPrivateUsage]
+
+    assert responses_tool_choice == {
+        'type': 'allowed_tools',
+        'mode': 'required',
+        'tools': [{'type': 'function', 'name': name} for name in expected_names],
+    }
 
 
 NATIVE_TOOL_CONFIG_CASES = [
@@ -1059,11 +1141,28 @@ async def test_anthropic_no_forcing_model_explicit_forcing_raises(
 
 
 @skip_if_no_openai
-async def test_openai_chat_fallback_single_tool_filters_tool_defs(allow_model_requests: None):
-    """`ToolOrOutput` single function tool on a no-forcing model falls back to auto and filters tool_defs."""
-    mock_client = MagicMock()
-    provider = OpenAIProvider(openai_client=mock_client)
+async def test_openai_chat_fallback_single_tool_uses_allowed_tools(allow_model_requests: None):
+    """`ToolOrOutput` single function tool on a no-forcing OpenAI model uses `allowed_tools` to preserve cache."""
+    provider = OpenAIProvider(api_key='test-key')
     profile = OpenAIModelProfile(supports_forced_tool_choice=False)
+    m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=True)
+
+    tools, tool_choice = m._get_tool_choice(  # pyright: ignore[reportPrivateUsage]
+        {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}, params
+    )
+    assert tool_choice == {
+        'type': 'allowed_tools',
+        'allowed_tools': {'mode': 'auto', 'tools': [{'type': 'function', 'function': {'name': 'tool_a'}}]},
+    }
+    assert [t['function']['name'] for t in tools] == ['tool_a', 'tool_b']
+
+
+@skip_if_no_openai
+async def test_openai_chat_fallback_single_tool_filters_tool_defs_without_allowed_tools(allow_model_requests: None):
+    """A server that opted out of `allowed_tools` gets a no-forcing model's subset as filtered `tool_defs` and `auto`."""
+    provider = OpenAIProvider(api_key='test-key', base_url='http://localhost:8000/v1')
+    profile = OpenAIModelProfile(supports_forced_tool_choice=False, openai_chat_supports_allowed_tools=False)
     m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
     params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=True)
 
@@ -1075,6 +1174,31 @@ async def test_openai_chat_fallback_single_tool_filters_tool_defs(allow_model_re
 
 
 @skip_if_no_openai
+async def test_openai_chat_custom_base_url_keeps_allowed_tools(allow_model_requests: None):
+    """`OpenAIProvider` sends `allowed_tools` through a custom `base_url` too, such as the Pydantic AI Gateway's."""
+    provider = OpenAIProvider(api_key='test-key', base_url='http://localhost:8000/v1')
+    m = OpenAIChatModel('gpt-4o-mini', provider=provider)
+    params = ModelRequestParameters(
+        function_tools=[make_tool('tool_a'), make_tool('tool_b'), make_tool('tool_c')], allow_text_output=False
+    )
+
+    tools, tool_choice = m._get_tool_choice({'tool_choice': ['tool_a', 'tool_b']}, params)  # pyright: ignore[reportPrivateUsage]
+    assert tool_choice == (
+        {
+            'type': 'allowed_tools',
+            'allowed_tools': {
+                'mode': 'required',
+                'tools': [
+                    {'type': 'function', 'function': {'name': 'tool_a'}},
+                    {'type': 'function', 'function': {'name': 'tool_b'}},
+                ],
+            },
+        }
+    )
+    assert [t['function']['name'] for t in tools] == ['tool_a', 'tool_b', 'tool_c']
+
+
+@skip_if_no_openai
 async def test_openai_responses_fallback_single_tool_uses_allowed_tools(allow_model_requests: None):
     """`ToolOrOutput` single function tool on a no-forcing Responses model uses `allowed_tools` to preserve cache."""
     mock_client = MagicMock()
@@ -1083,8 +1207,9 @@ async def test_openai_responses_fallback_single_tool_uses_allowed_tools(allow_mo
     m = OpenAIResponsesModel('gpt-4o-mini', provider=provider, profile=profile)
     params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=True)
 
+    settings: OpenAIResponsesModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
     tools, tool_choice = m._get_responses_tool_choice(  # pyright: ignore[reportPrivateUsage]
-        {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}, params
+        resolve_tool_choice(settings, params), settings, params
     )
     assert isinstance(tool_choice, dict)
     assert tool_choice['type'] == 'allowed_tools'
@@ -1146,7 +1271,7 @@ async def test_openai_responses_forcing_follows_thinking_state(
     )
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False, thinking=thinking)
 
-    _, tool_choice = m._get_responses_tool_choice({}, params)  # pyright: ignore[reportPrivateUsage]
+    _, tool_choice = m._get_responses_tool_choice(resolve_tool_choice({}, params), {}, params)  # pyright: ignore[reportPrivateUsage]
     assert tool_choice == expected_tool_choice
 
 
@@ -1188,9 +1313,10 @@ async def test_openai_responses_explicit_forcing_with_thinking_raises(
         'stub', provider=OpenAIProvider(openai_client=MagicMock()), profile=thinking_conditional_profile()
     )
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False)
+    settings: OpenAIResponsesModelSettings = {'tool_choice': tool_choice}
 
     with pytest.raises(UserError, match=r'does not support forcing tool use while thinking is enabled'):
-        m._get_responses_tool_choice({'tool_choice': tool_choice}, params)  # pyright: ignore[reportPrivateUsage]
+        m._get_responses_tool_choice(resolve_tool_choice(settings, params), settings, params)  # pyright: ignore[reportPrivateUsage]
 
 
 @skip_if_no_openai
@@ -1221,7 +1347,7 @@ async def test_openai_responses_tool_or_output_forcing_without_required_support_
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False)
     settings: OpenAIResponsesModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
 
-    _, tool_choice = m._get_responses_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+    _, tool_choice = m._get_responses_tool_choice(resolve_tool_choice(settings, params), settings, params)  # pyright: ignore[reportPrivateUsage]
     assert tool_choice == 'auto'
 
 

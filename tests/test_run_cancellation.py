@@ -232,11 +232,15 @@ async def test_after_run_hook_cannot_convert_external_cancel_to_success():
     agent = Agent(TestModel(), capabilities=[SwallowInAfterRun()])
 
     task = asyncio.create_task(agent.run('hello'))
-    await asyncio.wait_for(in_flight.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    # Order on the hook rather than a wall-clock deadline, which a stalled CI worker can overrun before
+    # the run gets that far. A run that ends without reaching the hook fails here instead of hanging.
+    hook_reached = asyncio.create_task(in_flight.wait())
+    await asyncio.wait({hook_reached, task}, return_when=asyncio.FIRST_COMPLETED)
+    assert in_flight.is_set(), task
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
+        await task
 
 
 async def test_consumed_cancellation_is_not_a_false_positive():

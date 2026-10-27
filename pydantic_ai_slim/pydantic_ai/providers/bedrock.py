@@ -4,7 +4,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Literal, overload
+from typing import Any, ClassVar, Literal, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
@@ -16,9 +16,11 @@ from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
@@ -86,6 +88,8 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
     `description` so the model still has the hint.
     """
 
+    _unsupported_keys_by_type: ClassVar[dict[str, tuple[str, ...]]] = _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE
+
     def walk(self) -> JsonSchema:
         schema = super().walk()
 
@@ -110,7 +114,7 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
 
         incompatible: dict[str, object] = {}
         if isinstance(schema_type, str):
-            for key in _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE.get(schema_type, ()):
+            for key in self._unsupported_keys_by_type.get(schema_type, ()):
                 if key in schema:
                     incompatible[key] = schema[key]
             if schema_type == 'array' and schema.get('minItems', 0) > 1:
@@ -125,6 +129,28 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
             desc = schema.get('description')
             schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
 
+        return schema
+
+
+class _BedrockJsonSchemaTransformerWithoutContains(BedrockJsonSchemaTransformer):
+    # Claude, GLM, Qwen and Gemma reject `contains`; Ministral accepts it. Keep the fallback model-specific.
+    # Verified on Bedrock us-east-1; see https://github.com/pydantic/pydantic-ai/issues/10713.
+    _unsupported_keys_by_type: ClassVar[dict[str, tuple[str, ...]]] = {
+        **_BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE,
+        'array': (*_BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE['array'], 'contains'),
+    }
+
+
+class _BedrockAnthropicJsonSchemaTransformer(_BedrockJsonSchemaTransformerWithoutContains):
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        schema = super().transform(schema)
+        schema_type = schema.get('type')
+        # Claude also rejects contains on nullable array type lists; GLM, Qwen and Gemma accept it.
+        # Keep the matching-type traversal boundary: the contains subschema is not walked here.
+        if self.strict and isinstance(schema_type, list) and 'array' in schema_type and 'contains' in schema:
+            note = f'contains={schema.pop("contains")}'
+            description = schema.get('description')
+            schema['description'] = note if not description else f'{description} ({note})'
         return schema
 
 
@@ -172,6 +198,16 @@ class BedrockModelProfile(ModelProfile, total=False):
     Default: `False` (strict — synthesize a leading user message when history starts with an
     assistant turn).
     """
+    bedrock_supports_citations: bool
+    """Whether this model returns citations for documents with citations enabled.
+
+    Other models reject a request that enables citations (`"This model doesn't support citations."`), so
+    [`citations`][pydantic_ai.settings.ModelSettings.citations] is ignored for them. Verified against
+    Bedrock `us-east-1` on 2026-10-20: Claude models return citations; Amazon Nova, Meta Llama, Mistral Pixtral and
+    DeepSeek reject the request.
+
+    Default: `False`.
+    """
     bedrock_supports_tool_result_status: bool
     """Whether this model accepts the `status` field on a `toolResult` block in Bedrock's Converse API.
 
@@ -192,13 +228,16 @@ class BedrockModelProfile(ModelProfile, total=False):
     Default: `False`.
     """
 
-    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen'] | None
+    bedrock_thinking_variant: Literal['anthropic', 'openai', 'openai_responses', 'qwen', 'xai'] | None
     """Which thinking API shape to use for unified thinking translation.
 
     - `'anthropic'`: Uses `{'thinking': {'type': 'adaptive'}}` for 4.6+ models,
       or `{'thinking': {'type': 'enabled', 'budget_tokens': N}}` for older models.
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
-    - `'qwen'`: Uses `{'reasoning_config': 'low'|'high'}`
+    - `'openai_responses'`: Uses `{'reasoning': {'effort': 'none'|'low'|'medium'|'high'|'xhigh'}}`, the Responses API
+      shape that the OpenAI GPT-5.6 and GPT-6 models take on Converse.
+    - `'qwen'`: Uses `{'reasoning_config': 'none'|'low'|'high'}`
+    - `'xai'`: Uses `{'reasoning': {'effort': 'low'|'medium'|'high'|'xhigh'}}`
     - `None`: No unified thinking support.
 
     Default: `None`.
@@ -239,6 +278,35 @@ class BedrockModelProfile(ModelProfile, total=False):
       Converse; Cohere's `k` and Qwen's key are unverified on Converse, so they stay here too).
     """
 
+    bedrock_tool_choice_none_variant: Literal['anthropic'] | None
+    """How `tool_choice='none'` is sent once the history has a tool call.
+
+    Converse's `toolChoice` has no `none` mode, so the tools are dropped from the request instead. Converse rejects
+    `toolUse`/`toolResult` blocks without a `toolConfig`, though, so once the history has them the tools are kept:
+
+    - `'anthropic'`: `toolChoice` is omitted and `{'tool_choice': {'type': 'none'}}` is sent in
+      `additionalModelRequestFields`. Bedrock 400s when this is combined with a Converse `toolChoice`.
+    - `None`: no native `none` exists, so `toolChoice` is omitted and the model can still call the tools.
+
+    Default: `None`.
+    """
+
+    bedrock_document_cache_point_variant: Literal['anthropic'] | None
+    """Where a cache point goes when the message ends with documents.
+
+    Bedrock rejects a `cachePoint` directly after some document blocks, so it can't always go at the end:
+
+    - `'anthropic'`: a `cachePoint` may follow a PDF or a document with citations on, so it's appended, for a
+      `CachePoint` too. Bedrock renders documents of every other format as text, moves them to the front of the message unless a `cachePoint`
+      precedes them, and rejects a `cachePoint` after them. When the message has no earlier `cachePoint`, an
+      automatic `bedrock_cache_messages` cache point goes at the end, with such trailing documents moved ahead of
+      the block before them, unless that's a PDF or a document with citations on: the rendered prompt is unchanged, and matches the next request's,
+      which no longer has this `cachePoint`, so that request reads the cache.
+    - `None`: the `cachePoint` goes before the trailing documents and videos.
+
+    Default: `None`.
+    """
+
     bedrock_disallows_sampling_settings: bool
     """Whether Converse rejects `temperature`, `top_p` and `top_k` for this model. Default: `False`.
 
@@ -276,10 +344,13 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             # accepts text and images alongside it. See https://github.com/pydantic/pydantic-ai/issues/6081.
             bedrock_tool_result_colocatable_content=frozenset({'text', 'image'}),
             bedrock_supports_leading_assistant_message=True,
+            bedrock_supports_citations=True,
             bedrock_thinking_variant='anthropic',
             bedrock_supports_adaptive_thinking=supports_adaptive,
             bedrock_supports_effort=supports_effort,
             bedrock_top_k_variant='anthropic',
+            bedrock_tool_choice_none_variant='anthropic',
+            bedrock_document_cache_point_variant='anthropic',
         ),
         _strip_builtin_tools(downstream),
     )
@@ -289,7 +360,9 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     return merge_profile(
         profile,
         BedrockModelProfile(
-            json_schema_transformer=BedrockJsonSchemaTransformer,
+            json_schema_transformer=(
+                _BedrockAnthropicJsonSchemaTransformer if supports_structured_output else BedrockJsonSchemaTransformer
+            ),
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
         ),
@@ -379,16 +452,20 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Qwen model used via Bedrock."""
     models_that_support_structured_output = ('qwen3',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    # Bedrock-Converse exposes only `reasoning_config ∈ {low, high}` for Qwen3 — no disable value.
-    supports_reasoning = 'qwq' in model_name or 'qwen3' in model_name
+    # Converse takes `reasoning_config` as `none`, `low`, `medium`, or `high`, and Qwen3 reasons only when asked to, so
+    # thinking can be turned off. Qwen3-Coder returns no reasoning at any level.
+    supports_reasoning = ('qwq' in model_name or 'qwen3' in model_name) and 'qwen3-coder' not in model_name
     return merge_profile(
         _strip_builtin_tools(qwen_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_supports_leading_assistant_message=True,
             bedrock_thinking_variant='qwen',
             supports_thinking=supports_reasoning,
-            thinking_always_enabled=supports_reasoning,
-            json_schema_transformer=BedrockJsonSchemaTransformer,
+            json_schema_transformer=(
+                _BedrockJsonSchemaTransformerWithoutContains
+                if supports_structured_output
+                else BedrockJsonSchemaTransformer
+            ),
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
             # Bedrock Converse API doesn't support JSON object mode
@@ -408,7 +485,11 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
     return merge_profile(
         _strip_builtin_tools(google_model_profile(model_name)),
         BedrockModelProfile(
-            json_schema_transformer=BedrockJsonSchemaTransformer,
+            json_schema_transformer=(
+                _BedrockJsonSchemaTransformerWithoutContains
+                if supports_structured_output
+                else BedrockJsonSchemaTransformer
+            ),
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
             # Bedrock Converse API doesn't support JSON object mode
@@ -426,7 +507,7 @@ def bedrock_zai_model_profile(model_name: str) -> ModelProfile | None:
         BedrockModelProfile(
             bedrock_supports_tool_choice=True,
             bedrock_supports_leading_assistant_message=True,
-            json_schema_transformer=BedrockJsonSchemaTransformer,
+            json_schema_transformer=_BedrockJsonSchemaTransformerWithoutContains,
             supports_json_schema_output=True,
             bedrock_supports_strict_tool_definition=True,
         ),
@@ -450,6 +531,31 @@ def bedrock_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
             # `toolResult`'s content (both images and documents), so multimodal tool returns are delivered
             # as a following user message instead. Verified live against `moonshotai.kimi-k2.5`.
             bedrock_supported_media_kinds_in_tool_returns=frozenset(),
+        ),
+    )
+
+
+def bedrock_xai_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an xAI Grok model used via Bedrock Converse."""
+    # Grok on Converse always reasons: `additionalModelRequestFields.reasoning.effort` takes `low`, `medium`,
+    # `high`, or `xhigh` (the default is `low` on 4.6 and `high` on 4.7), and no value turns reasoning off.
+    # Structured output (`outputConfig`) is listed as "Not Supported" on the Grok 4.6 model card, so the
+    # upstream Grok profile's `supports_json_schema_output`/`supports_json_object_output` are turned off. The
+    # Grok 4.7 card lists it as supported, but it stays off there too until it's verified on Converse.
+    # Converse rejects `temperature`, `topP` and `top_k` on Grok 4.6 with a `ValidationException`, and 4.7 is
+    # assumed to match, so they're dropped.
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-xai-grok-4-6.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-xai-grok-4-7.html
+    return merge_profile(
+        _strip_builtin_tools(grok_model_profile(model_name)),
+        BedrockModelProfile(
+            bedrock_supports_tool_choice=True,
+            bedrock_thinking_variant='xai',
+            bedrock_disallows_sampling_settings=True,
+            supports_thinking=True,
+            thinking_always_enabled=True,
+            supports_json_schema_output=False,
+            supports_json_object_output=False,
         ),
     )
 
@@ -516,12 +622,20 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         'gpt-6-astra',
         'gpt-6.1-sol',
     }:
-        # Converse rejects `temperature`, `top_p` and `top_k` for these; everything else keeps the defaults.
-        return BedrockModelProfile(bedrock_disallows_sampling_settings=True)
+        # Converse rejects `temperature`, `top_p` and `top_k` for these. Reasoning effort takes the Responses API
+        # shape, `{'reasoning': {'effort': ...}}`: Converse rejects the flat `reasoning_effort` that gpt-oss takes as an
+        # unknown parameter. Which models can turn reasoning off follows the OpenAI profile (GPT-6 Astra and GPT-6.1
+        # Sol reject `effort='none'` here too, verified with live requests).
+        return BedrockModelProfile(
+            bedrock_disallows_sampling_settings=True,
+            bedrock_thinking_variant='openai_responses',
+            supports_thinking=True,
+            thinking_always_enabled=openai_model_profile(model_name).get('thinking_always_enabled', False),
+        )
     # Keep other proprietary GPT models gated until their Converse support is confirmed.
     if not model_name.startswith('gpt-oss'):
         return BedrockModelProfile(bedrock_supported_on_converse=False)
-    # Converse rejects `reasoning_effort='none'` — mark always-on.
+    # Converse rejects `reasoning_effort='none'`, so gpt-oss can't turn reasoning off.
     return BedrockModelProfile(
         bedrock_thinking_variant='openai',
         supports_thinking=True,
@@ -592,6 +706,7 @@ class BedrockProvider(Provider[BaseClient]):
             # Moonshot AI's Kimi models ship under both provider prefixes on Bedrock.
             'moonshot': bedrock_moonshotai_model_profile,
             'moonshotai': bedrock_moonshotai_model_profile,
+            'xai': bedrock_xai_model_profile,
         }
 
         # Bedrock model IDs are `<provider>.<model-name>-v<n>(:<m>)?`, optionally with a

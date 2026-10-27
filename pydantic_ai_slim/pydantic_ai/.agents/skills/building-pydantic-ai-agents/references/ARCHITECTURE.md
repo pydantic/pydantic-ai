@@ -196,6 +196,8 @@ Need deterministic, fast tests?
 
 For GitHub Copilot device login, use `GitHubCopilotOAuthFlow(client_id=...)` from `pydantic_ai.providers.github_copilot`. Call `start()`, display the returned `verification_uri` and `user_code`, then await `wait_for_authorization()`. Pass its `access_token` to `GitHubCopilotProvider(api_key=...)`. The application must have device flow enabled; GitHub authorization does not establish Copilot entitlement or acceptance of that application's token. Browser opening, credential storage, and renewal stay application-owned. See the [Copilot provider guide](https://pydantic.dev/docs/ai/models/github-copilot/#device-login).
 
+To let the users of an open-source or local app run it on their own ChatGPT plan, use `OpenAIChatGPTOAuthFlow(app_name=..., host_id=...)` from `pydantic_ai.providers.openai_chatgpt`: open `authorization_url()` in the browser and await `exchange_code_from_callback()`, which listens on `http://127.0.0.1:1455/auth/callback`. Persist the returned credentials, including the issued `client_id` that later sign-ins pass back, and give them to `OpenAIChatGPTProvider` with an `OpenAIResponsesModel`. Credentials without plan usage (`plan_usage_granted` is `False`) are refused. See the [ChatGPT plan usage guide](https://pydantic.dev/docs/ai/models/openai-chatgpt/).
+
 ### Tool Decorator Comparison
 
 | Scenario | Decorator |
@@ -216,11 +218,13 @@ For GitHub Copilot device login, use `GitHubCopilotOAuthFlow(client_id=...)` fro
 | `ImageGeneration` | Image generation — native when supported, direct fallback via an image model name or `ImageGenerator` | Yes |
 | `MCP` | MCP server — native when supported, direct connection | Yes |
 | `LocalWorkspace` | A `ctx.workspace` on this machine (host subprocesses and files, no isolation); `read_only=True` refuses commands and changes | Yes |
+| `FileUnderstanding` | Replaces files the model's profile rejects with descriptions written by `fallback_subagent_model` | Yes |
 | `PrepareTools` | Filters or modifies tool definitions per step | No |
 | `PrefixTools` | Wraps a capability and prefixes its tool names | Yes |
 | `NativeTool` | Registers a provider-native tool with the agent | Yes |
 | `Toolset` | Wraps an `AbstractToolset` | No |
 | `ProcessHistory` | Wraps a history processor function — a thin wrapper over the `before_model_request` hook | No |
+| `BatchModelRequests` | Sends model requests through the OpenAI, Anthropic or Gemini batch API at batch prices; runs started together share batches | Yes |
 
 ### When to Use Each Agent Method
 

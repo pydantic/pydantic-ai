@@ -8,11 +8,14 @@ import re
 import threading
 import time
 from collections.abc import AsyncGenerator, Callable
-from contextlib import asynccontextmanager
-from typing import Any
+from contextlib import asynccontextmanager, suppress
+from typing import Any, assert_type
 
 import pytest
-from aws_durable_execution_sdk_python import durable_execution  # pyright: ignore[reportUnknownVariableType]
+from aws_durable_execution_sdk_python import (
+    DurableContext,
+    durable_execution,  # pyright: ignore[reportUnknownVariableType]
+)
 from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
 from aws_durable_execution_sdk_python.exceptions import ExecutionError
 from aws_durable_execution_sdk_python.retries import RetryPresets
@@ -147,6 +150,21 @@ class TestDurableAgentHandler:
 
         assert handler({'prompt': 'go'}, ctx) == 'done'
         assert ctx.step_names == ['a__model.request']
+
+    def test_keeps_the_handler_context_type(self) -> None:
+        """The documented handler annotates `context: DurableContext`, which a decorator typed for the
+        structural `DurableStepContext` alone would reject under a type checker."""
+
+        @durable_agent_handler
+        async def handler(event: dict[str, Any], context: DurableContext) -> str:
+            raise NotImplementedError
+
+        @durable_agent_handler(cancel_timeout=30)
+        async def parameterized(event: dict[str, Any], context: DurableContext) -> str:
+            raise NotImplementedError
+
+        assert_type(handler, Callable[[Any, DurableContext], str])
+        assert_type(parameterized, Callable[[Any, DurableContext], str])
 
     def test_parameterized_form_passes_cancel_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
         received: list[float] = []
@@ -525,6 +543,20 @@ class TestStepConfig:
         with pytest.raises(UserError, match=r'expected a dict .* or `False`, got str'):
             run_durable(lambda: agent.run('go'), context=ctx)
 
+    def test_non_string_per_tool_config_key_is_rejected(self) -> None:
+        """A pydantic `ValidationError` from a tool call is treated as invalid arguments and sent to
+        the model, so a malformed config must surface as a `UserError` instead."""
+        toolset = FunctionToolset[object](id='tools')
+        toolset.add_function(act, metadata={'aws_lambda': {1: 2}})
+
+        agent = Agent(tool_then_text(), name='a', toolsets=[toolset], capabilities=[AWSLambdaDurability()])
+        ctx = FakeDurableContext()
+
+        with pytest.raises(
+            UserError, match="Tool 'act' has invalid 'aws_lambda' metadata: step config keys must be strings"
+        ):
+            run_durable(lambda: agent.run('go'), context=ctx)
+
 
 class TestNesting:
     """A nested durable run cannot make progress: the handler thread is blocked servicing the
@@ -760,6 +792,30 @@ def shutdown(loop: asyncio.AbstractEventLoop, owner: threading.Thread | None = N
         loop.close()
 
 
+def hold_cancel_until_unwinding(
+    loop: asyncio.AbstractEventLoop, unwinding: threading.Event, monkeypatch: pytest.MonkeyPatch
+) -> threading.Event:
+    """Send the handler's cancel of an abandoned run only once the run has started unwinding.
+
+    The handler thread replies to the suspended step and then sends the cancel, which can reach
+    the loop before or after the run resumes. Holding it, as a handler thread that lags the loop on
+    a busy runner does, means it always finds the run still unwinding instead of interrupting it
+    before its cleanup starts. The returned event says the hold happened: a renamed cancel callback
+    would slip past it and bring the race back.
+    """
+    schedule = loop.call_soon_threadsafe
+    held = threading.Event()
+
+    def hold(callback: Callable[..., object], *args: Any) -> asyncio.Handle:
+        if callback.__name__ == 'cancel_and_notify':
+            assert unwinding.wait(timeout=_READINESS_WAIT_TIMEOUT)
+            held.set()
+        return schedule(callback, *args)
+
+    monkeypatch.setattr(loop, 'call_soon_threadsafe', hold)
+    return held
+
+
 class TestBridgeFailureModes:
     """Regressions for ways the bridge could strand the handler thread or swallow SDK control flow."""
 
@@ -824,18 +880,23 @@ class TestBridgeFailureModes:
         finally:
             shutdown(loop, owner=thread)
 
-    def test_a_cancelled_step_operation_does_not_hang_the_handler(self) -> None:
-        # `Task.exception()` raises for a cancelled task, so a naive done-callback would strand the
-        # handler thread inside `context.step(...)` until the function timed out.
+    def test_a_cancelled_step_operation_fails_the_step(self) -> None:
+        """`Task.exception()` raises for a cancelled task, so a naive done-callback would strand the
+        handler thread inside `context.step(...)` until the function timed out. The cancellation also
+        has to reach the SDK as an ordinary `Exception`: a `BaseException` skips its step failure
+        handling and crashes the invocation."""
+
         def act() -> str:
             raise asyncio.CancelledError('inner cancel')
 
         agent = build_agent(act)
         ctx = FakeDurableContext()
 
-        # The point of the assertion is that the call returns at all rather than wedging the thread.
-        with pytest.raises(BaseException):
+        step = 'a__function_toolset__<agent>.call_tool:act'
+        with pytest.raises(RuntimeError, match=re.escape(f'Durable step {step!r} was cancelled')):
             run_durable(lambda: agent.run('go'), context=ctx)
+
+        assert [op.name for op in ctx.failed] == [step]
 
     def test_sdk_control_flow_propagates_out_of_the_handler(self) -> None:
         """`SuspendExecution` and friends are `BaseException`s the SDK raises so user code cannot
@@ -967,11 +1028,15 @@ class TestBridgeFailureModes:
                 raise Suspend('retry scheduled')
 
         cleanup_reached = threading.Event()
+        abandoned_runs: list[asyncio.Task[Any]] = []
 
         async def run_with_slow_cleanup() -> str:
             try:
                 return await agent.run('go')  # type: ignore[return-value]
             finally:
+                task = asyncio.current_task()
+                assert task is not None
+                abandoned_runs.append(task)
                 cleanup_reached.set()
                 # Refuse cancellation past the retirement deadline. The loop must still stop at
                 # the grace deadline rather than letting this abandoned run continue indefinitely.
@@ -985,11 +1050,21 @@ class TestBridgeFailureModes:
         abandoned = loops.get()
         abandoned_thread = loops._thread  # pyright: ignore[reportPrivateUsage]
         assert abandoned_thread is not None
+        retire = loops.retire
+
+        def retire_once_cleaning_up(loop: asyncio.AbstractEventLoop, task: asyncio.Task[Any] | None) -> None:
+            # The 0.05s grace bounds a cleanup that refuses to finish, not the unwind that reaches
+            # it: a loop thread descheduled for longer than the grace would stop the loop before the
+            # run's `finally` starts. Retire once the cleanup is running, as a handler thread that
+            # lags the loop does.
+            assert cleanup_reached.wait(timeout=_READINESS_WAIT_TIMEOUT)
+            retire(loop, task)
+
+        monkeypatch.setattr(loops, 'retire', retire_once_cleaning_up)
 
         with pytest.raises(Suspend):
             run_durable(run_with_slow_cleanup, context=SuspendingContext(), cancel_timeout=0.01)
 
-        assert cleanup_reached.is_set()
         # The handler returned while the abandoned run still holds `abandoned`, so the next
         # invocation must not be handed that loop.
         replacement = loops.get()
@@ -997,18 +1072,17 @@ class TestBridgeFailureModes:
         assert replacement_thread is not None
         assert replacement is not abandoned
 
-        started_waiting = time.monotonic()
-        deadline = time.monotonic() + 5
-        while not abandoned.is_closed() and time.monotonic() < deadline:
-            time.sleep(0.01)  # pragma: lax no cover - the retired loop normally closes before polling
-
-        assert abandoned.is_closed()
+        # The thread closes the loop and then exits, so wait for the exit rather than the close.
+        abandoned_thread.join(timeout=_READINESS_WAIT_TIMEOUT)
         assert not abandoned_thread.is_alive()
-        assert time.monotonic() - started_waiting < 0.5
+        assert abandoned.is_closed()
+        # The cleanup was still refusing to finish, so the grace deadline is what stopped the loop.
+        (abandoned_run,) = abandoned_runs
+        assert not abandoned_run.done()
+        abandoned_runs.clear()
         shutdown(replacement, owner=replacement_thread)
         gc.collect()
 
-    @pytest.mark.skip(reason='Cleanup never finishes in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
     def test_an_unwind_that_finishes_within_the_cancel_timeout_keeps_the_loop_warm(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1024,6 +1098,7 @@ class TestBridgeFailureModes:
             def step(self, func, name=None, config=None):  # type: ignore[no-untyped-def]
                 raise Suspend('retry scheduled')
 
+        unwinding = threading.Event()
         cleanup_finished = threading.Event()
 
         agent = build_agent(act)
@@ -1032,17 +1107,22 @@ class TestBridgeFailureModes:
             try:
                 return await agent.run('go')  # type: ignore[return-value]
             finally:
-                await asyncio.sleep(0.02)
+                unwinding.set()
+                # The cleanup finishes as soon as the handler's cancel reaches it.
+                with suppress(asyncio.CancelledError):
+                    await asyncio.Event().wait()
                 cleanup_finished.set()
 
         warm = loops.get()
         thread = loops._thread  # pyright: ignore[reportPrivateUsage]
         assert thread is not None
+        cancel_held = hold_cancel_until_unwinding(warm, unwinding, monkeypatch)
 
         with pytest.raises(Suspend):
-            run_durable(run_with_quick_cleanup, context=SuspendingContext(), cancel_timeout=0.1)
+            run_durable(run_with_quick_cleanup, context=SuspendingContext(), cancel_timeout=_READINESS_WAIT_TIMEOUT)
 
-        assert cleanup_finished.wait(timeout=5)
+        assert cancel_held.is_set()
+        assert cleanup_finished.wait(timeout=_READINESS_WAIT_TIMEOUT)
         # The unwind beat the budget, so the loop is still the one the next invocation gets.
         assert loops.get() is warm
         assert not warm.is_closed()
@@ -1050,13 +1130,13 @@ class TestBridgeFailureModes:
         shutdown(warm, owner=thread)
         gc.collect()
 
-    @pytest.mark.skip(reason='Cleanup never finishes in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
     def test_retirement_drains_cleanup_scheduled_when_the_main_task_finishes(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         loops = _bridge._AgentLoop()  # pyright: ignore[reportPrivateUsage]
         monkeypatch.setattr(_bridge, '_agent_loop', loops)
-        monkeypatch.setattr(_bridge, '_RETIRED_LOOP_GRACE_SECONDS', 0.5)
+        unwinding = threading.Event()
+        retiring = asyncio.Event()
         cleanup_finished = threading.Event()
 
         class Suspend(BaseException):
@@ -1076,18 +1156,33 @@ class TestBridgeFailureModes:
             try:
                 return await agent.run('go')  # type: ignore[return-value]
             finally:
-                await asyncio.sleep(0.03)
+                unwinding.set()
+                # Outlive the cancel budget: finish only once the retirement is waiting on this run.
+                with suppress(asyncio.CancelledError):
+                    await asyncio.Event().wait()
+                await retiring.wait()
                 asyncio.create_task(delayed_cleanup())
 
         retired = loops.get()
         thread = loops._thread  # pyright: ignore[reportPrivateUsage]
         assert thread is not None
+        cancel_held = hold_cancel_until_unwinding(retired, unwinding, monkeypatch)
+        retire = loops.retire
+
+        def retire_and_release(loop: asyncio.AbstractEventLoop, task: asyncio.Task[Any] | None) -> None:
+            # Release the run after the retirement's cleanup is queued, so that cleanup is already
+            # waiting on the run when it finishes and schedules its follow-up task.
+            retire(loop, task)
+            loop.call_soon_threadsafe(retiring.set)
+
+        monkeypatch.setattr(loops, 'retire', retire_and_release)
 
         with pytest.raises(Suspend):
             run_durable(abandoned_run, context=SuspendingContext(), cancel_timeout=0.01)
 
-        assert cleanup_finished.wait(timeout=5)
-        thread.join(timeout=5)
+        assert cancel_held.is_set()
+        assert cleanup_finished.wait(timeout=_READINESS_WAIT_TIMEOUT)
+        thread.join(timeout=_READINESS_WAIT_TIMEOUT)
         assert retired.is_closed()
         assert not thread.is_alive()
 
@@ -1098,6 +1193,7 @@ class TestBridgeFailureModes:
         assert thread is not None
         task_started = threading.Event()
         task_cancelled = threading.Event()
+        tasks: list[asyncio.Task[None]] = []
 
         async def pending_work() -> None:
             task_started.set()
@@ -1106,13 +1202,17 @@ class TestBridgeFailureModes:
             finally:
                 task_cancelled.set()
 
-        loop.call_soon_threadsafe(loop.create_task, pending_work())
-        assert task_started.wait(timeout=5)
+        # Keep the task: a loop holds its tasks only weakly, so a dropped task waiting on an event
+        # nothing else references can be garbage-collected, running its `finally`, before the
+        # retirement gets to cancel it.
+        loop.call_soon_threadsafe(lambda: tasks.append(loop.create_task(pending_work())))
+        assert task_started.wait(timeout=_READINESS_WAIT_TIMEOUT)
 
         loops.retire(loop, None)
 
-        thread.join(timeout=5)
+        thread.join(timeout=_READINESS_WAIT_TIMEOUT)
         assert task_cancelled.is_set()
+        assert tasks[0].cancelled()
         assert loop.is_closed()
         assert not thread.is_alive()
 
@@ -1340,7 +1440,7 @@ class TestEnqueueGuard:
             run_durable(lambda: agent.run('go'), context=ctx)
 
     def test_enqueue_from_an_event_handler_on_a_model_event_raises(self) -> None:
-        """Model events reach the handler inside the model step (`capture_event_stream`); a replay
+        """Model events reach the handler inside the model step (`consume_event_stream`); a replay
         serves the recorded step, so an enqueue there would be dropped. The first handler call is
         the model-request capture, so enqueuing after draining the stream raises on that path."""
 

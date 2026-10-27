@@ -127,7 +127,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 ```
 
 To make real model requests, set `OPENAI_API_KEY` in the terminal where you start the worker. In `app.py`, replace
-`TestModel(custom_output_text='The workflow completed.')` with `'openai:gpt-5.6-sol'` and remove the `TestModel` import.
+`TestModel(custom_output_text='The workflow completed.')` with `'{{ openai:medium }}'` and remove the `TestModel` import.
 Restart the server and repeat step 4; the response now comes from the model and will vary with the prompt.
 
 Replace `get_weather` with your own tool functions and update the agent's `tools` list to use them. Their arguments
@@ -384,6 +384,9 @@ shared toolset definitions remain registered. `False` is rejected for MCP and dy
 - **Streaming and cancellation:** Model responses and events are buffered until the chained task run finishes;
   provider tokens do not stream live to the caller. Pydantic AI cancellation tokens are unsupported inside a
   workflow, so use Render's native task cancellation. Cancellation does not undo external tool side effects.
+- **Batched requests:** Under [`BatchModelRequests`](../batch.md#durable-execution), the waits between checks of a batch are plain
+  sleeps, so the task has to stay up for as long as the batch takes, and a retried entry task submits a waiting
+  request again in a new batch.
 
 Retry behavior is described in [Configure retries and timeouts](#6-configure-retries-and-timeouts).
 

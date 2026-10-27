@@ -11,11 +11,12 @@ GROQ_GPT_OSS_REASONING_EFFORT_MAP: dict[ThinkingEffort, Literal['low', 'medium',
     'medium': 'medium',
     'high': 'high',
     'xhigh': 'high',
+    'max': 'high',
 }
 """Maps unified thinking effort levels to the graded `reasoning_effort` values the gpt-oss family accepts.
 
 gpt-oss only accepts `low`/`medium`/`high` (not `none`/`default`), so `minimal` folds into `low` and
-`xhigh` into `high`. `thinking=True` (bare enable) maps to `medium` in `GroqModel`, mirroring the neutral
+`xhigh` and `max` into `high`. `thinking=True` (bare enable) maps to `medium` in `GroqModel`, mirroring the neutral
 default other providers use. See [the Groq docs](https://console.groq.com/docs/reasoning#reasoning-effort).
 """
 

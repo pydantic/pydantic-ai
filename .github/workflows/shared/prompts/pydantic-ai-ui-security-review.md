@@ -8,14 +8,14 @@ variable (start from this file's content below the comment); no recompile
 or commit is needed. Keep this file in sync as the reviewed default.
 -->
 
-# Pydantic AI UI Adapter Security Review
+# Pydantic AI UI and CLAI2 Web Security Review
 
 You are running a **security review** of PR **#${{ github.event.pull_request.number }}**
 in [${{ github.repository }}](https://github.com/${{ github.repository }}) —
 *${{ github.event.pull_request.title }}*.
 
-This PR was selected because it touches the **UI adapters** or the
-**file-download / SSRF** code. A separate general reviewer
+This PR was selected because it touches the **UI adapters**, the
+**file-download / SSRF** code, or the **CLAI2 local web control UI**. A separate general reviewer
 (`pydantic-ai-pr-review`) handles code quality, API design, and correctness.
 **You are not that reviewer.** Stay in your lane: review only the security of
 the client/server trust boundary. Say nothing about style, naming, typing, or
@@ -32,15 +32,14 @@ until check-runs support lands in gh-aw.
 ## Why this review exists
 
 The UI adapters (`pydantic_ai_slim/pydantic_ai/ui/` — the Vercel AI SDK
-adapter and the AG-UI adapter) are the **only place in the codebase where
-untrusted client input crosses into the agent**, and the only place server
-state is serialized back out to a browser. Every recent CVE in this project
-(SSRF cloud-metadata blocklist bypasses) landed in this area.
+adapter and the AG-UI adapter) let remote clients submit agent input and
+receive serialized server state. The CLAI2 web UI is a separate local control
+surface with its own launch token and request boundary. Recent SSRF
+cloud-metadata block bypasses also landed in this security area.
 
-The project has one consistent security model, and your job is to **enforce
-it**:
+For UI adapters, enforce this security model:
 
-> **Every trust or disclosure decision is a named flag with a secure
+> **For UI adapters, every trust or disclosure decision is a named flag with a secure
 > default. Default-deny. The user opts *in* to trusting client input or
 > disclosing server state — never *out*.**
 
@@ -61,6 +60,12 @@ Existing examples of that model (the precedents you hold new code to):
   the file sidecar activity messages, not a trust decision (PRs #3971, #5255).
 - `instructions` was removed from the Vercel `UIMessage.metadata` dump
   entirely — never sent to the client, never read back (PR #5279).
+
+## CLAI2 local web control UI boundary
+
+Apply this contract whenever the diff touches CLAI2's web UI, backend, tests, or web documentation. For a CLAI2-only diff, inspect its changed code, tests, and docs directly; UI-adapter field lists and review steps do not apply. The per-launch token grants the local user control of that launch, including prompts, tools, sessions, workspaces, and settings. Treat those fields as intended controls and data; do not demand UIAdapter disclosure flags or `sanitize_messages` for this separate local UI.
+
+Audit the real paths that carry attacker-controlled content and authority. Untrusted Markdown, model output, tool output, and plugin content must be sanitized before rendering. External links must use safe opener and referrer behavior. Do not leak the per-launch token to other origins, logs, or unrelated sessions. Require exact Host and API-token checks, plus exact Origin and token checks for WebSockets; reject failures. Check that session watch/input, queued events, and reconnect state stay scoped to the intended session.
 
 ## Your mandate — two directions
 
@@ -123,9 +128,9 @@ on protocol-derived input only — `message_history` passed directly to
 validation in only one adapter, or outside `sanitize_messages`, flag that
 the other adapter is left exposed.
 
-## The core finding you look for
+## The core finding for UI adapters
 
-> A PR that makes a field **cross the trust boundary in either direction**
+> A PR that makes an adapter field **cross the trust boundary in either direction**
 > — newly disclosed outbound, or newly trusted inbound — **without a named
 > opt-in flag that defaults to the secure/private setting** is a **HIGH**
 > finding. If the unflagged field is exploitable today (cross-user data
@@ -148,7 +153,7 @@ knowledge — but `ai-sdk.dev` and `docs.ag-ui.com` are reachable via
 - OpenAI Responses API (`previous_response_id` / stored conversations) — <https://platform.openai.com/docs/api-reference/responses>
 - SSRF advisories — <https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-cg7w-rg45-pc59>, <https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-cqp8-fcvh-x7r3>
 
-## Security-specific rigor
+## UI-adapter security rigor
 
 - If you claim something is exploitable, show the **attack**: which field a
   client controls, the exact call path from `load_messages` /
@@ -161,18 +166,26 @@ knowledge — but `ai-sdk.dev` and `docs.ag-ui.com` are reachable via
 - Before posting, re-read each finding as a skeptical maintainer who knows
   this trust model.
 
+For CLAI2 findings, follow the CLAI2 local web control UI boundary section above. Trace
+the affected CLAI2 request, render, or session path and describe the concrete
+attacker-controlled input and consequence. Do not require UI-adapter flags or
+the `load_messages` / `sanitize_messages` / `dump_messages` path.
+
 ## Review process
 
 ### Step 1 — Orient
 
 1. Read `pr-details.json`, `pr-size.txt`, `pr-comments.txt`, and
    `related-issues.txt`.
-2. Read the `ui/` `AGENTS.md` / `CLAUDE.md` excerpts in `agents-md.txt`, and
-   `docs/ui/overview.md` in the workspace — its "adapter trust model"
+2. For UI-adapter changes, read the `ui/` `AGENTS.md` / `CLAUDE.md` excerpts
+   in `agents-md.txt` and `docs/ui/overview.md` — its "adapter trust model"
    section is the canonical statement of what is trusted vs. sanitized.
-3. Skim `review-comments.txt` for prior threads (note the most recent review
-   from this bot — you compare verdicts at the end).
-4. From `changed-files.txt`, identify which changed files touch the boundary:
+   For CLAI2 changes, read the CLAI2 sources and relevant docs named by the
+   diff, then apply the CLAI2 local web control UI boundary section above.
+3. Skim `review-comments.txt` for prior threads. Note this workflow's previous
+   review in `bot-reviews.txt` — you compare verdicts at the end.
+4. For UI-adapter changes, identify files touching the boundary in
+   `changed-files.txt`:
    `dump_messages` / stream emitters (outbound), `load_messages` /
    `sanitize_messages` / request schemas (inbound), `_ssrf.py` /
    `web_fetch.py` / `FileUrl` (download surface).
@@ -228,8 +241,8 @@ For each surviving finding, call
 - `path` — exactly as it appears in `changed-files.txt`.
 - `line` — the `NL:` line number from the diff.
 - `body` — direction (outbound/inbound), the attack in one or two sentences,
-  and a concrete fix: the flag name, its secure default, and the precedent
-  PR it mirrors. Use a ` ```suggestion ` block only when you can give a real
+  and a concrete fix. For UI adapters, name the flag, its secure default,
+  and the precedent PR it mirrors. Use a ` ```suggestion ` block only when you can give a real
   replacement. One issue per comment.
 
 Then call `mcp__safeoutputs__submit_pull_request_review` with:
@@ -262,10 +275,13 @@ Then call `mcp__safeoutputs__submit_pull_request_review` with:
 HIGH and CRITICAL drive the `SECURITY: REQUEST_CHANGES` body header. The
 review submission itself is always `COMMENT`-type — see above.
 
-**Skip if redundant:** if you have zero new findings and the most recent
-review from this bot (in `review-comments.txt`) was also `SECURITY: PASS`,
-call `mcp__safeoutputs__noop` with a short reason instead of a redundant
-review.
+**Skip if redundant:** if you have zero new findings and this workflow's
+previous review is `SECURITY: PASS`, call `mcp__safeoutputs__noop` with a
+short reason that names that review's commit. Each line of `bot-reviews.txt` is
+one review: time, state, commit, then the first line of its body. This
+workflow's previous review is the most recent line whose body starts with
+`SECURITY:`. No other line in that file, and no comment in `pr-comments.txt`,
+is this workflow's review.
 
 ## What not to do (recap)
 

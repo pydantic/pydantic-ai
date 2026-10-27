@@ -7,7 +7,7 @@ from logfire.testing import CaptureLogfire
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -42,7 +42,11 @@ class TestRepairToolArguments:
         model = TestModel(call_tools=['write_file'], seed=0)
         agent = Agent(model, capabilities=capabilities)
         result = await agent.run('Write a file', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
-        assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
+        assert not any(
+            isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+            for message in result.all_messages()
+            for part in message.parts
+        )
 
     @pytest.mark.parametrize('error', [ValueError, RecursionError])
     async def test_repair_failure_retries(
@@ -85,7 +89,11 @@ class TestRepairToolArguments:
         assert result.output == 'done'
         assert (tmp_path / 'hello.txt').read_text() == 'hello'
         assert calls == 2
-        assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
+        assert not any(
+            isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+            for message in result.all_messages()
+            for part in message.parts
+        )
 
     @pytest.mark.parametrize('arguments', ['{"path": "hello.txt",}', '{"path": "hello.txt"}', 'not JSON'])
     async def test_invalid_schema_still_retries(
@@ -98,7 +106,11 @@ class TestRepairToolArguments:
             calls += 1
             if calls == 1:
                 return ModelResponse(parts=[ToolCallPart('write_file', arguments)])
-            assert any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+            assert any(
+                isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+                for message in messages
+                for part in message.parts
+            )
             return ModelResponse(parts=[TextPart('invalid arguments')])
 
         agent = Agent(model_for(respond), capabilities=capabilities)

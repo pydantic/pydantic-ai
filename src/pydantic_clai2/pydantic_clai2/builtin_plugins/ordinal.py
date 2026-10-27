@@ -2,8 +2,9 @@
 
 The built-in `ordinal` plugin: harness `Ordinal`, set up in a settings menu, with no secret in plugin settings.
 
-`/plugins configure ordinal` (also opened by `/plugins enable ordinal`, `/plugins add`, and `c` in `/plugins`)
-edits the non-secret options, saved to plugin settings as each one changes, and picks the token from `/keys`.
+`/plugins configure ordinal` (also opened by `/plugins enable ordinal`, `/plugins add`, and `c` in `/plugins`, and
+shown in the web UI's plugins panel) edits the non-secret options, saved to plugin settings as each one changes,
+and picks the token from `/keys`.
 Plugin settings are plaintext SQLite, so the token never goes there: only the chosen key's name is kept, in the
 credential store, and it is resolved on every run. Replacing the key in `/keys` applies to the next run, deleting
 it fails the run closed, and `/keys` refuses to rename it while Ordinal uses it.
@@ -17,7 +18,6 @@ would keep them in memory, so every launch would sign in again. The sign-in runs
 `/ordinal login`, never while loading or in a prompt; see `pydantic_clai2.plugins.sign_in`.
 """
 
-import asyncio
 import os
 import sys
 from collections.abc import Sequence
@@ -27,26 +27,18 @@ from typing import Generic, Literal
 
 from anyio import to_thread
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
-from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.ordinal import Ordinal
 from pydantic_clai2.commands import Command
-from pydantic_clai2.config.api_keys import (
-    KeyExistsError,
-    KeyReference,
-    load_keys,
-    prompt_api_key,
-    resolve_key,
-    save_key,
-    save_key_connection,
-)
+from pydantic_clai2.config.api_keys import KeyReference, load_keys, resolve_key, save_key_connection
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials
 from pydantic_clai2.mcp import OAuthSignIn
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
-from pydantic_clai2.plugins.keys import on_loop
+from pydantic_clai2.plugins.keys import choose_key
+from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_clai2.plugins.sign_in import (
     SUBCOMMANDS,
     run_subcommand,
@@ -54,10 +46,9 @@ from pydantic_clai2.plugins.sign_in import (
     status as sign_in_status,
     warn_if_signed_out,
 )
-from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
-from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.runtime.session import WorkspacelessCapability
+from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 URL = 'https://app.tryordinal.com/mcp'
 """Harness `Ordinal`'s endpoint, which this plugin needs to build its own signed-in client."""
@@ -71,8 +62,7 @@ SETUP = 'Run /plugins configure ordinal to choose how it signs in.'
 USAGE = 'Usage: /ordinal [login | logout | status]'
 SIGN_IN = OAuthSignIn(name=TOKENS, service='Ordinal', setup='/ordinal login', url=URL)
 """The browser sign-in; its tokens are the keyring credential `mcp-plugin_ordinal`."""
-RUNNERS: Runners = TERMINAL
-"""How the settings menu's widgets are shown; tests swap in scripted ones."""
+KEY_LABEL = f'Ordinal access token (saved in /keys as {KEY_NAME})'
 
 SignIn = Literal['browser', 'key', 'environment']
 
@@ -144,15 +134,15 @@ class OrdinalAuth(Generic[DepsT]):
         match await to_thread.run_sync(source, self.settings.sign_in):
             case KeyReference() as reference:
                 token = await to_thread.run_sync(partial(resolve_key, token=reference))
-                return Ordinal[DepsT](auth=token, include_instructions=instructions)
+                return Ordinal[DepsT](defer_loading=True, auth=token, include_instructions=instructions)
             case 'environment':
                 # Harness reads the variable when it connects and fails closed when it is unset.
-                return Ordinal[DepsT](include_instructions=instructions)
+                return Ordinal[DepsT](defer_loading=True, include_instructions=instructions)
             case 'browser':
                 # Each run builds its own client from the stored tokens, so a sign-out reaches the next run.
                 if not await to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
                     return None
-                return Ordinal[DepsT](client=SIGN_IN.client(), include_instructions=instructions)
+                return Ordinal[DepsT](defer_loading=True, client=SIGN_IN.client(), include_instructions=instructions)
             case 'none':  # pragma: no branch -- the cases cover every `source` result.
                 raise UserError(f'Ordinal has no /keys entry. {SETUP}')
 
@@ -167,7 +157,7 @@ class OrdinalPlugin(Plugin[OrdinalSettings, DepsT]):
         self.auth = OrdinalAuth[DepsT](settings)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
-        return (self.auth,)
+        return (WorkspacelessCapability[DepsT](self.auth),)
 
     def get_commands(self) -> Sequence[Command]:
         return (
@@ -179,8 +169,9 @@ class OrdinalPlugin(Plugin[OrdinalSettings, DepsT]):
             ),
         )
 
-    async def configure(self) -> str:
-        return await configure(OrdinalSource(self.host))
+    def settings_menu(self) -> SettingsMenu:
+        source = OrdinalSource(self.host)
+        return SettingsMenu(source=source, actions={METHOD.key: source.pick_method, KEY.key: source.pick_key})
 
     async def on_session_start(self, event: SessionStart) -> None:
         console = self.host.console
@@ -305,6 +296,44 @@ class OrdinalSource(Generic[DepsT]):
         """Persist to the plugin's declaration."""
         self._host.save_settings(settings)
 
+    async def pick_method(self, dialogs: Dialogs) -> list[str]:
+        """The Sign-in row: choosing the browser signs in now, behind a waiting screen, unless a sign-in is stored."""
+        picked = await dialogs.choose(
+            title=f'Choose {METHOD.label}',
+            options=[Option(value=choice, label=METHOD.display(choice)) for choice in METHOD.choices],
+            current=await to_thread.run_sync(self.current, METHOD),
+        )
+        if picked is None:
+            return []
+        saved = await to_thread.run_sync(self.apply, METHOD, picked)
+        if picked != 'browser' or await to_thread.run_sync(SIGN_IN.signed_in):
+            return [saved]
+        return [saved, await sign_in_now(SIGN_IN, dialogs)]
+
+    async def pick_key(self, dialogs: Dialogs) -> list[str]:
+        """The `/keys` entry row: pick a saved key or save a new one in `/keys`, then switch Sign-in to the key."""
+        reference = await choose_key(name=KEY_NAME, label=KEY_LABEL, dialogs=dialogs)
+        if reference is None:
+            return []
+        await to_thread.run_sync(self._choose, reference)
+        messages = [f'Ordinal uses {reference.name} from /keys. Manage it there.']
+        # A chosen key is used only with the key sign-in, so choosing one switches to it.
+        if await to_thread.run_sync(self._switch_to_key):
+            messages.append(f'Saved {METHOD.label}: {METHOD.display("key")}.')
+        return messages
+
+    @staticmethod
+    def _choose(reference: KeyReference) -> None:
+        """Keep the key's name, never its value, in the credential store."""
+        save_key_connection(account=KEY_ACCOUNT, token=reference, value=KeyChoice(token=reference).model_dump_json())
+
+    def _switch_to_key(self) -> bool:
+        """Use the chosen key for runs; whether that changed the setting."""
+        if self.settings.sign_in == 'key':
+            return False
+        self.save(self.settings.model_copy(update={'sign_in': 'key'}))
+        return True
+
     def _key_name(self) -> str:
         try:
             reference = saved_key()
@@ -315,97 +344,3 @@ class OrdinalSource(Generic[DepsT]):
     def _updated(self, row: FieldRow, raw: str) -> OrdinalSettings:
         value: object = raw == 'true' if row.key == INSTRUCTIONS.key and raw in ('true', 'false') else raw
         return OrdinalSettings.model_validate({**self.settings.model_dump(), row.key: value})
-
-
-async def configure(source: OrdinalSource[DepsT]) -> str:
-    """The settings menu: list, edit, back, until Esc; the key row opens the `/keys` picker.
-
-    Choosing the browser signs in now, behind a waiting screen, unless a sign-in is already stored.
-    """
-    loop = asyncio.get_running_loop()
-    menu = FieldMenu(source)
-
-    def pick_method() -> list[str]:
-        pick = RUNNERS.run_choice(menu.build_choices(METHOD))
-        if pick.cancelled or pick.item is None:
-            return []
-        messages = [menu.apply(METHOD, str(pick.item.value))]
-        if pick.item.value == 'browser' and not SIGN_IN.signed_in():
-            message = on_loop(lambda: sign_in_now(SIGN_IN, RUNNERS), loop)
-            messages += [] if message is None else [message]
-        return messages
-
-    def pick_key() -> list[str]:
-        # The key picker is async, so the menu's thread hands it back to the event loop.
-        reference = asyncio.run_coroutine_threadsafe(choose_key(), loop).result()
-        if reference is None:
-            return []
-        choice = KeyChoice(token=reference).model_dump_json()
-        save_key_connection(account=KEY_ACCOUNT, token=reference, value=choice)
-        messages = [f'Ordinal uses {reference.name} from /keys. Manage it there.']
-        if source.settings.sign_in != 'key':
-            source.save(source.settings.model_copy(update={'sign_in': 'key'}))
-            messages.append(f'Saved {METHOD.label}: {METHOD.display("key")}.')
-        return messages
-
-    submenus = {METHOD.key: pick_method, KEY.key: pick_key}
-    messages = await run_worker(lambda: run_flow(menu, RUNNERS, submenus=submenus))
-    return '\n'.join(messages) or 'Ordinal settings unchanged.'
-
-
-class MaskedPrompt:
-    """`prompt_api_key`'s value prompt as a masked Termflow input, matching the settings menu."""
-
-    async def prompt_async(self, label: str, /, *, is_password: bool = False) -> str:
-        """Read the token; Esc raises `EOFError`, which `prompt_api_key` reads as cancellation."""
-        builder = (
-            TextInputBuilder(label)
-            .style(markdown_style())
-            .prompt('Token: ')
-            .placeholder('Paste an Ordinal access token; it is saved in /keys')
-            .footer_hint('Enter save - Esc cancel')
-            .key_source(menu_key)
-        )
-        builder.mask()
-        widget = builder.build()
-        result = await run_worker(lambda: RUNNERS.run_text(widget))
-        if result.cancelled or not isinstance(result.value, str):
-            raise EOFError
-        return result.value
-
-
-async def choose_key() -> KeyReference | None:
-    """Pick a `/keys` entry, or save a masked new token as `ORDINAL_ACCESS_TOKEN`; `None` means cancelled."""
-    choice = await prompt_api_key(prompt=MaskedPrompt(), label=f'Ordinal access token (saved in /keys as {KEY_NAME})')
-    if choice is None or isinstance(choice, KeyReference):
-        return choice
-    value = choice.strip()
-    if not value:
-        return None
-    # Checked and saved under one lock, so a key another process just saved is never replaced unasked.
-    try:
-        await to_thread.run_sync(partial(save_key, name=KEY_NAME, value=value, replace=False))
-    except KeyExistsError:
-        if not await run_worker(confirm_replace):
-            return None
-        await to_thread.run_sync(partial(save_key, name=KEY_NAME, value=value))
-    return KeyReference(name=KEY_NAME)
-
-
-def confirm_replace() -> bool:
-    """Ask before a typed token replaces a `/keys` entry other plugins may share."""
-    menu = (
-        MenuBuilder(f'{KEY_NAME} is already in /keys')
-        .style(markdown_style())
-        .items(
-            [
-                MenuItem('Keep the saved token', value=False),
-                MenuItem(f'Replace {KEY_NAME} for every plugin and connection that uses it', value=True),
-            ]
-        )
-        .footer_hint('Enter select - Esc keep')
-        .key_source(menu_key)
-        .build()
-    )
-    pick = RUNNERS.run_choice(menu)
-    return not pick.cancelled and pick.item is not None and pick.item.value is True

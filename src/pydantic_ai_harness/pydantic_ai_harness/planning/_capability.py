@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
+from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.messages import CachePoint, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
+from pydantic_ai.messages import (
+    CachePoint,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    RetryFeedbackPart,
+    TextContent,
+    ToolReturnPart,
+    UserContent,
+    UserPromptPart,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness.planning._store import InMemoryPlanStore, PlanStore
@@ -50,17 +62,18 @@ _SUBTASK_GUIDANCE = (
 
 @dataclass
 class Planning(AbstractCapability[AgentDepsT]):
-    """Structured task planning that never invalidates the prompt cache.
+    """Structured task planning that keeps the conversation in the prompt cache.
 
     The model owns the plan through a small toolset (`write_plan`, `read_plan`,
     `add_task`, `update_task_status`, `update_task_statuses`, `remove_task`, and
     -- when `enable_subtasks` is set -- `add_subtask`, `set_dependency`,
     `get_available_tasks`); `tools` narrows that surface to an allowlist. The
     current plan is surfaced back as an *ephemeral* reminder appended to the
-    tail of each request. A single `CachePoint` is anchored on the last durable
-    user content, so the prefix it saves is a prefix of the next request; the
-    reminder itself carries no breakpoint, so only the mutable plan content is
-    re-read each turn.
+    tail of each request and never persisted. The reminder leads with a
+    `CachePoint`, which providers attach to the content right before it -- the
+    last user prompt, tool result, or retry prompt, which the next request
+    starts with -- so on most providers only the reminder itself is re-read each
+    turn. On OpenRouter the breakpoint stops at the previous user message.
 
     By default the plan lives in memory for the duration of a single run (a
     fresh, isolated plan per run). Pass a `store` (or `store_resolver`) to
@@ -91,7 +104,7 @@ class Planning(AbstractCapability[AgentDepsT]):
     """
 
     cache_ttl: Literal['5m', '1h'] = '5m'
-    """TTL for the cache breakpoint anchored on the last durable user content."""
+    """TTL for the cache breakpoint leading the plan reminder."""
 
     store: PlanStore | None = None
     """Storage backend. `None` keeps a fresh in-memory plan per run (the original
@@ -205,7 +218,12 @@ class Planning(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        """Anchor a cache breakpoint on durable user content, then append the ephemeral plan reminder."""
+        """Append the ephemeral plan reminder to the request, leading with a cache breakpoint.
+
+        The breakpoint marks the end of the content before the reminder, so each request caches
+        what the next one starts with, including every tool result since the last user prompt,
+        while the reminder stays outside the cached prefix and out of message history.
+        """
         if not self.inject:
             return await handler(request_context)
         items = await self._read_plan(ctx)
@@ -214,10 +232,12 @@ class Planning(AbstractCapability[AgentDepsT]):
         messages = request_context.messages
         last = messages[-1]
         if isinstance(last, ModelRequest):
-            _anchor_cache_breakpoint(messages, self.cache_ttl)
-            last = messages[-1]
-            reminder = UserPromptPart(content=['<plan-reminder>\n', _reminder_text(render_plan(items))])
-            messages[-1] = replace(last, parts=[*last.parts, reminder])
+            content: list[UserContent] = ['<plan-reminder>\n', _reminder_text(render_plan(items))]
+            # With no content before the reminder (an instructions-only first request) there is no
+            # prefix to protect, and providers reject a breakpoint with nothing to attach to.
+            if _has_cache_point_target(last.parts):
+                content.insert(0, CachePoint(ttl=self.cache_ttl))
+            messages[-1] = replace(last, parts=[*last.parts, UserPromptPart(content=content)])
         return await handler(request_context)
 
     # Each plan store call is a durable operation, so recovering a durable run reuses the recorded
@@ -288,43 +308,55 @@ class Planning(AbstractCapability[AgentDepsT]):
         return 'Planning'
 
 
+# TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
+# `plan-reminder` as a framing tag there.
+# The `<` of an opening or closing `plan-reminder` tag, in any case, spacing or with attributes, or cut off at the end
+# of the plan, where the frame's own end tag would complete it. Core's own framing tags are left to `neutralize_tags`.
+_PLAN_REMINDER_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?plan-reminder(?=[\s/>]|$))', re.IGNORECASE)
+
+
 def _reminder_text(plan: str) -> str:
-    return f'Your current plan (keep it updated with the planning tools):\n\n{plan}\n</plan-reminder>'
+    """The reminder's body and closing tag, with the plan's step text kept inside the `<plan-reminder>` frame.
 
-
-def _anchor_cache_breakpoint(messages: list[ModelMessage], ttl: Literal['5m', '1h']) -> None:
-    """Place a `ttl` cache breakpoint behind the last durable user content, when any exists.
-
-    The breakpoint must not lead its part: a leading one is rejected by OpenAI-compatible
-    and OpenRouter providers, and a breakpoint on ephemeral content would not describe a
-    prefix of the next request. With no eligible durable content, no breakpoint is placed.
-
-    A capability earlier in the capabilities list applies its request mutations first,
-    so one that appends a `UserPromptPart` each request (for example `SystemReminders`)
-    displaces the anchor onto that part; the prefix then stays cache-stable only while
-    that content is stable across turns.
+    The steps are written by the model, so the `<` of every opening or closing `plan-reminder` tag and of every
+    framing tag core writes is escaped as `&lt;`.
     """
-    for i in range(len(messages) - 1, -1, -1):
-        message = messages[i]
-        if not isinstance(message, ModelRequest):
-            continue
-        for j in range(len(message.parts) - 1, -1, -1):
-            part = message.parts[j]
-            if not isinstance(part, UserPromptPart) or not _has_anchorable_content(part):
-                continue
-            anchored = (
-                replace(part, content=[part.content, CachePoint(ttl=ttl)])
-                if isinstance(part.content, str)
-                else replace(part, content=[*part.content, CachePoint(ttl=ttl)])
-            )
-            parts = [*message.parts]
-            parts[j] = anchored
-            messages[i] = replace(message, parts=parts)
-            return
+    body = _PLAN_REMINDER_TAG_OPENER.sub('&lt;', neutralize_tags(plan))
+    return f'Your current plan (keep it updated with the planning tools):\n\n{body}\n</plan-reminder>'
 
 
-def _has_anchorable_content(part: UserPromptPart) -> bool:
-    """Whether a `CachePoint` appended to this part would sit behind existing user content."""
-    if isinstance(part.content, str):
-        return bool(part.content)
-    return any(item for item in part.content if not isinstance(item, CachePoint))
+def _has_cache_point_target(parts: Sequence[ModelRequestPart]) -> bool:
+    """Whether these request parts already carry content a leading `CachePoint` can attach to.
+
+    Providers attach a `CachePoint` that opens a user prompt to the content right before it, which is
+    the end of the durable history when the prompt is the plan reminder, whether that history ends in
+    a user prompt, a tool return, or retry feedback. With nothing before it to attach to, providers
+    that honor `CachePoint` reject it, so the reminder only leads with one when the request already
+    contributes such content. `SystemPromptPart` maps to the system field, not to message content, so
+    it does not count.
+
+    `RetryFeedbackPart` counts: it is translated at request time into a `<validation_errors>`-fenced
+    user prompt when it quotes the model's own output, and otherwise into a mid-conversation system
+    prompt, which providers without an inline system channel receive as `<system>`-tagged user text.
+    """
+    for part in parts:
+        if isinstance(part, ToolReturnPart | RetryFeedbackPart):
+            return True
+        if isinstance(part, UserPromptPart):
+            content = part.content
+            if isinstance(content, str):
+                if content:
+                    return True
+            elif any(_is_user_content_item(item) for item in content):
+                return True
+    return False
+
+
+def _is_user_content_item(item: object) -> bool:
+    if isinstance(item, CachePoint):
+        return False
+    if isinstance(item, str):
+        return bool(item)
+    if isinstance(item, TextContent):
+        return bool(item.content)
+    return True

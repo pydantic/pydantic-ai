@@ -26,6 +26,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelRetry,
     MultiModalContent,
     PartStartEvent,
     RequestUsage,
@@ -43,6 +44,8 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
     Capability,
+    PrefixTools,
+    Toolset,
 )
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -60,9 +63,10 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
 from ..._inline_snapshot import snapshot
+from ...wrapped_retry_toolsets import call_probe_once, call_while_listed, failing_toolset, snapshot_probe_toolset
 
 try:
-    from temporalio import workflow
+    from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowHistory
     from temporalio.common import RetryPolicy
@@ -1039,7 +1043,12 @@ async def test_temporal_mcptoolset_instructions_propagate(client: Client):
             id=MCPToolsetInstructionsWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
-        assert output == snapshot('Be a helpful assistant.')
+        assert output == snapshot("""\
+<context id="toolset:mcp">
+Be a helpful assistant.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
 
 
 def test_temporalize_mcptoolset_dispatches_to_temporalmcptoolset():
@@ -1973,3 +1982,232 @@ async def test_tool_outliving_configured_heartbeat_timeout_survives(client: Clie
         )
 
     assert output == snapshot('slow tool finished')
+
+
+# --- Retry counts under name-changing wrappers, see https://github.com/pydantic/pydantic-ai/issues/9741 ---
+# `ctx.retries` is keyed by the name the model calls a tool by. A static toolset's `prepare` runs in
+# the workflow, a dynamic toolset's in its discovery, validation and call activities: all of them
+# have to read the count of the name the wrappers give the tool.
+
+
+_wrapped_retries_agents: dict[str, Agent[None, str]] = {
+    name: Agent(
+        FunctionModel(call_while_listed),
+        name=name,
+        deps_type=type(None),
+        toolsets=toolsets,
+        capabilities=[*capabilities, TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    for name, toolsets, capabilities in [
+        ('prefixed_retries', [failing_toolset('prefixed').prefixed('demo')], []),
+        ('nested_prefixes_retries', [failing_toolset('nested').prefixed('a').prefixed('b')], []),
+        ('renamed_retries', [failing_toolset('renamed').renamed({'x': 'fail'})], []),
+        ('prefix_tools_retries', [], [PrefixTools(wrapped=Toolset(failing_toolset('capability')), prefix='cap')]),
+        (
+            'dynamic_renamed_retries',
+            [DynamicToolset[None](lambda ctx: failing_toolset('inner'), id='dynamic_renamed').renamed({'x': 'fail'})],
+            [],
+        ),
+        (
+            'factory_gate_retries',
+            # Gates on the name the model calls the tool by, which is what the factory always saw.
+            [
+                DynamicToolset[None](
+                    lambda ctx: None if ctx.retries.get('demo_fail') else failing_toolset('gated_inner'), id='gated'
+                ).prefixed('demo')
+            ],
+            [],
+        ),
+    ]
+}
+
+
+@workflow.defn
+class WrappedToolRetriesWorkflow:
+    @workflow.run
+    async def run(self, names: list[str]) -> list[str]:
+        return [(await _wrapped_retries_agents[name].run('Try the tool.')).output for name in names]
+
+
+@pytest.mark.parametrize(
+    'names',
+    [
+        pytest.param(
+            ['prefixed_retries', 'nested_prefixes_retries', 'renamed_retries', 'prefix_tools_retries'], id='static'
+        ),
+        pytest.param(['dynamic_renamed_retries', 'factory_gate_retries'], id='dynamic'),
+    ],
+)
+async def test_prepare_sees_retry_under_wrapper_in_workflow(client: Client, names: list[str]):
+    """A `prepare` that hides its tool after a failure sees the failure under each wrapper, as outside a workflow.
+
+    The factory gate reads `ctx.retries` by the name the model calls the tool by instead, which has
+    to keep working in its discovery and call activities alike.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WrappedToolRetriesWorkflow],
+        plugins=[AgentPlugin(_wrapped_retries_agents[name]) for name in names],
+    ):
+        outputs = await client.execute_workflow(
+            WrappedToolRetriesWorkflow.run,
+            args=[names],
+            id=f'{WrappedToolRetriesWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert outputs == ['No tools left.'] * len(names)
+
+
+_dynamic_unit_retries: list[tuple[str, int]] = []
+
+
+def _traced_failing_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+    toolset = FunctionToolset[None](id='traced_inner')
+
+    @toolset.instructions
+    def failures(ctx: RunContext[None]) -> str:
+        return f'demo_fail failed {ctx.retries.get("demo_fail", 0)} times'
+
+    async def hide_after_two_failures(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        _dynamic_unit_retries.append((activity.info().activity_type.rsplit('__', 1)[-1], ctx.retry))
+        return None if ctx.retry >= 2 else tool_def
+
+    def accept(ctx: RunContext[None]) -> None:
+        pass
+
+    @toolset.tool(prepare=hide_after_two_failures, args_validator=accept, retries=3)
+    async def fail(ctx: RunContext[None]) -> str:
+        raise ModelRetry('Choose another approach.')
+
+    return toolset
+
+
+def _report_instructions_once_unlisted(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if info.function_tools:
+        return ModelResponse(parts=[ToolCallPart(info.function_tools[0].name, {})])
+    requests = [message for message in messages if isinstance(message, ModelRequest)]
+    return ModelResponse(parts=[TextPart(' | '.join(str(request.instructions) for request in requests))])
+
+
+_traced_dynamic_retries_agent = Agent(
+    FunctionModel(_report_instructions_once_unlisted),
+    name='traced_dynamic_retries',
+    deps_type=type(None),
+    toolsets=[DynamicToolset[None](_traced_failing_toolset, id='traced').prefixed('demo')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class TracedDynamicRetriesWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _traced_dynamic_retries_agent.run('Try the tool.')).output
+
+
+async def test_wrapped_dynamic_toolset_activities_agree_on_retry(client: Client):
+    """Discovery, argument validation and the call each list the toolset again, and all read the same count.
+
+    The toolset's instructions read `ctx.retries` by the name the model calls the tool by, and keep
+    reporting each failure.
+    """
+    _dynamic_unit_retries.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TracedDynamicRetriesWorkflow],
+        plugins=[AgentPlugin(_traced_dynamic_retries_agent)],
+    ):
+        output = await client.execute_workflow(
+            TracedDynamicRetriesWorkflow.run,
+            id=f'{TracedDynamicRetriesWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert (output, _dynamic_unit_retries) == snapshot(
+        (
+            'demo_fail failed 0 times | demo_fail failed 1 times | demo_fail failed 2 times',
+            [
+                ('get_tools', 0),
+                ('validate_args', 0),
+                ('call_tool', 0),
+                ('get_tools', 1),
+                ('validate_args', 1),
+                ('call_tool', 1),
+                ('get_tools', 2),
+            ],
+        )
+    )
+
+
+_snapshot_reads: list[tuple[str, str, list[str], int]] = []
+
+
+def _record_snapshot_read(site: str, ctx: RunContext[None]) -> None:
+    _snapshot_reads.append(
+        (
+            activity.info().activity_type.rsplit('__', 1)[-1],
+            site,
+            sorted(ctx.available_tool_names),
+            len(ctx.active_capability_ids),
+        )
+    )
+
+
+_snapshot_reading_agent = Agent(
+    FunctionModel(call_probe_once),
+    name='prefixed_dynamic_snapshots',
+    deps_type=type(None),
+    toolsets=[DynamicToolset[None](snapshot_probe_toolset(_record_snapshot_read), id='snapshots').prefixed('demo')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class PrefixedDynamicSnapshotsWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _snapshot_reading_agent.run('Probe.')).output
+
+
+async def test_prefixed_dynamic_toolset_activities_keep_context_snapshots(client: Client):
+    """Under `.prefixed()`, a dynamic toolset's activities still answer from the snapshots serialized at dispatch.
+
+    `available_tool_names` and `active_capability_ids` are not `RunContext` fields, so every context copy made
+    inside an activity has to keep them: the ones that carry or strip the tool name path, the one a tool's
+    `prepare` gets, and the ones the inner prefix and rename make before the tool runs.
+    """
+    _snapshot_reads.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PrefixedDynamicSnapshotsWorkflow],
+        plugins=[AgentPlugin(_snapshot_reading_agent)],
+    ):
+        output = await client.execute_workflow(
+            PrefixedDynamicSnapshotsWorkflow.run,
+            id=f'{PrefixedDynamicSnapshotsWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert (output, _snapshot_reads) == snapshot(
+        (
+            'Done.',
+            [
+                ('get_tools', 'factory', [], 3),
+                ('get_tools', 'prepare', [], 3),
+                ('get_tools', 'instructions', [], 3),
+                ('validate_args', 'factory', ['demo_probe'], 3),
+                ('validate_args', 'prepare', ['demo_probe'], 3),
+                ('validate_args', 'validator', ['demo_probe'], 3),
+                ('call_tool', 'factory', ['demo_probe'], 3),
+                ('call_tool', 'prepare', ['demo_probe'], 3),
+                ('call_tool', 'body', ['demo_probe'], 3),
+                ('get_tools', 'factory', ['demo_probe'], 3),
+                ('get_tools', 'prepare', ['demo_probe'], 3),
+                ('get_tools', 'instructions', ['demo_probe'], 3),
+            ],
+        )
+    )

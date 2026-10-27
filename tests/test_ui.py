@@ -4,9 +4,9 @@ import asyncio
 import inspect
 import warnings
 from collections.abc import AsyncIterator, Awaitable, MutableMapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 import pytest
@@ -15,10 +15,11 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext, _utils
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import HandleDeferredToolCalls, ReinjectSystemPrompt
-from pydantic_ai.exceptions import RunCancelled
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ReinjectSystemPrompt
+from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
     BinaryImage,
+    CompactionPart,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
     DocumentUrl,
@@ -50,6 +51,7 @@ from pydantic_ai.messages import (
     UploadedFile,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -1247,6 +1249,102 @@ async def test_run_stream_request_error():
     )
 
 
+class RaisingDeferredResultsAdapter(DummyUIAdapter[AgentDepsT, OutputDataT]):
+    """Adapter whose `deferred_tool_results` rejects the request, as a protocol adapter's does when
+    the client sends a resume payload that doesn't match the schema the adapter advertised."""
+
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        raise UserError('malformed resume payload')
+
+
+async def test_run_stream_surfaces_deferred_tool_results_error_on_the_stream():
+    """`run_stream_native` promises subclass authors that a `UserError` from `deferred_tool_results`
+    reaches the client as a stream error rather than escaping at the call site.
+
+    Pinned here rather than only through a protocol adapter: the promise is on the base class, so a
+    third-party `UIAdapter` relies on it too, and a refactor that resolved the property eagerly
+    again would otherwise only be caught by a test that reads as an AG-UI test.
+    """
+    agent = Agent(model=TestModel())
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = RaisingDeferredResultsAdapter(agent, request)
+
+    stream = adapter.run_stream()
+
+    events = [event async for event in stream]
+    assert events == snapshot(
+        [
+            '<stream>',
+            "<error type='UserError'>malformed resume payload</error>",
+            '</stream>',
+        ]
+    )
+
+
+async def test_run_stream_rejecting_the_request_leaves_deps_untouched():
+    """Rejecting the request stops before the run setup, so `deps.state` is not written.
+
+    `deps` belongs to the caller and outlives the request, so a run that can never start must not
+    leave its state behind. The state block also validates the client's state, which would raise at
+    the call site and mask the rejection this is meant to report.
+    """
+    agent = Agent(model=TestModel())
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')], state={'country': 'Mexico'})
+    adapter = RaisingDeferredResultsAdapter(agent, request)
+    deps = DummyUIDeps(state=DummyUIState())
+
+    events = [event async for event in adapter.run_stream(deps=deps)]
+
+    assert deps.state == snapshot(DummyUIState(country=None))
+    assert "<error type='UserError'>malformed resume payload</error>" in events
+
+
+class BuggyDeferredResultsAdapter(DummyUIAdapter[AgentDepsT, OutputDataT]):
+    """Adapter whose `deferred_tool_results` fails on its own bug rather than rejecting the request."""
+
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        raise KeyError('resume')
+
+
+async def test_run_stream_lets_a_deferred_tool_results_bug_escape():
+    """Only the `UserError` an implementation raises to reject a request is turned into a stream
+    error; anything else is a bug in the implementation and still escapes at the call site.
+
+    Dressing a stray `KeyError` up as a protocol error would hand the client an error it can do
+    nothing about, and hide a server bug behind a 200.
+    """
+    agent = Agent(model=TestModel())
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = BuggyDeferredResultsAdapter(agent, request)
+
+    with pytest.raises(KeyError, match='resume'):
+        adapter.run_stream()
+
+
+async def test_run_stream_skips_deferred_tool_results_when_caller_supplies_them():
+    """A caller-supplied `deferred_tool_results` short-circuits the property, so an adapter that
+    would reject the request's own results is never consulted.
+
+    The run still errors, on the unrelated grounds that empty results don't match this history —
+    what matters is that the adapter's own rejection isn't what surfaced.
+    """
+    agent = Agent(model=TestModel())
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = RaisingDeferredResultsAdapter(agent, request)
+
+    events = [event async for event in adapter.run_stream(deferred_tool_results=DeferredToolResults())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            "<error type='UserError'>Tool call results were provided, but the message history does not contain a `ModelResponse`.</error>",
+            '</stream>',
+        ]
+    )
+
+
 async def test_run_stream_output_tool_error():
     """Output tool errors should close the pending tool call via _final_result_event drain."""
 
@@ -1777,6 +1875,145 @@ async def test_adapter_server_mode_with_deferred_agent_reinjector():
     assert [p.content for p in sys_parts] == ['Server prompt']
 
 
+def _steering_agent(**kwargs: Any) -> tuple[Agent[None, str], list[list[ModelMessage]]]:
+    """An agent whose first model turn calls a tool that enqueues a mid-run `SystemPromptPart`."""
+    requests: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        requests.append(messages)
+        if len(requests) == 1:
+            return ModelResponse(parts=[ToolCallPart('steer', {}, tool_call_id='steer_call')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def stream_respond(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        requests.append(messages)
+        if len(requests) == 1:
+            yield {0: DeltaToolCall(name='steer', json_args='{}', tool_call_id='steer_call')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(respond, stream_function=stream_respond), system_prompt='Server prompt', **kwargs)
+
+    @agent.tool
+    def steer(ctx: RunContext[None]) -> str:
+        ctx.enqueue(SystemPromptPart('Mid-run steering'))
+        return 'steered'
+
+    return agent, requests
+
+
+def _contents(messages: Sequence[ModelMessage]) -> list[str]:
+    """The text of each system and user prompt part in `messages`, in order."""
+    return [
+        part.content
+        for m in messages
+        if isinstance(m, ModelRequest)
+        for part in m.parts
+        if isinstance(part, (SystemPromptPart, UserPromptPart)) and isinstance(part.content, str)
+    ]
+
+
+async def test_reinject_system_prompt_replace_keeps_mid_run_system_prompts():
+    """`replace_existing=True` replaces the system prompts the run started with, not ones added during it."""
+    agent, requests = _steering_agent(capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Client prompt'), UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello')]),
+    ]
+
+    result = await agent.run('Go', message_history=history)
+
+    assert len(requests) == 2
+    assert _contents(requests[1]) == snapshot(['Server prompt', 'Hi', 'Go', '<system>Mid-run steering</system>'])
+    assert _contents(result.all_messages()) == snapshot(['Server prompt', 'Hi', 'Go', 'Mid-run steering'])
+
+
+async def test_reinject_system_prompt_replace_keeps_summary_added_to_head_on_first_request():
+    """A summary a compaction capability folds into the head request on the run's first step is kept."""
+
+    @dataclass
+    class SummarizeHistory(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            standing = [p for p in ctx.messages[0].parts if isinstance(p, SystemPromptPart)]
+            compacted: list[ModelMessage] = [
+                ModelRequest(parts=[*standing, SystemPromptPart('Summary of previous conversation')]),
+                ctx.messages[-1],
+            ]
+            ctx.messages[:] = compacted
+            request_context.messages = list(compacted)
+            return request_context
+
+    agent = Agent(TestModel(), system_prompt='Server prompt', capabilities=[SummarizeHistory()])
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Client prompt'), UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello')]),
+    ]
+
+    result = await agent.run('Go', message_history=history, capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+
+    assert _contents(result.all_messages()) == snapshot(['Server prompt', 'Summary of previous conversation', 'Go'])
+
+
+async def test_reinject_system_prompt_replace_fresh_conversation_does_not_duplicate():
+    """On a fresh conversation the agent's own system prompt is replaced, not doubled, on every step."""
+    agent, requests = _steering_agent(capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+
+    result = await agent.run('Go')
+
+    assert [_contents(request) for request in requests] == snapshot(
+        [['Server prompt', 'Go'], ['Server prompt', 'Go', '<system>Mid-run steering</system>']]
+    )
+    assert _contents(result.all_messages()) == snapshot(['Server prompt', 'Go', 'Mid-run steering'])
+
+
+async def test_reinject_system_prompt_replace_rerendered_dynamic_prompt_does_not_duplicate():
+    """A dynamic system prompt in the history is re-rendered as a new part before the first request, yet still replaced."""
+    agent = Agent(TestModel(), capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+
+    @agent.system_prompt(dynamic=True)
+    def server_prompt() -> str:
+        return 'Dynamic server prompt'
+
+    # Not at the head, where the standing prompt would be replaced regardless.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello')]),
+        ModelRequest(
+            parts=[UserPromptPart('Again'), SystemPromptPart('Stale', dynamic_ref=server_prompt.__qualname__)]
+        ),
+        ModelResponse(parts=[TextPart('Hello again')]),
+    ]
+
+    result = await agent.run('Go', message_history=history)
+
+    assert _contents(result.all_messages()) == snapshot(['Dynamic server prompt', 'Hi', 'Again', 'Go'])
+
+
+async def test_adapter_server_mode_keeps_mid_run_system_prompts():
+    """In `manage_system_prompt='server'` mode, a `SystemPromptPart` the server adds during the run survives."""
+    agent, requests = _steering_agent()
+    adapter = DummyUIAdapter(
+        agent,
+        DummyUIRunInput(messages=[ModelRequest(parts=[SystemPromptPart('Client prompt'), UserPromptPart('Go')])]),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Stale prompt'), UserPromptPart('Earlier')]),
+        ModelResponse(parts=[TextPart('Earlier reply')]),
+    ]
+
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
+        events = [event async for event in adapter.run_stream_native(message_history=history)]
+    run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
+
+    assert len(requests) == 2
+    assert _contents(requests[1]) == snapshot(['Server prompt', 'Earlier', 'Go', '<system>Mid-run steering</system>'])
+    assert _contents(run_result_event.result.all_messages()) == snapshot(
+        ['Server prompt', 'Earlier', 'Go', 'Mid-run steering']
+    )
+
+
 def test_allowed_file_url_schemes_visible_in_base_adapter_signatures():
     from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
     dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
@@ -1843,6 +2080,27 @@ def test_sanitize_messages_leaves_string_user_content_alone():
     adapter = _make_dummy_adapter([ModelRequest(parts=[UserPromptPart(content='Plain text')])])
     sanitized = adapter.sanitize_messages(adapter.messages)
     assert sanitized == snapshot([ModelRequest(parts=[UserPromptPart(content='Plain text', timestamp=IsDatetime())])])
+
+
+@pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
+def test_sanitize_messages_request_instructions_follow_manage_system_prompt(
+    manage_system_prompt: Literal['server', 'client'],
+):
+    """Request-level `instructions` on client messages are stripped exactly when the server owns the system prompt."""
+    request = ModelRequest(parts=[UserPromptPart(content='hi')], instructions='Client instructions')
+    adapter = DummyUIAdapter(
+        agent=Agent(model=TestModel()),
+        run_input=DummyUIRunInput(messages=[request]),
+        manage_system_prompt=manage_system_prompt,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+    if manage_system_prompt == 'server':
+        assert sanitized == [replace(request, instructions=None)]
+    else:
+        assert sanitized == [request]
 
 
 def test_sanitize_messages_respects_custom_allowed_schemes():
@@ -2403,6 +2661,47 @@ async def test_run_stream_strips_dangling_tool_calls_from_client_history():
     assert not any(
         isinstance(message, ModelResponse) and bool(message.tool_calls) for message in history_seen_by_model
     ), 'dangling client-submitted tool call leaked into the agent run'
+
+
+async def test_run_stream_with_message_history_strips_unresolved_tool_calls():
+    """End-to-end: with server-side `message_history`, an unresolved client tool call is still
+    stripped when other client messages before and after it are not kept, so the agent makes a
+    normal model request instead of running the call.
+    """
+    executed: list[int] = []
+    captured: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        captured.append(list(messages))
+        yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def refresh_cache(key: int) -> str:
+        executed.append(key)  # pragma: no cover
+        return 'refreshed'  # pragma: no cover
+
+    request = DummyUIRunInput(
+        messages=[
+            ModelResponse(parts=[ToolCallPart(tool_name='refresh_cache', args={'key': 42}, tool_call_id='call-1')]),
+            ModelRequest(parts=[SystemPromptPart(content='client system prompt')]),
+            ModelResponse(parts=[CompactionPart(content='client summary')]),
+        ]
+    )
+    adapter = DummyUIAdapter(agent=agent, run_input=request)
+
+    # Two warnings fire here (system-prompt strip + dangling call); assert on the dangling one.
+    with pytest.warns(UserWarning) as record:
+        async for _ in adapter.run_stream(message_history=[ModelRequest.user_text_prompt('server context')]):
+            pass
+    assert any('unresolved tool call' in str(w.message) and 'refresh_cache' in str(w.message) for w in record)
+
+    assert executed == []
+    assert len(captured) == 1
+    parts_seen_by_model = [part for message in captured[0] for part in message.parts]
+    assert not any(isinstance(part, (ToolCallPart, CompactionPart)) for part in parts_seen_by_model)
+    assert any(isinstance(part, UserPromptPart) and part.content == 'server context' for part in parts_seen_by_model)
 
 
 async def test_run_stream_strips_file_urls_with_disallowed_schemes():

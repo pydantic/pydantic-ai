@@ -208,7 +208,7 @@ Each event has `event.name = 'gen_ai.evaluation.result'` and a short human-reada
 - `gen_ai.evaluation.explanation` — `EvaluationResult.reason` on success or `EvaluatorFailure.error_message` on failure. Omitted when absent. Set via `reason=...` when constructing an `EvaluationResult` inside a custom evaluator.
 - `error.type` (failure events only) — the exception class name (e.g. `'ValueError'`) when the failure was built from a caught exception; falls back to `'pydantic_evals.EvaluatorFailure'` for `EvaluatorFailure` instances constructed without it. Absent on successful evaluations. Source: `EvaluatorFailure.error_type`.
 - `gen_ai.evaluation.target` — `@evaluate(target=...)` or agent `name`. See [Target](#target).
-- `gen_ai.evaluation.evaluator.version` — `Evaluator.evaluator_version` class attribute; omitted when the class doesn't set it. See [Evaluator Versioning](#evaluator-versioning).
+- `gen_ai.evaluation.evaluator.version` — the return value of [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version]; omitted when it returns `None`, which is the default. See [Evaluator Versioning](#evaluator-versioning).
 - `gen_ai.evaluation.evaluator.source` — JSON-serialized [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec] identifying the evaluator class and its constructor arguments, so downstream queries can group by evaluator identity without relying on `name` alone (two different `LLMJudge(rubric=...)` instances share a name but have different sources).
 
 [OTel baggage](https://pydantic.dev/docs/logfire/reference/baggage/) entries (if any) are also attached to each event as attributes — configurable via `include_baggage` on the config. The `gen_ai.*` and `error.type` attributes above always win on conflict with baggage.
@@ -774,13 +774,13 @@ async def main():
         'span_abc': _make_context(
             inputs={'query': 'What is AI?'},
             output='AI is artificial intelligence.',
-            metadata={'model': 'gpt-4o'},
+            metadata={'model': '{{ openai:medium.name }}'},
             duration=1.2,
         ),
         'span_def': _make_context(
             inputs={'query': 'What is ML?'},
             output='ML is machine learning.',
-            metadata={'model': 'gpt-4o'},
+            metadata={'model': '{{ openai:medium.name }}'},
             duration=0.8,
         ),
     })
@@ -822,7 +822,7 @@ ctx = EvaluatorContext[dict[str, str], str, dict[str, str]](
     inputs={'query': 'What is AI?'},
     output='AI is artificial intelligence.',
     expected_output=None,
-    metadata={'model': 'gpt-4o'},
+    metadata={'model': '{{ openai:medium.name }}'},
     duration=1.2,
     _span_tree=SpanTree(),
     attributes={},
@@ -997,7 +997,7 @@ class OutputNotEmpty(Evaluator):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     name='assistant',
     capabilities=[OnlineEvaluation(evaluators=[OutputNotEmpty()])],
 )

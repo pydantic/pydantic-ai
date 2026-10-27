@@ -7,7 +7,8 @@ recorded in the `_toolset` module docstring.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from collections.abc import Sequence
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import AgentRunResult, RunContext
@@ -15,6 +16,7 @@ from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
+from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness.playwright._toolset import (
     DEFAULT_ACTION_TIMEOUT_MS,
     DEFAULT_MAX_CONTENT_TOKENS,
@@ -243,9 +245,21 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     those as secrets.
     """
 
-    _session: PlaywrightBrowserSession = field(init=False, repr=False)
-    _toolset: PlaywrightBrowserToolset[AgentDepsT] = field(init=False, repr=False)
-    _policy: EgressPolicy = field(init=False, repr=False)
+    _: KW_ONLY
+    id: str | None = 'playwright_browser'
+    """Stable capability ID, so its instructions are addressable and `defer_loading=True` needs none.
+
+    An agent has one set of browser tools, so two `PlaywrightBrowser` sharing this `id` are one browser
+    stated twice when they agree, and an error when they differ, since a merge could widen the egress one
+    of them was given. To keep two, give each its own `id` and wrap them in `PrefixTools`, since their
+    tool names are the same.
+    """
+
+    # Built from the fields above in `__post_init__`, so they're left out of equality: two browsers configured
+    # the same way compare equal, which is what lets `combine` treat them as one.
+    _session: PlaywrightBrowserSession = field(init=False, repr=False, compare=False)
+    _toolset: PlaywrightBrowserToolset[AgentDepsT] = field(init=False, repr=False, compare=False)
+    _policy: EgressPolicy = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.policy is not None and (self.allowed_domains is not None or not self.block_private_addresses):
@@ -272,6 +286,11 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
             action_timeout_ms=self.action_timeout_ms,
             navigation_timeout_ms=self.navigation_timeout_ms,
         )
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one browser stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, object]) -> AbstractCapability[AgentDepsT]:
         """Refuse to bind to a durable-execution agent.

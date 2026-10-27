@@ -2,20 +2,22 @@
 
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import partial
-from typing import Protocol
 
 from pydantic import JsonValue, ValidationError
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 from termflow.tui.menu import Menu, MenuResult
+from termflow.tui.pager import Pager
 from termflow.tui.terminal import terminal_size
 from termflow.tui.textinput import TextInput, TextInputResult
 
+from pydantic_clai2.plugins.menus import ChoicePreview, FieldRow, FieldSource
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.text_editor import TextEditor, edit_text
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 CUSTOM = 'Type a value...'
 KEEP = 'Keep current'
@@ -56,67 +58,14 @@ class _Reset:
     key: str
 
 
-class ChoicePreview(Protocol):
-    """Render a sample of `choice` for the choice picker's right-hand panel, `width` cells wide."""
-
-    def __call__(self, choice: str, /, *, width: int) -> str: ...
-
-
-@dataclass(frozen=True, kw_only=True)
-class FieldRow:
-    """One editable field as the menu sees it."""
-
-    key: str
-    description: str
-    default: str
-    choices: tuple[str, ...] = ()
-    label: str = ''
-    choice_labels: Mapping[str, str] = field(default_factory=dict[str, str])
-    allow_custom: bool = True
-    secret: bool = False
-    note: str = ''
-    """Where the value comes from when not from the user; shown muted after the value."""
-    preview: ChoicePreview | None = None
-    """Renders a sample of each choice in the choice picker."""
-
-    def display(self, value: str) -> str:
-        """Label a choice without changing its stored or validated value."""
-        return self.choice_labels.get(value, value)
-
-
-class FieldSource(Protocol):
-    """Where the rows come from and where edits go. Every method is synchronous."""
-
-    @property
-    def title(self) -> str:
-        """Menu title."""
-        ...
-
-    def rows(self) -> Sequence[FieldRow]:
-        """Every editable field, in display order."""
-        ...
-
-    def current(self, row: FieldRow) -> str:
-        """The active value as the user would type it."""
-        ...
-
-    def problem(self, row: FieldRow, text: str) -> str | None:
-        """Why `text` is not valid for the row, or `None` when it is."""
-        ...
-
-    def apply(self, row: FieldRow, raw: str) -> str:
-        """Save and apply a non-empty value; return the message to show."""
-        ...
-
-    def reset(self, row: FieldRow) -> str:
-        """Forget the override; return the message to show."""
-        ...
+NOT_SET = '(not set)'
+"""What `shown` displays for a value that is not set; the editor starts empty instead."""
 
 
 def shown(value: JsonValue) -> str:
     """Display a stored value the way the user would type it back."""
     if value is None:
-        return '(not set)'
+        return NOT_SET
     return value if isinstance(value, str) else json.dumps(value)
 
 
@@ -225,16 +174,27 @@ class FieldMenu:
             return ''
         return render(item.value, width=max(20, terminal_size()[0] - _PREVIEW_LIST_WIDTH - 4))
 
+    def initial(self, row: FieldRow) -> str:
+        """The text the editor starts with: the current value, so Enter keeps it.
+
+        Empty for a secret, for a value that is not set, and for one at its default, which a source may
+        show as text you would not type, such as `LOGFIRE_API_KEY, if set`. Enter on empty resets, which
+        keeps the default. Text that is not printable is left out rather than drawn as control characters.
+        """
+        if row.secret:
+            return ''
+        current = self._source.current(row)
+        return '' if current in (row.default, NOT_SET) or not current.isprintable() else current
+
     def build_editor(self, row: FieldRow) -> TextInput:
-        """A typed input that validates as you go; empty resets."""
+        """A typed input that opens holding `initial(row)` and validates as you go; empty resets."""
         builder = (
             TextInputBuilder(f'New value for {row.label or row.key}')
             .style(markdown_style())
             .prompt('Value: ')
+            .initial(self.initial(row))
             .placeholder(
-                'Enter a new secret'
-                if row.secret
-                else f'current: {row.display(self._source.current(row))} (empty resets)'
+                'Enter a new secret' if row.secret else f'empty resets to {row.display(row.default) or "(empty)"}'
             )
             .validator(lambda text: None if not text.strip() else self._source.problem(row, text.strip()))
             .footer_hint('Enter save - Esc cancel')
@@ -280,6 +240,11 @@ def run_text(widget: TextInput) -> TextInputResult:  # pragma: no cover -- needs
     return widget.run()
 
 
+def run_pager(pager: Pager) -> object:  # pragma: no cover -- needs a real terminal.
+    """Show a termflow pager on the real terminal."""
+    return pager.run()
+
+
 @dataclass(frozen=True, kw_only=True)
 class Runners:
     """How widgets get shown; tests swap these for scripted results."""
@@ -287,6 +252,9 @@ class Runners:
     run_list: ListRunner = run_menu
     run_choice: ListRunner = run_menu
     run_text: TextRunner = run_text
+    run_pager: Callable[[Pager], object] = run_pager
+    edit: TextEditor = edit_text
+    """Multi-line text: `$VISUAL`, `$EDITOR`, or the built-in editor."""
 
 
 TERMINAL = Runners()
@@ -318,7 +286,7 @@ async def run_flow_async(
     menu: FieldMenu,
     runners: Runners = TERMINAL,
     *,
-    submenus: Mapping[str, Callable[[], Awaitable[list[str]]]] | None = None,
+    submenus: Mapping[str, Callable[[], Awaitable[Sequence[str]]]] | None = None,
 ) -> list[str]:
     """`run_flow` driven from the event loop, for submenus that are themselves async, such as `prompt_api_key`.
 
@@ -375,4 +343,9 @@ def _edit(menu: FieldMenu, row: FieldRow, runners: Runners) -> str | None:
     typed = runners.run_text(menu.build_editor(row))
     if typed.cancelled or not isinstance(typed.value, str):
         return None
-    return menu.apply(row, typed.value)
+    raw = typed.value.strip()
+    # Enter on the value it opened with saves nothing: in `/set`, saving would copy a value from the
+    # project's settings file into your own.
+    if raw and raw == menu.initial(row).strip():
+        return None
+    return menu.apply(row, raw)

@@ -20,6 +20,19 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Software Development",
+]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
@@ -30,13 +43,18 @@ dependencies = [
     "pyyaml>=6.0.2",
     # Speculative execution runs CodeMode's Monty sandbox. Pinned directly rather than via
     # `pydantic-ai-harness[code-mode]`, which also pulls a web-search client CLAI does not use.
-    "pydantic-monty>=1.0.0,<2",
+    "pydantic-monty>=1.4.0,<2",
     # Built-in MCP client: https://github.com/pydantic/pydantic-ai/issues/9267.
     "pydantic-ai-slim[anthropic,mcp,openai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
     # FastMCP's browser sign-in (`/mcp` OAuth and the day_ai, notion, ordinal, posthog, pylon, and grain
     # plugins) runs a uvicorn callback server with `ws="websockets-sansio"`, which imports `websockets`
     # on start. `fastmcp-slim[client]` does not declare it, so without this the sign-in fails.
-    "websockets>=13.0",
+    # 15 for `connect(proxy=None)`, which keeps `web.client`'s loopback WebSocket off any configured proxy.
+    "websockets>=15.0",
+    # The `web` plugin's server (`/web`, `clai2 --web`). A dependency rather than an extra so that
+    # `uvx pydantic-clai2 --web` works as is; uvicorn and starlette already come with `mcp`.
+    "fastapi>=0.115.0",
+    "uvicorn>=0.38.0",
     "genai-prices>=0.1.7",
     # 1.0 adds `termflow.live` (ScreenBuffer, render_diff, Widget), which paints the transcript panel.
     "termflow-md>=1.0.0,<2",

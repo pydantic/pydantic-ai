@@ -14,7 +14,7 @@ Pass an explicit [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] to pick a s
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import ToolSearch
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ToolSearch(strategy='keywords')])
+agent = Agent('{{ anthropic:medium }}', capabilities=[ToolSearch(strategy='keywords')])
 ```
 
 When the local `search_tools` function tool is used, its retry budget follows the agent's tool budget — so `Agent(retries={'tools': N})` gives the model `N` attempts to correct a malformed `queries` argument, on the same [precedence ladder](../tools-advanced.md#which-retry-limit-wins) as any other tool. A search that finds no matches returns normally and never spends a retry.

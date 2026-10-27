@@ -3,6 +3,7 @@
 import io
 
 import pytest
+from rich.color import Color
 from rich.console import Console
 from rich.text import Text
 
@@ -114,7 +115,10 @@ async def test_tool_header_colors(name: str, arguments: dict[str, str], show_too
     text = Text.from_ansi(output.getvalue())
     assert text.get_style_at_offset(console, 0).color == console.get_style(theme.MUTED).color
     assert text.get_style_at_offset(console, 2).color == console.get_style(theme.ACCENT).color
-    if arguments:
+    if name == 'shell':
+        # The command is highlighted as Bash: `echo` is a builtin.
+        assert text.get_style_at_offset(console, 3 + len(name)).color == Color.parse('color(6)')
+    elif arguments:
         assert text.get_style_at_offset(console, 3 + len(name)).color == console.get_style(theme.MUTED).color
 
 

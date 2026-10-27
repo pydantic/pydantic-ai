@@ -58,7 +58,7 @@ from pydantic_ai_harness.experimental.acp import run_acp_stdio_sync
 
 
 def build_agent() -> Agent[None, str]:
-    return Agent('anthropic:claude-sonnet-5', instructions='You are a coding assistant.')
+    return Agent('{{ anthropic:medium }}', instructions='You are a coding assistant.')
 
 
 if __name__ == '__main__':
@@ -99,7 +99,7 @@ from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.experimental.acp import AcpSession, AcpSessionConfig, run_acp_stdio_sync
 
-agent = Agent('anthropic:claude-sonnet-5')
+agent = Agent('{{ anthropic:medium }}')
 
 
 def session_config(session: AcpSession) -> AcpSessionConfig[None]:
@@ -199,7 +199,7 @@ run_acp_stdio_sync(agent, session_store=InMemorySessionStore())
 Pass `models` to advertise a stable ACP session config option named `model` (using Pydantic AI [model names](../models/overview.md)). The first is each session's default. A selection is applied as a per-run override -- the shared agent is never mutated -- and is persisted with the session when a `session_store` is set.
 
 ```python
-run_acp_stdio_sync(agent, models=['anthropic:claude-sonnet-5', 'anthropic:claude-opus-4-8', 'openai:gpt-4o'])
+run_acp_stdio_sync(agent, models=['{{ anthropic:medium }}', '{{ anthropic:large }}', '{{ openai:medium }}'])
 ```
 
 A model id is any string a Pydantic AI model accepts, so newer models not yet in `KnownModelName` work too. Pass `models='all'` to offer every model Pydantic AI knows. To advertise ids `infer_model` does not understand (OAuth or subscription models), pass `model_resolver` to map the selected id to a prebuilt `Model`.

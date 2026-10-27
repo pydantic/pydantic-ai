@@ -34,9 +34,18 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
 from pydantic_ai import Agent, ToolDefinition
-from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
 
 pytestmark = pytest.mark.xdist_group(name='harness-dbos')
@@ -69,16 +78,23 @@ def dbos_instance(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, A
 # ---------------------------------------------------------------------------
 
 
+_additions: list[tuple[int, int]] = []
+
+
+@DBOS.step()
 def add(a: int, b: int) -> int:
     """Add two numbers."""
+    _additions.append((a, b))
     return a + b
 
 
 _captured_tool_defs: list[list[ToolDefinition]] = []
+_captured_instructions: list[str | None] = []
 
 
 def _code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
     _captured_tool_defs.append(info.function_tools)
+    _captured_instructions.append(info.instructions)
 
     for msg in messages:
         if isinstance(msg, ModelResponse):
@@ -87,11 +103,18 @@ def _code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentIn
             if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code':
                 return ModelResponse(parts=[TextPart(content=f'done: {part.content}')])
 
+    code = 'result = await add(a=3, b=4)\nresult'
+    if any(
+        isinstance(part, UserPromptPart) and part.content == 'Gather two additions'
+        for message in messages
+        for part in message.parts
+    ):
+        code = 'import asyncio\nawait asyncio.gather(add(a=3, b=4), add(a=5, b=6))'
     return ModelResponse(
         parts=[
             ToolCallPart(
                 tool_name='run_code',
-                args={'code': 'result = await add(a=3, b=4)\nresult'},
+                args={'code': code},
                 tool_call_id='test_tc_1',
             )
         ]
@@ -110,6 +133,24 @@ code_mode_agent = Agent(
 def run_code_mode_agent(prompt: str) -> dict[str, Any]:
     result = code_mode_agent.run_sync(prompt)
     return {'output': str(result.output), 'messages': result.all_messages_json().decode()}
+
+
+class _LimitAbortCrash(BaseException):
+    """Leave the failed attempt pending so DBOS recovery replays its recorded model request."""
+
+
+_limit_errors: list[str] = []
+
+
+@DBOS.workflow()
+def run_limited_code_mode_agent(prompt: str, tool_calls_limit: int) -> None:
+    try:
+        code_mode_agent.run_sync(prompt, usage_limits=UsageLimits(tool_calls_limit=tool_calls_limit))
+    except UsageLimitExceeded as error:
+        _limit_errors.append(str(error))
+        if len(_limit_errors) == 1:
+            raise _LimitAbortCrash from error
+        raise
 
 
 _GATHERED_CALLS = 3
@@ -132,7 +173,7 @@ def _gather_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo)
     last = messages[-1]
     assert isinstance(last, ModelRequest)
     for part in last.parts:
-        if isinstance(part, ToolReturnPart | RetryPromptPart):
+        if isinstance(part, ToolReturnPart):
             return ModelResponse(parts=[TextPart(content=f'done: {part.content}')])
     code = "import asyncio\nawait asyncio.gather(fetch(label='a'), fetch(label='b'), fetch(label='c'))"
     return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='gather')])
@@ -164,6 +205,7 @@ def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
     model requests through DBOS steps: `DBOSDurability` is transparent outside
     a workflow, so a passing run alone would not show durability engaged."""
     _captured_tool_defs.clear()
+    _captured_instructions.clear()
 
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id):
@@ -221,21 +263,64 @@ def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
     # The model was called twice (first request + after tool return), both
     # should see the same tool definitions.
     assert len(_captured_tool_defs) == 2
-    for tool_defs in _captured_tool_defs:
+    for tool_defs, instructions in zip(_captured_tool_defs, _captured_instructions, strict=True):
         tool_names = [td.name for td in tool_defs]
         # CodeMode wraps `add` into `run_code` -- the model should only see `run_code`
         assert 'run_code' in tool_names
         assert 'add' not in tool_names
 
+        # The catalog crosses the model request in the instructions, not in `run_code`'s description.
+        assert instructions is not None
+        assert 'async def add' in instructions
         run_code_td = next(td for td in tool_defs if td.name == 'run_code')
         assert run_code_td.description is not None
-        assert 'async def add' in run_code_td.description
+        assert 'async def add' not in run_code_td.description
         assert run_code_td.parameters_json_schema['properties']['code']['type'] == 'string'
 
     # 6. Durability engaged: model requests were recorded as DBOS steps
     steps = dbos_instance.list_workflow_steps(workflow_id)
     step_names = [step['function_name'] for step in steps]
     assert step_names.count('code_mode_dbos_agent__model.request') == 2
+
+
+@pytest.mark.parametrize(
+    'prompt,limit,expected_additions',
+    [('Calculate 3 + 4', 1, []), ('Gather two additions', 2, [(3, 4)])],
+    ids=['sequential', 'gather'],
+)
+def test_tool_calls_limit_refuses_during_recovery(
+    dbos_instance: DBOS, prompt: str, limit: int, expected_additions: list[tuple[int, int]]
+) -> None:
+    _limit_errors.clear()
+    _captured_tool_defs.clear()
+    _captured_instructions.clear()
+    _additions.clear()
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id), pytest.raises(_LimitAbortCrash):
+        run_limited_code_mode_agent(prompt, limit)
+
+    recorded_additions: list[tuple[int, object, object]] = [
+        (step['function_id'], step['output'], step['error'])
+        for step in dbos_instance.list_workflow_steps(workflow_id)
+        if step['function_name'] == 'add'
+    ]
+    assert len(recorded_additions) == len(expected_additions)
+    if expected_additions:
+        assert recorded_additions[0][1:] == (7, None)
+
+    handle = DBOS.resume_workflow(workflow_id)
+    with pytest.raises(UsageLimitExceeded, match=rf'tool_calls_limit of {limit} \(tool_calls={limit + 1}\)'):
+        handle.get_result()
+
+    assert len(_limit_errors) == 2
+    assert _limit_errors[0] == _limit_errors[1]
+    assert len(_captured_tool_defs) == 1
+    assert _additions == expected_additions
+    steps = dbos_instance.list_workflow_steps(workflow_id)
+    assert [step['function_name'] for step in steps].count('code_mode_dbos_agent__model.request') == 1
+    assert [
+        (step['function_id'], step['output'], step['error']) for step in steps if step['function_name'] == 'add'
+    ] == recorded_additions
 
 
 def test_gathered_calls_overlap_in_dbos_workflow(dbos_instance: DBOS) -> None:

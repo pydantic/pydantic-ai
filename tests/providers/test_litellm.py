@@ -114,6 +114,8 @@ def test_model_profile_with_different_models(mocker: MockerFixture):
         mock_profiles[expected_profile].reset_mock()
 
     # Test unknown provider prefix (should fall back to openai)
+    # The Mistral cases above also consult the OpenAI fallback underneath the Mistral profile.
+    mock_profiles['openai'].reset_mock()
     provider.model_profile('unknown-provider/some-model')
     mock_profiles['openai'].assert_called_once_with('unknown-provider/some-model')
 

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
 from typing import Generic, Self
@@ -21,17 +23,21 @@ from pydantic import (
     model_serializer,
 )
 
-from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, CombinedCapability, WrapperCapability
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai.tools import RunContext
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.skills import SkillDefinition, Skills
-from pydantic_clai2.builtin_plugins.coder_folders import is_folder_name, run_coder_flow
+from pydantic_ai_harness.subagents import TaskControl
+from pydantic_clai2.builtin_plugins.coder_folders import edit_agent_folders, is_folder_name
+from pydantic_clai2.builtin_plugins.coder_skills import edit_skills
 from pydantic_clai2.commands import Command
+from pydantic_clai2.config.project_settings import repository_directories
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
-from pydantic_clai2.runtime._session import supports_local_workspace
-from pydantic_clai2.ui.menus.field_menu import FieldRow, first_error
-from pydantic_clai2.ui.menus.menu_worker import run_worker
+from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
+from pydantic_clai2.runtime.session import supports_local_workspace
+from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
@@ -42,6 +48,12 @@ DEFAULT_SKILL_FOLDERS = ('.agents/skills', '.claude/skills', '~/.agents/skills',
 
 SKILL_FOLDERS_FEATURE = 'coder-skill-folders'
 """Builds without it would reject a saved `skill_folders`, so they drop the setting instead."""
+
+DISABLED_SKILLS_FEATURE = 'coder-disabled-skills'
+"""Builds without it would reject a saved `disabled_skills`, so they drop the setting and offer every skill."""
+
+TASK_CONTROL_FEATURE = 'coder-task-control'
+"""Builds without it would reject a saved `task_control`, so they drop the setting."""
 
 
 def _expand_home(value: str, *, home: Path) -> str:
@@ -60,6 +72,10 @@ class CoderSettings(BaseModel):
     workspace: str | None = Field(default=None, description='Deprecated workspace option, retained for saved settings.')
     repo_context: bool = Field(default=True, description='Include repository instructions with coding tools.')
     sub_agents: bool = Field(default=True, description='Enable delegation to sub-agents.')
+    task_control: bool = Field(
+        default=True,
+        description='With sub-agents, let the model run tasks in the background and steer, answer, or cancel them.',
+    )
     agent_folders: list[str] = Field(
         default_factory=list,
         description=(
@@ -74,6 +90,10 @@ class CoderSettings(BaseModel):
             'Missing folders are skipped. Use [] to turn skills off.'
         ),
     )
+    disabled_skills: list[str] = Field(
+        default_factory=list,
+        description='Skill names hidden from the model and from the /commands, in every project.',
+    )
 
     @field_validator('agent_folders', 'skill_folders')
     @classmethod
@@ -85,6 +105,15 @@ class CoderSettings(BaseModel):
                     f'{kind} folders must be nonempty names or paths without surrounding whitespace or NUL.'
                 )
         return values
+
+    @field_validator('disabled_skills')
+    @classmethod
+    def valid_skill_names(cls, values: list[str]) -> list[str]:
+        for value in values:
+            if not value or value != value.strip() or not value.isprintable():
+                raise ValueError('Skill names must be nonempty, without surrounding whitespace or control characters.')
+        # Harness compares skill names after NFKC normalization, so a name typed another way still matches.
+        return [unicodedata.normalize('NFKC', value) for value in values]
 
     @model_serializer(mode='wrap')
     def _only_chosen(self, handler: SerializerFunctionWrapHandler) -> dict[str, JsonValue]:
@@ -106,9 +135,20 @@ class CoderSettings(BaseModel):
                 project.append(_expand_home(value, home=home))
         return list(dict.fromkeys([*project, *personal]))
 
-    def skill_libraries(self, *, home: Path) -> list[str]:
-        """`skill_folders` with `~/` expanded, each once, in precedence order."""
-        return list(dict.fromkeys(_expand_home(value, home=home) for value in self.skill_folders))
+    def skill_libraries(self, *, home: Path, parents: Sequence[Path] = ()) -> list[str]:
+        """`skill_folders` with `~/` expanded, each once, in precedence order.
+
+        Each relative folder is followed by the same folder in each of `parents`: the session directory's
+        parents up to the git root, nearest first, so launching in a subdirectory still finds the
+        repository's skills.
+        """
+        libraries: list[str] = []
+        for value in self.skill_folders:
+            library = _expand_home(value, home=home)
+            libraries.append(library)
+            if not Path(library).is_absolute():
+                libraries.extend((parent / library).as_posix() for parent in parents)
+        return list(dict.fromkeys(libraries))
 
 
 class CoderSource(Generic[DepsT]):
@@ -120,7 +160,8 @@ class CoderSource(Generic[DepsT]):
         self.host = host
 
     def rows(self) -> tuple[FieldRow, ...]:
-        folders = self.host.settings(CoderSettings).agent_folders
+        settings = self.host.settings(CoderSettings)
+        folders, disabled = settings.agent_folders, settings.disabled_skills
         return (
             FieldRow(
                 key='unrestricted_filesystem',
@@ -141,7 +182,7 @@ class CoderSource(Generic[DepsT]):
             FieldRow(
                 key='agent_folders',
                 label='Agent folders',
-                description='Manage sub-agent definition folders.\nEnter opens the folder list.\nAn empty list turns disk agents off.',
+                description='Manage sub-agent definition folders.\nChoosing it opens the folder list.\nAn empty list turns disk agents off.',
                 default='[]',
                 choice_labels={
                     '[]': 'None (off)',
@@ -154,6 +195,16 @@ class CoderSource(Generic[DepsT]):
                 description=CoderSettings.model_fields['skill_folders'].description or '',
                 default=json.dumps(DEFAULT_SKILL_FOLDERS),
             ),
+            FieldRow(
+                key='disabled_skills',
+                label='Skills',
+                description='Turn each skill on or off.\nChoosing it opens the skill list.',
+                default='[]',
+                choice_labels={
+                    '[]': 'All on',
+                    **({json.dumps(disabled): f'{len(disabled)} off'} if disabled else {}),
+                },
+            ),
         )
 
     def current(self, row: FieldRow) -> str:
@@ -163,6 +214,7 @@ class CoderSource(Generic[DepsT]):
             'sub_agents': settings.sub_agents,
             'agent_folders': list[JsonValue](settings.agent_folders),
             'skill_folders': list[JsonValue](settings.skill_folders),
+            'disabled_skills': list[JsonValue](settings.disabled_skills),
         }
         return json.dumps(values[row.key])
 
@@ -188,6 +240,13 @@ class CoderSource(Generic[DepsT]):
         """Persist the folder list, keeping every other Coder preference."""
         self.host.save_settings(self._with('agent_folders', list[JsonValue](folders)))
 
+    def disabled_skills(self) -> list[str]:
+        return self.host.settings(CoderSettings).disabled_skills
+
+    def save_disabled_skills(self, names: list[str]) -> None:
+        """Persist the skills that are off, keeping every other Coder preference."""
+        self.host.save_settings(self._with('disabled_skills', list[JsonValue](names)))
+
     def problem(self, row: FieldRow, text: str) -> str | None:
         try:
             self._updated(row, text)
@@ -206,17 +265,46 @@ class CoderSource(Generic[DepsT]):
         return f'Reset {row.label}.'
 
 
+@dataclass
+class _ProjectSkills(WrapperCapability[DepsT]):
+    """Harness `Skills` that read the project directory while the run's workspace is not chosen yet.
+
+    When a plugin adds a capability function, CLAI attaches the project directory only once the run's
+    capability functions resolve, so a sandbox one supplies wins (see `local_workspace`). `Skills` reads
+    its catalog in `for_run`, before then, and would find no workspace. It reads the project directory
+    instead, where the run works unless a capability function supplies a workspace of its own.
+
+    The `Skills` sits in a group, so core still sees it and another `Skills` on the agent combines with it.
+    Core keeps the combined one where the last of them was, so one combined outside this wrapper reads
+    the run's workspace as before.
+    """
+
+    project: LocalWorkspaceBackend = field(kw_only=True)
+    """The session's directory (`PluginHost.workspace`), where the commands' skills are read."""
+
+    async def for_run(self, ctx: RunContext[DepsT]) -> AbstractCapability[DepsT]:
+        if not ctx.workspace.attached:
+            ctx = replace(ctx, workspace=Workspace(self.project))
+        return await super().for_run(ctx)
+
+
 class CoderPlugin(Plugin[CoderSettings, DepsT]):
     """Harness `Coder` and `Skills`, a `/command` per skill, and a field editor for the preferences."""
 
     @classmethod
     def from_host(cls, host: PluginHost[DepsT]) -> Self:
         # Tags the setting, so a build that cannot read it uses the default instead of failing to load `coder`.
-        return cls(host, host.settings(CoderSettings, requires={'skill_folders': [SKILL_FOLDERS_FEATURE]}))
+        requires = {
+            'task_control': [TASK_CONTROL_FEATURE],
+            'skill_folders': [SKILL_FOLDERS_FEATURE],
+            'disabled_skills': [DISABLED_SKILLS_FEATURE],
+        }
+        return cls(host, host.settings(CoderSettings, requires=requires))
 
     def __init__(self, host: PluginHost[DepsT], settings: CoderSettings) -> None:
         super().__init__(host, settings)
         self._skills: Skills[DepsT] | None = None
+        self._skill_workspace: LocalWorkspaceBackend | None = None
         self._skill_definitions: tuple[SkillDefinition, ...] = ()
         self._skill_notices: tuple[str, ...] = ()
 
@@ -226,21 +314,37 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
         The model's catalog is read again at the start of every run, so it lists a skill added since;
         its command arrives when the plugin loads again.
         """
-        libraries = self.settings.skill_libraries(home=Path(await anyio.Path.home()))
+        directory = self.host.workspace
+        # The session's directory itself stays relative, resolved by the workspace as before.
+        _, *parents = await anyio.to_thread.run_sync(repository_directories, directory)
+        libraries = self.settings.skill_libraries(home=Path(await anyio.Path.home()), parents=parents)
         # Without a local workspace (Windows), the folders cannot be read here or by the run.
         if not libraries or not supports_local_workspace():
             return
-        skills = Skills[DepsT](libraries, missing_directories='skip', duplicate_names='keep_first')
+        # The model's skills leave out the ones turned off. The setting is the same in every project, so a
+        # name this project lacks is skipped. The commands and the settings menu read every skill.
+        skills = Skills[DepsT](
+            libraries,
+            exclude=self.settings.disabled_skills,
+            missing_directories='skip',
+            duplicate_names='keep_first',
+            unknown_names='skip',
+        )
+        listed = Skills[DepsT](libraries, missing_directories='skip', duplicate_names='keep_first')
+        workspace = LocalWorkspaceBackend(directory)
         try:
-            catalog = await skills.load(LocalWorkspaceBackend(Path(await anyio.Path.cwd())))
+            catalog = await listed.load(workspace)
         except (UserError, ValueError, OSError) as exc:
             # A misconfigured or unreadable folder would otherwise fail every turn, or the whole plugin, so
             # skills are left out and the file and shell tools still load.
             self._skill_notices = (f'Skills are off: {exc}',)
             return
         self._skills = skills
+        self._skill_workspace = workspace
         self._skill_definitions = catalog.skills
-        self._skill_notices = catalog.skipped
+        # Only skipped skills are reported. Fields such as `allowed-tools` belong to other clients that share
+        # the skill folders, so naming them at every launch would be a warning nobody can act on.
+        self._skill_notices = tuple(skipped.message for skipped in catalog.skipped)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         settings = self.settings
@@ -251,8 +355,14 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             repo_context=settings.repo_context,
             sub_agents=settings.sub_agents,
             agent_folders=settings.folders(home=Path.home()) or None,
+            task_control=TaskControl() if settings.sub_agents and settings.task_control else None,
         )
-        return (coder,) if self._skills is None else (coder, self._skills)
+        if self._skills is None or self._skill_workspace is None:
+            return (coder,)
+        return (
+            coder,
+            _ProjectSkills[DepsT](CombinedCapability([self._skills]), project=self._skill_workspace),
+        )
 
     def get_commands(self) -> Sequence[Command]:
         return tuple(
@@ -265,9 +375,21 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
                 overridable=True,
             )
             for skill in self._skill_definitions
+            if skill.user_invocable and skill.name not in self.settings.disabled_skills
         )
 
-    def _invoke(self, skill: SkillDefinition, args: list[str]) -> str:
+    async def _invoke(self, loaded: SkillDefinition, args: list[str]) -> str:
+        """Send the skill as the folders hold it now, as the model would load it, not as it was at load."""
+        assert self._skills is not None and self._skill_workspace is not None, 'skill commands need loaded skills'
+        catalog = await self._skills.load(self._skill_workspace)
+        skill = next((skill for skill in catalog.skills if skill.name == loaded.name), None)
+        if skill is None:
+            problem = next((skipped.message for skipped in catalog.skipped if skipped.path == loaded.path), None)
+            detail = problem or f'no skill folder has it any more; it was in {loaded.path}.'
+            # Skill files come from the repository, so control characters must not reach the terminal.
+            raise ValueError(terminal_text(f'Skill {loaded.name!r} is gone: {detail} /reload updates the commands.'))
+        if not skill.user_invocable:
+            raise ValueError(f'Skill {loaded.name!r} is now `user-invocable: false`. /reload updates the commands.')
         self.host.submit_prompt(skill.render(args[0] if args else ''))
         return ''
 
@@ -275,8 +397,12 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
         for notice in self._skill_notices:
             self.host.console.print(terminal_text(notice), style=theme.color(theme.WARNING), markup=False)
 
-    async def configure(self) -> str:
-        if not self.host.console.is_terminal:
-            return 'Configure Coder from a terminal: /plugins configure coder'
-        messages = await run_worker(lambda: run_coder_flow(CoderSource(self.host)))
-        return '\n'.join(messages) or 'No Coder settings changed.'
+    def settings_menu(self) -> SettingsMenu:
+        source = CoderSource(self.host)
+        return SettingsMenu(
+            source=source,
+            actions={
+                'agent_folders': partial(edit_agent_folders, source),
+                'disabled_skills': partial(edit_skills, source, self._skill_definitions),
+            },
+        )

@@ -31,7 +31,7 @@ from pydantic_ai_harness.step_persistence import InMemoryStepStore
 
 store = InMemoryStepStore()
 librarian = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[StepPersistence(store=store, agent_name='code_librarian')],
 )
 
@@ -55,6 +55,13 @@ The run record, events, and snapshots carry `agent_name`. When it is unset, they
 
 ## Durable execution
 
+`StepPersistence` and a durable execution engine recover from different failures:
+
+- **`StepPersistence`** saves message-history snapshots, a step-event trail, and a tool-effect ledger to a store you choose, with no engine to run. After a crash, your code decides what happens next: load the latest complete snapshot's messages with `continue_run` or `fork_run` and pass them to a new `Agent.run(message_history=...)`, in the same process or another one. A step that was in flight is not retried: its tool calls show up as `started` effects in the ledger, and you decide whether redoing them is safe.
+- **A durable engine** replays the run itself after a restart and retries the call that was in flight, as [Durable Execution](../durable_execution/overview.md) describes.
+
+Use `StepPersistence` alone when a run can be resumed or forked from its last settled step, for example by an orchestrator that continues a delegate's investigation. Use a durable engine when a run must finish without your code restarting it, including a step interrupted partway through. Use both to have the engine keep the run alive while the store keeps a history you can inspect, continue, or fork after the run ends.
+
 `StepPersistence` has the stable capability id `step_persistence`, so it can be attached alongside a Pydantic AI durability capability without passing `id=`. Pass an explicit id only when the same agent has more than one `StepPersistence` instance.
 
 Six store boundaries are durable operations: registration identity, run registration, event append, snapshot save, tool-effect start, and tool-effect completion or failure. Every persisted timestamp is read inside one of those operations, so replay uses the journaled value instead of reading the workflow wall clock again. The journaled registration identity makes a retried registration idempotent while a distinct reuse of the same run id still fails.
@@ -72,7 +79,7 @@ from pydantic_ai_harness.step_persistence import InMemoryStepStore
 
 store = InMemoryStepStore()
 orchestrator = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[StepPersistence(store=store, agent_name='orchestrator')],
 )
 
@@ -124,7 +131,7 @@ from pydantic_ai_harness.step_persistence import InMemoryStepStore, continue_run
 
 store = InMemoryStepStore()
 librarian = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[StepPersistence(store=store, agent_name='code_librarian')],
 )
 
@@ -179,11 +186,11 @@ from pydantic_ai_harness.step_persistence import InMemoryStepStore
 
 store = InMemoryStepStore()
 orchestrator = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[StepPersistence(store=store, agent_name='orchestrator')],
 )
 librarian = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[StepPersistence(store=store, agent_name='code_librarian')],
 )
 
@@ -311,9 +318,9 @@ The helper reads the active `run_id` from the `StepPersistence` `ContextVar` and
     - `tool_effects.jsonl` -- append-only `ToolEffectRecord`s, scoped to this run
     - `snapshot-keys.jsonl` -- replay-suppression keys retained independently of snapshot pruning
     - `snapshots/{seq}.json` -- `ContinuableSnapshot`s, named by a per-run monotonic counter (not `step_index`, which would collide when the same `run_id` is reused across `Agent.run` calls, since `ctx.run_step` resets to 0 each call).
-- `SqliteStepStore(database='runs.db')` -- single SQLite file with tables `runs`, `events`, `snapshots`, `snapshot_idempotency_keys`, `tool_effects`, and a sibling `media` table for externalized blobs (see [Persisting media](#persisting-media) below). WAL mode is enabled; `tool_effects` upserts per `(run_id, tool_call_id)` so the latest state wins; snapshots use `AUTOINCREMENT seq` to mirror `FileStepStore._next_snapshot_seq`. Databases created before the snapshot `state` column existed gain it automatically on open (existing rows read as `complete`). Pass `connection=` instead of `database=` to share a `sqlite3.Connection` with the rest of your application; the connection must be opened with `check_same_thread=False` because hook calls are dispatched onto a worker thread.
-- `MongoStepStore(client= or db_url=, database=...)` -- MongoDB collections `runs`, `events`, `snapshots`, `snapshot_idempotency_keys`, `tool_effects`, and `counters` (atomic `$inc` allocates the monotonic `seq`). Run registration uses an atomic insert by `runs._id = run_id`; duplicate ids raise `ValueError`. Needs the `mongodb` extra (which installs `pymongo>=4.17.0`); pass a shared `AsyncMongoClient` as `client=`, or a connection string as `db_url=` (the store then owns the client -- call `await store.aclose()` to release it). Individual parts at or above `media_threshold_bytes` externalize by default to a `MongoMediaStore` on the same client. That is a per-value offload, not an aggregate cap: a snapshot of many below-threshold parts can still exceed MongoDB's 16 MiB document limit and fail on insert, so lower the threshold if that is a risk for your workload.
-- `PostgresStepStore(pool, table='step_persistence')` -- PostgreSQL tables `{table}_runs`, `{table}_events`, `{table}_snapshots`, `{table}_snapshot_keys`, and `{table}_tool_effects`, plus `{table}_media` for externalized blobs (see [Persisting media](#persisting-media) below). `table` is a prefix, not a table name. `pool` is a caller-owned asyncpg-compatible pool: the harness imports no driver and defines no extra for it, and the store does not close the pool. Run registration inserts by the `run_id` primary key of `{table}_runs`; duplicate ids raise `ValueError`. Events and snapshots are ordered by a `BIGINT GENERATED ALWAYS AS IDENTITY` `seq`, which keeps counting when `ctx.run_step` resets to 0; `{table}_snapshot_keys` holds the replay-suppression keys independently of snapshot pruning; `{table}_tool_effects` upserts per `(run_id, tool_call_id)` so the latest state wins. Timestamps and JSON are stored as `TEXT`.
+- `SqliteStepStore(database='runs.db')` -- single SQLite file with tables `runs`, `events`, `snapshots`, `snapshot_idempotency_keys`, `tool_effects`, and a sibling `media` table for externalized blobs (see [Persisting media](#persisting-media) below), plus `snapshot_messages` and `snapshot_message_refs` (see [Storing each message once](#storing-each-message-once)). WAL mode is enabled, and a write waits up to 30 seconds for another writer, such as another process sharing the file, before raising `database is locked`; `tool_effects` upserts per `(run_id, tool_call_id)` so the latest state wins; snapshots use `AUTOINCREMENT seq` to mirror `FileStepStore._next_snapshot_seq`. Databases created before the snapshot `state` column existed gain it automatically on open (existing rows read as `complete`). Pass `connection=` instead of `database=` to share a `sqlite3.Connection` with the rest of your application; the connection must be opened with `check_same_thread=False` because hook calls are dispatched onto a worker thread; the store leaves its busy timeout and journal mode as the caller set them.
+- `MongoStepStore(client= or db_url=, database=...)` -- MongoDB collections `runs`, `events`, `snapshots`, `snapshot_messages`, `snapshot_idempotency_keys`, `tool_effects`, and `counters` (atomic `$inc` allocates the monotonic `seq`). Run registration uses an atomic insert by `runs._id = run_id`; duplicate ids raise `ValueError`. Needs the `mongodb` extra (which installs `pymongo>=4.17.0`); pass a shared `AsyncMongoClient` as `client=`, or a connection string as `db_url=` (the store then owns the client -- call `await store.aclose()` to release it). Individual parts at or above `media_threshold_bytes` externalize by default to a `MongoMediaStore` on the same client. That is a per-value offload, not an aggregate cap: a message of many below-threshold parts can still exceed MongoDB's 16 MiB document limit and fail on insert, so lower the threshold if that is a risk for your workload.
+- `PostgresStepStore(pool, table='step_persistence')` -- PostgreSQL tables `{table}_runs`, `{table}_events`, `{table}_snapshots`, `{table}_snapshot_keys`, `{table}_messages`, and `{table}_tool_effects`, plus `{table}_media` for externalized blobs (see [Persisting media](#persisting-media) below). `table` is a prefix, not a table name. `pool` is a caller-owned asyncpg-compatible pool: the harness imports no driver and defines no extra for it, and the store does not close the pool. Run registration inserts by the `run_id` primary key of `{table}_runs`; duplicate ids raise `ValueError`. Events and snapshots are ordered by a `BIGINT GENERATED ALWAYS AS IDENTITY` `seq`, which keeps counting when `ctx.run_step` resets to 0; `{table}_snapshot_keys` holds the replay-suppression keys independently of snapshot pruning; `{table}_tool_effects` upserts per `(run_id, tool_call_id)` so the latest state wins. Timestamps and JSON are stored as `TEXT`.
 
 All implement the same async `StepStore` protocol, so capability hooks never block the event loop on the file/sqlite backends (I/O is dispatched via `anyio.to_thread`); the Mongo and Postgres backends are natively async.
 
@@ -327,7 +334,7 @@ The store issues `createIndex` on its first write, for ten indexes: `conversatio
 - The unique index build fails if an existing `tool_effects` collection already holds duplicate `(run_id, tool_call_id)` pairs.
 - Index builds against already-populated collections cost time and I/O on that first call.
 
-`RunRecord.metadata` and `StepEvent.metadata` are stored as nested documents, so their keys become BSON field names: keys containing `.` or starting with `$` need [MongoDB 5.0 or later](https://www.mongodb.com/docs/manual/core/dot-dollar-considerations/), and a key containing a NULL byte is rejected by the BSON encoder before it reaches the server. CI exercises both Mongo backends against `mongo:8`.
+`RunRecord.metadata` and `StepEvent.metadata` are stored as nested documents, so their keys become BSON field names: keys containing `.` or starting with `$` need [MongoDB 5.0 or later](https://www.mongodb.com/docs/manual/core/dot-dollar-considerations/), and a key containing a NULL byte is rejected by the BSON encoder before it reaches the server. CI exercises both Mongo backends against MongoDB 8.3.
 
 Install MongoDB support:
 
@@ -387,13 +394,25 @@ Pruning a snapshot never deletes its externalized media: blobs are content-addre
 
 Bounded retention discards older per-step snapshots, including pre-compaction ones. Any downstream that reconstructs history by unioning a run's retained snapshots -- snapshot search or a compaction receipt keyed on `run_id` -- can only see what is retained. With a tight bound (for example `max_snapshots_per_run=1`) the older, pre-compaction states are gone, so treat the bound as a hard limit on how far back such recovery can reach. Leave the bound at `None`, or set it high enough to cover the history you need to recover, when historical reconstruction matters.
 
+### Storing each message once
+
+`max_snapshots_per_run` bounds the snapshots within a run, but every snapshot repeats the history before it, so storing each one in full grows with the number of snapshots times the history length. `SqliteStepStore` stores each message's content once instead: `snapshot_messages` holds each message's JSON keyed by its SHA-256, and `snapshot_message_refs` lists each snapshot's messages in order, as a short row per message. Reads rebuild the full history, so `latest_snapshot` and `list_snapshots` return the same messages either way.
+
+Deleting a snapshot, by pruning or by deleting its conversation with `SqliteConversationStore.delete`, also deletes the messages no remaining snapshot references.
+
+A database written by an earlier release keeps working: its rows hold the history inline and still read, and new snapshots in the same database store their messages once. Earlier releases can't read snapshots written this way, so don't downgrade a store that a newer release has written to. An existing database doesn't shrink right away: its earlier rows keep their history until pruning or deleting their conversation removes them, and SQLite keeps the freed space in the file until you run `VACUUM`.
+
+`PostgresStepStore` and `MongoStepStore` store each message once too, in a `{table}_messages` table and a `snapshot_messages` collection, with each snapshot holding the keys of its messages in order. Unlike `SqliteStepStore`, they keep a stored message when the snapshots referencing it are pruned, as they do externalized media: with several writers at once, deleting a message along with its last snapshot could race with a save that is about to reference it. So messages that only pruned snapshots referenced, such as those compaction replaced, stay stored, and pruning doesn't bound these stores' size or remove that content. `FileStepStore` keeps writing each snapshot as a complete JSON file, so a run's directory stays readable and greppable on its own.
+
 ## Persisting media
 
-`BinaryContent` payloads (images, audio, documents, video) inlined as base64 inside a snapshot would balloon every file or row containing the message; a large text part (e.g. a big tool-return string) does the same and can push a `MongoStepStore` snapshot past MongoDB's 16 MiB document cap ([#440](https://github.com/pydantic/pydantic-ai-harness/issues/440)). The file, sqlite, mongo, and postgres backends externalize any `BinaryContent.data`, and any part whose string `content` is at or above **64 KiB**, through a configured `MediaStore`, leaving a URI reference in the snapshot. The same `media_threshold_bytes` governs binary and text alike; there is no separate text knob. Round-trip is transparent: `latest_snapshot(...).messages[*]` returns the original `BinaryContent` bytes and text.
+`BinaryContent` payloads (images, audio, documents, video) inlined as base64 inside a snapshot would balloon every file or row containing the message; a large text part (e.g. a big tool-return string) does the same and can push a `MongoStepStore` message past MongoDB's 16 MiB document cap ([#440](https://github.com/pydantic/pydantic-ai-harness/issues/440)). The file, sqlite, mongo, and postgres backends externalize any `BinaryContent.data`, and any part whose string `content` is at or above **64 KiB**, through a configured `MediaStore`, leaving a URI reference in the snapshot. The same `media_threshold_bytes` governs binary and text alike; there is no separate text knob. Round-trip is transparent: `latest_snapshot(...).messages[*]` returns the original `BinaryContent` bytes and text.
 
 Text externalization is not Mongo-only and has no opt-out short of `media_store=None`: the walker is shared, so an existing `FileStepStore` or `SqliteStepStore` deployment starts writing blobs for large text parts as well as binary ones from this release on. Snapshots written before it still restore -- the reader recognises the older binary marker shape. This compatibility is upgrade-only: a release that predates text externalization treats every marker as binary, so it cannot validate a snapshot containing an externalized text marker. Keep a current reader for persisted snapshots that contain those markers.
 
 Reserved-key escaping is a second marker-format generation with the same rule for these stores: a payload using the marker format's namespaced keys is moved into a versioned reserved mapping (the `__harness_external_escaped_keys__` stash, stamped with the format version under `__harness_external_marker_format__`), and the current reader moves those values back to their own keys. Compatibility the other way is upgrade-only. A reader that predates the escaping format re-inlines the externalized field correctly, but it leaves both reserved keys sitting in the restored payload rather than removing them. A marker carrying both, stamped with a version this reader does not know, is rejected rather than restored with the reserved values stripped: `restore_media` raises `ValueError`, and `latest_snapshot` surfaces it to the caller for the file, sqlite, mongo, and postgres stores. `list_snapshots` is different: each store treats the failed snapshot as unparsable, skips it, and logs the error, so an unknown version shows up as a missing snapshot rather than an exception. That rejection is the version gate and is intended, but store users have to anticipate it. Keep a current reader for persisted snapshots that contain escaped markers.
+
+Two later additions follow the same upgrade-only rule. A dict the walker leaves inline but which carries `__harness_external_media__` or `__harness_external_literal__` (a tool return, say) is written wrapped under `__harness_external_literal__` with a `__harness_external_marker_format__` stamp, so it is never read back as a marker; a wrapper stamped with a version this reader does not know is rejected. An older reader leaves the wrapper in the restored payload, and still misreads a wrapped dict whose `__harness_external_media__` is `true`. A binary marker whose source used URL-safe base64, which is how pydantic serializes `bytes`, carries `__harness_external_urlsafe__` so the restored `data` uses the same alphabet; an older reader keeps that key in the restored part, which validation ignores.
 
 | StepStore           | Default `media_store`                  | Where blobs live                      |
 | ------------------- | --------------------------------------- | ------------------------------------- |
@@ -490,11 +509,11 @@ class MediaContext:
 
 All fields default; new fields are added non-breakingly as use cases emerge. Pass what you have, ignore the rest.
 
-**Persistence by store.** `get_metadata(uri)` round-trips the user-supplied `metadata` mapping on all five stores. `media_type` is also persisted but is not part of what `get_metadata` returns (it is stored for the byte payload itself, for example as the `Content-Type`).
+**Persistence by store.** `get_metadata(uri)` returns the stored `metadata` mapping and raises `FileNotFoundError` for a blob that was never stored. A repeated `put` keeps the first metadata on the SQLite, MongoDB, and PostgreSQL stores. On `DiskMediaStore` a later `put` with metadata replaces it; on `S3MediaStore` every `put` replaces it, and one without metadata clears it. On Disk and S3 this holds for puts that resolve to the same key, which a custom `key_strategy` may not. `get_metadata` does not return `media_type`: S3 sends it as `Content-Type`, the database stores keep it in a column, and `DiskMediaStore` does not persist it.
 
 - `SqliteMediaStore` writes `metadata` to a JSON column and `media_type` to a dedicated column.
-- `S3MediaStore` sends `metadata` as signed `x-amz-meta-*` headers (ASCII alphanumeric plus dash key names) and `media_type` as `Content-Type`; `get_metadata` reads the `x-amz-meta-*` values back from the HEAD response.
-- `DiskMediaStore` writes a sidecar JSON file (`<resolved>.meta.json`) alongside each blob, atomic via tmp plus rename. Sidecars are absent only when the put carried no metadata.
+- `S3MediaStore` sends `metadata` as signed `x-amz-meta-*` headers and `media_type` as `Content-Type`; `get_metadata` reads the `x-amz-meta-*` values back from the HEAD response. Keys must match `[A-Za-z0-9-]+` and come back lowercased.
+- `DiskMediaStore` writes a sidecar JSON file (`<resolved>.meta.json`) alongside each blob, atomically through a uniquely named temporary file.
 - `MongoMediaStore` writes `metadata` as a JSON string and `media_type` as a dedicated field on the blob's manifest document (the `media` collection by default); `get_metadata` decodes the JSON string back. Because the mapping is one JSON string rather than nested fields, metadata keys are not subject to BSON field-name rules here.
 - `PostgresMediaStore` writes `metadata` as a JSON string to a `TEXT` column and `media_type` to a dedicated column.
 
@@ -546,6 +565,9 @@ returns summaries without loading messages; search matches saved user/assistant
 text and metadata using Unicode case folding, including text entries within
 multimodal prompts. Search does not include tool output, reasoning, or discarded
 pre-compaction history. Unknown metadata schema versions are rejected.
+An application may set `ConversationSummary.checkout` to a `GitCheckout` (repository,
+name, checkout root, branch) for the workspace, so a browser can still group the
+conversation by repository after that folder is removed; the store saves it as given.
 
 Metadata naming uses a separate version. `name(source=..., title=..., ...)` cannot
 overwrite a newer content revision, newer name, or a manual title. Naming does not
@@ -554,6 +576,13 @@ associated run records from the same SQLite database atomically, retaining share
 media. It is not secure erasure. A local live PID marks an unfinished conversation
 as busy; this is not a distributed lease and the database must not be shared
 between hosts. PID reuse is conservatively treated as busy.
+
+`set_archived(conversation_id=..., archived=...)` archives or unarchives a
+conversation through `ConversationSummary.archived_at`, a metadata-only change that
+keeps its messages, content revision, and activity timestamp. Saving new content
+unarchives it, since the conversation is in use again. Archiving deletes nothing.
+`listing(archived=False)` leaves archived conversations out, `archived=True` lists
+only those, and the default `None` lists both, as before archiving existed.
 
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.

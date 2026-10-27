@@ -4,17 +4,25 @@ import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from io import StringIO
-from itertools import chain, repeat
-from pathlib import Path
+from itertools import chain, count, repeat
+from pathlib import Path, PurePath
+from types import SimpleNamespace
+from uuid import UUID, uuid4, uuid5
 
 import pytest
 from termflow.ansi.utils import visible_length
 from termflow.tui.keys import Key
 
 import pydantic_clai2.ui.menus.session_browser as module
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
-from pydantic_clai2.ui.menus.session_browser import MISSING, SessionBrowser, date_label, plain
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, GitCheckout
+from pydantic_clai2.runtime.project_identity import (
+    MISSING,
+    ProjectIdentity,
+    git_checkout,
+    placements,
+    project_identity,
+)
+from pydantic_clai2.ui.menus.session_browser import SessionBrowser, date_label, plain
 
 
 @pytest.fixture(autouse=True)
@@ -50,7 +58,9 @@ def repository(repo: Path, *, linked: Path, branch: str) -> None:
     git('-C', str(repo), 'worktree', 'add', '-b', branch, str(linked))
 
 
-def browser(*, keys: list[str] | None = None) -> tuple[SessionBrowser, list[ConversationSummary]]:
+def browser(
+    *, keys: list[str] | None = None, now: datetime | None = None
+) -> tuple[SessionBrowser, list[ConversationSummary]]:
     entries = [
         ConversationSummary(id='one', workspace='/a/project', title='Fix renderer', subtitle='Race', tags=('tests',)),
         ConversationSummary(id='two', workspace='/b/project', title='Add resume', message_count=24, total_tokens=1200),
@@ -58,11 +68,16 @@ def browser(*, keys: list[str] | None = None) -> tuple[SessionBrowser, list[Conv
     ]
     source = iter(keys or [])
 
-    def refresh(query: str, limit: int) -> list[ConversationSummary]:
-        return [e for e in entries if query.lower() in e.title.lower()][:limit]
+    def refresh(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
+        found = [e for e in entries if query.lower() in e.title.lower() and (archived or e.archived_at is None)]
+        return found[:limit]
 
     def rename(entry: ConversationSummary, title: str) -> None:
         entries[entries.index(entry)] = replace(entry, title=title)
+
+    def archive(entry: ConversationSummary, archived: bool) -> None:
+        index = next(index for index, e in enumerate(entries) if e.id == entry.id)
+        entries[index] = replace(entry, archived_at=datetime.now(UTC) if archived else None)
 
     widget = SessionBrowser(
         entries=entries,
@@ -72,9 +87,11 @@ def browser(*, keys: list[str] | None = None) -> tuple[SessionBrowser, list[Conv
         preview=lambda session_id: f'Transcript {session_id}\nuser: hello',
         delete=entries.remove,
         rename=rename,
+        archive=archive,
         output=StringIO(),
         key_source=lambda: next(source),
         size=lambda: (110, 24),
+        now=lambda: now or datetime.now(UTC),
     )
     return widget, entries
 
@@ -164,7 +181,7 @@ def test_search_sort_rename_delete_and_stable_refresh() -> None:
     widget.handle_key(Key.DOWN)
     widget.handle_key('d')
     assert widget.confirm is not None
-    assert widget.footer() == 'Delete saved session: Other? y confirm / any other key cancel'
+    assert widget.footer() == 'Delete saved session: Other? y confirm - any other key cancel'
     widget.handle_key('n')
     assert len(entries) == 3
     widget.handle_key('d')
@@ -212,13 +229,17 @@ def test_date_buckets() -> None:
     now = datetime(2026, 9, 18, 12, tzinfo=UTC)
     assert date_label(now, now=now) == 'TODAY'
     assert date_label(now - timedelta(days=1), now=now) == 'YESTERDAY'
-    assert date_label(now - timedelta(days=365), now=now).startswith(str((now - timedelta(days=365)).year))
+    assert date_label(now - timedelta(days=6), now=now) == 'LAST 7 DAYS'
+    assert date_label(now - timedelta(days=29), now=now) == 'LAST 30 DAYS'
+    assert date_label(now - timedelta(days=365), now=now) == 'SEPTEMBER 2025'
 
 
 def test_idle_refresh_and_storage_errors_stay_in_menu(monkeypatch: pytest.MonkeyPatch) -> None:
     widget, entries = browser(keys=['', 'ctrl-c'])
     ticks = iter([0.0, 1.0, 1.0])
-    monkeypatch.setattr(module.time, 'monotonic', lambda: next(ticks))
+    # Replace the browser's `time`, not `module.time.monotonic`: that is the stdlib's clock, which other
+    # threads' event loops read too.
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: next(ticks)))
     entries[0] = replace(entries[0], title='Named in background')
     assert widget.loop() == ''
     assert isinstance(widget.output, StringIO)
@@ -229,9 +250,26 @@ def test_idle_refresh_and_storage_errors_stay_in_menu(monkeypatch: pytest.Monkey
 
     widget, _ = browser(keys=[Key.ENTER, Key.RIGHT, 'ctrl-c'])
     widget.preview = fail_preview
-    monkeypatch.setattr(module.time, 'monotonic', lambda: 0.0)
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: 0.0))
     assert widget.loop() == ''
     assert 'Cannot read this session' in widget.notice
+
+
+def test_moving_the_selection_never_waits_on_a_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refreshes wait for a poll without a key, so a held arrow key never waits on storage."""
+    widget, _ = browser(keys=[Key.ENTER, Key.DOWN, Key.UP, Key.DOWN, '', 'ctrl-c'])
+    refresh = widget.refresh
+    refreshed: list[str | None] = []
+
+    def counted(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
+        refreshed.append(widget.selected_id)
+        return refresh(query, limit, archived)
+
+    widget.refresh = counted
+    # Every key arrives long after the last refresh.
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=count(step=1.0).__next__))
+    assert widget.loop() == ''
+    assert refreshed == ['three']
 
 
 def test_render_long_cards_all_modes_and_empty_projects() -> None:
@@ -317,7 +355,7 @@ def test_idle_loop_redraws_only_for_changes(monkeypatch: pytest.MonkeyPatch) -> 
     widget, _ = browser(keys=['', '', '', 'ctrl-c'])
     sizes = iter([(110, 24), (110, 24), (100, 24), (100, 24)])
     widget.size = lambda: next(sizes)
-    monkeypatch.setattr(module.time, 'monotonic', lambda: 0.0)
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: 0.0))
     assert widget.loop() == ''
     assert isinstance(widget.output, StringIO)
     assert widget.output.getvalue().count('CLAI > Resume session') == 2
@@ -325,13 +363,11 @@ def test_idle_loop_redraws_only_for_changes(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_failed_idle_refresh_waits_before_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     widget, _ = browser(keys=['', '', '', 'ctrl-c'])
-    # `time.monotonic` is the global one, so the clock holds its last tick for everything that
-    # reads it after the widget, such as the event loop the shared fixtures tear down on.
     ticks = chain([0.0, 0.6, 0.6, 0.7], repeat(0.8))
-    monkeypatch.setattr(module.time, 'monotonic', lambda: next(ticks))
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: next(ticks)))
     attempts: list[str] = []
 
-    def fail(query: str, limit: int) -> list[ConversationSummary]:
+    def fail(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
         attempts.append(query)
         raise OSError('database unavailable')
 
@@ -454,6 +490,85 @@ def test_checkout_tree_and_missing_folders(tmp_path: Path) -> None:
     assert '[missing folders: old-worktree]' in '\n'.join(widget.frame(width=120, height=24))
 
 
+def test_removed_worktree_stays_in_its_repository(tmp_path: Path) -> None:
+    """A session saved with its checkout is listed under its repository after the worktree is removed."""
+    repo, gone = tmp_path / 'repo', tmp_path / 'gone'
+    repository(repo, linked=gone, branch='fix')
+    checkout = git_checkout(project_identity(str(gone)))
+    git('-C', str(repo), 'worktree', 'remove', str(gone))
+    widget, entries = browser()
+    entries[:] = [
+        replace(entries[0], workspace=str(repo)),
+        replace(entries[1], workspace=str(gone / 'src'), checkout=checkout),
+    ]
+    widget.reload()
+    assert widget.projects == [widget.project]
+    assert widget.project_label(widget.project) == 'repo'
+    frame = '\n'.join(widget.frame(width=120, height=24))
+    # Gathered with the other removed and idle worktrees, its sessions still saying where they ran.
+    assert '├─ main (1)' in frame and '└─ 1 older worktree (1)' in frame and '[fix (removed)]' in frame
+
+
+def test_placements_of_removed_folders() -> None:
+    """A removed folder takes its saved checkout, else a known checkout holding it, else a worktree layout's."""
+    key = '/code/repo/.git'
+    main = ProjectIdentity(key=key, name='repo', root='/code/repo', checkout='main')
+    linked = ProjectIdentity(key=key, name='repo', root='/wt/repo/feature', checkout='feature')
+    other = ProjectIdentity(key='/code/other/.git', name='other', root='/code/other', checkout='main')
+    plain = ProjectIdentity(key='/plain', name='plain', root='/plain')
+    fix = GitCheckout(repository=key, name='repo', root='/wt/repo/fix', branch='fix')
+    entries = [
+        ConversationSummary(workspace='/wt/repo/fix/src', checkout=fix),
+        ConversationSummary(workspace='/wt/repo/fix/src', checkout=replace(fix, branch='older')),
+        ConversationSummary(workspace='/code/repo/src', checkout=replace(fix, root='/code/repo')),
+        ConversationSummary(workspace='/plain'),
+    ]
+    removed = [
+        '/wt/repo/fix/src',
+        '/wt/repo/fix',
+        '/wt/repo/fix/docs',
+        '/code/repo/.worktrees/task/src',
+        '/nowhere/.worktrees/task',
+        '/code/repo/src',
+        '/wt/repo/old/src',
+        '/home/worktrees/other/wip',
+        '/home/worktrees/unknown/wip',
+        '/tmp/repo/x',
+        '/',
+    ]
+    identities = {i.root: i for i in (main, linked, other, plain)} | {
+        workspace: ProjectIdentity(key=workspace, name='', root=workspace, missing=True) for workspace in removed
+    }
+    placed = placements(entries, identities=identities)
+    recorded = ProjectIdentity(key=key, name='repo', root='/wt/repo/fix', checkout='fix', missing=True)
+
+    def guessed(identity: ProjectIdentity, root: str) -> ProjectIdentity:
+        return replace(identity, root=str(PurePath(root)), checkout=PurePath(root).name, missing=True)
+
+    def unclaimed(workspace: str, label: str) -> ProjectIdentity:
+        return ProjectIdentity(key=MISSING, name='Removed folders', root=workspace, checkout=label, missing=True)
+
+    assert placed == {
+        '/code/repo': main,
+        '/wt/repo/feature': linked,
+        '/code/other': other,
+        '/plain': plain,
+        '/wt/repo/fix/src': recorded,
+        '/wt/repo/fix': recorded,
+        '/wt/repo/fix/docs': recorded,
+        '/code/repo/.worktrees/task/src': guessed(main, '/code/repo/.worktrees/task'),
+        '/nowhere/.worktrees/task': unclaimed('/nowhere/.worktrees/task', 'task'),
+        '/code/repo/src': main,
+        '/wt/repo/old/src': guessed(linked, '/wt/repo/old'),
+        '/home/worktrees/other/wip': guessed(other, '/home/worktrees/other/wip'),
+        '/home/worktrees/unknown/wip': unclaimed('/home/worktrees/unknown/wip', 'wip'),
+        '/tmp/repo/x': unclaimed('/tmp/repo/x', 'x'),
+        '/': unclaimed('/', '/'),
+    }
+    assert [git_checkout(identity) for identity in (plain, recorded)] == [None, None]
+    assert git_checkout(main) == GitCheckout(repository=key, name='repo', root='/code/repo', branch='main')
+
+
 def test_independent_same_named_repositories(tmp_path: Path) -> None:
     widget, entries = browser()
     for index, parent in enumerate(('a', 'b')):
@@ -475,3 +590,91 @@ def test_git_unavailable_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(subprocess, 'run', fail)
     assert project_identity(str(tmp_path)) == ProjectIdentity(key=str(tmp_path), name=tmp_path.name, root=str(tmp_path))
+
+
+def test_archiving_hides_a_session_until_archived_ones_are_listed() -> None:
+    widget, entries = browser()
+    assert 'h archived' in widget.footer()
+    widget.handle_key(Key.ENTER)
+    assert 'a archive - h archived' in widget.footer()
+    widget.handle_key('a')
+    assert widget.notice == 'Cannot archive the active session. Use /new first.'
+    widget.handle_key(Key.DOWN)
+    widget.handle_key('a')
+    assert widget.notice == 'Archived Other. h lists archived sessions.'
+    assert [entry.id for entry in widget.entries] == ['one', 'two']
+    widget.handle_key('h')
+    assert widget.notice == 'Archived sessions are listed.'
+    frame = widget.frame(width=110, height=24)
+    assert 'archived included' in frame[0]
+    assert any('Other ! (archived)' in line for line in frame)
+    widget.selected_id = 'three'
+    widget.handle_key('a')
+    assert widget.notice == 'Unarchived Other.' and entries[2].archived_at is None
+    widget.handle_key('h')
+    assert widget.notice == 'Archived sessions are hidden.'
+    assert [entry.id for entry in widget.entries] == ['one', 'two', 'three']
+
+
+def test_sources_filter_and_idle_worktrees_fold(tmp_path: Path) -> None:
+    """`f` lists one source's sessions; removed and idle worktrees gather in one row under active ones."""
+    now = datetime(2026, 9, 18, 12, tzinfo=UTC)
+    repo, feature, stale = tmp_path / 'repo', tmp_path / 'feature', tmp_path / 'stale'
+    repository(repo, linked=feature, branch='feature')
+    git('-C', str(repo), 'worktree', 'add', '-b', 'stale', str(stale))
+    widget, entries = browser(now=now)
+    entries[:] = [
+        ConversationSummary(id=str(uuid4()), workspace=str(repo), title='Native', updated_at=now),
+        ConversationSummary(
+            id=str(uuid5(UUID(int=0), 'claude')),
+            workspace=str(feature),
+            title='From Claude',
+            tags=('claude',),
+            updated_at=now - timedelta(days=1),
+        ),
+        ConversationSummary(
+            id=str(uuid5(UUID(int=0), 'codex')),
+            workspace=str(stale),
+            title='From Codex',
+            tags=('codex',),
+            updated_at=now - timedelta(days=35),
+        ),
+    ]
+    widget.reload()
+    key = widget.project
+    assert widget.rows == [
+        (key, ''),
+        (key, widget.identity(str(repo)).root),
+        (key, widget.identity(str(feature)).root),
+        (key, module.OLDER),
+    ]
+    frame = '\n'.join(widget.frame(width=120, height=30))
+    assert '└─ 1 older worktree (1)' in frame and 'stale (1)' not in frame
+    # Headings widen with age; an older card shows its date.
+    older = f'{(now - timedelta(days=35)).astimezone():%b %d} From Codex'
+    assert all(heading in frame for heading in ('TODAY', 'YESTERDAY', 'AUGUST 2026', older))
+    for _ in range(3):
+        widget.handle_key(Key.DOWN)
+    assert [e.title for e in widget.sessions] == ['From Codex']
+    assert 'SESSIONS: repo / 1 older worktree' in '\n'.join(widget.frame(width=120, height=30))
+    titles: list[list[str]] = []
+    for _ in range(4):
+        widget.handle_key('f')
+        titles.append([e.title for e in widget.sessions])
+    assert titles == [['Native'], ['From Claude'], ['From Codex'], ['Native', 'From Claude', 'From Codex']]
+    widget.handle_key('f')
+    assert widget.notice == 'Listing CLAI sessions.' and 'Source: CLAI' in widget.frame(width=120, height=30)[0]
+    # The older row is gone with the worktrees it gathered, so the project is selected instead.
+    assert widget.rows == [(key, '')] and widget.checkout == ''
+    for _ in range(3):
+        widget.handle_key('f')
+    assert widget.notice == 'Listing all sessions.' and 'f source' in widget.footer()
+    # The repository's own checkout keeps its row however idle; only worktrees are gathered.
+    entries[0] = replace(entries[0], updated_at=now - timedelta(days=60))
+    widget.reload()
+    assert widget.rows == [
+        (key, ''),
+        (key, widget.identity(str(repo)).root),
+        (key, widget.identity(str(feature)).root),
+        (key, module.OLDER),
+    ]

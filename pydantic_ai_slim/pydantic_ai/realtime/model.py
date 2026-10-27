@@ -8,11 +8,12 @@ from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, Protocol
 
 from typing_extensions import TypeAliasType
 
 from .._genai_prices import lookup_context_window, preload_pricing_data
+from .._unsupported_settings import warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UserError
 from ..messages import ModelMessage
@@ -29,7 +30,7 @@ from .profiles import (
     RealtimeModelProfileSpec,
     merge_realtime_profile,
 )
-from .settings import RealtimeModelSettings
+from .settings import RealtimeModelSettingName, RealtimeModelSettings
 
 if TYPE_CHECKING:
     from ..providers import Provider
@@ -137,6 +138,14 @@ class RealtimeClientSecret:
     _: KW_ONLY
     expires_at: datetime
     """When the secret expires (timezone-aware UTC)."""
+    webrtc_url: str | None = None
+    """Where the browser posts its WebRTC SDP offer, with the secret as its bearer token.
+
+    The answer comes back as the response body, and the call's id in its `Location` header. On Azure OpenAI the
+    URL carries `webrtcfilter=on`, so the browser's data channel gets only the events that are safe for it to see,
+    as on a call answered with [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer].
+    `None` when the provider takes no WebRTC offers.
+    """
     provider_details: dict[str, Any] | None = field(default=None, repr=False)
     """Raw provider fields returned alongside the secret (e.g. the resolved `session` object).
 
@@ -204,6 +213,15 @@ class WebRTCAnswer:
     """The call handle the server sideband session attaches to."""
 
 
+_GUARANTEE_SETTINGS: dict[RealtimeModelSettingName, str] = {
+    'parallel_tool_calls': '',
+    'async_tool_calls': ' Its tool calls always run asynchronously.',
+    'reconnect': ' A dropped connection ends the session.',
+}
+"""The realtime settings a model warns about ignoring, with a hint to append to the warning, as
+`GUARANTEE_SETTINGS` lists them for standard models."""
+
+
 class RealtimeModel(AbstractModel):
     """Abstract base class for realtime model providers.
 
@@ -220,6 +238,18 @@ class RealtimeModel(AbstractModel):
 
     settings: RealtimeModelSettings | None = None
     """Model settings used as defaults for realtime sessions."""
+
+    unsupported_settings: ClassVar[frozenset[RealtimeModelSettingName]] = frozenset()
+    """The shared [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] fields this model class ignores.
+
+    Works like [`Model.unsupported_settings`][pydantic_ai.models.Model.unsupported_settings]: when a session sets one
+    that changes what it guarantees (`parallel_tool_calls=False` with function tools, or a `reconnect` policy),
+    opening it emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the tuning
+    knobs among them, like `max_tokens`, are ignored silently. Empty by default, so a model class that declares
+    nothing never warns. `tool_choice`, `thinking` and `async_tool_calls` aren't listed here: a forced `tool_choice`
+    raises on every realtime model, and the other two are resolved through the profile. Nor is a setting a class
+    honors in part, like Gemini's `input_transcription_model`, whose `None` turns transcription off.
+    """
 
     _profile: RealtimeModelProfileSpec | None = None
     """The user's `profile=` override, applied as the last layer of [`profile`][pydantic_ai.realtime.RealtimeModel.profile].
@@ -248,6 +278,14 @@ class RealtimeModel(AbstractModel):
         """Return the native tool types implemented by this realtime model class."""
         return frozenset()
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return the names of the settings set on `native_tool` that this model can't apply.
+
+        Works like [`Model.unsupported_native_tool_settings`][pydantic_ai.models.Model.unsupported_native_tool_settings]:
+        a native tool with any of these is treated as unsupported for the session. The default is an empty set.
+        """
+        return frozenset()
+
     def _merge_model_settings(self, model_settings: RealtimeModelSettings | None) -> RealtimeModelSettings | None:
         """Merge model-level defaults with connection-level overrides."""
         settings = self.settings.copy() if self.settings else None
@@ -257,6 +295,27 @@ class RealtimeModel(AbstractModel):
             else:
                 settings.update(model_settings)
         return settings
+
+    def _warn_unsupported_settings(
+        self, model_settings: RealtimeModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> None:
+        """Warn about each set setting that changes what the session guarantees and that this model ignores.
+
+        As [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] does for a request, once per session.
+        A model whose profile's `async_tool_call_mode` is `'always'` ignores `async_tool_calls=False` too.
+        """
+        if not model_settings:
+            return
+        unsupported: set[str] = set(self.unsupported_settings)
+        if self.profile.get('async_tool_call_mode', 'never') == 'always':
+            unsupported.add('async_tool_calls')
+        warn_unsupported_settings(
+            self.model_id,
+            model_settings,
+            unsupported,
+            has_function_tools=bool(model_request_parameters.function_tools),
+            guarantees=_GUARANTEE_SETTINGS,
+        )
 
     def _async_tool_calls(self, model_settings: RealtimeModelSettings | None) -> bool:
         """Whether this session's tool calls run asynchronously, for adapters that have to say so on the wire.
@@ -365,8 +424,8 @@ class RealtimeModel(AbstractModel):
         [`RealtimeSession.hang_up`][pydantic_ai.realtime.RealtimeSession.hang_up] instead. A call that has
         already ended is not an error; the provider likely answers the same for a call negotiated with a
         different API key or project, so that reads as already ended too. Only implemented by realtime
-        models whose provider can end a WebRTC call from the server (OpenAI gpt-realtime and GPT-Live); the
-        default raises [`UserError`][pydantic_ai.exceptions.UserError].
+        models whose provider can end a WebRTC call from the server (OpenAI gpt-realtime and GPT-Live, and Azure
+        OpenAI); the default raises [`UserError`][pydantic_ai.exceptions.UserError].
         """
         self._check_hang_up(session)
         raise NotImplementedError  # pragma: no cover - a model that can hang up overrides this method
@@ -502,6 +561,8 @@ KnownRealtimeModelName = TypeAliasType(
         'azure:gpt-realtime',
         'xai:grok-voice-latest',
         'xai:grok-voice-think-fast-2.0',
+        'elevenlabs:eleven_realtime_v1_max',
+        'elevenlabs:eleven_realtime_v1_mini',
         'google:gemini-2.5-flash-native-audio-latest',
         'google:gemini-3.1-flash-live-preview',
         'google:gemini-3.8-live',
@@ -516,8 +577,9 @@ def infer_realtime_model(
 ) -> RealtimeModel:
     """Infer a realtime model from a `provider:model` identifier.
 
-    The provider is one of `openai`, `azure`, `xai`, `google` (the Gemini Developer API), or
-    `google-cloud` (Vertex AI) — e.g. `openai:gpt-realtime` — or a
+    The provider is one of `openai`, `azure`, `xai`, `elevenlabs`, `google` (the Gemini Developer API),
+    `google-cloud` (Vertex AI), or `elevenlabs-agents` (whose "model name" is an agent id, e.g.
+    `elevenlabs-agents:agent_0101...`) — e.g. `openai:gpt-realtime` — or a
     [Pydantic AI Gateway](../gateway.md) route (`gateway/openai:gpt-realtime`,
     `gateway/google:gemini-live-2.5-flash`), which connects through the gateway's built-in provider —
     the provider string is passed to the realtime model as its `provider`, so authentication and the
@@ -582,6 +644,17 @@ def infer_realtime_model(
         from .xai import XaiRealtimeModel
 
         return XaiRealtimeModel(model_name, provider=resolved_provider)
+    if model_kind == 'elevenlabs':
+        from .elevenlabs import ElevenLabsRealtimeModel
+
+        return ElevenLabsRealtimeModel(model_name, provider=resolved_provider)
+    if model_kind == 'elevenlabs-agents':
+        from .elevenlabs_agents import ElevenLabsAgentsRealtimeModel
+
+        # The model string names the model class; the provider is ElevenLabs' own.
+        if isinstance(resolved_provider, str):
+            resolved_provider = 'elevenlabs'
+        return ElevenLabsAgentsRealtimeModel(model_name, provider=resolved_provider)
     # `google` is the Gemini Developer API and `google-cloud` is Vertex AI, exactly as in `infer_model`.
     if model_kind in ('google', 'google-cloud'):
         from .google import GoogleRealtimeModel
@@ -591,6 +664,6 @@ def infer_realtime_model(
         return GoogleRealtimeModel(model_name, provider=resolved_provider)
     raise UserError(
         f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `azure`, '
-        '`xai`, `google`, and `google-cloud`, or `gateway/openai` / `gateway/google` to route OpenAI '
-        'or Gemini Live realtime through the Pydantic AI Gateway.'
+        '`xai`, `elevenlabs`, `google`, `google-cloud`, and `elevenlabs-agents`, or `gateway/openai` / '
+        '`gateway/google` to route OpenAI or Gemini Live realtime through the Pydantic AI Gateway.'
     )
