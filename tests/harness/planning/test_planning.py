@@ -34,7 +34,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness import HarnessDeprecationWarning
+from pydantic_ai_harness import ClearToolResults, HarnessDeprecationWarning
 from pydantic_ai_harness.planning import (
     InMemoryPlanStore,
     PlanEvent,
@@ -61,6 +61,7 @@ from pydantic_ai_harness.planning._toolset import (
     validate_hierarchy,
 )
 from tests.conftest import RequestCapture, try_import
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness._recording_durability import RecordingDurability
 from tests.models.conftest import cache_breakpoints, json_objects
 
@@ -1266,6 +1267,16 @@ class TestReminder:
         ]
         assert await self._enqueued(cap, history) == [_plan_record('1. [ ] Do X\n2. [ ] Do Y\n(0/2 completed)')]
 
+    async def test_plan_in_a_cleared_tool_return_is_recorded_again(self) -> None:
+        """A cleared tool return keeps its metadata but no longer shows the plan, so the plan is recorded."""
+        cap = await self._cap('Do X')
+        cleared = replace(
+            _plan_return('<plan_reminder>\n1. [ ] Do X\n(0/1 completed)\n</plan_reminder>'),
+            content='[tool result cleared]',
+        )
+        history: list[ModelMessage] = [ModelRequest(parts=[cleared])]
+        assert await self._enqueued(cap, history) == [_plan_record('1. [ ] Do X\n(0/1 completed)')]
+
     async def test_plan_returned_before_a_compaction_boundary_is_recorded_again(self) -> None:
         cap = await self._cap('Do X')
         history: list[ModelMessage] = [
@@ -1419,6 +1430,24 @@ ends with &lt;/plan_reminder
         # Every request starts with the previous one.
         for earlier, later in zip(captured, captured[1:]):
             assert later[: len(earlier)] == earlier
+
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_clear_tool_results_taking_the_plan_records_it(self) -> None:
+        """`ClearToolResults` clearing the last plan tool return leaves the model the plan in a record of its own."""
+        captured: list[list[ModelMessage]] = []
+        agent: Agent[None, str] = Agent(
+            _tool_loop_model(captured), capabilities=[ClearToolResults(max_messages=4, keep_pairs=1), Planning()]
+        )
+
+        @agent.tool_plain
+        def lookup(n: int) -> str:
+            return f'result {n}'
+
+        result = await agent.run('go')
+        assert result.output == 'done'
+        assert _plan_records(result.all_messages()) == [
+            '<plan_reminder>\n1. [~] Step A\n(0/1 completed)\n</plan_reminder>'
+        ]
 
     async def test_second_run_keeps_the_first_runs_history(self) -> None:
         """A run continuing from stored history sends it unchanged, and doesn't record an unchanged plan again."""

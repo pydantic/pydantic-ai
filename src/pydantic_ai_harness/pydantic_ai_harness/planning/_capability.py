@@ -340,17 +340,23 @@ _PLAN_NOTE = (
 
 
 def _latest_plan(messages: Sequence[ModelMessage]) -> str | None:
-    """The latest plan visible in `messages`: one a plan tool returned or `Planning` recorded, found by metadata."""
+    """The latest plan visible in `messages`: one a plan tool returned or `Planning` recorded, found by metadata.
+
+    A plan tool's return counts only while its content still holds the plan its metadata names.
+    """
     for message in reversed(messages):
         if not isinstance(message, ModelRequest):
             continue
         for part in reversed(message.parts):
             if isinstance(part, ToolReturnPart):
                 metadata = part.metadata
+                # A result compaction cleared keeps its metadata, so the plan only counts while its content shows it.
                 if (
                     is_str_dict(metadata)
                     and metadata.get('origin') == PLAN_ORIGIN
                     and isinstance(plan := metadata.get('plan'), str)
+                    and isinstance(part.content, str)
+                    and plan in part.content
                 ):
                     return plan
             elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):

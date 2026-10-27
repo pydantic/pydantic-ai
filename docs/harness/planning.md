@@ -23,7 +23,7 @@ So in a tool loop, the latest plan is always in the conversation already, and `P
 
 The plan tools' results carry `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`, which the model doesn't see. Before each model request, `Planning` reads the plan from its store and looks for the latest plan the model can see, by that metadata, never by text. Only when there's none, or it differs from the store's, does `Planning` record the current plan itself, on the user channel in the same `<plan_reminder>` tag:
 
-- after compaction took the plan tools' results, so the model works from a window without them;
+- after compaction took the plan tools' results, so the model works from a window without them, or cleared them (`ClearToolResults`): a cleared result keeps its metadata, so a plan tool's result only counts while its content still shows the plan;
 - in a run that starts without them in its history, such as an executor reading a plan another agent wrote to a shared store;
 - after something outside the plan tools changed the store.
 
