@@ -68,6 +68,19 @@ of the conversation; your next prompt tells the model what you ran, since the
 variables are in its sandbox now. A cell that fails is reported, not retried. In the
 web UI, the Monty panel's input runs `/monty` too.
 
+<!-- From #11590 -->
+The **Changes** button in the header (Cmd/Ctrl+Shift+E) opens a review panel of what the session
+changed, with the number of files it changed so far on the button. Pick a scope: **Last turn** and
+**This session** come from the session's own `write_file` and `edit_file` calls, so they work
+outside Git too, and show each file once, as one diff from before the first change to what is on
+disk now. A file the session wrote whole counts as created. **Uncommitted** is `git diff HEAD` in the
+session's directory (untracked files are left out, as there), and **Branch vs base** compares the files,
+uncommitted changes included, with where the branch left its base: `origin/HEAD`, else `main` or
+`master`. Each file shows its status
+(A, M, or D) and added and removed lines; click it to jump to its diff. Files with many changed lines
+start collapsed. The panel asks again when a turn ends, and **Refresh** asks at once. It takes the
+plugin side panels' place, so opening one closes the other.
+
 <!-- From #10442 -->
 The **Settings** window (the gear in the sidebar's footer, or Cmd/Ctrl+,) has a section per area
 on its left, each with its own address (`#settings/general`, `#settings/plugins`) to link or

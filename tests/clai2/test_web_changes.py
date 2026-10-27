@@ -1,0 +1,256 @@
+"""The Changes panel's data: a session's changed files from its own file tools, and from Git."""
+
+import subprocess
+from collections.abc import Iterator
+from itertools import count
+from pathlib import Path
+
+import pytest
+
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_clai2.builtin_plugins.web import changes as changes_module
+from pydantic_clai2.builtin_plugins.web.changes import Changes, ChangeScope, session_changes
+from pydantic_clai2.runtime.session import STEERING
+
+from .test_web_sessions import MakeFleet, make_fleet as make_fleet
+
+pytestmark = pytest.mark.anyio
+
+Call = tuple[str, dict[str, object]]
+
+
+class History:
+    """A session's history, built a turn at a time, each call given its own ID."""
+
+    def __init__(self) -> None:
+        self.messages: list[ModelMessage] = []
+        self._ids = count()
+
+    def turn(self, prompt: str, *calls: Call, steering: bool = False, outcome: str = 'success') -> None:
+        metadata = {STEERING: True} if steering else None
+        self.messages.append(ModelRequest(parts=[UserPromptPart(prompt)], metadata=metadata))
+        for name, args in calls:
+            call_id = f'call{next(self._ids)}'
+            self.messages.append(ModelResponse(parts=[ToolCallPart(name, args, call_id)]))
+            self.messages.append(
+                ModelRequest(parts=[ToolReturnPart(name, 'done', call_id, outcome=outcome)])  # pyright: ignore[reportArgumentType]
+            )
+
+
+def write(path: str, content: str) -> Call:
+    return 'write_file', {'path': path, 'content': content}
+
+
+def edit(path: str, old: str, new: str) -> Call:
+    return 'edit_file', {'path': path, 'old_text': old, 'new_text': new}
+
+
+def listed(found: Changes) -> list[tuple[str, str, int, int]]:
+    return [(change.path, change.status, change.added, change.removed) for change in found.files]
+
+
+def git(repo: Path, *args: str) -> str:
+    command = ['git', '-C', str(repo), '-c', 'user.name=Test', '-c', 'user.email=test@example.com', *args]
+    return subprocess.run(command, check=True, capture_output=True, text=True).stdout
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Iterator[Path]:
+    """A Git repository on `main` with one commit of `a.py` and `b.py`."""
+    root = tmp_path / 'repo'
+    root.mkdir()
+    git(root, 'init', '-q', '-b', 'main')
+    (root / 'a.py').write_text('def a():\n    return 1\n')
+    (root / 'b.py').write_text('def b():\n    return 2\n')
+    git(root, 'add', '.')
+    git(root, 'commit', '-q', '-m', 'start')
+    yield root
+
+
+A1 = 'def hello():\n    return "a"\n'
+A2 = 'def hello():\n    """Say hello."""\n    return "a"\n'
+B1 = 'def hello():\n    return "b"\n'
+C1 = 'def hello():\n    return "c"\n'
+
+
+async def test_last_turn_and_session_from_the_file_tools(tmp_path: Path) -> None:
+    """The issue's repro: two turns, with `a.py` written then edited; each file shows one net diff."""
+    history = History()
+    history.turn('create a.py and b.py', write('a.py', A1), write('b.py', B1))
+    history.turn(
+        'docstring a.py, and create c.py', edit('a.py', '():\n', '():\n    """Say hello."""\n'), write('c.py', C1)
+    )
+    for name, text in (('a.py', A2), ('b.py', B1), ('c.py', C1)):
+        (tmp_path / name).write_text(text)
+
+    session = await session_changes(history.messages, tmp_path, scope='session')
+    assert listed(session) == [('a.py', 'A', 3, 0), ('b.py', 'A', 2, 0), ('c.py', 'A', 2, 0)]
+    assert session.files[0].diff.diff == (
+        '--- /dev/null\n+++ b/a.py\n@@ -0,0 +1,3 @@\n+def hello():\n+    """Say hello."""\n+    return "a"'
+    )
+
+    turn = await session_changes(history.messages, tmp_path, scope='turn')
+    assert listed(turn) == [('a.py', 'M', 1, 0), ('c.py', 'A', 2, 0)]
+    assert turn.files[0].diff.diff == (
+        '--- a/a.py\n+++ b/a.py\n@@ -1,2 +1,3 @@\n def hello():\n+    """Say hello."""\n     return "a"'
+    )
+
+
+async def test_edits_of_a_file_the_session_did_not_create_are_undone_from_the_disk(tmp_path: Path) -> None:
+    (tmp_path / 'main.py').write_text('x = 3\ny = 4\n')
+    history = History()
+    history.turn('one', edit('main.py', 'x = 1', 'x = 2'))
+    history.turn('steer', edit('main.py', 'x = 2', 'x = 3'), steering=True)
+    history.turn('two', edit('main.py', 'y = 1', 'y = 4'))
+    history.turn('failed', edit('main.py', 'y = 4', 'y = 5'), outcome='retried')
+
+    session = await session_changes(history.messages, tmp_path, scope='session')
+    assert listed(session) == [('main.py', 'M', 2, 2)]
+    assert '-x = 1\n-y = 1\n+x = 3\n+y = 4' in session.files[0].diff.diff
+
+    # The last turn holds the failed edit alone, which changed nothing.
+    assert listed(await session_changes(history.messages, tmp_path, scope='turn')) == []
+
+
+async def test_replacements_and_steering_stay_in_their_turn(tmp_path: Path) -> None:
+    (tmp_path / 'main.py').write_text('x = 3\ny = 4\n')
+    history = History()
+    history.turn('one', edit('main.py', 'x = 1', 'x = 2'))
+    replacements = [{'old_text': 'x = 2', 'new_text': 'x = 3'}, {'old_text': 'y = 1', 'new_text': 'y = 4'}]
+    history.turn('two', ('edit_file', {'path': 'main.py', 'replacements': replacements}))
+    history.turn('more', steering=True)
+
+    assert listed(await session_changes(history.messages, tmp_path, scope='turn')) == [('main.py', 'M', 2, 2)]
+
+
+async def test_a_file_whose_earlier_content_is_unknown_is_listed_without_a_diff(tmp_path: Path) -> None:
+    (tmp_path / 'edited.py').write_text('changed elsewhere\n')
+    (tmp_path / 'rewritten.py').write_text('whole\n')
+    history = History()
+    history.turn(
+        'one', edit('edited.py', 'a = 1', 'a = 2'), edit('rewritten.py', 'a', 'b'), write('rewritten.py', 'whole\n')
+    )
+
+    found = await session_changes(history.messages, tmp_path, scope='session')
+    assert listed(found) == [('edited.py', 'M', 0, 0), ('rewritten.py', 'M', 0, 0)]
+    assert [change.note for change in found.files] == [
+        'Its content before these changes is not known: the file changed in another way since.'
+    ] * 2
+
+
+async def test_deleted_large_binary_and_outside_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = tmp_path / 'work'
+    workspace.mkdir()
+    (workspace / 'big.txt').write_text('x' * 2000)
+    (workspace / 'image.bin').write_bytes(b'\0\1')
+    (workspace / 'folder').mkdir()
+    (tmp_path / 'outside.py').write_text('out = 2\n')
+    (workspace / 'long.py').write_text('\n'.join(f'line {n}' for n in range(30)))
+    history = History()
+    history.turn(
+        'one',
+        write('gone.py', 'a = 1\n'),
+        write('temporary.py', 'a = 1\n'),
+        write('big.txt', 'x'),
+        write('image.bin', ''),
+        write('folder', ''),
+        write('../outside.py', 'out = 1\n'),
+        write('long.py', ''),
+        ('write_file', {'path': 1, 'content': ''}),
+        ('write_file', {'path': 'x.py', 'content': 1}),
+        ('edit_file', {'path': 'x.py', 'replacements': ['no']}),
+        ('edit_file', {'path': 'x.py', 'old_text': 1, 'new_text': ''}),
+        ('read_file', {'path': 'gone.py'}),
+    )
+    history.turn('two', edit('gone.py', 'a = 1', 'a = 2'), edit('../outside.py', 'out = 1', 'out = 2'))
+    monkeypatch.setattr(changes_module, 'MAX_FILE_BYTES', 1000)
+    monkeypatch.setattr(changes_module, 'MAX_DIFF_CHARS', 100)
+
+    session = await session_changes(history.messages, workspace, scope='session')
+    by_path = {change.path: change for change in session.files}
+    assert sorted(by_path) == sorted([str(tmp_path / 'outside.py'), 'big.txt', 'folder', 'image.bin', 'long.py'])
+    assert by_path['big.txt'].note == 'Too large to diff.'
+    assert by_path['image.bin'].note == 'Binary file.'
+    assert by_path['folder'].note == 'Is a directory'
+    assert by_path['long.py'].diff.truncated
+    assert by_path['long.py'].added == 30
+    assert len(by_path['long.py'].diff.diff) <= 100
+
+    turn = await session_changes(history.messages, workspace, scope='turn')
+    assert listed(turn) == [(str(tmp_path / 'outside.py'), 'M', 1, 1), ('gone.py', 'D', 0, 1)]
+
+
+async def test_uncommitted_matches_git_diff_head(repo: Path) -> None:
+    (repo / 'a.py').write_text('def a():\n    return 10\n')
+    (repo / 'b.py').unlink()
+    (repo / 'c.py').write_text('c = 1\n')
+    (repo / 'logo.png').write_bytes(b'\0PNG')
+    git(repo, 'add', 'c.py', 'logo.png')
+    (repo / 'untracked.py').write_text('ignored by git diff HEAD\n')
+
+    found = await session_changes([], repo, scope='uncommitted')
+    numstat = [line.split('\t') for line in git(repo, 'diff', 'HEAD', '--numstat').splitlines()]
+    assert [(path, str(added), str(removed)) for path, _, added, removed in listed(found)] == [
+        (path, '0' if added == '-' else added, '0' if removed == '-' else removed) for added, removed, path in numstat
+    ]
+    assert listed(found) == [('a.py', 'M', 1, 1), ('b.py', 'D', 0, 2), ('c.py', 'A', 1, 0), ('logo.png', 'A', 0, 0)]
+    assert found.files[0].diff.diff.startswith('--- a/a.py\n+++ b/a.py\n@@ -1,2 +1,2 @@')
+    assert found.files[3].note == 'Binary file.'
+
+
+async def test_branch_against_its_base(repo: Path) -> None:
+    git(repo, 'switch', '-q', '-c', 'feature')
+    (repo / 'feature.py').write_text('feature = 1\n')
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-q', '-m', 'feature')
+    (repo / 'a.py').write_text('def a():\n    return 10\n')
+
+    found = await session_changes([], repo, scope='branch')
+    assert (found.base, listed(found)) == ('main', [('a.py', 'M', 1, 1), ('feature.py', 'A', 1, 0)])
+
+    # A clone's `origin/HEAD` names the base instead.
+    git(repo, 'update-ref', 'refs/remotes/origin/trunk', 'main')
+    git(repo, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk')
+    assert (await session_changes([], repo, scope='branch')).base == 'origin/trunk'
+
+
+@pytest.mark.parametrize('scope', ['uncommitted', 'branch'])
+async def test_git_scopes_say_why_they_show_nothing(tmp_path: Path, scope: ChangeScope) -> None:
+    assert (await session_changes([], tmp_path, scope=scope)).note == 'This workspace is not in a Git repository.'
+    git(tmp_path, 'init', '-q', '-b', 'trunk')
+    assert (await session_changes([], tmp_path, scope=scope)).note == 'This repository has no commits yet.'
+
+
+async def test_branch_without_a_base(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    git(repo, 'branch', '-q', '-m', 'trunk')
+    found = await session_changes([], repo, scope='branch')
+    assert found.note == 'No base branch found: neither origin/HEAD nor main or master.'
+    monkeypatch.setenv('PATH', '')
+    assert (await session_changes([], repo, scope='uncommitted')).note == 'This workspace is not in a Git repository.'
+
+
+def test_changes_route(make_fleet: MakeFleet) -> None:
+    """`GET /api/sessions/ID/changes` answers for a live session, and for the default one unprefixed."""
+    fleet = make_fleet()
+    conversation = fleet.new('work')
+    workspace = fleet.folder('work')
+    history = History()
+    history.turn('create a.py', write('a.py', A1))
+    fleet.portal.call(fleet.runtimes['work'].session.commit_messages, history.messages)
+    (workspace / 'a.py').write_text(A1)
+
+    response = fleet.get(f'/api/sessions/{conversation}/changes?scope=turn')
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body['scope'], [(file['path'], file['status']) for file in body['files']]) == ('turn', [('a.py', 'A')])
+    assert fleet.get(f'/api/sessions/{conversation}/changes').json()['scope'] == 'session'
+    assert fleet.get('/api/changes?scope=uncommitted').json()['note'] == 'This workspace is not in a Git repository.'
+    assert fleet.get('/api/sessions/nope/changes').status_code == 404
+    assert fleet.get(f'/api/sessions/{conversation}/changes?scope=everything').status_code == 422

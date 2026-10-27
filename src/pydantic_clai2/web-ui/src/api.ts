@@ -3,6 +3,8 @@ import type { Snapshot } from './state'
 import { PROTOCOL } from './protocol'
 import type {
   AnswerBody,
+  ChangeScope,
+  Changes,
   CompletionInfo,
   Entered,
   JsonValue,
@@ -130,6 +132,8 @@ export function sessionApi(id: string | null) {
     interrupt: () => call<{ interrupted: boolean }>('POST', `${base}/interrupt`),
     /** One of the images a prompt in this session's transcript lists, as a `data:` URL; fetched once per page. */
     image: (id: string) => image(base, id),
+    /** The files this session changed in `scope`, each with its diff, for the Changes panel. */
+    changes: (scope: ChangeScope) => call<Changes>('GET', `${base}/changes?scope=${scope}`),
     complete: (text: string) => call<CompletionInfo[]>('GET', `${base}/complete?text=${encodeURIComponent(text)}`),
     selectModel: (name: string) => call<void>('POST', `${base}/model`, { name }),
     answer: (request: string, answers: AnswerBody[] | null) =>
