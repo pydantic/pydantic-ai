@@ -13,6 +13,7 @@ from collections.abc import AsyncIterable, AsyncIterator
 
 import anyio
 import pytest
+from pydantic import ValidationError
 
 pytest.importorskip('pgtask')
 pytest.importorskip('fastmcp')
@@ -711,6 +712,40 @@ class TestCrashMidRun:
 
 
 class TestCapabilityOperation:
+    @pytest.mark.parametrize('valid_checkpoint', [True, False], ids=['valid-json', 'invalid-json'])
+    async def test_operation_loads_existing_checkpoint(self, pgtask_db: PGTaskDatabase, valid_checkpoint: bool) -> None:
+        values: list[int] = []
+
+        class Reader(AbstractCapability[object]):
+            id = 'reader'
+
+            async def before_run(self, ctx: RunContext[object]) -> None:
+                values.append(await self.read(ctx))
+
+            @durable_operation('read')
+            async def read(self, ctx: RunContext[object]) -> int:  # pragma: no cover
+                pytest.fail('The checkpointed operation must not run again')
+
+        agent = Agent(_make_model(), name='cap', capabilities=[Reader(), PGTaskDurability()])
+
+        async def body(attempt: int) -> None:
+            if valid_checkpoint:
+                await agent.run('hi')
+                assert values == [42]
+            else:
+                with pytest.raises(CheckpointDecodeError, match='A pgtask checkpoint could not be decoded') as exc_info:
+                    await agent.run('hi')
+                assert isinstance(exc_info.value.__cause__, ValidationError)
+                assert values == []
+
+        await run_in_task(
+            pgtask_db,
+            body,
+            seed={
+                ('cap__capability__reader.read', 0): {'value': 42 if valid_checkpoint else 'invalid', 'usage_delta': {}}
+            },
+        )
+
     async def test_operation_is_checkpointed_and_replayed(self, pgtask_db: PGTaskDatabase) -> None:
         calls: list[str] = []
 
