@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 
@@ -138,6 +139,8 @@ class WebUI:
     gamma: str
     delta: str
     epsilon: str
+    busy: str
+    """A session another CLAI runs: this test process's parent."""
     saved: str
     """Saved in Gamma's folder, so it opens while Gamma is the default session, and not live until a test opens it."""
     moved: str
@@ -183,6 +186,17 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterator[W
                 portal.call(fleet.runtimes[name].session.commit_messages, messages)
                 response = fleet.post(f'/api/sessions/{conversation}/rename', {'title': title})
                 assert response.status_code == 204, response.text
+            busy = portal.call(
+                lambda: fleet.launch.sessions.store.save(
+                    summary=ConversationSummary(
+                        workspace=str(fleet.folder('beta')),
+                        title='Browser Busy',
+                        outcome='running',
+                        owner_pid=os.getppid(),
+                    ),
+                    messages=[],
+                )
+            )
             summary = ConversationSummary(workspace=str(fleet.folder('gamma')), title='Browser Saved')
             history: list[ModelMessage] = [
                 ModelRequest(parts=[UserPromptPart(content='Saved prompt')]),
@@ -200,6 +214,7 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterator[W
                     gamma=gamma,
                     delta=delta,
                     epsilon=epsilon,
+                    busy=busy.id,
                     saved=saved.id,
                     moved=moved.id,
                 )
@@ -740,6 +755,24 @@ async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI
     await expect(composer).to_be_focused()
 
 
+async def test_a_session_another_clai_runs_shows_until_forked(page: Page, web_ui: WebUI) -> None:
+    """Clicking it shows it read-only and saves nothing; only the banner's button continues it, in a fork."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    # This CLAI does not follow sessions' folders, so it continues only those of the session it shows: Beta's.
+    await sidebar.get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    async with page.expect_response(f'**/api/sessions/{web_ui.busy}') as shown:
+        await sidebar.get_by_text('Browser Busy', exact=True).click()
+    assert (await shown.value).ok
+    banner = page.locator('.preview-banner')
+    await expect(banner).to_contain_text(f'Running in another CLAI (pid {os.getppid()}).')
+    await expect(sidebar.get_by_text('Browser Busy (fork)', exact=True)).to_have_count(0)
+    await banner.get_by_role('button', name='Fork to continue here').click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Busy (fork)')
+    await expect(banner).to_have_count(0)
+
+
 async def list_gamma_folder_as_openable(page: Page, web_ui: WebUI) -> None:
     """Opening Gamma makes it the default session, so the sidebar lists the sessions saved in its folder as openable."""
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
@@ -798,6 +831,7 @@ async def test_a_row_that_says_it_opens_shows_read_only_when_it_no_longer_can(pa
         'items': [],
         'openable': False,
         'missing': True,
+        'owner_pid': None,
     }
     await page.route(f'**/api/sessions/{web_ui.moved}', lambda route: route.fulfill(json=transcript))
     await page.locator('.sidebar').get_by_text('Browser Moved', exact=True).click()
