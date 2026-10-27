@@ -828,7 +828,9 @@ async def test_a_row_that_says_it_opens_shows_read_only_when_it_no_longer_can(pa
         'missing': True,
     }
     await page.route(f'**/api/sessions/{web_ui.moved}', lambda route: route.fulfill(json=transcript))
-    await page.locator('.sidebar').get_by_text('Browser Moved', exact=True).click()
+    # The row says it opens, so the click asks to open it before anything else.
+    async with page.expect_request(f'**/api/sessions/{web_ui.moved}/open'):
+        await page.locator('.sidebar').get_by_text('Browser Moved', exact=True).click()
     await expect(page.locator('.preview-banner')).to_contain_text('which no longer exists')
     await expect(page.locator('.topbar .title')).to_have_text('Browser Moved')
     await expect(page.get_by_role('alert')).to_have_count(0)
