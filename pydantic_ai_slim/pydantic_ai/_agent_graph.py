@@ -3508,45 +3508,34 @@ def _record_model_settings_changes(
     names a level.
 
     Reading history makes this idempotent, like `_record_tool_population_changes`: a retried request finds the
-    part it already recorded. A part on this step's own request is replaced rather than followed by another,
-    since no response has answered it yet.
+    part it already recorded. A part no response has answered yet (on this step's own request, when the run continues
+    a history that ends in one) stays, and the change this request makes follows it: a UI client that rebuilt the
+    history from the event stream keeps that part too, and learns of a change only from its event. A model with a
+    channel collapses the parts no response separates into the last one.
     """
     # Resolved by the model, with its own `settings` (each candidate's, for a `FallbackModel`) and provider-specific
     # overrides taken into account, so a request never records an effort it doesn't send.
     wanted = model._unified_effort(model_settings)  # pyright: ignore[reportPrivateUsage]
-    targets = list(requests)
     # A compaction replaces what came before it, including the changes recorded there, so the effort in
     # effect is read from the window after it, and the next request that names a level opens a new one.
-    recorded = [
-        (message, part)
-        for message in _messages.post_compaction_window(messages)
-        if isinstance(message, _messages.ModelRequest)
-        for part in message.parts
-        if isinstance(part, _messages.ModelSettingsDeltaPart) and 'thinking' in part.settings
-    ]
-    # A part on this step's own request hasn't been answered yet, so this step changed its mind (a hook, or a
-    # retry with different settings): it's replaced, and the request records only what it ends up sending.
-    unanswered: _messages.ModelSettingsDeltaPart | None = None
-    if recorded and any(recorded[-1][0] is target for target in targets):
-        unanswered = recorded.pop()[1]
-    current = recorded[-1][1] if recorded else None
+    current = next(
+        (
+            part
+            for message in reversed(_messages.post_compaction_window(messages))
+            if isinstance(message, _messages.ModelRequest)
+            for part in reversed(message.parts)
+            if isinstance(part, _messages.ModelSettingsDeltaPart) and 'thinking' in part.settings
+        ),
+        None,
+    )
     current_effort = current.settings.get('thinking') if current is not None else None
     if current_effort == wanted:
-        delta = None
-    else:
-        top_level = current is None or current_effort is None or wanted is None
-        delta = _messages.ModelSettingsDeltaPart(settings={'thinking': wanted}, top_level=top_level)
-    if unanswered is not None:
-        if delta == unanswered:
-            return
-        replacement = [] if delta is None else [delta]
-        for request in targets:
-            request.parts = [new for part in request.parts for new in (replacement if part is unanswered else [part])]
-    elif delta is not None:
-        for request in targets:
-            request.parts = [*request.parts, delta]
-    if delta is not None:
-        ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
+        return
+    top_level = current is None or current_effort is None or wanted is None
+    delta = _messages.ModelSettingsDeltaPart(settings={'thinking': wanted}, top_level=top_level)
+    for request in requests:
+        request.parts = [*request.parts, delta]
+    ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
 
 
 def _with_outgoing_reveal_state(
