@@ -2623,6 +2623,20 @@ _SILENCE = {'type': 'session.output_audio.delta', 'delta': base64.b64encode(b'\x
 """100 ms of Live's idle track."""
 
 
+class _ContinuedWebSocket(_FakeWebSocket):
+    """A socket whose `continued` frames come once the client continues the delegated backend (`response.create`)."""
+
+    def __init__(self, frames: list[str], *, continued: list[str]) -> None:
+        super().__init__(frames)
+        self._continued = continued
+
+    async def send(self, data: str) -> None:
+        await super().send(data)
+        if json.loads(data)['type'] == 'response.create':
+            self._frames.extend(self._continued)
+            self._arrived.set()
+
+
 @pytest.mark.parametrize('pause', ['audio', 'transcript'])
 async def test_a_reply_that_delegated_ends_at_lives_next_pause(pause: str) -> None:
     """Live goes on with what it was saying as the backend answers, and only then speaks the answer.
@@ -2631,23 +2645,27 @@ async def test_a_reply_that_delegated_ends_at_lives_next_pause(pause: str) -> No
     recorded as the start of the answer. The reply ends where Live next pauses, on its audio or its transcript.
     """
     answer_start = 900 if pause == 'audio' else 800
-    ws = _FakeWebSocket(
+    ws = _ContinuedWebSocket(
         _live_frames(
             _delegation_created('d1'),
             _said('Checking the', 0),
             _VOICE,
             {'type': 'response.event', 'event_id': 'e', 'delegation_id': 'd1', 'event': _backend_call('c1')},
             _backend_completion('d1'),
-            _VOICE,
-            # The continuation, with the tool's result, settles the delegation while Live is mid-sentence.
-            _backend_completion('d1'),
-            _said(' weather now.', 100),
-            _VOICE,
-            *([_SILENCE] * 5 if pause == 'audio' else []),
-            _said('It is sunny.', answer_start),
-            _VOICE,
         ),
-        delay=0.02,
+        continued=[
+            json.dumps(frame)
+            for frame in (
+                _VOICE,
+                # The continuation, with the tool's result, settles the delegation while Live is mid-sentence.
+                _backend_completion('d1'),
+                _said(' weather now.', 100),
+                _VOICE,
+                *([_SILENCE] * 5 if pause == 'audio' else []),
+                _said('It is sunny.', answer_start),
+                _VOICE,
+            )
+        ],
     )
     agent = Agent()
 
@@ -2656,7 +2674,7 @@ async def test_a_reply_that_delegated_ends_at_lives_next_pause(pause: str) -> No
         return 'Sunny.'
 
     model = OpenAILiveModel(
-        'gpt-live-1', provider='openai', settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=300)
+        'gpt-live-1', provider='openai', settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=10)
     )
     with _patched_connect(ws):
         async with agent.realtime(model).session() as session:
