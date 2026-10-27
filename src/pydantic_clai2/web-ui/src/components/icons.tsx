@@ -196,3 +196,9 @@ export const ServerIcon = icon(
 )
 export const ShieldIcon = icon(<path d="M12 3 5 6v5c0 4.5 3 8.5 7 10 4-1.5 7-5.5 7-10V6Z" />)
 export const PlusIcon = icon(<path d="M12 5v14M5 12h14" />)
+export const DiffIcon = icon(
+  <>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+    <path d="M9 10h6M12 7v6M9 17h6" />
+  </>,
+)

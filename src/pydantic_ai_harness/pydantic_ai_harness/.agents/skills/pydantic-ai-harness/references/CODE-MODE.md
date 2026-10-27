@@ -272,8 +272,37 @@ async def wrap_tool_execute(self, ctx, *, call, tool_def, args, handler):
 `run_code` parts recorded before the kind existed load as plain `ToolCallPart`s;
 `ToolCallPart.narrow_type(part, tool_kind='code_mode.run_code')` promotes one.
 
+## IPython Code Mode (local agents only)
+
+`IPythonCodeMode` gives the model the same `run_code` tool backed by a persistent IPython kernel: full
+CPython, any installed package, and state kept for the whole run. It is not a sandbox: model-written code
+runs with the agent process's permissions. Never use it in a webserver or on untrusted input unless the
+whole agent runs in a container or VM; use `CodeMode` there.
+
+```bash
+uv add "pydantic-ai-harness[ipython]"
+```
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import IPythonCodeMode
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[IPythonCodeMode()])
+```
+
+- Tools become synchronous, keyword-only functions in the kernel; calls run one at a time and a failed
+  call raises `ToolCallError`. `tools=` and `max_tool_calls=` work as in `CodeMode`.
+- `timeout=` (default 60 s, tool time excluded) interrupts long cells and keeps the kernel's state; a cell
+  that ignores the interrupt or a kernel that exits gets a fresh kernel on the next call.
+- Each run starts a kernel on first use and stops it at the end. To keep state across runs, pass
+  `kernel=IPythonKernel()` (from `pydantic_ai_harness.ipython_code_mode`) and shut it down yourself,
+  e.g. with `async with IPythonKernel() as kernel:`.
+- Not supported: `eager`, `speculate`, `dynamic_catalog`, durable execution, `mount`/`os_access`.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/code-mode/
+- https://pydantic.dev/docs/ai/harness/ipython-code-mode/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/

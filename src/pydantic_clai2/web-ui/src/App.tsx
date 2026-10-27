@@ -13,12 +13,14 @@ import { CommandMenu } from './components/CommandMenu'
 import { CommandPalette } from './components/CommandPalette'
 import { SettingsWindow, commandSection, linkedSection, type SettingsSection } from './components/SettingsWindow'
 import { DialogLayer } from './components/DialogLayer'
+import { CHANGES_KEY, ChangesPanel, useChanges } from './components/ChangesPanel'
+import { GitChip } from './components/GitChip'
 import { MontyPanel } from './components/MontyPanel'
 import { OrchestratorPane } from './components/OrchestratorPane'
 import { NewSessionDialog } from './components/NewSessionDialog'
 import { PanelGlyph, SidePanel, followWindows, following, panelKey } from './components/SidePanel'
 import { WorkerView } from './components/WorkerView'
-import { SidebarIcon, TerminalIcon } from './components/icons'
+import { DiffIcon, SidebarIcon, TerminalIcon } from './components/icons'
 import type { PanelInfo, ServerMessage, Transcript as Saved } from './protocol'
 import { MAC, MOD, STEER_KEY } from './platform'
 import { isLight, paletteVariables } from './palette'
@@ -29,9 +31,13 @@ type Theme = 'dark' | 'light'
 /** What the main pane shows: the session, or the orchestrator chat. */
 type Pane = 'session' | 'orchestrator'
 
+/** The session picked in the sidebar, until it shows; its header paints from the row at once. */
 interface Opening {
   id: string
   title: string
+  workspace?: string
+  /** What the sidebar's row said; unknown for a session picked from elsewhere, so its transcript is asked first. */
+  openable?: boolean
 }
 
 const NO_ATTACHMENTS: readonly Attachment[] = []
@@ -79,6 +85,8 @@ export function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme)
   const [sidebar, setSidebar] = useState(true)
   const [monty, setMonty] = useState(() => localStorage.getItem('clai-monty') === 'open')
+  // The Changes panel, which takes the side panel's column: opening one closes the other.
+  const [changes, setChanges] = useState(() => localStorage.getItem('clai-changes') === 'open')
   const [preview, setPreview] = useState<Saved | null>(null)
   // The session the user picked, until it shows: CLAI makes it live, then its snapshot comes.
   const [opening, setOpening] = useState<Opening | null>(null)
@@ -210,6 +218,7 @@ export function App() {
   }, [awaiting])
 
   useEffect(() => localStorage.setItem('clai-monty', monty ? 'open' : 'closed'), [monty])
+  useEffect(() => localStorage.setItem('clai-changes', changes ? 'open' : 'closed'), [changes])
   useEffect(() => localStorage.setItem('clai-pane', pane), [pane])
 
   // A command or the plugins panel may have turned `workspaces` on or off, which the orchestrator needs, or
@@ -265,11 +274,21 @@ export function App() {
   const shownKey = shownPanel ? panelKey(shownPanel) : null
   const togglePanel = useCallback(
     (key?: string) => {
-      if (key !== undefined) setSidePanel(shownKey === key ? null : key)
-      else setSidePanel(shownKey || !firstPanel ? null : panelKey(firstPanel))
+      const next =
+        key !== undefined ? (shownKey === key ? null : key) : shownKey || !firstPanel ? null : panelKey(firstPanel)
+      setSidePanel(next)
+      if (next) setChanges(false)
     },
     [shownKey, firstPanel],
   )
+  const toggleChanges = useCallback(() => {
+    setChanges((open) => !open)
+    setSidePanel(null)
+  }, [])
+  // The files may have changed when a turn ends, so the count and the panel ask again then; not while one runs.
+  const changesActive = connection === 'open' && !chat.running
+  const sessionChanges = useChanges(session, 'session', shown ?? '', changesActive, false).changes
+  const changed = (sessionChanges?.files.length ?? 0) + (sessionChanges?.omitted ?? 0)
 
   // A `/theme` palette paints the page as it paints the terminal; `default` keeps Pydantic's colours in the chosen mode.
   const palette = state.theme?.palette ?? null
@@ -287,10 +306,11 @@ export function App() {
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', bar)
   }, [theme, palette])
 
+  const shownTitle = opening?.title ?? chat.session?.title
   useEffect(() => {
     if (pane === 'orchestrator') document.title = 'Orchestrator · CLAI'
-    else document.title = chat.session?.title ? `${chat.session.title} · CLAI` : 'CLAI'
-  }, [chat.session?.title, pane])
+    else document.title = shownTitle ? `${shownTitle} · CLAI` : 'CLAI'
+  }, [shownTitle, pane])
 
   // The picked session showing ends the wait for it; `show` already closed any preview and worker.
   const sessionId = chat.session?.id
@@ -418,6 +438,24 @@ export function App() {
     setOpening(null)
   }, [])
 
+  // A session another CLAI runs only shows here; continuing it, in a fork of it, is the reader's choice.
+  const continueInFork = useCallback(
+    (saved: Saved) => {
+      const request = ++picked.current
+      api
+        .open(saved.id)
+        .then(({ id }) => {
+          if (request !== picked.current) return
+          if (id !== shown) show(id)
+          else setPreview(null)
+        })
+        .catch((error: unknown) => {
+          if (request === picked.current) showError(error instanceof Error ? error.message : String(error))
+        })
+    },
+    [shown, show, showError],
+  )
+
   const view = useCallback(
     async (session: Opening) => {
       // Only the last session clicked is shown, however the requests for earlier ones resolve.
@@ -440,19 +478,21 @@ export function App() {
         return
       }
       setOpening(session)
+      /** Show the saved session read-only when CLAI can only show it, as when its directory is gone; whether it did. */
+      const readOnly = async () => {
+        const saved = await api.transcript(session.id)
+        if (request !== picked.current || saved.openable) return false
+        focusing.current = null
+        setPreview(saved)
+        setOpening(null)
+        return true
+      }
+      // A saved session opens live, whatever the others run; a live one, or one its sidebar row says opens, at once.
+      const saved = !(session.id in live)
+      const trusted = saved && session.openable === true
       try {
-        // A saved session opens live, whatever the others run, unless CLAI can only show it, as when its
-        // directory is gone; a live one opens at once.
-        if (!(session.id in live)) {
-          const saved = await api.transcript(session.id)
-          if (request !== picked.current) return
-          if (!saved.openable) {
-            focusing.current = null
-            setPreview(saved)
-            setOpening(null)
-            return
-          }
-        }
+        if (saved && !trusted && (await readOnly())) return
+        if (request !== picked.current) return
         const { id } = await api.open(session.id)
         if (request !== picked.current) return
         if (id !== shown) show(id)
@@ -464,6 +504,9 @@ export function App() {
           setOpening(null)
         }
       } catch (error) {
+        if (request !== picked.current) return
+        // The row may be out of date, as when the session's directory went since the sidebar listed it.
+        if (trusted && (await readOnly().catch(() => false))) return
         if (request !== picked.current) return
         focusing.current = null
         setOpening(null)
@@ -502,6 +545,9 @@ export function App() {
       } else if (mod && event.shiftKey && event.key.toLowerCase() === 'l') {
         event.preventDefault()
         togglePanel()
+      } else if (mod && event.shiftKey && event.key.toUpperCase() === CHANGES_KEY) {
+        event.preventDefault()
+        toggleChanges()
       } else if (mod && event.key === ',') {
         event.preventDefault()
         openSettings()
@@ -526,15 +572,18 @@ export function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, openSettings, newSession, focusSessions])
+  }, [running, stop, orchestrating, workerTask, preview, showError, togglePanel, toggleChanges, openSettings, newSession, focusSessions])
 
   const status = chat.status
+  // A session still opening is named from its sidebar row, never as a new session while its snapshot comes.
   const title = workerTask
     ? `${workerTask.agent}: ${workerTask.prompt.split('\n')[0]}`
     : preview
       ? preview.title
-      : (chat.session?.title ?? 'New session')
-  const workspace = preview ? preview.workspace : (chat.session?.workspace ?? '')
+      : opening
+        ? opening.title
+        : (chat.session?.title ?? 'New session')
+  const workspace = preview ? preview.workspace : opening ? (opening.workspace ?? '') : (chat.session?.workspace ?? '')
   const entries = preview ? preview.items : chat.entries
   const prompts = useMemo(() => entries.flatMap((entry) => (entry.kind === 'user' ? [entry.text] : [])), [entries])
   const project = (chat.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''
@@ -569,7 +618,7 @@ export function App() {
 
   const page = (
     <div
-      className={`app ${sidebar ? '' : 'no-sidebar'} ${monty && !orchestrating ? 'with-monty' : ''} ${shownPanel && !orchestrating ? 'with-side-panel' : ''}`}
+      className={`app ${sidebar ? '' : 'no-sidebar'} ${monty && !orchestrating ? 'with-monty' : ''} ${(shownPanel || changes) && !orchestrating ? 'with-side-panel' : ''}`}
       style={{ '--side-panel-width': `min(${panelWidth}px, 70vw)` } as CSSProperties}
     >
       {sidebar && (
@@ -643,6 +692,14 @@ export function App() {
                   )}
                 </div>
               )}
+              {chat.session && !preview && !workerTask && (
+                <GitChip
+                  session={chat.session.id}
+                  // While a turn runs its edits are not done yet; each item after it may be a `/commit`'s.
+                  refresh={chat.running ? -1 : entries.length}
+                  onNotice={showNotice}
+                />
+              )}
               {panels.map((panel) => {
                 const key = panelKey(panel)
                 const active = shownKey === key
@@ -659,6 +716,16 @@ export function App() {
                 )
               })}
               <button
+                className={`icon-button monty-toggle changes-toggle ${changes ? 'active' : ''}`}
+                onClick={toggleChanges}
+                title={`${changes ? 'Hide' : 'Show'} the changes: ${changed} ${changed === 1 ? 'file' : 'files'} changed this session (${MOD}⇧${CHANGES_KEY})`}
+                aria-label={`Changes: ${changed} ${changed === 1 ? 'file' : 'files'} changed`}
+                aria-pressed={changes}
+              >
+                <DiffIcon size={16} />
+                {changed > 0 && <span className="changes-count">{changed}</span>}
+              </button>
+              <button
                 className={`icon-button monty-toggle ${monty ? 'active' : ''}`}
                 onClick={() => setMonty(!monty)}
                 title={`${monty ? 'Hide' : 'Show'} Monty, the run_code sandbox (${MOD}J)`}
@@ -669,9 +736,18 @@ export function App() {
             </header>
             {preview && (
               <div className="preview-banner">
-                {preview.missing
-                  ? `Saved in ${preview.workspace}, which no longer exists. You can read it here.`
-                  : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
+                <span>
+                  {preview.owner_pid !== null
+                    ? `Running in another CLAI (pid ${preview.owner_pid}). You can read it here.`
+                    : preview.missing
+                      ? `Saved in ${preview.workspace}, which no longer exists. You can read it here.`
+                      : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
+                </span>
+                {preview.owner_pid !== null && (
+                  <button className="ghost small" onClick={() => continueInFork(preview)}>
+                    Fork to continue here
+                  </button>
+                )}
                 <button className="ghost small" onClick={closePreview}>
                   Back to current
                 </button>
@@ -798,7 +874,10 @@ export function App() {
           onError={showError}
         />
       )}
-      {shownPanel && !orchestrating && (
+      {changes && !orchestrating && (
+        <ChangesPanel session={session} owner={shown ?? ''} active={changesActive} onClose={() => setChanges(false)} />
+      )}
+      {shownPanel && !changes && !orchestrating && (
         <SidePanel
           panel={shownPanel}
           width={panelWidth}
