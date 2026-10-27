@@ -56,6 +56,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
+from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, RequestCapture, try_import
@@ -354,6 +355,7 @@ def recording_function_model(seen: list[list[ModelMessage]], *, profile: ModelPr
     return FunctionModel(respond, profile=profile)
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_superseded_reminders_are_left_out_without_native_support():
     """A model that can't clear a request-scoped prompt gets each one only while it's current.
 
@@ -452,6 +454,7 @@ async def test_native_support_leaves_out_a_reminder_no_user_message_clears():
     assert request_scoped_texts(prepared) == []
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_reminder_enqueued_from_before_model_request_matches_two_writes():
     """`ctx.enqueue` from `before_model_request` delivers into the request being prepared, and into history.
 
@@ -488,6 +491,7 @@ async def test_reminder_enqueued_from_before_model_request_matches_two_writes():
     assert [type(message) for message in enqueued_history] == [type(message) for message in written_history]
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_enqueued_request_scoped_prompt():
     """`ctx.enqueue` delivers a request-scoped prompt into the next request, and it's gone from the one after."""
     seen: list[list[ModelMessage]] = []
@@ -650,6 +654,7 @@ async def test_retry_without_response_drops_the_request_scoped_prompt():
     assert request_scoped_texts(result.all_messages()) == ['Reminder: be terse. This is request 2.']
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_resuming_a_suspended_response_defers_the_enqueued_reminder():
     """Resuming a provider-suspended turn sends the history ending in it unchanged, with nothing added after it.
 
