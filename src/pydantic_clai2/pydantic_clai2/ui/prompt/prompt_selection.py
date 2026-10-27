@@ -81,8 +81,8 @@ class Selection:
     def span(self, *, width: int, rows: int) -> range:
         """Frame indexes from the earlier end to the later one, inclusive, within the top `rows`.
 
-        Only the transcript is selectable: a drag into the editor or footer below it stops at its
-        last row, so a copy never picks up the draft, borders, or status.
+        The surface supplies the selectable rows: normally just the transcript, or the question
+        widget too while it owns the panel. Ordinary editor and status rows remain excluded.
         """
         if self.anchor is None or self.head is None:
             return range(0)
