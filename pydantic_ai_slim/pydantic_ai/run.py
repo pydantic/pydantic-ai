@@ -32,6 +32,7 @@ from ._run_context import (
 )
 from .capabilities._pending_messages import drain_pending_messages_at_end
 from .conversation import Conversation
+from .conversation_store import _mark_stored  # pyright: ignore[reportPrivateUsage]
 from .output import OutputDataT
 from .tools import AgentDepsT, DeferredToolRequests
 
@@ -931,12 +932,13 @@ class AgentRunResult(Generic[OutputDataT]):
             'usage': self._state.usage,
             'run_id': self._state.run_id,
             'conversation_id': self._state.conversation_id,
-            'conversation_revision': self._state.conversation_revision,
             'metadata': self._state.metadata,
             'traceparent': self._traceparent_value,
         }
+        # Only for a run that continued a stored conversation, so other results keep their shape.
+        if self._state.conversation_revision is not None:
+            data['conversation_revision'] = self._state.conversation_revision
         if self._state.conversation_unsaved is not None:
-            # Only for a run that continued a stored conversation, so other results keep their shape.
             data['conversation_unsaved'] = self._state.conversation_unsaved
         if 'output' in serialized:
             # Absent when the caller filtered it out: an explicit `exclude={'output'}`, or
@@ -1076,7 +1078,7 @@ class AgentRunResult(Generic[OutputDataT]):
         hadn't saved before the run.
         """
         output = self.output
-        return Conversation(
+        conversation = Conversation(
             messages=list(self.all_messages()),
             usage=copy(self.usage),
             conversation_id=self.conversation_id,
@@ -1088,8 +1090,10 @@ class AgentRunResult(Generic[OutputDataT]):
                 else None
             ),
             revision=self._state.conversation_revision,
-            new_message_index=self._conversation_new_message_index(),
         )
+        if (index := self._conversation_new_message_index()) is not None:
+            _mark_stored(conversation, index)
+        return conversation
 
     def _conversation_new_message_index(self) -> int | None:
         unsaved = self._state.conversation_unsaved

@@ -38,6 +38,28 @@ __all__ = (
 )
 
 
+_STORED_TAIL = '_stored_tail'
+"""Where `_mark_stored` keeps the message just before the unsaved ones, outside the fields: not compared, serialized or copied."""
+
+
+def _mark_stored(conversation: Conversation, index: int) -> None:
+    """Set `conversation.new_message_index`, remembering the message before it to check that it still marks the boundary."""
+    conversation.new_message_index = index
+    conversation.__dict__[_STORED_TAIL] = conversation.messages[index - 1] if index else None
+
+
+def _stored_boundary(conversation: Conversation) -> int | None:
+    """`conversation.new_message_index`, if the messages before it are still the ones it was set after."""
+    index = conversation.new_message_index
+    if index is None or index == 0:
+        return index
+    if index > len(conversation.messages) or conversation.messages[index - 1] is not conversation.__dict__.get(
+        _STORED_TAIL
+    ):
+        return None
+    return index
+
+
 @dataclasses.dataclass(frozen=True)
 class ConversationEntry:
     """One message in a conversation's log, linked to the entry before it."""
@@ -159,15 +181,15 @@ class ConversationStore(ABC):
         if loaded is None:
             return None
         record, history = loaded
-        messages = [entry.message for entry in history]
-        return Conversation(
-            messages=messages,
+        conversation = Conversation(
+            messages=[entry.message for entry in history],
             usage=record.usage,
             conversation_id=record.conversation_id,
             deferred_tool_requests=record.deferred_tool_requests,
             revision=record.revision,
-            new_message_index=len(messages),
         )
+        _mark_stored(conversation, len(conversation.messages))
+        return conversation
 
     async def load_entries(self, conversation_id: str, *, limit: int | None = None) -> list[ConversationEntry] | None:
         """Load a conversation's history with each message's entry, or `None` if the store doesn't have it.
@@ -241,9 +263,10 @@ class ConversationStore(ABC):
         record = await self.read_record(conversation_id)
         if (record.revision if record is not None else None) != expected_revision:
             raise ConversationConflict(conversation_id)
-        if record is not None and conversation.new_message_index is not None:
+        boundary = _stored_boundary(conversation)
+        if record is not None and boundary is not None:
             parent_id = record.head_id
-            unsaved = conversation.messages[conversation.new_message_index :]
+            unsaved = conversation.messages[boundary:]
         else:
             history = await self._history_of(record) if record is not None else []
             if history is None:
@@ -270,7 +293,7 @@ class ConversationStore(ABC):
         )
         await self.write_record(updated, new_entries=new_entries, expected_revision=expected_revision)
         conversation.revision = updated.revision
-        conversation.new_message_index = len(conversation.messages)
+        _mark_stored(conversation, len(conversation.messages))
         return new_entries
 
     async def rewind(self, conversation_id: str, *, at: int, expected_revision: str | None) -> Conversation:
@@ -309,15 +332,15 @@ class ConversationStore(ABC):
             updated_at=now_utc(),
         )
         await self.write_record(rewound, expected_revision=expected_revision)
-        messages = [entry.message for entry in kept]
-        return Conversation(
-            messages=messages,
+        conversation = Conversation(
+            messages=[entry.message for entry in kept],
             usage=rewound.usage,
             conversation_id=conversation_id,
             deferred_tool_requests=rewound.deferred_tool_requests,
             revision=rewound.revision,
-            new_message_index=len(messages),
         )
+        _mark_stored(conversation, len(conversation.messages))
+        return conversation
 
     async def fork(
         self,
@@ -358,14 +381,15 @@ class ConversationStore(ABC):
             forked_from=head_id,
         )
         await self.write_record(fork, expected_revision=None)
-        return Conversation(
+        forked = Conversation(
             messages=[entry.message for entry in history[:keep]],
             usage=fork.usage,
             conversation_id=fork.conversation_id,
             deferred_tool_requests=fork.deferred_tool_requests,
             revision=fork.revision,
-            new_message_index=keep,
         )
+        _mark_stored(forked, keep)
+        return forked
 
     async def list_conversations(
         self, *, scope: str | None = None, limit: int | None = None

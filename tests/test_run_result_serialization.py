@@ -65,7 +65,6 @@ def test_plain_result_round_trip_and_serialized_shape() -> None:
     assert set(result_data) == snapshot(
         {
             'conversation_id',
-            'conversation_revision',
             'messages',
             'metadata',
             'new_message_index',

@@ -124,8 +124,10 @@ class Conversation:
     with the stored history instead, and stores what differs as a branch.
 
     Messages added to the end of a loaded conversation before a run, like a user's new turn, are
-    carried through the run and saved with it. It's bookkeeping about what's stored, so two
-    conversations compare equal whatever it is.
+    carried through the run and saved with it. If a message before the index is removed, inserted
+    or replaced, the index no longer marks where the stored messages end, so `save` compares with
+    the stored history instead, which never drops a message. It's bookkeeping about what's stored,
+    so two conversations compare equal whatever it is.
     """
 
 

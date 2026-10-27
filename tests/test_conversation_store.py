@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Awaitable, Callable, Sequence
 
 import pytest
@@ -608,3 +609,41 @@ async def test_a_save_returns_the_entries_it_stored_and_they_load_with_their_ids
     assert window is not None
     assert [entry.id for entry in window] == [second[-1].id]
     assert await store.load_entries('unknown') is None
+
+
+@pytest.mark.parametrize('edit', ['delete', 'insert', 'replace'])
+async def test_a_loaded_conversation_edited_before_its_stored_end_is_compared_instead(edit: str) -> None:
+    """Once the messages before `new_message_index` change, it no longer marks the stored end, so nothing is dropped."""
+    store = InMemoryConversationStore()
+    first, second = ModelRequest(parts=[UserPromptPart('one')]), ModelResponse(parts=[TextPart('two')])
+    await store.save(Conversation(messages=[first, second], conversation_id='c'))
+    loaded = await store.load('c')
+    assert loaded is not None
+    if edit == 'delete':
+        del loaded.messages[0]
+    elif edit == 'insert':
+        loaded.messages.insert(0, ModelRequest(parts=[UserPromptPart('zero')]))
+    else:
+        loaded.messages[1] = ModelResponse(parts=[TextPart('two, edited')])
+    added = ModelRequest(parts=[UserPromptPart('three')])
+    loaded.messages.append(added)
+
+    await store.save(loaded)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == loaded.messages
+
+
+async def test_a_conversation_copied_after_loading_is_compared_instead() -> None:
+    store = InMemoryConversationStore()
+    await store.save(Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])], conversation_id='c'))
+    loaded = await store.load('c')
+    assert loaded is not None
+    copied = dataclasses.replace(loaded, messages=[*loaded.messages[1:], ModelRequest(parts=[UserPromptPart('two')])])
+
+    await store.save(copied)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == copied.messages
