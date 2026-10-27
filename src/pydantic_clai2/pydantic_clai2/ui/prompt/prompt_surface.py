@@ -38,7 +38,7 @@ _UNFINISHED_OSC = re.compile(r'(?:\x1b\][^\x07\x1b]*\x1b?|\x1b)\Z')
 MAX_HELD_OSC = 4096
 """An unterminated control longer than this is malformed and dropped, as the transcript does."""
 TRANSCRIPT_KEYS = frozenset({'pageup', 'pagedown', 'mouse'})
-"""Decoded keys that scroll or select the transcript rather than reach the widget pinned under it."""
+"""Decoded keys that scroll the transcript or select painted text rather than act as widget input."""
 WHEEL_ROWS = 3
 
 
