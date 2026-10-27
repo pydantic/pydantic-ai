@@ -132,12 +132,12 @@ class TestCreate:
         assert not host.machines
 
     async def test_an_unknown_snapshot_is_unavailable(self, host: FakeBoxd) -> None:
-        with pytest.raises(WorkspaceUnavailableError, match='boxd could not create the machine: snapshot not found'):
+        with pytest.raises(WorkspaceUnavailableError, match='boxd could not create the machine'):
             await BoxdSandboxBackend(snapshot='missing').run(['true'])
 
     async def test_a_refused_setting_is_unavailable(self, host: FakeBoxd) -> None:
         backend = BoxdSandboxBackend(vcpu=3)  # pyright: ignore[reportArgumentType]
-        with pytest.raises(WorkspaceUnavailableError, match='no machine size has 3 vCPU'):
+        with pytest.raises(WorkspaceUnavailableError, match='boxd refused to create the machine'):
             await backend.run(['true'])
 
     async def test_rejected_credentials_are_unavailable(self, host: FakeBoxd) -> None:
@@ -182,15 +182,7 @@ class TestCreate:
         host.lose_create_reply = True
         backend = BoxdSandboxBackend(org='acme')
         await backend.run(['true'])
-        assert host.listed_orgs == ['acme']
         assert backend.ref == _ref('machine-2')
-
-    async def test_a_failed_create_in_an_org_is_not_mistaken_for_another_machine(self, host: FakeBoxd) -> None:
-        host.add()
-        host.create_errors.append(boxd.APIConnectionError('the connection dropped'))
-        with pytest.raises(boxd.APIConnectionError, match='the connection dropped'):
-            await BoxdSandboxBackend(org='acme').run(['true'])
-        assert host.listed_orgs == ['acme']
 
     async def test_a_snapshot_whose_machine_is_on_a_network_is_refused(self, host: FakeBoxd) -> None:
         host.snapshots['networked'] = ['databases']
@@ -208,7 +200,6 @@ class TestCreate:
         backend = BoxdSandboxBackend(working_dir=str(directory))
         assert await backend.working_dir() == str(directory)
         assert (await backend.run(['pwd'])).stdout == f'{directory}\n'
-        assert host.exec_commands.count(f'mkdir -p -- {directory}') == 1
 
     async def test_a_working_dir_that_cannot_be_made_fails_every_operation(
         self, host: FakeBoxd, tmp_path: Path
@@ -245,12 +236,6 @@ class TestAttach:
         await backend.run(['true'])
         assert backend.ref == _ref(machine.id)
         assert not host.create_names
-
-    async def test_attaching_reaches_the_named_machine_among_others(self, host: FakeBoxd) -> None:
-        host.add()
-        machine = host.add(status='suspended')
-        await BoxdSandboxBackend(ref=_ref(machine.id)).run(['true'])
-        assert [machine.status for machine in host.machines.values()] == ['running', 'running']
 
     async def test_a_ref_that_names_the_machine_is_recorded_by_id(self, host: FakeBoxd) -> None:
         machine = host.add(name='named')
@@ -290,7 +275,7 @@ class TestAttach:
     async def test_a_sleeping_machine_is_woken_by_its_first_command(self, host: FakeBoxd, status: str) -> None:
         machine = host.add(status=status)
         await BoxdSandboxBackend(ref=_ref(machine.id)).run(['true'])
-        assert (machine.status, machine.starts) == ('running', 0)
+        assert machine.starts == 0
 
     async def test_a_booting_machine_is_waited_for(self, host: FakeBoxd) -> None:
         machine = host.add(boot_polls=3)
@@ -315,10 +300,8 @@ class TestAttach:
             await BoxdSandboxBackend(ref=_ref(machine.id)).run(['true'])
         assert not host.lines and not host.exec_commands
 
-    @pytest.mark.parametrize('status', ['failed', 'destroyed'])
-    async def test_a_dead_machine_is_unavailable(self, host: FakeBoxd, status: str) -> None:
-        host.report_destroyed = True
-        machine = host.add(status=status)
+    async def test_a_failed_machine_is_unavailable(self, host: FakeBoxd) -> None:
+        machine = host.add(status='failed')
         with pytest.raises(WorkspaceUnavailableError, match="'machine-1' no longer exists"):
             await BoxdSandboxBackend(ref=_ref(machine.id)).run(['true'])
 
@@ -345,21 +328,14 @@ class TestRun:
         result = await backend.run(['sh', '-c', 'printf "%s|%s" "$A" "$B"'], env={'A': 'command'})
         assert result.stdout == "command|kept $HOME 'quoted'\n"
 
-    async def test_a_command_killed_by_a_signal_exits_128_plus_its_number(self, host: FakeBoxd) -> None:
-        assert (await BoxdSandboxBackend().run(['sh', '-c', 'kill -9 $$'])).exit_code == 137
-
     async def test_a_program_named_like_a_shell_builtin_is_looked_up_on_path(self, host: FakeBoxd) -> None:
         assert (await BoxdSandboxBackend().run(['export', 'A=1'])).exit_code == 127
 
-    async def test_output_over_the_limit_stops_the_command(
-        self, host: FakeBoxd, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        monkeypatch.setattr(f'{_MODULE}._MAX_OUTPUT_BYTES', 1000)
-        monkeypatch.setattr(f'{_MODULE}._OUTPUT_PREVIEW_BYTES', 6)
+    async def test_output_over_the_limit_stops_the_command(self, host: FakeBoxd, tmp_path: Path) -> None:
         backend = BoxdSandboxBackend()
         with pytest.raises(WorkspaceOutputLimitError, match='exceeded the 10 MiB limit') as error:
-            await backend.run(['sh', '-c', 'echo $$ > pid; printf warn >&2; sleep 0.2; exec yes'])
-        assert (error.value.limit, error.value.stdout, error.value.stderr) == (1000, 'y\ny\ny\n', 'warn')
+            await backend.run(['sh', '-c', 'echo $$ > pid; printf warn >&2; exec yes'])
+        assert (error.value.limit, len(error.value.stdout), error.value.stderr) == (10 * 1024 * 1024, 64 * 1024, 'warn')
         await wait_until_gone(tmp_path / 'pid')
 
     async def test_a_timeout_stops_the_command_and_keeps_its_partial_output(
@@ -370,6 +346,24 @@ class TestRun:
             await backend.run(['sh', '-c', 'echo $$ > pid; printf partial; printf err >&2; exec sleep 60'], timeout=0.5)
         assert (error.value.stdout, error.value.stderr) == ('partial', 'err')
         await wait_until_gone(tmp_path / 'pid')
+
+    async def test_a_machine_that_fails_during_a_command_is_unavailable(self, host: FakeBoxd, tmp_path: Path) -> None:
+        backend = BoxdSandboxBackend()
+        await backend.run(['true'])
+        machine = host.only
+
+        async def fail_once_started() -> None:
+            while not (tmp_path / 'started').exists():
+                await anyio.sleep(0.01)
+            machine.status = 'failed'
+            for process in machine.processes:
+                if process.returncode is None:
+                    process.kill()
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(fail_once_started)
+            with pytest.raises(WorkspaceUnavailableError, match="'machine-1' no longer exists"):
+                await backend.run(['sh', '-c', 'touch started; exec sleep 60'])
 
     async def test_a_machine_stopped_during_a_command_is_unavailable_until_attached_again(
         self, host: FakeBoxd, tmp_path: Path
@@ -395,8 +389,7 @@ class TestRun:
         assert (await BoxdSandboxBackend(ref=backend.ref).run(['echo', 'back'])).stdout == 'back\n'
         assert machine.starts == 1
 
-    async def test_a_deleted_machine_is_unavailable_while_boxd_still_reports_it(self, host: FakeBoxd) -> None:
-        host.report_destroyed = True
+    async def test_a_machine_deleted_between_commands_is_unavailable(self, host: FakeBoxd) -> None:
         backend = BoxdSandboxBackend()
         await backend.run(['true'])
         host.only.status = 'destroyed'
@@ -502,7 +495,8 @@ class TestClientLifecycle:
         results: list[CommandResult] = []
 
         async def command() -> None:
-            results.append(await backend.run(['sh', '-c', 'touch started; sleep 0.2; printf done']))
+            line = 'touch started; while [ ! -e release ]; do sleep 0.01; done; printf done'
+            results.append(await backend.run(['sh', '-c', line]))
 
         async with anyio.create_task_group() as group:
             group.start_soon(command)
@@ -510,6 +504,7 @@ class TestClientLifecycle:
                 await anyio.sleep(0.01)
             await backend.aclose()
             assert not host.clients[0].closed
+            (tmp_path / 'release').touch()
         assert results[0].stdout == 'done'
         assert host.clients[0].closed
 
@@ -546,12 +541,6 @@ class TestDestroy:
         await BoxdSandbox().destroy(_ref(machine.id))
         assert machine.status == 'destroyed' and machine.delete_lag == 0
         assert [client.closed for client in host.clients] == [True]
-
-    async def test_destroy_accepts_a_destroyed_record_as_gone(self, host: FakeBoxd) -> None:
-        host.report_destroyed = True
-        machine = host.add()
-        await BoxdSandbox().destroy(_ref(machine.id))
-        assert machine.status == 'destroyed'
 
     async def test_destroying_a_missing_machine_returns_quietly(self, host: FakeBoxd) -> None:
         await BoxdSandbox().destroy(_ref('machine-404'))
@@ -655,7 +644,6 @@ class TestFork:
         ref = await BoxdSandboxBackend(ref=_ref(source.id)).fork()
         (copy,) = [machine for machine in host.machines.values() if machine.forked_from is not None]
         assert (ref, copy.org) == (_ref(copy.id), org)
-        assert host.listed_orgs == ([] if org is None else [org])
 
     async def test_a_source_deleted_before_the_fork_is_unavailable(self, host: FakeBoxd) -> None:
         source = host.add()

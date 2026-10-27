@@ -158,7 +158,7 @@ class _FakeExecCall:
                 task.cancel()
         if owner.stream_error is not None:
             raise owner.stream_error
-        if machine.status in ('destroyed', 'stopped'):
+        if machine.status in ('destroyed', 'stopped', 'failed'):
             raise APIConnectionError(
                 f'lost the connection to the machine during exec: the machine was {machine.status}'
             )
@@ -221,7 +221,7 @@ class FakeMachines:
             'auto_suspend_timeout': auto_suspend_timeout,
         }
         machine = owner.add(
-            name=name, isolated=isolated, networks=networks, create_kwargs=kwargs, boot_polls=owner.boot_polls
+            name=name, isolated=isolated, networks=networks, create_kwargs=kwargs, boot_polls=owner.boot_polls, org=org
         )
         if owner.create_gate is not None and owner.create_then_hang:
             await owner.create_gate.wait()
@@ -248,8 +248,11 @@ class FakeMachines:
     async def list(self, *, org: str | None = None) -> list[Machine]:
         owner = self._owner
         owner.check_call()
-        owner.listed_orgs.append(org)
-        return [machine.record() for machine in owner.machines.values() if machine.status != 'destroyed']
+        return [
+            machine.record()
+            for machine in owner.machines.values()
+            if machine.status != 'destroyed' and machine.org == org
+        ]
 
     async def get(self, machine_id: str) -> Machine:
         owner = self._owner
@@ -261,9 +264,8 @@ class FakeMachines:
             if machine.delete_lag:
                 machine.delete_lag -= 1
                 return machine.record('running')
-            if not owner.report_destroyed:
-                raise _not_found(machine_id)
-        elif machine.boot_polls:
+            raise _not_found(machine_id)
+        if machine.boot_polls:
             machine.boot_polls -= 1
             return machine.record('starting')
         return machine.record()
@@ -348,7 +350,6 @@ class FakeBoxd:
         self.snapshots: dict[str, list[str]] = {}
         self.host_root: Path | None = None
         self.create_names: list[str | None] = []
-        self.listed_orgs: list[str | None] = []
         self.lines: list[str] = []
         self.exec_commands: list[str] = []
         # Every command stream's pipe readers, which `reap` finishes before it reads the pipes itself.
@@ -357,7 +358,6 @@ class FakeBoxd:
         self.boot_polls = 0
         self.delete_lag = 0
         self.reject_credentials = False
-        self.report_destroyed = False
         self.lose_create_reply = False
         self.lose_fork_reply = False
         # With `create_gate`: create the machine, then wait, instead of waiting before creating it.

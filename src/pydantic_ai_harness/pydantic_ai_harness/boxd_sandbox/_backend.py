@@ -193,7 +193,9 @@ async def destroy_machine(client: AsyncBoxd | None, machine_id: str) -> None:
                         'delete it. Delete it with the boxd CLI or SDK if you mean to.'
                     )
                 await client.machines.delete(machine.id)
-                while (await client.machines.get(machine.id)).status != 'destroyed':
+                # boxd's `get` raises `NotFoundError` once the deletion has gone through.
+                while True:
+                    await client.machines.get(machine.id)
                     await anyio.sleep(_POLL_INTERVAL)
             except boxd.NotFoundError:
                 return
@@ -356,9 +358,7 @@ class _Output:
 class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
     """A [boxd](https://boxd.sh) machine as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
-    Commands run inside an isolated boxd microVM, so the host is never exposed. File operations run
-    as shell commands in the machine (see
-    [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace/#writing-a-backend)).
+    Commands run inside an isolated boxd microVM.
 
     Building one does no I/O. The first operation creates an isolated machine named `pydantic-ai-`
     and 32 hex digits, or attaches to the one `ref` names, waking or starting it as needed;
@@ -368,8 +368,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
     A command's output streams back while it runs and is returned once it exits. A shell string
     runs under `/bin/sh -c`; a timeout or cancellation stops the command and its process group.
 
-    A deleted machine, one stopped under a backend still in use (attaching again starts it), a
-    machine that is not isolated, rejected credentials, and an unknown snapshot raise
+    A deleted machine, one that is not isolated, an unknown snapshot, and rejected credentials raise
     `WorkspaceUnavailableError`.
 
     Args:
@@ -388,7 +387,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
             disables it, and `None` keeps the organization's default. A command wakes a suspended
             machine.
         working_dir: Absolute directory commands start in and relative paths resolve against; the
-            machine's own default when `None`, discovered with `pwd -P` on first use.
+            machine's own default when `None`.
         env: Environment variables every command gets; a command's own `env` is layered on top.
             Nothing is read from the host environment.
     """

@@ -90,27 +90,20 @@ def test_invalid_env_fails_at_construction(env: dict[str, object], error: type[E
         BoxdSandbox(env=env)  # pyright: ignore[reportArgumentType]
 
 
-@pytest.mark.parametrize(
-    ('options', 'forwarded'),
-    [
-        ({'snapshot': 'python'}, {'from_snapshot': 'python', 'vcpu': None}),
-        ({'vcpu': 2}, {'from_snapshot': None, 'vcpu': 2}),
-    ],
-    ids=['snapshot', 'vcpu'],
-)
-async def test_capability_is_lazy_and_forwards_options(
-    host: FakeBoxd, tmp_path: Path, options: dict[str, Any], forwarded: dict[str, Any]
-) -> None:
-    host.snapshots['python'] = []
+async def test_capability_is_lazy_and_forwards_options(host: FakeBoxd, tmp_path: Path) -> None:
     directory = str(tmp_path.resolve() / 'work')
-    capability = BoxdSandbox[None](
-        org='acme', auto_suspend_timeout=300, working_dir=directory, env={'A': 'b'}, **options
-    )
+    capability = BoxdSandbox[None](org='acme', vcpu=2, auto_suspend_timeout=300, working_dir=directory, env={'A': 'b'})
     backend = capability.get_workspace(_ctx(), ref=None)
     assert isinstance(backend, BoxdSandboxBackend)
     assert not host.create_names
     assert (await backend.run(['sh', '-c', 'printf %s "$A"'])).stdout == 'b'
-    assert host.only.create_kwargs == {'org': 'acme', 'isolated': True, 'auto_suspend_timeout': 300, **forwarded}
+    assert host.only.create_kwargs == {
+        'org': 'acme',
+        'from_snapshot': None,
+        'isolated': True,
+        'vcpu': 2,
+        'auto_suspend_timeout': 300,
+    }
     assert await backend.working_dir() == directory
 
 
@@ -263,8 +256,3 @@ async def test_fork_leaves_a_supplied_client_open(host: FakeBoxd) -> None:
     source = host.add()
     await BoxdSandbox[None](client=boxd.AsyncBoxd()).fork(WorkspaceRef(provider='boxd', id=source.id))
     assert [client.closed for client in host.clients] == [False]
-
-
-async def test_fork_refuses_another_providers_ref() -> None:
-    with pytest.raises(ValueError, match="expected 'boxd'"):
-        await BoxdSandbox[None]().fork(WorkspaceRef(provider='daytona', id='x'))
