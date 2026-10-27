@@ -20,6 +20,8 @@ Recorded cassettes also double as a suite-wide prompt-cache prefix regression ne
 
 `tests/test_history_append_only.py` (core) and `tests/harness/test_history_append_only.py` (Harness) check the same invariant without cassettes, over every capability the packages ship. A new capability is picked up automatically; if it can't be built with its defaults, give it a `FIXTURES` entry (or an `EXEMPT` entry saying why it can't run offline), and, in the Harness file, a `SCENARIOS` entry if it keeps state the conversation should change. A prefix move that is a bug goes in `KNOWN`, linked to the issue or PR that fixes it; a move that is documented behavior (compaction, a request-only tail) goes in `ALLOWED`, which pins how far it may move.
 
+Tests without a cassette get the same check from `fail_function_model_prefix_violations` in `tests/conftest.py`: every request a `FunctionModel` or `TestModel` receives is rendered offline as the body `AnthropicModel` would send, and compared with the previous request of its run, or, for a run's first request, with the latest shorter request that starts with the same message. A test whose conversation moves the prefix on purpose (it changes the tools or instructions between steps, compacts or rewrites history, drops a request-scoped prompt, rewinds a fallback continuation) uses `@pytest.mark.moves_cache_prefix(reason=...)`, preferably with one of the shared reasons in `tests/function_model_prefix.py`. A move the framework shouldn't make is a bug, the counterpart of a `KNOWN` entry above: fix it rather than mark the test, or, when the fix belongs in its own PR, mark it with a reason that links the issue tracking the fix.
+
 ## Test File Structure
 
 ```python
