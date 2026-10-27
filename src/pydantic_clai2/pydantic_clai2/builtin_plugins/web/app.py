@@ -49,6 +49,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     legacy_tags,
 )
 from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
+from pydantic_clai2.builtin_plugins.web.sidebar import completions
 from pydantic_clai2.builtin_plugins.web.workspaces import open_workspace
 from pydantic_clai2.runtime.image_codec import decode_images
 
@@ -494,6 +495,11 @@ def _sessions(app: FastAPI, service: WebService) -> None:
     @app.get('/api/sessions')
     async def sessions(q: str = '', include_archived: bool = False, include_worktrees: bool = False) -> list[Project]:
         return await _wait(service.projects(q, include_archived=include_archived, include_worktrees=include_worktrees))
+
+    @app.get('/api/directories')
+    async def directories(path: str = '') -> list[Project]:
+        """New session's completions of a typed path, so it reaches repositories and worktrees without sessions."""
+        return await to_thread.run_sync(completions, path)
 
     @app.post('/api/sessions/new')
     async def new(body: NewSession | None = None) -> Opened:
