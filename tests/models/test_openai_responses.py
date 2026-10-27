@@ -159,6 +159,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
+        _response_error_type,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -15642,6 +15643,21 @@ async def test_failed_response_body_gets_category(
     assert exc_info.value.provider_error_code == code
     assert exc_info.value.provider_error_type == error_type
     assert exc_info.value.in_stream is False
+
+
+def test_response_error_type_declared_or_extra():
+    """A failed response's error `type` is read whether `openai` declares the field (3.32.0+) or keeps it as an extra.
+
+    A unit test because the mock-transport tests above parse with the installed `ResponseError`, which only shows one
+    of the two shapes.
+    """
+
+    class DeclaredTypeResponseError(resp.ResponseError):
+        type: str | None = None
+
+    error = {'code': 'server_error', 'message': 'No capacity.', 'type': 'too_many_requests'}
+    assert _response_error_type(resp.ResponseError.model_validate(error)) == 'too_many_requests'
+    assert _response_error_type(DeclaredTypeResponseError.model_validate(error)) == 'too_many_requests'
 
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])

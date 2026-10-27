@@ -34,16 +34,16 @@ from pydantic_clai2.plugins import (
     SessionStart,
 )
 from pydantic_clai2.plugins.loader import SessionPlugins
-from pydantic_clai2.runtime._session import (
+from pydantic_clai2.runtime.imported_sessions import ImportSource
+from pydantic_clai2.runtime.launch import launch_session_id
+from pydantic_clai2.runtime.reloading import reload_clai
+from pydantic_clai2.runtime.session import (
     ModelDefaults,
     SessionModels,
     StockAgent,
     local_workspace,
     resolve_model_name,
 )
-from pydantic_clai2.runtime.imported_sessions import ImportSource
-from pydantic_clai2.runtime.launch import launch_session_id
-from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer

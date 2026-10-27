@@ -8,9 +8,9 @@ from pathlib import Path
 
 from anyio import to_thread
 
-from pydantic_clai2.mcp._form import Editor, edit_form, edit_in_editor, install_form
-from pydantic_clai2.mcp._runtime import MCPServers, ServerEntry, State, not_owned, sign_in
-from pydantic_clai2.mcp._settings import references, target
+from pydantic_clai2.mcp.form import Editor, edit_form, edit_in_editor, install_form
+from pydantic_clai2.mcp.runtime import MCPServers, ServerEntry, State, not_owned, sign_in
+from pydantic_clai2.mcp.settings import references, target
 from pydantic_clai2.plugins.menus import Dialogs
 from pydantic_clai2.plugins.sign_in import sign_in_now, sign_out_now
 from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
@@ -51,9 +51,11 @@ Examples
 def _uptime(seconds: float | None) -> str:
     if seconds is None:
         return '-'
-    minutes, secs = divmod(int(seconds), 60)
+    minutes, remaining_seconds = divmod(int(seconds), 60)
     hours, minutes = divmod(minutes, 60)
-    return f'{hours}h {minutes}m' if hours else f'{minutes}m {secs}s' if minutes else f'{secs}s'
+    return (
+        f'{hours}h {minutes}m' if hours else f'{minutes}m {remaining_seconds}s' if minutes else f'{remaining_seconds}s'
+    )
 
 
 def _tail(path: Path, limit: int) -> tuple[int, list[str]]:
