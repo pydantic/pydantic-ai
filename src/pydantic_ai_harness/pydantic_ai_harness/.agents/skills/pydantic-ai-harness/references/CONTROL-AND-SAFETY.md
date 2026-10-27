@@ -494,10 +494,12 @@ print(agent.run_sync('Set up storage').output)
 ## SystemReminders
 
 Enqueues reminders at the tail of each model request as a request-scoped `SystemPromptPart`
-(`scope='request'`): the model sees each one for that request only, it's kept in message history,
-and it sits after the cached prefix, so it doesn't invalidate it. Turn on caching on the model
+(`scope='request'`): the model sees each one only in the model request it's part of, and the next
+request, even the next step of the same run, no longer shows it. It's kept in message history, and
+it sits after the cached prefix, so it doesn't invalidate it. Turn on caching on the model
 (e.g. `anthropic_cache`); its breakpoint lands before the reminder. `cache_ttl` is deprecated and
-has no effect.
+has no effect. With `interval>1` the model sees a reminder only on the requests where it fires, so
+text it must follow at every step belongs in the agent's instructions, not in a `Reminder`.
 
 ```python
 from pydantic_ai import Agent

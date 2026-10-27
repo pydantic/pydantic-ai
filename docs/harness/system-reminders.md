@@ -17,7 +17,7 @@ Long multi-turn runs suffer instruction fade: after many tool-use turns the mode
 
 ## The solution
 
-`SystemReminders` injects reminders on each model request, either statically (`Reminder`, on a cadence) or dynamically (a callable that reads the run context). Each firing enqueues a [request-scoped system prompt](../message-history.md#request-scoped-system-prompts) at the **tail** of the request: the model sees it for that request only, and it's recorded in the message history like any other part.
+`SystemReminders` injects reminders on each model request, either statically (`Reminder`, on a cadence) or dynamically (a callable that reads the run context). Each firing enqueues a [request-scoped system prompt](../message-history.md#request-scoped-system-prompts) at the **tail** of the request. The model sees a request-scoped prompt only in the model request it's part of: the next request, even the next step of the same run, no longer shows it. It's recorded in the message history like any other part.
 
 - On Anthropic models that take mid-conversation system messages, it's sent as a turn-scoped system message (`clear_at`): every copy stays on the wire, the API stops rendering each one once the next request arrives, and a cleared one costs no tokens. Leaving earlier reminders in place is what keeps the cached prefix and the model's earlier reasoning valid; deleting one would invalidate every thinking block after it on models with preserved thinking.
 - Everywhere else, it's sent with its own request only, at the end, rendered like any other [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts), and left out of later ones.
@@ -59,6 +59,8 @@ A `Reminder` fires on a cadence within a run:
 | `trigger` | Predicate over `RunContext`. When set, fires only when it returns `True` *and* the cadence matches. |
 | `max_fires` | Cap the number of fires per run. `None` = no limit. |
 | `tag` | Also wrap the content in `<tag>\ncontent\n</tag>`. `None` sends the raw content. Left unset, it's `None` and warns that the default changed. |
+
+A reminder adds recency; it doesn't keep a rule in force. The model sees each firing only in the request it fires on, so with `interval>1` it sees the reminder on the requests where it fires and not on the ones in between, and a `trigger` or `max_fires` narrows that further. Text the model must follow at every step belongs in the agent's [instructions](../agent.md#instructions), which every request sends.
 
 A reminder is a system prompt, so the model is already shown it as one: as a native system message where the model supports it, and in a `<system>` tag otherwise. It needs no tag of its own, so pass `tag=None`. The default used to be `'system-reminder'`: a `Reminder` that leaves `tag` unset sends the raw content and warns, and `tag='system-reminder'` restores the old wrapping.
 
