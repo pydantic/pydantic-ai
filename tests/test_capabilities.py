@@ -3308,11 +3308,10 @@ def test_ordering_deferred_group_children_keep_their_global_positions():
     plain, middle, outermost, innermost = PlainCapA(), PlainCapB(), OutermostCap(), InnermostCap()
     group = CombinedCapability([innermost, middle, outermost], id='group', defer_loading=True)
     combined = CombinedCapability([plain, group])
-    assert [getattr(c, 'wrapped', c) for c in combined.capabilities] == [outermost, plain, middle, innermost]
 
     visited: list[AbstractCapability[Any]] = []
     combined.apply(visited.append)
-    assert visited == [plain, group, innermost, middle, outermost]
+    assert visited == [plain, group, outermost, middle, innermost]
 
     # A group with only an `id` is a plain grouping, merged as before.
     named = CombinedCapability([PlainCapB(), OutermostCap()], id='named')

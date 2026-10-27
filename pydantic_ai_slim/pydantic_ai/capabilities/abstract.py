@@ -343,7 +343,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         For a single capability, calls the visitor on itself.
         Overridden by [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
-        to recursively visit all child capabilities, and itself first when it has an `id`.
+        to recursively visit all child capabilities, and itself first when it is deferred.
         """
         visitor(self)
 
@@ -1607,31 +1607,23 @@ def _occurrences_by_id(
 def _outside_discarded_subtrees(
     visited: Sequence[tuple[AbstractCapability[AgentDepsT], int, int]],
 ) -> Sequence[tuple[AbstractCapability[AgentDepsT], int, int]]:
-    """Drop the visits beneath a capability that combining will remove or replace.
+    """Drop the visits beneath a deferred capability that combining will remove or replace.
 
-    A removed or replaced capability takes everything registered beneath it along, and
+    A removed or replaced deferred capability takes everything registered beneath it along, and
     `visit_and_replace` never visits those, so they get no say in a duplicate and no decision of
     their own: one handed to them would be consumed by the next occurrence of the same object.
     `apply` visits a node before its subtree, so the subtree is the run of visits after it.
-
-    Only occurrences outside a discarded subtree count when picking the last of an `id`: dropping a
-    subtree can make an earlier occurrence the last one again, so this repeats until nothing changes.
+    Deferred capabilities can't nest, so one pass settles it. Other capabilities keep their
+    subtrees' visits, as before deferred groups.
     """
     visit_index = {position: index for index, (_, _, position) in enumerate(visited)}
     discarded: set[int] = set()
-    # Each pass is decided by the previous one's survivors; the bound only guards a tree nesting an
-    # `id` beneath itself, where no answer is stable.
-    for _ in range(len(visited)):  # pragma: no branch
-        survivors = [visit for index, visit in enumerate(visited) if index not in discarded]
-        settled: set[int] = set()
-        for duplicates in _occurrences_by_id(survivors)[1].values():
-            # Every occurrence but the last is removed. The last keeps its place, or `combine`'s result takes it.
-            for duplicate in sorted(duplicates, key=lambda occurrence: occurrence.position)[:-1]:
+    for duplicates in _occurrences_by_id(visited)[1].values():
+        # Every occurrence but the last is removed. The last keeps its place, or `combine`'s result takes it.
+        for duplicate in sorted(duplicates, key=lambda occurrence: occurrence.position)[:-1]:
+            if duplicate.capability.defer_loading is True:
                 start = visit_index[duplicate.position] + 1
-                settled.update(range(start, start + len(leaf_capabilities(duplicate.capability)) - 1))
-        if settled == discarded:
-            break
-        discarded = settled
+                discarded.update(range(start, start + len(leaf_capabilities(duplicate.capability)) - 1))
     return [visit for index, visit in enumerate(visited) if index not in discarded]
 
 

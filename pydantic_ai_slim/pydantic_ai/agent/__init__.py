@@ -2434,7 +2434,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # override. Build it before resolving an overridden model so custom model IDs can
         # be preserved for that capability's async, deps-aware resolver.
         if resolved is not None and resolved.capability is not None:
-            override_caps = list(resolved.capability.capabilities)
+            override_caps = list(resolved.capability._branches)  # pyright: ignore[reportPrivateUsage]
             _inject_auto_capabilities(override_caps)
             _reject_second_of_a_kind(override_caps)
             override_capability: CombinedCapability[AgentDepsT] | None = CombinedCapability(override_caps).for_agent(

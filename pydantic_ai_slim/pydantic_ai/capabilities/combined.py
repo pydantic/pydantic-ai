@@ -205,6 +205,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ]
         if any(leaf.get_ordering() is not None for leaf in collect_leaves(self)):
             self.capabilities = sort_capabilities(list(self.capabilities))
+            if not any(isinstance(branch, CombinedCapability) and branch._registers_itself for branch in branches):
+                # Without a deferred group the two lists are one, so registration, binding and `for_run`
+                # follow the settled order, as before groups existed.
+                self._branches = list(self.capabilities)
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         # Like a wrapper, a deferred group is registered itself, ahead of its children.
@@ -320,10 +324,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
         Computed on access rather than stored, so a rebind can't leave it stale.
         """
-        positions = {
-            id(capability.wrapped if isinstance(capability, _GroupMember) else capability): index
-            for index, capability in enumerate(self.capabilities)
-        }
+        positions = {id(capability): index for index, capability in enumerate(self.capabilities)}
 
         def position(source: AbstractCapability[AgentDepsT]) -> int:
             # A source with no leaf among `capabilities` (nothing does this today) sorts last
@@ -1213,8 +1214,8 @@ def _ungrouped(capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> list[A
 class _GroupMember(WrapperCapability[AgentDepsT]):
     """A child of a deferred group, dispatched at its own ordering position.
 
-    It carries the group's `id` and deferral, so every per-capability gate (hooks, instructions,
-    settings, native tools) skips it until the group is loaded. The group itself is what's
+    It carries the group's `id` and deferral, so every per-capability gate (hooks, settings,
+    native tools) skips it until the group is loaded. The group itself is what's
     registered, so this registers nothing: `apply` goes straight to the child, which also gives
     the ordering pass the child's own ordering.
     """

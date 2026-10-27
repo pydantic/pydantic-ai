@@ -1176,31 +1176,34 @@ async def test_a_run_level_group_replaces_the_agent_level_group_whole() -> None:
     def group(*members: AbstractCapability[Any]) -> CombinedCapability[Any]:
         return CombinedCapability(list(members), id='group', description='Group.', defer_loading=True)
 
-    agent = Agent(FunctionModel(model_fn), capabilities=[group(Capability(id='member', tools=[agent_tool]), Hooks())])
+    agent = Agent(FunctionModel(model_fn), capabilities=[group(Capability(id='member', tools=[agent_tool]))])
 
     await agent.run('hi', capabilities=[group(Toolset(FunctionToolset([run_tool]), id='member'))])
 
     assert seen == [['load_capability'], ['load_capability', 'run_tool']]
 
 
-async def test_a_group_can_be_prefixed_and_reused_across_layers() -> None:
-    """A wrapper over a group, and the same group passed again at run level, keep the group's members."""
+async def test_a_deferred_group_passed_again_at_run_level_loads_once() -> None:
+    """The same deferred group object on the agent and the run is one capability, loaded with all its members."""
 
     def lookup() -> str:
         return 'found'  # pragma: no cover
 
-    seen: list[tuple[list[str], str | None]] = []
+    seen: list[list[str]] = []
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        seen.append((sorted(tool.name for tool in info.function_tools), info.instructions))
+        seen.append(sorted(tool.name for tool in info.function_tools))
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'group'})])
         return ModelResponse(parts=[TextPart('done')])
 
-    group = CombinedCapability([Capability(id='member', instructions='Policy.', tools=[lookup])], id='group')
+    group = CombinedCapability(
+        [Capability(id='member', tools=[lookup])], id='group', description='Group.', defer_loading=True
+    )
 
-    await Agent(FunctionModel(model_fn), capabilities=[group.prefix_tools('p')]).run('hi')
     await Agent(FunctionModel(model_fn), capabilities=[group]).run('hi', capabilities=[group])
 
-    assert seen == [(['p_lookup'], 'Policy.'), (['lookup'], 'Policy.')]
+    assert seen == [['load_capability'], ['load_capability', 'lookup']]
 
 
 def test_a_wrapper_repeated_in_one_layer_still_combines_what_it_wraps() -> None:

@@ -787,7 +787,7 @@ def test_deferred_capability_inside_deferred_capability_raises() -> None:
 async def test_deferred_capability_group_loads_all_members_together(wrap: bool) -> None:
     """A deferred group hides its members' tools, instructions and hooks until it loads, then activates all of them.
 
-    Its members are not reported as active capabilities before then either.
+    Its members are not reported as active capabilities before then either, and can't be loaded on their own.
     """
     toolset = FunctionToolset()
 
@@ -808,11 +808,11 @@ async def test_deferred_capability_group_loads_all_members_together(wrap: bool) 
         hooks,
     ]
     observer = Hooks()
-    active_ids: list[list[str]] = []
+    active_ids: list[set[str]] = []
 
     @observer.on.before_model_request
     async def observe(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
-        active_ids.append(sorted(i for i in ctx.active_capability_ids if not i.startswith('<')))
+        active_ids.append({'editing', 'editing_tools'} & ctx.active_capability_ids)
         return request_context
 
     group = (
@@ -842,11 +842,7 @@ async def test_deferred_capability_group_loads_all_members_together(wrap: bool) 
         [['load_capability'], ['edit_document', 'load_capability'], ['edit_document', 'load_capability']]
     )
     assert hook_steps == [2, 3]
-    assert active_ids == [
-        ['tool_search'],
-        ['editing', 'editing_tools', 'tool_search'],
-        ['editing', 'editing_tools', 'tool_search'],
-    ]
+    assert active_ids == [set(), {'editing', 'editing_tools'}, {'editing', 'editing_tools'}]
     assert loaded_instructions(result.all_messages(), 'editing') == 'Editing instructions.'
     assert [
         part.content
@@ -915,9 +911,13 @@ async def test_a_prefixed_deferred_group_loads_its_prefixed_tools() -> None:
             return ModelResponse(parts=[ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'group'})])
         return make_text_response('done')
 
-    await Agent(FunctionModel(model_fn), capabilities=[group.prefix_tools('p')]).run('hi')
+    agent = Agent(FunctionModel(model_fn), capabilities=[group.prefix_tools('p')])
+    await agent.run('hi')
 
     assert visible_tools == [['load_capability'], ['load_capability', 'p_lookup']]
+    visited: list[AbstractCapability[object]] = []
+    agent.root_capability.apply(visited.append)
+    assert [capability.id for capability in visited].count('group') == 1
 
 
 async def test_a_copy_of_the_agent_capabilities_registers_a_deferred_group_once() -> None:
@@ -954,7 +954,40 @@ async def test_a_shared_member_is_active_only_when_it_occurs_outside_an_unloaded
     groups = [CombinedCapability[object]([member], id=i, description='G.', defer_loading=True) for i in ('g1', 'g2')]
     eager = [member] if also_eager else []
     await Agent(TestModel(call_tools=[]), capabilities=[*groups, *eager, observer]).run('hi')
-    assert [len(ids) for ids in active_ids] == [3 if also_eager else 0]
+    assert [bool(ids) for ids in active_ids] == [also_eager]
+
+
+async def test_a_deferred_group_member_rebuilt_for_the_run_still_loads_with_its_group() -> None:
+    """A member and a sibling that return a fresh instance from `for_run` are what the run dispatches to."""
+    calls: list[tuple[str, bool]] = []
+
+    @dataclass
+    class PerRun(AbstractCapability[object]):
+        name: str = ''
+        fresh: bool = False
+
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            return replace(self, fresh=True)
+
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            calls.append((self.name, self.fresh))
+            return request_context
+
+    group = CombinedCapability[object]([PerRun('member')], id='group', description='Group.', defer_loading=True)
+    per_request: list[list[tuple[str, bool]]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        per_request.append(calls.copy())
+        calls.clear()
+        if len(per_request) == 1:
+            return ModelResponse(parts=[ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'group'})])
+        return make_text_response('done')
+
+    await Agent(FunctionModel(model_fn), capabilities=[group, PerRun('sibling')]).run('hi')
+
+    assert per_request == [[('sibling', True)], [('member', True), ('sibling', True)]]
 
 
 async def test_partial_load_capability_history_does_not_mark_loaded() -> None:

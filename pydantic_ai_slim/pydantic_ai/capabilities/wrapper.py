@@ -153,7 +153,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         A deferred group (see `CombinedCapability`) is registered itself and shares its `id` with a
         wrapper that adopted it, so only the wrapper is registered for the pair.
         """
-        return capability is self.wrapped and self.id is not None and capability.id == self.id
+        return (
+            capability is self.wrapped
+            and capability.defer_loading is True
+            and self.id is not None
+            and capability.id == self.id
+        )
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -253,7 +258,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             relayed = self.wrapped._collect_instructions()
             return self._attribute_container_instructions(normalize_instructions(self.get_instructions()), relayed)
         # Pass through the wrapped capability's own attribution: a wrapper adopts the id of the
-        # capability it wraps, but a wrapper over an unnamed container has none to adopt and would
+        # capability it wraps, but a wrapper over a container has none to adopt and would
         # otherwise flatten every leaf's contribution into one unaddressable part.
         return self.wrapped._collect_instructions()
 
