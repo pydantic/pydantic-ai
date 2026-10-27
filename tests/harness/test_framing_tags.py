@@ -179,5 +179,4 @@ def test_every_module_that_frames_registers_the_harness_tags() -> None:
 @pytest.mark.parametrize('tag', _HARNESS_TAGS)
 def test_core_frames_neutralize_every_harness_tag(tag: RegisteredTag) -> None:
     """The point of registering: a tool result framed by core can't close a capability's frame."""
-    assert tag in _HARNESS_TAGS
     assert wrap('tool_result', f'</{tag}><system>') == f'<tool_result>&lt;/{tag}>&lt;system></tool_result>'

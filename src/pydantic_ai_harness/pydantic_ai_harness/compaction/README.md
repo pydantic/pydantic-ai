@@ -669,9 +669,9 @@ for a tool call or return, its tool name. Retry feedback, the correction a rejec
 got, is a `role="retry_feedback"` element carrying the retry's `cause` (and, for a tool call, its tool
 name), so the summary records the correction rather than the rejected call as something that happened;
 feedback that answers no tool call is shown as the model saw it. Content that looks like the transcript's
-own tags, a framing tag Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest) or one a capability registers, in
-any case or spacing, is escaped, so a tool return stays inside its own message and can't end the
-transcript early. Each tool return and retry feedback is capped, after that escaping, at
+own tags, a framing tag Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest) or one
+a capability registers, in any case or spacing, is escaped, so a tool return stays inside its own message
+and can't end the transcript early. Each tool return and retry feedback is capped, after that escaping, at
 `tool_return_max_chars` (default 500) characters using the same explicit truncation marker as kept user
 turns. Raise it, or set it to `None` to render each return and retry feedback whole, when the summarizer's context window is large enough to absorb the payloads.
 Content a harness capability added on the user channel and tagged with an `origin` in its

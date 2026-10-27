@@ -125,8 +125,12 @@ and paths reach the model as a user message, not as instructions. The
 `<system>`-tagged user text otherwise), followed by the file's path as a
 user-message `<context_file path="..."></context_file>` element.
 
-Each file is wrapped in `<context_file path="...">` tags. The `<` of every opening or closing framing tag inside a file is escaped as `&lt;`: Pydantic AI's own (`<system>`, `<context>`, `<tool_result>` and the rest), every tag a capability registers (`<context_file>` among them), and the `<context-file>` spelling earlier releases used, and the path is HTML-escaped, so a file stays inside its own
-block.
+Each file is wrapped in `<context_file path="...">` tags. The `<` of every
+opening or closing framing tag inside a file is escaped as `&lt;`: Pydantic AI's
+own (`<system>`, `<context>`, `<tool_result>` and the rest), every tag a
+capability registers (`<context_file>` among them), and the `<context-file>`
+spelling earlier releases used, and the path is HTML-escaped, so a file stays
+inside its own block.
 
 ## Cache cost
 
