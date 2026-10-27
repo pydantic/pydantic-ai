@@ -276,9 +276,9 @@ without telling Live what was typed, so Live may leave a terse answer to it unsa
 sent, so it is not recorded in history; split it, send it as a typed turn, which the backend takes at any
 length, or give long material to the backend as a tool result instead.
 [`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle, except that
-[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s on their own aren't the user's words: Live
-hears them as context as they are, and the backend gets them as a developer message, so the model doesn't
-later tell the caller they said it. Enqueued together with user text, they go out with it as the user's turn,
+[system prompts](turns.md#system-prompts), sent with `send()` or enqueued on their own, aren't the user's
+words: Live hears them as context as they are (`<system>`-tagged), and with a reply asked for, the backend
+gets them as a developer message, so the model doesn't later tell the caller they said it. Enqueued together with user text, they go out with it as the user's turn,
 so enqueue a system prompt on its own when the caller mustn't be credited with it. The
 [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] it produces marks when the text
 was sent, not when the model took it in. Live speaks to text in the reply it is giving, if it is giving one, rather
@@ -397,8 +397,10 @@ model = OpenAILiveModel('gpt-live-1', settings=settings)
 Voice, audio format, and the starting instructions are fixed for the life of the session, which is
 why these are session-start settings rather than things to change mid-call. (The Live API can append
 to the instructions and reconfigure the delegation backend mid-session; Pydantic AI does not expose
-either yet.) Live exposes no turn-detection, truncation, or token-limit controls, and the shared
-settings that name them [raise rather than being ignored](#what-raises). `tool_choice` reaches the
+either yet.) Live exposes no turn-detection, truncation, or token-limit controls: it ignores `max_tokens`
+and the [`TurnDetection`][pydantic_ai.realtime.TurnDetection] knobs, as a standard model ignores a tuning
+knob it doesn't support, along with `input_transcription_model`, since it always transcribes with its own
+model. It [raises](#what-raises) for push-to-talk, which it can't provide. `tool_choice` reaches the
 backend when it can't loop: `'auto'`, `'none'`, and [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]
 to limit the tools, applied by trimming the tools the backend is given. `'required'` and lists of
 tool names raise, because the backend applies the choice to every response of a delegation,
@@ -545,8 +547,7 @@ the provider-agnostic workflows.
 Live refuses a stated requirement it cannot meet rather than accepting and ignoring it. These raise
 [`UserError`][pydantic_ai.exceptions.UserError]:
 
-- Before the session connects: `turn_detection`, `max_tokens`, a pinned `input_transcription_model`,
-  `output_modality='text'` (the profile reports `supports_text_output=False`; see
+- Before the session connects: `turn_detection=False`, `output_modality='text'` (the profile reports `supports_text_output=False`; see
   [Shared settings](overview.md#shared-settings)), a `tool_choice` of `'required'` or a list of
   tool names, and a [`profile=`](overview.md#provider-support) whose `audio_input_sample_rate` and
   `audio_output_sample_rate` keys differ or aren't 16000 or 24000.

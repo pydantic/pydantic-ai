@@ -113,7 +113,6 @@ from ..usage import RequestUsage
 from ._inferred_lifecycle import InferredLifecycle
 from ._lifecycle import AnswersRevised, InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, ToolCallsAbandoned
 from ._openai_protocol import (
-    AUTO_TRANSCRIPTION_MODEL,
     RealtimeHandshakeError,
     expect_event,
     map_connect_errors,
@@ -127,6 +126,7 @@ from ._utils import (
     SystemPromptText,
     inject_trace_context,
     reconnect_with_backoff,
+    reject_forced_tool_choice,
     resolve_advertised_tools,
     seed_retry_feedback_text,
     session_instructions,
@@ -2277,6 +2277,7 @@ class OpenAILiveModel(RealtimeModel):
     model: OpenAILiveModelName
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
+    unsupported_settings = frozenset({'max_tokens', 'input_transcription_model'})
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
 
     def __init__(
@@ -2375,15 +2376,15 @@ class OpenAILiveModel(RealtimeModel):
         if backend_instructions:
             responses['instructions'] = backend_instructions
         advertised_tools, tool_choice = resolve_advertised_tools(tools, settings.get('tool_choice'))
-        if tool_choice == 'required' or (isinstance(tool_choice, tuple) and tool_choice[0] == 'required'):
-            # The backend applies the choice to every response of a delegation, including the one meant
-            # to answer after the tools have run, so a forced call never lets a delegation finish: it
-            # looped on tool calls (seven in ten seconds, live) until a limit ended the session.
-            raise UserError(
-                f'OpenAI GPT-Live cannot force a tool call, so `tool_choice={settings.get("tool_choice")!r}` cannot '
-                'be set: the backend would apply it to every response, including the one after the tool '
-                "results, and never answer. Use `'auto'`, `'none'`, or `ToolOrOutput` to limit the tools instead."
-            )
+        # The backend applies the choice to every response of a delegation, including the one meant
+        # to answer after the tools have run, so a forced call never lets a delegation finish: it
+        # looped on tool calls (seven in ten seconds, live) until a limit ended the session.
+        reject_forced_tool_choice(
+            tool_choice,
+            f'OpenAI GPT-Live cannot force a tool call, so `tool_choice={settings.get("tool_choice")!r}` cannot '
+            'be set: the backend would apply it to every response, including the one after the tool '
+            "results, and never answer. Use `'auto'`, `'none'`, or `ToolOrOutput` to limit the tools instead.",
+        )
         # The backend runs native tools too, so they go to it rather than to the Live model. Web search
         # takes the same options as on a direct Responses call, and Live passes them through unchecked.
         backend_tools = [tool_def_to_live(tool) for tool in advertised_tools]
@@ -2453,18 +2454,15 @@ class OpenAILiveModel(RealtimeModel):
         return input_rate
 
     def _reject_unsupported(self, settings: OpenAILiveModelSettings) -> None:
-        """Refuse settings Live cannot honor, rather than silently ignoring a stated requirement."""
-        for setting, feature in (
-            ('turn_detection', 'turn detection: Live owns turn-taking and exposes no VAD configuration'),
-            ('max_tokens', 'a token limit on the spoken conversation'),
-        ):
-            if settings.get(setting) is not None:
-                raise UserError(f'OpenAI GPT-Live does not support {feature}, so `{setting}` cannot be set.')
-        # Live always transcribes with its own model, which is what the `'auto'` default asks for.
-        if (transcription_model := settings.get('input_transcription_model')) not in (AUTO_TRANSCRIPTION_MODEL, None):
+        """Refuse push-to-talk, which Live cannot provide, rather than silently ignoring it.
+
+        Settings Live merely can't tune are ignored, as on a standard model: `max_tokens`, the
+        `TurnDetection` knobs, and `input_transcription_model` (Live always transcribes, with its own model).
+        """
+        if settings.get('turn_detection') is False:
             raise UserError(
-                'OpenAI GPT-Live does not support choosing a transcription model, so `input_transcription_model` '
-                f"can only be `'auto'`; got {transcription_model!r}."
+                'OpenAI GPT-Live does not support manual turn-taking: Live owns turn detection, so '
+                '`turn_detection=False` cannot be set.'
             )
 
     def _live_url(self) -> str:

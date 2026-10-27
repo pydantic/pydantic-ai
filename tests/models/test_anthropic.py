@@ -1975,6 +1975,118 @@ async def test_anthropic_cache_instructions_mixed_static_dynamic(allow_model_req
     )
 
 
+async def test_anthropic_cache_instructions_add_a_point_after_appending_blocks(allow_model_requests: None):
+    """An `on_change='append'` block keeps the prefix the same between requests, so it gets a cache point of its own.
+
+    The point after the static instructions stays, and a dynamic block that rewrites the prefix stays after both.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        instructions='Static instructions that should be cached.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    @agent.instructions
+    def dynamic_context() -> str:
+        return 'Dynamic context that changes per run.'
+
+    @agent.instructions(name='catalog', on_change='append')
+    def catalog() -> str:
+        return 'Catalog: a, b.'
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['system'] == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': 'Static instructions that should be cached.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'type': 'text',
+                'text': """\
+<context id="agent:catalog">
+Catalog: a, b.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {'type': 'text', 'text': 'Dynamic context that changes per run.'},
+        ]
+    )
+
+
+async def test_anthropic_cache_instructions_keep_the_static_point_for_per_user_appending_blocks(
+    allow_model_requests: None,
+):
+    """A per-user `on_change='append'` block doesn't stop a new conversation from reading the static instructions.
+
+    Two conversations whose append block differs both send a cache point at the end of the static instructions, so the
+    second reads the prefix the first wrote, even though the point after the append block is different in each.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock([c, c])
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        deps_type=str,
+        instructions='Static instructions that should be cached.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    @agent.instructions(name='memory', on_change='append')
+    def memory(ctx: RunContext[str]) -> str:
+        return f'Memory for {ctx.deps}.'
+
+    await agent.run('test prompt', deps='alice')
+    await agent.run('test prompt', deps='bob')
+
+    alice, bob = (kwargs['system'] for kwargs in get_mock_chat_completion_kwargs(mock_client))
+    assert (
+        alice[0]
+        == bob[0]
+        == snapshot(
+            {
+                'type': 'text',
+                'text': 'Static instructions that should be cached.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            }
+        )
+    )
+    assert alice[1] != bob[1]
+    assert bob == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': 'Static instructions that should be cached.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'type': 'text',
+                'text': """\
+<context id="agent:memory">
+Memory for bob.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+        ]
+    )
+
+
 async def test_anthropic_cache_instructions_all_dynamic(allow_model_requests: None):
     """Test that when all instructions are dynamic, no cache_control is placed on instructions."""
     c = completion_message(
@@ -2628,6 +2740,72 @@ async def test_limit_cache_points_all_settings(allow_model_requests: None):
     # Should have exactly 2 cache points in messages
     # (4 total - 1 system - 1 tool = 2 available for messages)
     assert cache_count == 2
+
+
+async def test_limit_cache_points_drops_the_appending_blocks_point_first(allow_model_requests: None):
+    """Over the budget, the point after the append blocks goes before any message point or the static one.
+
+    The static instructions point is what a new conversation reads, and the message points cover the conversation,
+    while the point after the append blocks only helps a new conversation whose append blocks are the same.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        instructions='Static instructions that should be cached.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_tool_definitions=True,
+            anthropic_cache_instructions=True,
+            anthropic_cache_messages=True,
+        ),
+    )
+
+    @agent.instructions(name='catalog', on_change='append')
+    def catalog() -> str:
+        return 'Catalog: a, b.'
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    # Tools, static instructions, append blocks, this `CachePoint` and the last message: five points, one over.
+    await agent.run(['Context', CachePoint(), 'Question'])
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['tools'][-1]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
+    assert completion_kwargs['system'] == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': 'Static instructions that should be cached.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'type': 'text',
+                'text': """\
+<context id="agent:catalog">
+Catalog: a, b.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+            },
+        ]
+    )
+    assert completion_kwargs['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Context', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                    {'text': 'Question', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                ],
+            }
+        ]
+    )
 
 
 @pytest.mark.parametrize(

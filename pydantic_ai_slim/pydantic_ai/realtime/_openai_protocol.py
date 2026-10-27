@@ -91,6 +91,7 @@ from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
 from ._utils import (
+    reject_forced_tool_choice,
     seed_pcm_audio,
     seed_retry_feedback_text,
     seed_speech_content,
@@ -414,8 +415,8 @@ CONVERSATION_ITEM_ADDED_EVENT_ADAPTER: TypeAdapter[ProtocolConversationItemAdded
 )
 
 
-def is_user_message_item(item: ProtocolConversationItem | dict[str, Any]) -> bool:
-    """Whether a conversation item is a user message the client created: text or images, not spoken audio.
+def is_client_message_item(item: ProtocolConversationItem | dict[str, Any]) -> bool:
+    """Whether a conversation item is a message the client created: user text or images, or a system prompt.
 
     Spoken audio joins the conversation as a user message too, but the server makes that item itself when
     it commits the audio buffer, so it answers to no `conversation.item.create` of the client's.
@@ -424,7 +425,7 @@ def is_user_message_item(item: ProtocolConversationItem | dict[str, Any]) -> boo
         item = ProtocolConversationItem.model_validate(item)
     return (
         item.type == 'message'
-        and item.role == 'user'
+        and item.role in ('user', 'system')
         and not any(content.type == 'input_audio' for content in item.content or ())
     )
 
@@ -1286,15 +1287,14 @@ def tool_choice_config(tool_choice: ResolvedToolChoice) -> str:
             response, including the one after a tool result, so the model could never answer: it would
             call tools until a usage limit ended the session.
     """
-    mode = tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice
-    if mode == 'required':
-        raise UserError(
-            "A realtime session can't force a tool call: the provider applies `tool_choice` to every "
-            "response, including the one after a tool result, so `tool_choice='required'` or a list of "
-            'tool names would never let the model answer. To restrict which tools the model can use, pass '
-            '`ToolOrOutput(function_tools=[...])` instead.'
-        )
-    return mode
+    reject_forced_tool_choice(
+        tool_choice,
+        "A realtime session can't force a tool call: the provider applies `tool_choice` to every "
+        "response, including the one after a tool result, so `tool_choice='required'` or a list of "
+        'tool names would never let the model answer. To restrict which tools the model can use, pass '
+        '`ToolOrOutput(function_tools=[...])` instead.',
+    )
+    return tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice
 
 
 async def expect_event(

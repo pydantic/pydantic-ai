@@ -788,10 +788,10 @@ class GeminiSimulation(Simulation):
         return GoogleRealtimeModel(self.behavior.model, provider=self._provider, profile=profile)
 
     def model_settings(self) -> RealtimeModelSettings:
-        settings: GoogleRealtimeModelSettings = {
-            'google_input_transcription': self.behavior.input_transcription,
-            'async_tool_calls': self.behavior.async_tool_calls,
-        }
+        settings: GoogleRealtimeModelSettings = {'google_input_transcription': self.behavior.input_transcription}
+        # Off is the default, so only `True` is set: an always-async model warns about an explicit `False`.
+        if self.behavior.async_tool_calls:
+            settings['async_tool_calls'] = True
         settings['reconnect'] = {'max_attempts': 2, 'base_delay': 0.1, 'jitter': False}
         return settings
 

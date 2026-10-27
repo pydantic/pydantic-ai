@@ -97,7 +97,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import IsNow, legacy_retry_prompt_part, try_import
+from ..conftest import IsDatetime, IsNow, legacy_retry_prompt_part, try_import
 
 with try_import() as imports_successful:
     import httpx2
@@ -176,6 +176,7 @@ def test_profile(model: OpenAILiveModel) -> None:
         supports_output_truncation=False,
         supports_text_output=False,
         supports_session_seeding=True,
+        supports_system_messages=True,
         supports_seeding_images=False,
         supports_seeding_audio=False,
         # A server relays the offer and attaches a sideband; there are no client secrets.
@@ -331,20 +332,12 @@ def test_shared_parallel_tool_calls_reaches_the_backend(model: OpenAILiveModel) 
     assert responses['parallel_tool_calls'] is False
 
 
-@pytest.mark.parametrize(
-    'setting,value',
-    [
-        ('turn_detection', False),
-        ('max_tokens', 100),
-        ('input_transcription_model', 'gpt-transcribe'),
-    ],
-)
-async def test_unsupported_settings_raise_before_connecting(model: OpenAILiveModel, setting: str, value: Any) -> None:
-    """A setting Live cannot honor is a stated requirement, so it fails rather than being ignored."""
-    with pytest.raises(UserError, match='GPT-Live does not support'):
+async def test_push_to_talk_raises_before_connecting(model: OpenAILiveModel) -> None:
+    """Push-to-talk is a requirement Live cannot meet, so it fails rather than being ignored."""
+    with pytest.raises(UserError, match='GPT-Live does not support manual turn-taking'):
         async with model.connect(
             messages=[],
-            model_settings={setting: value},  # pyright: ignore[reportArgumentType]
+            model_settings=OpenAILiveModelSettings(turn_detection=False),
             model_request_parameters=ModelRequestParameters(),
         ):
             pass  # pragma: no cover
@@ -2404,10 +2397,32 @@ async def test_enqueued_system_prompt_is_the_operators_not_the_users() -> None:
             {'type': 'response.create', 'event_id': 'pydantic_ai.text.0'},
         ]
     )
-    # History records the text the session delivered, as for any enqueued system prompt.
-    assert [
-        type(part.content) for message in messages for part in message.parts if isinstance(part, UserPromptPart)
-    ] == [str]
+    # History records the system prompt it is, as `send(SystemPromptPart(...))` does.
+    assert [part for message in messages for part in message.parts] == [
+        SystemPromptPart(content='The caller was verified as Jamie. Greet them by name.', timestamp=IsDatetime())
+    ]
+
+
+async def test_system_prompt_sent_as_context_is_a_note_to_live() -> None:
+    """`send(SystemPromptPart(...), respond=False)` goes to Live as a silent note, `<system>`-tagged, and runs nothing."""
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started])
+    note = SystemPromptPart(content='The caller was verified as Jamie.')
+    with _patched_connect(ws):
+        async with Agent().realtime(OpenAILiveModel('gpt-live-1', provider='openai')).session() as session:
+            await session.send(note, respond=False)
+            messages = session.all_messages()
+
+    assert [json.loads(frame) for frame in ws.sent[1:-1]] == snapshot(
+        [
+            {
+                'type': 'session.thinking.append',
+                'delegation_id': None,
+                'content': '<system>The caller was verified as Jamie.</system>',
+            }
+        ]
+    )
+    assert [part for message in messages for part in message.parts] == [note]
 
 
 async def test_typed_turn_too_long_to_tell_live_still_runs_the_backend() -> None:
@@ -3229,8 +3244,43 @@ async def test_unsupported_settings_raise_before_answering_an_offer() -> None:
     def handler(request: httpx2.Request) -> httpx2.Response:
         raise AssertionError('no HTTP request expected')  # pragma: no cover
 
-    with pytest.raises(UserError, match='`max_tokens` cannot be set'):
-        await _webrtc_model(handler).answer_webrtc_offer('v=0', model_settings=OpenAILiveModelSettings(max_tokens=10))
+    with pytest.raises(UserError, match='`turn_detection=False` cannot be set'):
+        await _webrtc_model(handler).answer_webrtc_offer(
+            'v=0', model_settings=OpenAILiveModelSettings(turn_detection=False)
+        )
+
+
+@pytest.mark.parametrize(
+    'settings',
+    [
+        OpenAILiveModelSettings(max_tokens=10),
+        OpenAILiveModelSettings(turn_detection=True),
+        OpenAILiveModelSettings(turn_detection={'sensitivity': 'high', 'silence_duration_ms': 400}),
+        OpenAILiveModelSettings(input_transcription_model='auto'),
+        OpenAILiveModelSettings(input_transcription_model=None),
+        OpenAILiveModelSettings(input_transcription_model='gpt-transcribe'),
+    ],
+    ids=[
+        'max_tokens',
+        'turn_detection=True',
+        'turn_detection_knobs',
+        'transcription=auto',
+        'transcription=None',
+        'transcription=pinned',
+    ],
+)
+async def test_settings_live_cannot_tune_are_ignored(settings: OpenAILiveModelSettings) -> None:
+    """As on a standard model, a tuning knob Live has no control for is ignored, so shared settings work everywhere."""
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return _created()
+
+    await _webrtc_model(handler).answer_webrtc_offer('v=0')
+    await _webrtc_model(handler).answer_webrtc_offer('v=0', model_settings=settings)
+
+    assert sent[1] == sent[0]
 
 
 async def test_the_auto_transcription_default_can_be_set_explicitly() -> None:

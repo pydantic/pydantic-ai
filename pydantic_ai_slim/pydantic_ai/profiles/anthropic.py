@@ -148,6 +148,16 @@ class AnthropicModelProfile(ModelProfile, total=False):
     Anthropic currently documents task budgets as a Claude Opus 4.7 / 4.8 / 5 / 5.5 and Haiku 5.5 beta feature.
     """
 
+    anthropic_supports_on_demand_compaction: bool
+    """Whether the model accepts the `compaction` request parameter, and the signed block it returns. Default: `False`.
+
+    [`AnthropicModel.compact_messages`][pydantic_ai.models.anthropic.AnthropicModel.compact_messages] raises a
+    `UserError` for a model without it. It's a fact about the Messages API, which no `AnthropicModel` client narrows,
+    so `AnthropicProvider` sets it for Claude
+    Fable 5 and 5.1, Mythos 5, 5.1 and Preview, Opus 4.6, 4.7, 4.8, 5 and 5.5, Sonnet 4.6, 5 and 5.5, and Haiku 5.5;
+    see [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand).
+    """
+
     anthropic_supports_forced_tool_choice: bool
     """Deprecated: use [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] instead.
 

@@ -224,6 +224,11 @@ def map_usage(
     ):
         usage_for_extraction['cache_creation'] = {'ephemeral_1h_input_tokens': ephemeral_1h_input_tokens}
 
+    # `extract_usage_details` keeps int fields only; carry the Gateway's cost objects through.
+    for gateway_key in ('logfire_ai_gateway', 'pydantic_ai_gateway'):
+        if gateway_usage := (response_usage.model_extra or {}).get(gateway_key):
+            usage_for_extraction[gateway_key] = gateway_usage
+
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
     request_usage = usage.RequestUsage.extract(
@@ -239,7 +244,15 @@ def map_usage(
     return request_usage
 
 
-def compaction_provider_details(encrypted_content: str | None) -> dict[str, Any] | None:
-    if encrypted_content is not None:
-        return {'encrypted_content': encrypted_content}
-    return None
+def compaction_provider_details(encrypted_content: str | None, signature: str | None = None) -> dict[str, Any] | None:
+    """The `CompactionPart.provider_details` a compaction block is sent back with.
+
+    A block from threshold compaction can carry `encrypted_content`; one from an on-demand compaction request carries
+    a `signature`, which Anthropic checks against the summary when the block is sent back.
+    """
+    details = {
+        key: value
+        for key, value in (('encrypted_content', encrypted_content), ('signature', signature))
+        if value is not None
+    }
+    return details or None
