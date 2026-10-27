@@ -1,3 +1,4 @@
+# description: On manual dispatch, asks pydantic/unified-docs to deploy the docs for this commit.
 name: Manual Docs Deploy
 
 on:

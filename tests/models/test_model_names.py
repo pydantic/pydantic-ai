@@ -186,10 +186,6 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/google:gemini-flash-lite-latest',
         'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
         'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
-        'gateway/groq:meta-llama/llama-guard-4-12b',
-        'gateway/groq:meta-llama/llama-4-maverick-17b-128e-instruct',
-        'gateway/groq:playai-tts',
-        'gateway/groq:playai-tts-arabic',
         'gateway/groq:whisper-large-v3',
         'gateway/groq:whisper-large-v3-turbo',
         'gateway/openai:chatgpt-4o-latest',
@@ -285,6 +281,12 @@ def test_known_model_names():  # pragma: lax no cover
 def test_known_model_names_accessor():
     """`known_model_names()` exposes exactly the `KnownModelName` members, verbatim."""
     assert known_model_names() == get_args(KnownModelName.__value__)
+
+
+def test_grok_4_7_is_known_model_name():
+    """`grok-4.7` is a bridged `XaiModelName` and a `KnownModelName` member."""
+    assert 'grok-4.7' in get_args(get_args(XaiModelName)[-1])
+    assert 'xai:grok-4.7' in known_model_names()
 
 
 class HerokuModel(TypedDict):

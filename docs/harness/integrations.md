@@ -28,7 +28,8 @@ one to `capabilities=[...]` like any other capability.
 
 - [Day AI](day-ai.md): search and update CRM records, read meeting context, and draft emails in
   [Day AI](https://day.ai).
-- [Grain](grain.md): search and read meetings, transcripts, notes, and deals in [Grain](https://grain.com).
+- [Grain](grain.md): search and read meetings, transcripts, notes, and deals, and create clips and tag meetings, in
+  [Grain](https://grain.com).
 - [Pylon](pylon.md): work with support issues, accounts, and contacts in [Pylon](https://www.usepylon.com).
 - [StackOne](stackone.md): act on a user's linked business applications, such as BambooHR, Salesforce, or Zendesk,
   through [StackOne](https://www.stackone.com).

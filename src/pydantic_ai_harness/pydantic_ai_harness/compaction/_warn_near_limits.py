@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -178,7 +178,7 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
             if len(parts) == len(msg.parts):
                 cleaned.append(msg)
             else:
-                cleaned.append(ModelRequest(parts=parts))
+                cleaned.append(replace(msg, parts=parts))
         return cleaned
 
     def _build_iteration_warning(self, ctx: RunContext[AgentDepsT]) -> _Warning | None:

@@ -108,7 +108,7 @@ class Terminal(Generic[DepsT, OutputT]):
     def ended(self, runtime: 'SessionRuntime[DepsT, OutputT]', reason: SessionEndReason) -> None:
         """Note that the session shown, `runtime`, ended for `reason`, which ends `drive`.
 
-        Its web UI hand-off is read now, before its plugins end: it may be the last live session.
+        Its web UI hand-off is the one `/update` read before uv replaced the installed code.
         """
         self.ended_in, self._reason, self.served = runtime, reason, runtime.handoff()
         self._ended.set()
@@ -169,6 +169,7 @@ class Terminal(Generic[DepsT, OutputT]):
             pinned=lambda: self._shown().speculation.row(),
             spinner=lambda: self._shown().spinners.active(),
             panel=lambda glyph: (*self._shown().tasks.rows(glyph), *self._shown().forks.rows(glyph)),
+            queue_changed=lambda: self._shown().live_session.changed(),
         )
         try:
             async with self.editor.opened():

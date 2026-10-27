@@ -48,10 +48,12 @@ class _RecordingBackend(CallableOperationBackend[None]):
         agent_name: str,
         calls: list[tuple[str, tuple[object, ...]]],
         fail_operations: frozenset[str],
+        results: list[tuple[str, object]],
     ) -> None:
         super().__init__(namer=JournalOperationNamer(agent_name), config=_RecordingConfig())
         self.calls = calls
         self.fail_operations = fail_operations
+        self.results = results
 
     async def execute(
         self,
@@ -65,7 +67,9 @@ class _RecordingBackend(CallableOperationBackend[None]):
         self.calls.append((name, cache_key))
         if name in self.fail_operations:
             raise RuntimeError(f'{name} failed')
-        return await body()
+        result = await body()
+        self.results.append((name, result))
+        return result
 
 
 class RecordingDurability(BaseDurabilityCapability[object]):
@@ -80,6 +84,8 @@ class RecordingDurability(BaseDurabilityCapability[object]):
     def __init__(self, *, fail_operations: frozenset[str] = frozenset()) -> None:
         super().__init__()
         self.calls: list[tuple[str, tuple[object, ...]]] = []
+        self.results: list[tuple[str, object]] = []
+        """Each completed operation's result, as an engine would journal it."""
         self.fail_operations = fail_operations
 
     @property
@@ -87,4 +93,4 @@ class RecordingDurability(BaseDurabilityCapability[object]):
         return True
 
     def get_durable_operation_backend(self) -> _RecordingBackend:
-        return _RecordingBackend(self.name, self.calls, self.fail_operations)
+        return _RecordingBackend(self.name, self.calls, self.fail_operations, self.results)

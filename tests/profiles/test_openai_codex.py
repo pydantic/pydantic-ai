@@ -13,7 +13,7 @@ import pytest
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.profiles.openai import openai_model_profile
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
     from pydantic_ai.profiles.openai_codex import openai_codex_model_profile
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
@@ -32,6 +32,7 @@ def test_codex_wire_dialect_flags():
     assert profile.get('supports_cache') is False
     assert profile.get('supported_cache_retentions') == ()
     assert profile.get('openai_responses_supports_prompt_cache_diagnostics') is False
+    assert profile.get('openai_responses_supports_max_reasoning_effort') is False
     assert profile.get('openai_unsupported_model_settings') == (
         'max_tokens',
         'temperature',
@@ -52,6 +53,7 @@ def test_codex_profile_extends_the_standard_openai_profile():
         'supports_cache',
         'supported_cache_retentions',
         'openai_responses_supports_prompt_cache_diagnostics',
+        'openai_responses_supports_max_reasoning_effort',
     }
     assert {k: v for k, v in codex.items() if k not in overridden} == {
         k: v for k, v in base.items() if k not in overridden
@@ -64,6 +66,7 @@ def test_codex_provider_layers_wire_dialect_over_first_party_profile():
     codex = dict(OpenAICodexProvider.model_profile('gpt-5.6-luna') or {})
     dialect = {
         'openai_unsupported_model_settings',
+        'json_schema_transformer',
         'openai_responses_requires_streaming',
         'openai_responses_requires_store_false',
         'openai_supports_input_token_counting',
@@ -71,6 +74,7 @@ def test_codex_provider_layers_wire_dialect_over_first_party_profile():
         'supports_cache',
         'supported_cache_retentions',
         'openai_responses_supports_prompt_cache_diagnostics',
+        'openai_responses_supports_max_reasoning_effort',
     }
 
     assert {key: value for key, value in codex.items() if key not in dialect} == {
@@ -78,6 +82,8 @@ def test_codex_provider_layers_wire_dialect_over_first_party_profile():
     }
     assert codex['tool_addition_mode'] == 'with_definitions'
     assert codex['tool_deferral_mode'] == 'with_tool_search'
+    # OpenAIProvider's tuple and string-bound handling has not been verified against the Codex backend.
+    assert codex['json_schema_transformer'] is OpenAIJsonSchemaTransformer
     assert {key: codex[key] for key in dialect} == {
         key: openai_codex_model_profile('gpt-5.6-luna')[key] for key in dialect
     }

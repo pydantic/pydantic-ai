@@ -25,6 +25,7 @@ import anyio
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import Workspace, WorkspaceError
 from pydantic_ai_harness.shell._limits import LIMIT_FUNCTION
+from pydantic_ai_harness.shell._policy import run_model_command
 
 CONTROL_TIMEOUT = 30.0
 """Deadline in seconds for one control command (launch, read, signal).
@@ -35,6 +36,12 @@ These return at once in a healthy workspace; the deadline keeps a wedged one fro
 _KILL_GRACE_PERIOD = 2.0
 """Seconds a job gets to exit after `SIGTERM` before its process group is sent `SIGKILL`."""
 
+_LOG_CHECK_INTERVAL = 1.0
+"""Seconds between a job's log size checks against `max_log_bytes`.
+
+`sleep 1` stands in where `sleep` takes only whole seconds.
+"""
+
 POLL_MIN = 0.05
 POLL_MAX = 1.0
 """Bounds of the backoff between polls of a job's status, so a remote workspace is not asked every 50 ms."""
@@ -44,6 +51,35 @@ dir=$1
 publish() {{
   printf '{{"pid": %s, "exit_code": %s}}' "$$" "$1" > "$dir/status.tmp" && mv -f "$dir/status.tmp" "$dir/status.json"
 }}
+clear_logs() {{
+  for log in "$out" "$err"; do
+    __harness_size=$(( $(wc -c < "$log" 2> /dev/null) + 0 ))
+    if [ "$__harness_size" -gt "$1" ] && [ "$__harness_size" -gt $(( ${{#__harness_notice}} + 1 )) ]; then
+      printf x >> "$dir/log_clears"
+      : > "$log"
+      printf '%s\\n' "$__harness_notice" >> "$log"
+      printf x >> "$dir/log_clears"
+    fi
+  done
+}}
+watch_logs() {{
+  trap '__harness_watch_stopped=1; kill "$__harness_sleeper" 2> /dev/null' TERM
+  __harness_notice="[Log exceeded max_log_bytes=$1; earlier output was cleared.]"
+  __harness_interval=$2
+  while [ -z "$__harness_watch_stopped" ] && [ ! -e "$dir/watch.stop" ] && kill -0 "$$" 2> /dev/null; do
+    sleep "$__harness_interval" 2> /dev/null & __harness_sleeper=$!
+    [ -z "$__harness_watch_stopped" ] || kill "$__harness_sleeper" 2> /dev/null
+    wait "$__harness_sleeper" || [ $? -gt 128 ] || __harness_interval=1
+    [ -z "$__harness_watch_stopped" ] && [ ! -e "$dir/watch.stop" ] || break
+    clear_logs "$1"
+  done
+  wait "$__harness_sleeper" 2> /dev/null
+  # Once more for the output since the last round, so a finished job's logs end within the limit.
+  clear_logs "$1"
+}}
+stop_watcher() {{
+  [ -z "$watcher" ] || {{ true 2> /dev/null > "$dir/watch.stop"; kill "$watcher" 2> /dev/null; wait "$watcher" 2> /dev/null; }}
+}}
 unset __harness_stopped
 trap __harness_stopped=1 TERM
 publish null
@@ -52,16 +88,35 @@ while [ -z "$__harness_stopped" ] && [ ! -e "$dir/launch.ready" ]; do
   sleep 0.1 2> /dev/null || [ -n "$__harness_stopped" ] || sleep 1
 done
 if [ "$2" = combined ]; then out="$dir/output.log"; err="$dir/output.log"; else out="$dir/stdout.log"; err="$dir/stderr.log"; fi
+watcher=
+if [ -n "$6" ]; then watch_logs "$6" "$7" & watcher=$!; fi
 if [ -n "$4" ]; then
-  __harness_limit_files "$4" || {{ echo 'Unable to apply max_file_bytes.' >> "$err"; publish 1; exit 1; }}
+  __harness_limit_files "$4" || {{
+    stop_watcher
+    echo 'Unable to apply max_file_bytes.' >> "$err"; publish 1; exit 1
+  }}
 fi
 (
   [ -z "$__harness_stopped" ] && [ ! -e "$dir/stop" ] || exit 143
   exec sh -c "$3"
 ) < /dev/null >> "$out" 2>> "$err"
-publish $?
+code=$?
+stop_watcher
+publish $code
 """
-"""The job's supervisor: arguments are the job directory, the log mode, the command, the file limit, and the launcher's PID.
+"""The job's supervisor: arguments are the job directory, the log mode, the command, the file limit, the launcher's PID,
+the log limit, and the seconds between log checks.
+
+With a log limit, a watcher checks each log every `_LOG_CHECK_INTERVAL` seconds, and once more when it stops, and
+empties one that has grown past it, leaving a notice. It appends a byte to `log_clears` before and after each clear, so
+a reader can tell a clear is under way (an odd size) or done, even once the log has grown back. The command keeps
+running, and a command that reads its own log (a glob over job logs) reaches the end of it and stops, instead of copying
+the log into itself until the disk is full. A log holding no more than the notice is left alone, so a limit below its
+size doesn't clear it at every check. The watcher starts before `max_file_bytes` applies, since `log_clears` keeps
+growing, finishes a clear it has started when the wrapper stops it, and exits once the wrapper is gone (killed on its
+own and reaped). The wrapper stops it with `watch.stop` as well as `TERM`, since a `TERM` sent as the watcher starts
+can be lost before its trap is set. It sleeps in a child it stops and reaps itself, so a stopped job leaves no orphan
+behind; a `sleep` without fractional seconds gets 1.
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
 publish the command's exit status; the command itself runs with default signal handling, since
@@ -100,10 +155,10 @@ else
 fi
 if [ "$mode" = combined ]; then : > "$dir/output.log"; else : > "$dir/stdout.log"; : > "$dir/stderr.log"; fi
 if command -v setsid > /dev/null 2>&1; then
-  setsid sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ < /dev/null > /dev/null 2>&1 &
+  setsid sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ "$log_limit" "$log_interval" < /dev/null > /dev/null 2>&1 &
   pid=$!; group=$pid
 else
-  nohup sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ < /dev/null > /dev/null 2>&1 &
+  nohup sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ "$log_limit" "$log_interval" < /dev/null > /dev/null 2>&1 &
   pid=$!; group=-
   if [ "$(ps -o pgid= -p $$ 2> /dev/null | tr -d ' ')" = "$$" ]; then group=$$; fi
 fi
@@ -113,6 +168,10 @@ echo "$pid $group" > "$dir/handle"
 echo "$pid $group"
 """
 """Start the wrapper detached and print `<pid> <process group or ->`, also kept in the job's `handle` file.
+
+The command is the launcher's argument `$1` rather than quoted into the script, so it reaches the
+wrapper as itself: quoting turns each `'` into `'"'"'`, and a command full of them could pass the
+operating system's limit on the size of one argument (128 KiB on Linux).
 
 It first checks for `_REQUIRED_TOOLS` with the shell's `command -v` builtin, which costs no extra
 process, and prints the missing ones and exits `_MISSING_TOOLS` instead of launching.
@@ -154,6 +213,7 @@ class Job:
         env: Mapping[str, str] | None,
         combined: bool,
         file_limit: int | None = None,
+        log_limit: int | None = None,
         job_id: str | None = None,
     ) -> Job:
         directory = posixpath.join(base, job_id or uuid.uuid4().hex)
@@ -164,13 +224,15 @@ class Job:
                 ('dir', directory),
                 ('exclusive', '1' if job_id is not None else '0'),
                 ('mode', mode),
-                ('cmd', command),
                 ('limit', '' if file_limit is None else str(file_limit)),
+                ('log_limit', '' if log_limit is None else str(log_limit)),
+                ('log_interval', f'{_LOG_CHECK_INTERVAL:g}'),
                 ('wrapper', _WRAPPER),
             )
         )
-        result = await workspace.run(
-            f'cd {shlex.quote(cwd)} || exit\n{assignments}\n{_LAUNCHER}', shell=True, env=env, timeout=CONTROL_TIMEOUT
+        script = f'cd {shlex.quote(cwd)} || exit\n{assignments} cmd=$1\n{_LAUNCHER}'
+        result = await run_model_command(
+            workspace, lambda cmd: ['sh', '-c', script, 'sh', cmd], command, env=env, timeout=CONTROL_TIMEOUT
         )
         if result.exit_code == _MISSING_TOOLS:
             # Without these the launcher would wait out `CONTROL_TIMEOUT` for a status that is never
@@ -217,6 +279,11 @@ class Job:
     @property
     def status_path(self) -> str:
         return posixpath.join(self.directory, 'status.json')
+
+    @property
+    def clears_path(self) -> str:
+        """A file one byte longer before and again after each time `max_log_bytes` empties one of the job's logs."""
+        return posixpath.join(self.directory, 'log_clears')
 
     @property
     def stop_command(self) -> str:

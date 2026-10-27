@@ -630,6 +630,71 @@ def test_profile_allow_seeding() -> None:
     )
 
 
+async def test_speech_resumed_before_the_commit_continues_the_turn(
+    xai_ws_cassette: tuple[XaiProvider, RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """The user pauses for 400 ms mid-turn: xAI takes back the stop its server VAD heard.
+
+    Recorded facts: xAI starts a reply at the stop, a few hundred milliseconds before it commits the turn. Speech
+    heard before the commit makes it report `speech_started` again for the *same* item, and it drops that reply
+    without ever sending a `response.done` for it. It then hears the user stop again, starts another reply, and
+    commits the turn. The session records the turn once, ends the dropped reply as cancelled (as a barge-in would),
+    and records the reply that follows.
+    """
+    provider, cassette = xai_ws_cassette
+    model = XaiRealtimeModel(MODEL, provider=provider)
+    agent = Agent(instructions='Reply in a few words.')
+    bytes_per_second = 48_000
+    question = assets_path.joinpath('amsterdam_population_question_24khz.pcm').read_bytes()
+    follow_up = assets_path.joinpath('favorite_color_question_24khz.pcm').read_bytes()
+    pcm = b''.join(
+        [
+            bytes(bytes_per_second * 3 // 10),
+            question[: bytes_per_second * 32 // 10],
+            bytes(bytes_per_second * 4 // 10),
+            follow_up[bytes_per_second * 4 // 10 : bytes_per_second * 16 // 10],
+            bytes(bytes_per_second * 3),
+        ]
+    )
+
+    async with agent.realtime(model).session() as session:
+        with anyio.fail_after(60):
+            for start in range(0, len(pcm), 4800):
+                await session.send_audio(pcm[start : start + 4800])
+                if realtime_recording:  # pragma: no cover
+                    # A live microphone's pace: a burst of audio is heard quite differently.
+                    await anyio.sleep(0.1)
+            turns_complete = 0
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    turns_complete += 1
+                    # The dropped reply's, then the one that answers the turn.
+                    if turns_complete == 2:
+                        break
+
+    received = [
+        message.data
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage) and message.direction == 'received'
+    ]
+    speech_starts = [frame['item_id'] for frame in received if frame['type'] == 'input_audio_buffer.speech_started']
+    assert len(speech_starts) == 2 and speech_starts[0] == speech_starts[1]
+    created = [frame['response']['id'] for frame in received if frame['type'] == 'response.created']
+    done = [frame['response']['id'] for frame in received if frame['type'] == 'response.done']
+    assert len(created) == 2 and done == created[1:]
+
+    # One user turn; the dropped reply, which said nothing, recorded as interrupted as a barge-in's would be; then
+    # the reply that answers the turn.
+    request, dropped, reply = session.all_messages()
+    assert isinstance(request, ModelRequest) and isinstance(request.parts[0], SpeechPart)
+    assert request.parts[0].transcript == snapshot(
+        'Can you look up on the web how many people live in Amsterdam? What is my favorite color?'
+    )
+    assert isinstance(dropped, ModelResponse) and isinstance(reply, ModelResponse)
+    assert (dropped.provider_response_id, dropped.state, dropped.parts) == (created[0], 'interrupted', [])
+    assert (reply.provider_response_id, reply.state) == (created[1], 'complete')
+
+
 async def test_handle_barge_in_over_live_speech(
     xai_ws_cassette: tuple[XaiProvider, RealtimeCassette], assets_path: Path
 ) -> None:
@@ -640,7 +705,8 @@ async def test_handle_barge_in_over_live_speech(
     local flush that keeps stale audio out of the playback stream. In this recording the reply had
     already completed server-side by the time the user spoke over it (generation outruns playback),
     which is exactly when a client-side cancel would have been applied to the *next* response —
-    the session sent nothing, and both replies completed.
+    the session sent nothing. History still records the reply the user spoke over as interrupted where
+    playback stopped (here before the first chunk finished playing), with its transcript whole.
     """
     provider, cassette = xai_ws_cassette
     model = XaiRealtimeModel(MODEL, provider=provider)
@@ -670,4 +736,8 @@ async def test_handle_barge_in_over_live_speech(
     assert sent_frames_containing(cassette, 'conversation.item.truncate') == []
     assert sent_frames_containing(cassette, 'response.cancel') == []
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
-    assert [response.state for response in responses] == snapshot(['complete', 'complete'])
+    assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])
+    assert [
+        [(part.interrupted_at_ms, part.transcript) for part in response.parts if isinstance(part, SpeechPart)]
+        for response in responses
+    ] == snapshot([[(0, 'Hello Marcelo! Nice to meet you!')], [(None, 'Hi Marcelo!')]])

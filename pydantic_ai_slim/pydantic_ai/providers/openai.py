@@ -6,7 +6,15 @@ from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile, openai_realtime_model_profile
+from pydantic_ai.profiles.openai import (
+    _GPT_6_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
+    OpenAIJsonSchemaTransformer,
+    OpenAIModelProfile,
+    # Keep the provider-specific specialization private; the provider only selects it.
+    _OpenAIJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    openai_model_profile,
+    openai_realtime_model_profile,
+)
 from pydantic_ai.providers import missing_api_key_error
 
 if TYPE_CHECKING:
@@ -64,6 +72,10 @@ class OpenAIProvider(_OpenAICompatibleProvider):
         return merge_profile(
             profile,
             OpenAIModelProfile(
+                # Fine-tuned models keep the conservative string-bound behavior.
+                json_schema_transformer=(
+                    OpenAIJsonSchemaTransformer if model_name.startswith('ft:') else _OpenAIJsonSchemaTransformer
+                ),
                 tool_addition_mode='with_definitions',
                 tool_deferral_mode='with_tool_search',
                 # GPT-5.6 and later document a model-determined floor: a cached prefix stays eligible for
@@ -98,6 +110,28 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 openai_responses_supports_prompt_cache_diagnostics=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # Measured live: every model from `gpt-4o-mini` through `gpt-5.5` rejects a `tool_choice` naming a tool
+                # that only an `additional_tools` item declares, and GPT-5.6 and GPT-6 accept it. Those are the models
+                # with explicit cache breakpoints. Set here with `tool_addition_mode`, since the item is first-party.
+                openai_responses_tool_choice_accepts_additional_tools=bool(
+                    profile.get('openai_supports_prompt_cache_breakpoints')
+                ),
+                # GPT-5.6 and later, the models with explicit cache breakpoints, accept `reasoning.effort='max'`
+                # (verified live). Set here rather than in `openai_model_profile` because `max` is unverified on
+                # the OpenAI-compatible endpoints that share it.
+                openai_responses_supports_max_reasoning_effort=bool(
+                    profile.get('openai_supports_prompt_cache_breakpoints')
+                ),
+                # Set here rather than in `openai_model_profile` because OpenAI-compatible Chat Completions APIs
+                # don't all honor it: OpenRouter and xAI silently ignore it, and OpenRouter rejects it for Claude.
+                # A server reached through a custom `base_url` that doesn't honor it opts out in the model's profile.
+                # https://platform.openai.com/docs/api-reference/chat/create
+                openai_chat_supports_allowed_tools=True,
+                # The `configuration_update` input item that changes reasoning effort mid-conversation is
+                # documented for the GPT-6 family. Set here rather than in `openai_model_profile` because the
+                # OpenAI-compatible Responses endpoints that share it don't necessarily implement the item.
+                # https://developers.openai.com/api/docs/guides/reasoning
+                supports_mid_conversation_effort=model_name.startswith(_GPT_6_MODEL_PREFIXES),
             ),
         )
 

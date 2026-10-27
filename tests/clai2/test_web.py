@@ -1,13 +1,18 @@
 """The `web` plugin end to end: a shell driven over HTTP, its WebSocket stream, and the access checks."""
 
 import asyncio
+import base64
+import gzip
+import hashlib
 import html
 import io
 import re
+import shutil
+import sys
 import threading
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TypeVar
@@ -18,6 +23,7 @@ import httpx
 import httpx2
 import pytest
 from anyio.from_thread import BlockingPortal, start_blocking_portal
+from PIL import Image
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from rich.console import Console
 from starlette.testclient import TestClient, WebSocketTestSession
@@ -29,7 +35,7 @@ from websockets.typing import Origin
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserContent, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -38,6 +44,7 @@ from pydantic_clai2.builtin_plugins import web
 from pydantic_clai2.builtin_plugins.web import (
     WebPlugin,
     WebSettings,
+    app as app_module,
     channel as channel_module,
     live,
     service as service_module,
@@ -72,14 +79,19 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     ToolDone,
     TurnEnded,
     TurnStarted,
+    image_id,
 )
+from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
-from pydantic_clai2.runtime.project_identity import git_checkout, project_identity
+from pydantic_clai2.runtime import image_codec
+from pydantic_clai2.runtime.image_codec import decode_images
+from pydantic_clai2.runtime.project_identity import git_checkout, project_identity, worktree_roots
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
+from pydantic_clai2.ui.menus.menu_worker import require_terminal
 from pydantic_clai2.ui.rendering import theme as terminal_theme
 from tests.clai2.test_session_browser import git, repository
 from tests.clai2.test_tasks import task
@@ -394,11 +406,243 @@ def test_a_failed_turn(make_web: 'MakeWeb') -> None:
         running.result(timeout=10)
 
 
-def test_input_the_browser_cannot_send(make_web: 'MakeWeb') -> None:
+def test_input_the_browser_cannot_send(make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch) -> None:
     web_ = make_web(Agent(TestModel()))
     assert web_.post('/api/input', {'text': '   '}).json() == {'detail': 'Type a prompt or a /command.'}
     response = web_.post('/api/input', {'text': '!ls'})
     assert (response.status_code, response.json()) == (400, {'detail': 'Shell lines (!) run only in the terminal.'})
+    response = web_.post('/api/input', {'text': '/model', 'images': [encoded(png('red'))]})
+    assert (response.status_code, response.json()) == (
+        400,
+        {'detail': 'Images go with a prompt, not with a /command or ! line.'},
+    ), 'not even a command whose menu the page would show'
+    response = web_.post('/api/input', {'text': 'look', 'images': [encoded(b'not an image')]})
+    assert response.status_code == 400 and response.json()['detail'].startswith('Not an image CLAI can read')
+    assert web_.shell.images.pending == {}
+    response = web_.post('/api/input', {'text': 'look', 'images': ['not base64!']})
+    assert (response.status_code, response.json()) == (400, {'detail': 'Images must be base64-encoded.'})
+    # Images waiting in the terminal's draft, which the page does not show, leave no room.
+    waiting = web_.shell.images.attach(decode_images([encoded(png('red'))])).strip()
+    [blue] = decode_images([encoded(png('blue'))])
+    monkeypatch.setattr(
+        image_codec, 'MAX_PENDING_BYTES', len(web_.shell.images.pending[waiting].data) + len(blue.data) - 1
+    )
+    response = web_.post('/api/input', {'text': 'look', 'images': [encoded(png('blue'))]})
+    assert (response.status_code, response.json()) == (
+        400,
+        {'detail': "Images waiting in this session's prompt leave no room for these (32 MiB limit)."},
+    )
+    assert list(web_.shell.images.pending) == [waiting]
+    with pytest.raises(ValueError, match='send fewer at a time'):
+        web_.shell.send_input('look', images=[blue, blue, blue])
+
+
+def test_a_terminal_menu_or_prompt_fails_without_a_terminal(
+    make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no terminal anywhere, a command that would read the terminal's keys fails, naming an alternative.
+
+    A menu would read EOF from stdin and close as cancelled, saying nothing useful, as under `clai2 --web` from a
+    script; that is so whether the command waits for its turn or opens over a running one.
+    """
+    monkeypatch.setattr(sys, 'stdin', None)  # As Python leaves it when CLAI starts with stdin closed.
+    started, release = anyio.Event(), anyio.Event()
+    tools = Capability[None]()
+
+    @tools.tool_plain
+    async def wait() -> str:
+        """Wait to be released."""
+        started.set()
+        await release.wait()
+        return 'released'
+
+    web_ = make_web(Agent(TestModel(call_tools=['wait']), deps_type=type(None), capabilities=[tools]))
+    assert web_.shell.terminal is None
+    needs = 'opens a terminal menu or prompt, and this CLAI has no terminal: enter it in CLAI in a terminal'
+
+    def notices(texts: Sequence[str]) -> list[tuple[str, str, str | None]]:
+        received: list[tuple[str, str, str | None]] = []
+        for text in texts:
+            assert web_.post('/api/input', {'text': text}).json() == {'menu': None}
+            notice = receive_until(socket, Notice)[1]
+            received.append((notice.level, notice.text, notice.command))
+        return received
+
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        assert notices(('/model add', '/model settings', '/chain', '/set api_key', '/resume claude')) == [
+            ('error', f'/model add {needs}, or use /model in this page.', '/model add'),
+            ('error', f'/model settings {needs}, or use /model in this page.', '/model settings'),
+            ('error', f'/chain {needs}.', '/chain'),
+            ('error', f'/set api_key {needs}, or use /keys in this page.', '/set api_key'),
+            ('error', f'/resume claude {needs}.', '/resume claude'),
+        ]
+        web_.post('/api/input', {'text': 'wait'})
+        web_.portal.call(started.wait)
+        # `during_turn` commands open over the running turn instead of queueing.
+        assert notices(('/model add', '/chain')) == [
+            ('error', f'/model add {needs}, or use /model in this page.', '/model add'),
+            ('error', f'/chain {needs}.', '/chain'),
+        ]
+        web_.portal.call(release.set)
+        assert receive_until(socket, TurnEnded)[1].outcome == 'completed'
+        web_.post('/api/input', {'text': '/exit'})
+        assert running.result(timeout=10) == 'exit'
+
+
+class _Terminal(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+def test_a_terminal_menu_opens_in_the_terminal_that_runs_clai(
+    make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`clai2 --web` started in a terminal shows no session there, but its menus still open in it, as before."""
+    monkeypatch.setattr(sys, 'stdin', _Terminal())
+    web_ = make_web(Agent(TestModel()))
+    assert web_.shell.terminal is None
+
+    def probe(args: list[str]) -> str:
+        require_terminal()
+        return 'A menu would open here.'
+
+    web_.shell.commands.register(Command(name='probe', description='Open a terminal menu', handler=probe))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': '/probe'})
+        notice = receive_until(socket, Notice)[1]
+        assert (notice.level, notice.text) == ('info', 'A menu would open here.')
+        web_.post('/api/input', {'text': '/exit'})
+        assert running.result(timeout=10) == 'exit'
+
+
+def png(color: str) -> bytes:
+    output = io.BytesIO()
+    Image.new('RGB', (3, 2), color=color).save(output, format='PNG')
+    return output.getvalue()
+
+
+def encoded(data: bytes) -> str:
+    return base64.b64encode(data).decode()
+
+
+def test_images_pasted_in_the_browser_go_with_the_prompt(make_web: 'MakeWeb') -> None:
+    """Images sent with a prompt reach the model after its text, also queued behind a running turn, also alone."""
+    started, release = anyio.Event(), anyio.Event()
+    prompts: list[str | Sequence[UserContent]] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        prompts.extend(part.content for part in request.parts if isinstance(part, UserPromptPart))
+        if len(prompts) == 1:
+            started.set()
+            await release.wait()
+        yield 'seen'
+
+    web_ = make_web(Agent(FunctionModel(stream_function=stream)))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'first'})
+        web_.portal.call(started.wait)
+        # Queued in the inbox of a session no editor reads, until the running turn ends.
+        queued = web_.post('/api/input', {'text': 'what is this?', 'images': [encoded(png('red'))]})
+        assert queued.json() == {'menu': None}
+        assert web_.post('/api/input', {'text': ' ', 'images': [encoded(png('blue'))]}).status_code == 200
+        web_.portal.call(release.set)
+        messages: list[ServerMessage] = []
+        for _ in range(3):
+            messages += receive_until(socket, TurnEnded)[0]
+        started_items = [message.item for message in messages if isinstance(message, TurnStarted)]
+        red, blue = decode_images([encoded(png('red')), encoded(png('blue'))])
+        shown: list[tuple[str, list[str]]] = [('first', []), ('what is this?', [image_id(red)]), ('', [image_id(blue)])]
+        assert [(item.text, item.images) for item in started_items if item] == shown
+        history = [item for item in web_.get('/api/state').json()['items'] if item['kind'] == 'user']
+        assert [(item['text'], item['images']) for item in history] == shown, 'the same IDs after a reload'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+    assert prompts == ['first', ['what is this?', red], [blue]], 'no empty text block beside images alone'
+    assert web_.shell.images.pending == {}, 'sent images are let go'
+
+
+def test_the_transcript_fetches_the_images_of_a_session(make_web: 'MakeWeb') -> None:
+    """A prompt's images are served by ID, from a running turn's prompt and from the saved history."""
+    started, release = anyio.Event(), anyio.Event()
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        started.set()
+        await release.wait()
+        yield 'seen'
+
+    web_ = make_web(Agent(FunctionModel(stream_function=stream)))
+    [red] = decode_images([encoded(png('red'))])
+    route = f'/api/sessions/{web_.shell.session.conversation_id}/images/{image_id(red)}'
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'look', 'images': [encoded(png('red'))]})
+        web_.portal.call(started.wait)
+        for path in (route, f'/api/images/{image_id(red)}'):
+            response = web_.get(path)
+            assert (response.status_code, response.content) == (200, red.data), 'while its turn runs'
+            assert response.headers['content-type'] == 'image/png'
+            assert response.headers['cache-control'] == 'private, max-age=31536000, immutable'
+        web_.portal.call(release.set)
+        receive_until(socket, TurnEnded)
+        # A later prompt without images leaves only the saved history to find it in.
+        web_.post('/api/input', {'text': 'again'})
+        receive_until(socket, TurnEnded)
+        assert web_.get(route).content == red.data, 'from the saved history'
+        unknown = web_.get(f'/api/images/{"0" * 64}')
+        assert (unknown.status_code, unknown.json()) == (404, {'detail': 'No such image in this session.'})
+        assert web_.client.get(route).status_code == 403, 'not without the token'
+        # A new conversation lets go of the old one's images.
+        web_.post('/api/input', {'text': '/new'})
+        assert receive_until(socket, Snapshot)[1].items == []
+        assert web_.get(f'/api/images/{image_id(red)}').status_code == 404
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_a_prompt_keeps_its_images_while_it_waits_for_the_terminal(
+    make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Images are read as the prompt leaves the queue, so the terminal moving here meanwhile cannot let them go."""
+    prompts: list[str | Sequence[UserContent]] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        prompts.extend(part.content for part in request.parts if isinstance(part, UserPromptPart))
+        yield 'seen'
+
+    web_ = make_web(Agent(FunctionModel(stream_function=stream)))
+    waiting, announced = anyio.Event(), anyio.Event()
+    busy = web_.shell.forks.busy
+
+    @asynccontextmanager
+    async def after_an_announcement() -> AsyncGenerator[None]:
+        # As when a fork's announcement holds the terminal.
+        if not announced.is_set():
+            waiting.set()
+            await announced.wait()
+        async with busy():
+            yield
+
+    monkeypatch.setattr(web_.shell.forks, 'busy', after_an_announcement)
+    running = web_.run()
+    web_.post('/api/input', {'text': 'what is this?', 'images': [encoded(png('red'))]})
+    web_.portal.call(waiting.wait)
+    # As the terminal showing this session now does, with nothing left in its queue.
+    web_.portal.call(web_.shell.images.retain, list[str]())
+    web_.post('/api/input', {'text': '/exit'})
+    web_.portal.call(announced.set)
+    running.result(timeout=10)
+    assert prompts == [['what is this?', *decode_images([encoded(png('red'))])]]
 
 
 def test_completion_and_models(make_web: 'MakeWeb') -> None:
@@ -642,6 +886,45 @@ def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', t
     # A search lists only matching sessions, in the same places.
     [found] = web_.get('/api/sessions?q=Before').json()
     assert [(w['label'], w['missing']) for w in found['worktrees']] == [('old', True)]
+
+
+def test_new_session_offers_every_worktree_of_a_known_repository(
+    make_web: 'MakeWeb', tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """New session lists a known repository's other worktrees before any session runs there; the sidebar does not.
+
+    One whose folder was deleted behind Git's back is not offered, nor is any during a search, or when Git fails.
+    """
+    web_ = make_web(Agent(TestModel()))
+    repo, feature, deleted = tmp_path / 'repo', tmp_path / 'wt' / 'feature', tmp_path / 'wt' / 'deleted'
+    repository(repo, linked=feature, branch='feature')
+    git('-C', str(repo), 'worktree', 'add', '--detach', str(deleted))
+    shutil.rmtree(deleted)
+    summary = ConversationSummary(workspace=str(repo.resolve()), title='Main')
+    web_.portal.call(lambda: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    plain = tmp_path / 'plain'
+    plain.mkdir()
+    web_.shell.session.workspace = str(plain.resolve())
+
+    def shown(query: str) -> list[tuple[str, str, list[str]]]:
+        [project] = [p for p in web_.get(f'/api/sessions?{query}').json() if p['name'] == 'repo']
+        return [(w['label'], w['root'], [entry['title'] for entry in w['sessions']]) for w in project['worktrees']]
+
+    main = ('main', str(repo.resolve()), ['Main'])
+    assert shown('include_worktrees=true') == [main, ('feature', str(feature.resolve()), [])]
+    assert shown('q=') == [main], 'the sidebar lists checkouts with sessions only'
+    assert shown('q=Main&include_worktrees=true') == [main]
+    monkeypatch.setenv('PATH', '')
+    assert shown('include_worktrees=true') == [main]
+
+
+def test_a_bare_repository_is_not_a_worktree(tmp_path: Path) -> None:
+    """A bare clone's own folder holds no checkout, so only its linked worktrees are offered."""
+    source, bare, feature = tmp_path / 'source', tmp_path / 'bare.git', tmp_path / 'feature'
+    repository(source, linked=tmp_path / 'unused', branch='unused')
+    git('clone', '--bare', str(source), str(bare))
+    git('-C', str(bare), 'worktree', 'add', '-b', 'feature', str(feature))
+    assert worktree_roots(project_identity(str(feature.resolve()))) == [str(feature.resolve())]
 
 
 def test_sidebar_notices_a_folder_removed_or_recreated_while_it_runs(make_web: 'MakeWeb', tmp_path: Path) -> None:
@@ -1066,15 +1349,13 @@ def test_access_checks(make_web: 'MakeWeb') -> None:
         403,
         "Open the address CLAI printed: it carries this launch's access token.",
     )
-    assert client.get('/assets/app.js').status_code == 403
+    assert client.get('/assets/app.js', headers={'host': 'evil.example'}).status_code == 403
     assert client.get(f'/?token={TOKEN}', headers={'host': 'evil.example'}).status_code == 403
 
     page = client.get(f'/?token={TOKEN}')
     assert f'<meta name="clai-token" content="{TOKEN}"></head>' in page.text
-    assert f'src="/assets/app.js?token={TOKEN}"' in page.text and f'href="/assets/index.css?token={TOKEN}"' in page.text
     assert "frame-ancestors 'none'" in page.headers['content-security-policy']
     assert 'set-cookie' not in page.headers, 'cookies reach every port of the host'
-    assert client.get(f'/assets/app.js?token={TOKEN}').text == 'console.log("hi")'
 
     for path, headers in (
         ('/ws', {'origin': 'http://testserver'}),
@@ -1084,6 +1365,48 @@ def test_access_checks(make_web: 'MakeWeb') -> None:
         with pytest.raises(WebSocketDisconnect) as refused, client.websocket_connect(path, headers=headers):
             pass  # pragma: no cover
         assert refused.value.code == 1008
+
+
+def test_assets_are_versioned_cached_and_compressed(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """The page links each asset by its content's digest, not the launch's token, so it stays cached across launches."""
+    web_ = make_web(Agent(TestModel()))
+    client = web_.client
+    script = tmp_path / 'static' / 'assets' / 'app.js'
+    version = hashlib.sha256(script.read_bytes()).hexdigest()[:16]
+    page = client.get(f'/?token={TOKEN}').text
+    assert f'src="/assets/app.js?v={version}"' in page
+    assert 'href="/assets/index.css"' in page, 'a link to a missing file is left alone'
+    assert TOKEN not in page.replace(f'<meta name="clai-token" content="{TOKEN}">', '')
+    other = TestClient(
+        create_app(service=web_.plugin.service, token='next-launch', hosts=HOSTS, static=tmp_path / 'static')
+    )
+    assert f'src="/assets/app.js?v={version}"' in other.get('/?token=next-launch').text, 'the same link every launch'
+
+    served = client.get(f'/assets/app.js?v={version}', headers={'accept-encoding': 'gzip, br'})
+    assert served.status_code == 200 and served.text == 'console.log("hi")', 'public build output needs no token'
+    assert served.headers['cache-control'] == 'public, max-age=31536000, immutable'
+    assert served.headers['content-encoding'] == 'gzip'
+    assert served.headers['vary'] == 'Accept-Encoding'
+    assert 'javascript' in served.headers['content-type']
+    plain = client.get('/assets/app.js', headers={'accept-encoding': 'identity'})
+    assert (plain.headers['cache-control'], plain.text) == ('no-cache', 'console.log("hi")')
+    assert 'content-encoding' not in plain.headers
+    revalidated = client.get('/assets/app.js', headers={'if-none-match': served.headers['etag']})
+    assert (revalidated.status_code, revalidated.content) == (304, b'')
+
+    assert client.get('/assets/missing.js').status_code == 404
+
+
+async def test_assets_are_built_once_per_version(tmp_path: Path) -> None:
+    """Each file is read and compressed once, until a rebuild changes it, and only files of the directory are served."""
+    assets = app_module.Assets(static_dir(tmp_path) / 'assets')
+    built = await assets.get('app.js')
+    assert built is not None and built is await assets.get('app.js')
+    (tmp_path / 'static' / 'assets' / 'app.js').write_text('console.log("rebuilt")')
+    rebuilt = await assets.get('app.js')
+    assert rebuilt is not None and (rebuilt.body, rebuilt.version != built.version) == (b'console.log("rebuilt")', True)
+    assert gzip.decompress(rebuilt.gzipped) == rebuilt.body
+    assert await assets.get('../index.html') is None
 
 
 def test_a_checkout_without_a_built_ui(tmp_path: Path) -> None:
@@ -1103,7 +1426,7 @@ def test_a_build_without_assets(tmp_path: Path) -> None:
         PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})
     ).service
     with TestClient(create_app(service=service, token=TOKEN, hosts=HOSTS, static=static)) as client:
-        assert client.get(f'/assets/app.js?token={TOKEN}').status_code == 404
+        assert client.get('/assets/app.js').status_code == 404
         assert client.post('/api/input', json={'text': 'hi'}, headers={HEADER: TOKEN}).json() == {
             'detail': "Plugin 'web' has no prompt to enter input at."
         }

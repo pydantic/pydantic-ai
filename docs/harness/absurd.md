@@ -102,7 +102,7 @@ These are not checkpointed and run again on replay:
 - Function, MCP, or dynamic toolsets passed per run with `run(toolsets=...)` inside a task raise a
   `UserError`; register them on the agent instead. `ExternalToolset` is allowed.
 - Streaming inside a task is not live: the model stream is consumed inside the step, then its
-  captured events are replayed to the caller.
+  final response is replayed to the caller, one event per part.
 
 ## Parallel execution
 

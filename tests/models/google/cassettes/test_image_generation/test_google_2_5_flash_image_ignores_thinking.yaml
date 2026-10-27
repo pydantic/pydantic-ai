@@ -1,0 +1,66 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "156"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Say hi in one word, no image please.
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+          - IMAGE
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=633
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: Hi!
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 11
+          candidatesTokenCount: 2
+          totalTokenCount: 13
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 11
+          serviceTier: standard
+        modelVersion: gemini-2.5-flash-image
+        responseId: Br_aat_lH5GGz7IPuIv9mAs
+  recorded_at: 2026-10-23T01:57:26.967586+00:00

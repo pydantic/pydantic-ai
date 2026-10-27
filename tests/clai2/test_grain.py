@@ -118,7 +118,9 @@ async def for_run(plugin: LoadedPlugin[None]) -> Grain[None] | None:
     grain_plugin = plugin.plugin
     assert isinstance(grain_plugin, GrainPlugin)
     assert list(plugin.capabilities) == [WorkspacelessCapability(grain_plugin.connection.capability)]
-    return await grain_plugin.connection.capability(run_context())
+    capability = await grain_plugin.connection.capability(run_context())
+    assert capability is None or capability.defer_loading
+    return capability
 
 
 async def loader_run(loader: PluginLoader[None]) -> Grain[None] | None:
@@ -349,7 +351,7 @@ async def test_the_browser_sign_in_redirects_to_localhost_and_shows_the_link(mon
             pass
 
     monkeypatch.setattr(OAuth, 'redirect_handler', open_browser)
-    monkeypatch.setattr('pydantic_clai2.mcp._tokens.Client', Connect)
+    monkeypatch.setattr('pydantic_clai2.mcp._client.Client', Connect)
     await BROWSER_SIGN_IN(grain_module.SIGN_IN, show=shown.append)
     assert opened == [url]
     assert shown == [f'If no browser opened, open this link:\n{url}']

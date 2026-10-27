@@ -10,9 +10,12 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass, field
+from html.parser import HTMLParser
 from typing import Any
 
+import anyio
 import httpx2
+from anyio.lowlevel import RunVar
 from typing_extensions import TypedDict
 
 from pydantic_ai._ssrf import safe_download
@@ -34,6 +37,15 @@ except ImportError as _import_error:
 __all__ = ('WebFetchResult', 'web_fetch_tool')
 
 _EXCESSIVE_NEWLINES_RE = re.compile(r'\n{3,}')
+# `HTMLParser`'s tag grammar in current CPython patch releases, with each separator run matched by
+# one character class so the match takes constant memory. Attribute names skip the parser's
+# lookbehind, so these never count fewer attributes or separators than the parser does.
+_HTML_TAG_NAME_RE = re.compile(r'[a-zA-Z][^\t\n\r\f />]*')
+_HTML_TAG_SEPARATORS_RE = re.compile(r'[\t\n\r\f /]*')
+_HTML_TAG_ATTRIBUTE_RE = re.compile(
+    r'[^\t\n\r\f />][^\t\n\r\f /=>]*'
+    r'(?:[\t\n\r\f ]*=[\t\n\r\f ]*(?:\'[^\']*\'|"[^"]*"|(?![\'"])[^>\t\n\r\f ]*))?'
+)
 _WHITESPACE_RUN_RE = re.compile(r'[\t \r\n]+')
 _LINE_WITH_CONTENT_RE = re.compile(r'^(.*)', flags=re.MULTILINE)
 # `markdownify`'s stub doesn't declare its per-tag `convert_<tag>` methods, which it looks up by name.
@@ -51,9 +63,24 @@ _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 # This rejects 15 nested `<dd>` tags with 300k short lines before 600 KB of HTML expands
 # to ~19 MB of Markdown (0.7 s in a local conversion benchmark).
 _MAX_HTML_CONVERSION_COST = 20_000_000
+# Bound parsing and conversion work by parser events (tags, attributes, entities, comments)
+# before building the tree. A 2.9 MB Wikipedia article has ~100k events and converts in ~3 s;
+# 500k events of `<p>x</p>` take ~20 s.
+_MAX_HTML_MARKUP_EVENTS = 500_000
+# `html.parser` loops once per `<` or `&`, including ones that produce no event (`< `, `</>`).
+# The same Wikipedia article has ~50k of them.
+_MAX_HTML_MARKUP_DELIMITERS = 500_000
+# `html.parser` matches a whole start or end tag before any handler runs, taking memory per
+# attribute (a 1.9 MB tag with 500k attributes peaks at ~300-490 MiB on CPython 3.11-3.15) and per
+# whitespace or `/` character between them (~140-220 bytes each).
+_MAX_HTML_TAG_ATTRIBUTES = 2_000
+_MAX_HTML_TAG_SEPARATORS = 100_000
 # Unchanged text is copied much faster: 10 MB inside 300 `<div>` tags took ~0.85 s,
 # despite ~2.8 billion estimated character copies. Budget those separately.
 _MAX_HTML_TEXT_SCAN_COST = 5_000_000_000
+# Reserve most of AnyIO's default 40 worker slots for other tools during HTML conversion.
+_MAX_CONCURRENT_HTML_CONVERSIONS = 4
+_HTML_CONVERSION_LIMITER: RunVar[anyio.Semaphore] = RunVar('_HTML_CONVERSION_LIMITER')
 
 
 class WebFetchResult(TypedDict):
@@ -158,8 +185,13 @@ class WebFetchLocalTool:
             elif not media_type or media_type in ('text/html', 'application/xhtml+xml'):
                 # Parsing and converting is CPU-bound and scales with the (server-controlled) body
                 # size, so run it in a worker thread rather than on the event loop.
+                limiter = _HTML_CONVERSION_LIMITER.get(None)
+                if limiter is None:
+                    limiter = anyio.Semaphore(_MAX_CONCURRENT_HTML_CONVERSIONS)
+                    _HTML_CONVERSION_LIMITER.set(limiter)
                 try:
-                    title, content = await run_in_executor(_convert_html, text)
+                    async with limiter:
+                        title, content = await run_in_executor(_convert_html, text)
                 except RecursionError as e:
                     # `markdownify` walks the document recursively, so a page nested deeper than the
                     # interpreter's recursion limit can't be converted; let the model try elsewhere.
@@ -197,8 +229,79 @@ def _decode_text(response: httpx2.Response) -> str:
     return response.content.decode(response.encoding or 'utf-8', errors='replace')
 
 
+class _HTMLMarkupBudget(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.count = 0
+
+    def _count(self, amount: int = 1) -> None:
+        self.count += amount
+        if self.count > _MAX_HTML_MARKUP_EVENTS:
+            raise ModelRetry('the document is too complex')
+
+    def _check_tag(self, name_start: int) -> int:
+        name = _HTML_TAG_NAME_RE.match(self.rawdata, name_start)
+        assert name is not None
+        position, attributes, separator_count = name.end(), 0, 0
+        while True:
+            separators = _HTML_TAG_SEPARATORS_RE.match(self.rawdata, position)
+            assert separators is not None
+            separator_count += separators.end() - position
+            if separator_count > _MAX_HTML_TAG_SEPARATORS:
+                raise ModelRetry('the document is too complex')
+            attribute = _HTML_TAG_ATTRIBUTE_RE.match(self.rawdata, separators.end())
+            if attribute is None:
+                return attributes
+            attributes += 1
+            if attributes > _MAX_HTML_TAG_ATTRIBUTES:
+                raise ModelRetry('the document is too complex')
+            position = attribute.end()
+
+    def check_for_whole_start_tag(self, i: int) -> int:
+        self._check_tag(i + 1)
+        return super().check_for_whole_start_tag(i)
+
+    def parse_endtag(self, i: int) -> int:
+        if self.rawdata.find('>', i + 2) != -1 and _HTML_TAG_NAME_RE.match(self.rawdata, i + 2):
+            # `handle_endtag` doesn't report end-tag attributes, so charge the walked ones here.
+            self._count(self._check_tag(i + 2))
+        return super().parse_endtag(i)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self._count(1 + len(attrs))
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self._count(1 + len(attrs))
+
+    def handle_endtag(self, tag: str) -> None:
+        self._count()
+
+    def handle_comment(self, data: str) -> None:
+        self._count()
+
+    def handle_decl(self, decl: str) -> None:
+        self._count()
+
+    def unknown_decl(self, data: str) -> None:
+        self._count()
+
+    def handle_pi(self, data: str) -> None:
+        self._count()
+
+    def handle_entityref(self, name: str) -> None:
+        self._count()
+
+    def handle_charref(self, name: str) -> None:
+        self._count()
+
+
 def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
     """Return the raw `<title>` text (empty if there is none) and the markdown conversion of the HTML."""
+    if html.count('<') + html.count('&') > _MAX_HTML_MARKUP_DELIMITERS:
+        raise ModelRetry('the document is too complex')
+    budget = _HTMLMarkupBudget()
+    budget.feed(html)
+    budget.close()
     soup = BeautifulSoup(html, 'html.parser')
     converter = _MarkdownConverter(strip=['img', 'script', 'style'])
     # `markdownify` repeatedly scans each descendant's converted text as it walks back up the

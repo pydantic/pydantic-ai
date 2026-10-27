@@ -17,19 +17,27 @@ BWRAP_WORKS = (
 """Whether this machine has a working `bwrap` (Linux with user namespaces), for the tests that need the real one."""
 
 # Runs the remote command on this machine, starting in `$HOME` like a login. `unreachable` and `dropped` fail on
-# purpose, `chatty` prints a login banner first, `slow` takes 30 seconds to log in, and `lossy` loses the
-# connection (`ssh` exits 255) after the command finishes.
+# purpose, `chatty` prints a login banner first, `slow` takes 30 seconds to log in, `lossy` loses the connection
+# (`ssh` exits 255) after the command finishes, and `ignoring` runs no command, as a `ForceCommand` can. `-n`
+# gives the remote command an empty input, as it does `ssh`'s. Each remote command line is recorded, ended by an
+# ASCII record separator since it can hold newlines.
 _FAKE_SSH = """#!/bin/sh
 bin=$(dirname "$0")
-while [ "$1" != -- ]; do printf '%s\\n' "$1" >> "$bin/ssh-options"; shift; done
+while [ "$1" != -- ]; do
+    printf '%s\\n' "$1" >> "$bin/ssh-options"
+    if [ "$1" = -n ]; then exec < /dev/null; fi
+    shift
+done
 destination=$2
 shift 2
+printf '%s\\036' "$*" >> "$bin/ssh-commands"
 case $destination in
 unreachable) echo 'ssh: connect to host unreachable port 22: Connection refused' >&2; exit 255 ;;
 dropped) printf '__pydantic_ai_ssh_ready__\\n' >&2; exit 255 ;;
 chatty) echo 'Welcome to box!'; echo 'Last login: yesterday' >&2 ;;
 slow) sleep 30 ;;
 lossy) cd "$HOME" && sh -c "$*"; exit 255 ;;
+ignoring) exit 0 ;;
 esac
 cd "$HOME" && exec sh -c "$*"
 """
@@ -60,6 +68,11 @@ class FakeRemoteTools:
     @property
     def ssh_options(self) -> list[str]:
         return (self.bin_dir / 'ssh-options').read_text().splitlines()
+
+    @property
+    def ssh_commands(self) -> list[str]:
+        """The remote command line of every `ssh` call, in order."""
+        return (self.bin_dir / 'ssh-commands').read_text().split('\x1e')[:-1]
 
     @property
     def seccomp_filter(self) -> bytes:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
@@ -14,7 +14,7 @@ from ..messages import ModelMessage, ModelResponse
 from ..native_tools import AbstractNativeTool
 from ..profiles import ModelProfile
 from ..providers import Provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingEffort
 from ..usage import RequestUsage
 from . import (
     KnownModelName,
@@ -22,6 +22,7 @@ from . import (
     ModelRequestContext,
     ModelRequestParameters,
     StreamedResponse,
+    _SettingsLayer,  # pyright: ignore[reportPrivateUsage]
     infer_model,
 )
 from ._request_timeout import RequestDeadline
@@ -110,6 +111,12 @@ class WrapperModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return self.wrapped.prepare_request(model_settings, model_request_parameters)
+
+    def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
+        self.wrapped._warn_if_thinking_overridden(layers)
+
+    def _unified_effort(self, model_settings: ModelSettings | None) -> ThinkingEffort | None:
+        return self.wrapped._unified_effort(model_settings)
 
     def prepare_messages(
         self,

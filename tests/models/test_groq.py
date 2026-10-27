@@ -22,7 +22,9 @@ from pydantic_ai import (
     FinalResultEvent,
     ImageUrl,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
+    ModelOverloadedError,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -31,7 +33,9 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -171,14 +175,14 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -189,6 +193,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -210,6 +215,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -276,6 +282,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -394,11 +401,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         tool_name='get_location',
                         content='Wrong location, please try again',
                         tool_call_id='1',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -442,6 +451,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -549,6 +559,45 @@ async def test_map_text_content_input(allow_model_requests: None, groq_api_key: 
             ],
         }
     )
+
+
+async def test_structured_content_input(allow_model_requests: None, groq_api_key: str):
+    """A model without native structured input is sent the text the item rendered to, beside the other text.
+
+    The body is read off the wire with a request hook, which fires on replay too, so it's what the code sends now
+    rather than what the cassette recorded. `GroqProvider` takes a legacy `httpx.AsyncClient`, so the shared
+    `request_capture` fixture, an `httpx2` client, can't be injected.
+    """
+    sent: list[httpx.Request] = []
+
+    async def record(request: httpx.Request) -> None:
+        sent.append(request)
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [record]})
+    m = GroqModel('openai/gpt-oss-20b', provider=GroqProvider(api_key=groq_api_key, http_client=http_client))
+    agent = Agent(m, instructions='Answer from the UI state, in one short sentence.')
+
+    result = await agent.run(
+        [
+            StructuredContent({'url': '/products/42', 'cart': {'items': 2, 'total': 949.0}}, tag='ui_state'),
+            'How many items are in my cart?',
+        ]
+    )
+
+    [request] = sent
+    assert json.loads(request.content)['messages'][1] == snapshot(
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'text': '<ui_state>{"url":"/products/42","cart":{"items":2,"total":949.0}}</ui_state>',
+                    'type': 'text',
+                },
+                {'text': 'How many items are in my cart?', 'type': 'text'},
+            ],
+        }
+    )
+    assert result.output == snapshot('Your cart contains 2 items.')
 
 
 async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
@@ -755,7 +804,8 @@ async def test_stream_transport_error_mid_stream(allow_model_requests: None) -> 
             async with agent.run_stream('hello') as result:
                 await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'read'
     assert exc_info.value.message == 'peer closed connection without sending complete message body'
     assert isinstance(exc_info.value.__cause__, httpx.RemoteProtocolError)
 
@@ -778,7 +828,8 @@ _STREAM_ERROR_SSE_ERROR = (
     ],
 )
 async def test_stream_error_object_raises_model_api_error(allow_model_requests: None, content: bytes) -> None:
-    """An error object inside a 200 SSE stream surfaces as `ModelAPIError`, with no status code invented for it.
+    """An error object inside a 200 SSE stream surfaces as the `ModelHTTPError` the same error gets before a stream
+    opens, with `in_stream` set.
 
     A mock transport stands in for a cassette because no real provider returns such a stream on demand.
     https://github.com/pydantic/pydantic-ai/issues/8722
@@ -793,8 +844,12 @@ async def test_stream_error_object_raises_model_api_error(allow_model_requests: 
             async with Agent(model).run_stream('hello') as result:
                 await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
-    assert exc_info.value.message == 'over capacity'
+    assert isinstance(exc_info.value, ModelHTTPError)
+    assert isinstance(exc_info.value, ModelOverloadedError)
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.in_stream is True
+    assert exc_info.value.provider_error_code == 'service_unavailable'
+    assert exc_info.value.provider_error_type == 'server_error'
     cause = exc_info.value.__cause__
     assert isinstance(cause, APIError)
     assert cause.body == snapshot({'message': 'over capacity', 'type': 'server_error', 'code': 'service_unavailable'})
@@ -5365,17 +5420,17 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content=[
                             {
                                 'type': 'missing',
-                                'loc': ('name',),
+                                'loc': ['name'],
                                 'msg': 'Field required',
                                 'input': {'foo': 'bar'},
                             },
                             {
                                 'type': 'extra_forbidden',
-                                'loc': ('foo',),
+                                'loc': ['foo'],
                                 'msg': 'Extra inputs are not permitted',
                                 'input': 'bar',
                             },
@@ -5383,6 +5438,8 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         tool_name='get_something_by_name',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -5506,7 +5563,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=RequestUsage(cost=Decimal('0.000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5518,17 +5575,17 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content=[
                             {
                                 'type': 'missing',
-                                'loc': ('name',),
+                                'loc': ['name'],
                                 'msg': 'Field required',
                                 'input': {'invalid_param': 'value'},
                             },
                             {
                                 'type': 'extra_forbidden',
-                                'loc': ('invalid_param',),
+                                'loc': ['invalid_param'],
                                 'msg': 'Extra inputs are not permitted',
                                 'input': 'value',
                             },
@@ -5536,6 +5593,8 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                         tool_name='get_something_by_name',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -5651,7 +5710,7 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             {
                                 'type': 'json_invalid',
@@ -5660,7 +5719,7 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
                                 'input': 'maybe',
                             }
                         ],
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -5760,7 +5819,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                     ),
                     TextPart(content='maybe'),
                 ],
-                usage=RequestUsage(cost=Decimal('0.000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5772,7 +5831,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             {
                                 'type': 'json_invalid',
@@ -5781,7 +5840,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                                 'input': 'maybe',
                             }
                         ],
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],

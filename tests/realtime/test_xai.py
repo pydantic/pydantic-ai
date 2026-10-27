@@ -2275,8 +2275,20 @@ async def test_a_request_that_fails_to_commit_the_buffer_places_nothing_ahead_of
     await conn.send(_AUDIO)
     with pytest.raises(OSError):
         await conn.send(CreateResponse())
-    assert conn._lifecycle._sent_before_commits == deque()  # pyright: ignore[reportPrivateUsage]
+    assert conn._lifecycle._commits == deque()  # pyright: ignore[reportPrivateUsage]
     # A request committing nothing has no snapshot to drop.
     with pytest.raises(OSError):
         await conn.send(CreateResponse())
-    assert conn._lifecycle._sent_before_commits == deque()  # pyright: ignore[reportPrivateUsage]
+    assert conn._lifecycle._commits == deque()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_commit_under_server_vad_goes_out_but_is_not_waited_for() -> None:
+    """Under server VAD, xAI ignores a commit altogether (no acknowledgement, no error; checked live): it still goes out,
+    and nothing waits for its acknowledgement, so it makes no turn of its own when the session ends."""
+    ws = FakeWebSocket([])
+    conn = XaiRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(_AUDIO)
+    await conn.send(CommitAudio())
+    assert json.loads(ws.sent[-1]) == {'type': 'input_audio_buffer.commit', 'event_id': 'pydantic_ai.commit.1'}
+    assert conn._lifecycle._commits == deque()  # pyright: ignore[reportPrivateUsage]
+    assert conn._stop_reading() == []  # pyright: ignore[reportPrivateUsage]

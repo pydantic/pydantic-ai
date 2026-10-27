@@ -26,6 +26,7 @@ Provider-adaptive capabilities to reach for first:
 - `WebSearch`
 - `WebFetch`
 - `ImageGeneration`
+- `FileUnderstanding`
 - `MCP`
 
 For stricter safety handling, use `RaiseContentFilterError` to raise `ContentFilterError` whenever a model response has `finish_reason='content_filter'`, including responses with partial text.
@@ -53,8 +54,11 @@ Supported effort values:
 - `'medium'`
 - `'high'`
 - `'xhigh'`
+- `'max'`
 
-Thinking is model parity, not a per-model feature: a `ThinkingPart` from message history is sent back to whatever model you switch to. It rides the provider's own reasoning channel where the part is still usable there — it has to carry the credential that channel checks (a signature, a reasoning-item id) and have come from that same provider — and goes as text where it isn't: in the model's thinking tags for most models, and for the Anthropic family in a `user` message ahead of the assistant turn, wrapped in `<assistant_thinking model="..." provider="...">`, because Claude copies formatting it finds in assistant turns into the answers your users read. You do not have to strip thinking from history before switching models; the one profile that can turn the send-back off is `openai_chat_send_back_thinking_parts=False`, which no shipped model sets.
+Thinking is model parity, not a per-model feature: a `ThinkingPart` from message history is sent back to whatever model you switch to. It rides the provider's own reasoning channel where the part is still usable there — it has to carry the credential that channel checks (a signature, a reasoning-item id) and have come from that same provider — and goes as text where it isn't: in the model's thinking tags for most models, and for the Anthropic family in a `user` message ahead of the assistant turn, wrapped in `<assistant_thinking>`, because Claude copies formatting it finds in assistant turns into the answers your users read. You do not have to strip thinking from history before switching models; the one profile that can turn the send-back off is `openai_chat_send_back_thinking_parts=False`, which no shipped model sets.
+
+To change effort between runs or steps, change the unified `thinking` setting (a `model_settings` callable or a capability's `get_model_settings`); don't switch to `openai_reasoning_effort`/`anthropic_effort` for it. The framework records each change as a `ModelSettingsDeltaPart` and sends it as a mid-conversation `configuration_update` (OpenAI Responses, GPT-6) or per-message `output_config` (Anthropic), so the prompt cache survives; elsewhere it goes out as the request-level effort. On Anthropic, a change takes effect at the next user turn with new input, not after a tool-result-only step.
 
 ## Configure Prompt Caching Across Providers
 
@@ -141,7 +145,7 @@ Changing what the model sees from `before_model_request`:
 
 - Steering message the model sees now and that stays in the conversation: `ctx.enqueue(part)`. It goes into the request being prepared and into history, as its own `ModelRequest`.
 - Reminder true only for this request: `ctx.enqueue(SystemPromptPart(..., scope='request'))`. Anthropic sends it with `clear_at` and stops showing it once its request has been answered; elsewhere it's sent with its own request only. It stays in history either way.
-- State the model should track (todo list, notes): instructions, via `get_instructions` returning a callable. Each change re-sends everything after the instructions uncached.
+- State the model should track (todo list, notes): instructions with `on_change='append'`, via `@capability.instructions(name='state', on_change='append')` on a `Capability` with an `id`. Each change is appended to history as a replacement, so the cached prefix survives. Only for operator-controlled text: never tool arguments, tool output or user input. A callable returned from `get_instructions` opts in by returning `InstructionPart(..., name='state', on_change='append')`. With the default `'rewrite'` each change re-sends everything after the instructions uncached.
 - Change only this request (trim, filter, redact): assign a new list to `request_context.messages`. Build new messages and parts; mutating shared ones in place changes history too.
 - Rewrite history (compaction): `ctx.messages[:] = ...`, plus assign `request_context.messages` if this request should be sent it.
 - `request_context.messages.append(...)` also writes history, deprecated with a warning; use `ctx.enqueue(...)`.
@@ -166,7 +170,7 @@ React with `@on_event(SomeEvent, OtherEvent)` on an async capability method; a b
 
 Always name the classes when you can. They are what lets dispatch skip a capability without descending into it — a bare `@on_event`, or an overridden `on_event()`, opts that capability into every event in the run. Override `listens_to(event)` alongside a custom `on_event()` if you can report something narrower.
 
-Capability events reach the agent run event stream but UI adapters do not forward them, since they are internal signals. To surface one to a frontend, react to it from application code and emit your own `CustomEvent` with the public payload.
+Capability events reach the agent run event stream, and a realtime session's, but UI adapters do not forward them, since they are internal signals. One emitted from `after_run` comes after the stream has ended, so as in `iter()` only the listeners of a `dispatch='immediate'` event receive it; emitting there is still safe, in a realtime session too. To surface one to a frontend, react to it from application code and emit your own `CustomEvent` with the public payload.
 
 For application-level listening, prefer `@agent.on_event(SomeEvent)` — it takes the same event classes, filtering and `timeout=` as `Hooks.on.event` without a separate capability, runs after the capabilities' own listeners, and survives an overridden root capability. Reach for a `Hooks` capability when you also want hook families other than events, or when you need to choose where it sits among the other capabilities.
 
@@ -262,7 +266,7 @@ Use `for_agent(agent)` when a capability needs the agent's model, name, or tools
 
 ## Select a Model Dynamically
 
-Implement `get_model()` when reusable policy should choose the model, or use `SelectModel(selector)` for the common callable-only case. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, lower-precedence configured model on step one (then the previous step's model), step number, the run's prompt, the messages the selected model will be sent (ending with the request being routed, before its instructions are added), and accumulated usage. Keep `get_model()` cheap; put I/O in an async selector. Static choices are resolved once per run, while a selector runs once per new logical request step and not again for same-step continuation. A model-less agent can be bootstrapped by a selector because the callable is first evaluated during run setup, after dependencies and history are available.
+Implement `get_model()` when reusable policy should choose the model, or use `SelectModel(selector)` for the common callable-only case. Return a model or model ID for a static choice, or return a sync/async callable accepting `ModelSelectionContext` to choose before every request step. The context exposes the agent, run dependencies, lower-precedence configured model on step one (then the previous step's model), step number, the run's prompt, the messages the selected model will be sent (ending with the request being routed, before its instructions are added), accumulated usage, the run's `usage_limits`, `deadline`, `run_id` and `conversation_id`, and its output retry count and budget (`retry`, `max_retries`), which a selector can use to escalate to a stronger model after output validation failures. Keep `get_model()` cheap; put I/O in an async selector. Static choices are resolved once per run, while a selector runs once per new logical request step and not again for same-step continuation. A model-less agent can be bootstrapped by a selector because the callable is first evaluated during run setup, after dependencies and history are available.
 
 Explicit `run(model=...)`, run-spec, and `agent.override(model=...)` choices win and skip capability selection. Later capabilities override earlier model contributions. Same-step continuation remains pinned to its selected model; pass an explicit model when resuming a suspended provider-side request in another run.
 

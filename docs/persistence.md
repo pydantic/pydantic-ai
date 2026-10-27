@@ -11,7 +11,7 @@ A production agent serves each conversation across many requests, processes and 
 | You want to… | Use | Where it lives |
 |---|---|---|
 | Save a conversation and pick it up later — a chat thread, a support ticket, an assistant that remembers yesterday | [Store its `Conversation`](#storing-a-conversation-yourself) in a column of your own database | Core |
-| The same, with each message stored once, conflicting saves caught, and forking built in | A [`ConversationStore`](#using-a-conversation-store): your own backend, or SQLite, Postgres or MongoDB from the [Harness](https://pydantic.dev/docs/ai/harness/step-persistence/#storing-conversations) | Core and [Harness](https://pydantic.dev/docs/ai/harness/) |
+| The same, with each message stored once, conflicting saves caught, and forking built in | A [`ConversationStore`](#using-a-conversation-store) on your own database | Core |
 | A log of what each run did, and snapshots to continue or fork a run from | [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | The agent to remember what it learned about someone *across* conversations, not just within one | [`Memory`](https://pydantic.dev/docs/ai/harness/memory/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | A run to survive the process dying mid-tool-call, replaying its completed steps and retrying the one in flight | [Durable execution](durable_execution/overview.md) | Core |
@@ -97,7 +97,7 @@ agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
 async def chat(store: ConversationStore, conversation_id: str, prompt: str) -> str:
     conversation = await store.load(conversation_id) or Conversation(conversation_id=conversation_id)
     result = await agent.run(prompt, conversation=conversation)
-    await store.save(result.conversation)
+    await store.save(result)
     return result.output
 
 
@@ -108,9 +108,17 @@ async def main():
     #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
 
-Each save is checked against the conversation's [`revision`][pydantic_ai.conversation.Conversation.revision], which `load` sets and a run carries through to its result. If someone else saved the conversation in between, or a new conversation reuses a stored one's ID, `save` raises [`ConversationConflict`][pydantic_ai.conversation_store.ConversationConflict] instead of overwriting it: load it again and retry. `save` advances the revision of the conversation you pass it, and `result.conversation` builds a new conversation on each access, so to save again or continue from it, keep the one you saved in a variable. Pass `scope=` to `save` to record whose conversation it is, and [`list_conversations`][pydantic_ai.conversation_store.ConversationStore.list_conversations] by it, most recently saved first, with `limit=` for the newest few.
+Each save is checked against the conversation's [`revision`][pydantic_ai.conversation.Conversation.revision], which `load` sets and a run carries through to its result. If someone else saved the conversation in between, or a new conversation reuses a stored one's ID, `save` raises [`ConversationConflict`][pydantic_ai.conversation_store.ConversationConflict] instead of overwriting it: load it again and retry. `save` takes a run's result, as above, or a [`Conversation`][pydantic_ai.conversation.Conversation], and advances its revision, so `result.conversation` can be continued or saved again afterwards.
 
-[`InMemoryConversationStore`][pydantic_ai.conversation_store.InMemoryConversationStore] is for tests and examples. For a real database, use one of the [Harness backends](https://pydantic.dev/docs/ai/harness/step-persistence/#storing-conversations), for SQLite, Postgres and MongoDB, or subclass `ConversationStore` for your own: it implements the loading, saving and forking on five storage primitives, so a backend only reads and writes records and entries.
+Pass `scope=` to `save` to record whose conversation it is, such as a user ID, and [`list_conversations`][pydantic_ai.conversation_store.ConversationStore.list_conversations] by it, most recently saved first, with `limit=` for the newest few. Pass the same `scope=` to `load` and the other methods that read or change a conversation, to keep it to its owner: one saved with another scope is treated as one the store doesn't have, so a guessed `conversation_id` doesn't reach it.
+
+The stored conversation only ever grows. `load` records where the stored messages end, as the conversation's [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index], and a run carries it to its result, so `save` appends just the messages the run added. That holds when a capability trims or rewrites the history a run is sent, like [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] keeping the last few turns: the model sees the trimmed history, and the store keeps the whole one. So does a run that only needs the recent turns: `load(conversation_id, limit=20)` loads the last 20 messages, and saving the result appends to the whole conversation. A message you add to the end of a loaded conversation before a run, like a user's new turn, is saved with what the run added.
+
+To regenerate a reply or edit an earlier turn, [`branch`][pydantic_ai.conversation_store.ConversationStore.branch] the conversation from the message before it, then run and save as usual: the new turn goes on the branch. The history it left stays stored, listed in its record's [`branches`][pydantic_ai.conversation_store.ConversationRecord.branches], so the conversation can branch back to it with `from_entry=`. To explore from a point without moving the conversation, say to try several approaches side by side, [`fork`][pydantic_ai.conversation_store.ConversationStore.fork] a new conversation from it for each, sharing the history instead of copying it.
+
+Each stored message is a [`ConversationEntry`][pydantic_ai.conversation_store.ConversationEntry] with an [`id`][pydantic_ai.conversation_store.ConversationEntry.id] of its own, which is what to tie a rating or a billing row to. `save` returns the entries it stored, and [`load_entries`][pydantic_ai.conversation_store.ConversationStore.load_entries] loads a conversation's history with them.
+
+[`InMemoryConversationStore`][pydantic_ai.conversation_store.InMemoryConversationStore] is for tests and examples. For a real database, subclass `ConversationStore`: it implements the loading, saving and forking on five storage primitives, so a backend only reads and writes records and entries.
 
 ## Not writing that code yourself
 

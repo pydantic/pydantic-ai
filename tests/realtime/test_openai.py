@@ -38,6 +38,7 @@ from pydantic_ai.messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -48,7 +49,8 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
@@ -89,6 +91,7 @@ from pydantic_ai.realtime._openai_protocol import (
     seed_items,
     server_vad_from_turn_detection,
 )
+from pydantic_ai.realtime._utils import session_instructions
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     CancelResponse,
@@ -114,7 +117,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import IsDatetime, try_import
+from ..conftest import IsDatetime, legacy_retry_prompt_part, try_import
 from ..realtime_connections import lifecycle_events
 from .test_session import FakeRealtimeModel, make_tool_manager
 from .ws_helpers import collect_codec_events, collect_session_events
@@ -1247,6 +1250,8 @@ def test_session_config_thinking_maps_to_reasoning_on_reasoning_models() -> None
 
     assert reasoning('low') == {'effort': 'low'}
     assert reasoning('high') == {'effort': 'high'}
+    # The realtime reasoning efforts stop at `xhigh`, where `max` lands.
+    assert reasoning('max') == {'effort': 'xhigh'}
     assert reasoning(True) == {'effort': 'medium'}
     # `thinking=False` sends effort `'none'`, which the SDK type omits but the reasoning models accept
     # and honor with zero reasoning tokens; omitting `reasoning` would leave them at their default effort.
@@ -1661,6 +1666,88 @@ async def test_connect_without_tools_omits_tools(monkeypatch: pytest.MonkeyPatch
     assert 'voice' not in session['audio']['output']
 
 
+async def test_connect_sends_seeded_system_prompts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The standing system prompt opens the session instructions; a later one is seeded in place as `<system>` text."""
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='Standing prompt.'), UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='Mid-conversation note.'), UserPromptPart(content='more')]),
+        ModelResponse(parts=[TextPart(content='sure')]),
+    ]
+    model = OpenAIRealtimeModel('gpt-realtime')
+    async with model.connect(
+        messages=[*history, ModelRequest(parts=[])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            instruction_parts=[InstructionPart(content='Agent instructions.')]
+        ),
+    ):
+        pass
+
+    assert json.loads(ws.sent[0])['session']['instructions'] == 'Standing prompt.\n\nAgent instructions.'
+    assert [
+        (item['item']['role'], [content['text'] for content in item['item']['content']])
+        for item in map(json.loads, ws.sent[1:])
+    ] == snapshot(
+        [
+            ('user', ['hi']),
+            ('assistant', ['hello']),
+            ('user', ['<system>Mid-conversation note.</system>']),
+            ('user', ['more']),
+            ('assistant', ['sure']),
+        ]
+    )
+
+
+async def test_seed_items_drop_answered_request_scoped_system_prompts() -> None:
+    """A request-scoped system prompt whose request was answered isn't seeded; the current request's still is.
+
+    That's what `Model.prepare_messages` does for a model that can't clear request-scoped prompts itself.
+    """
+    history = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='Standing prompt.'),
+                SystemPromptPart(content='Answered note.', scope='request'),
+                UserPromptPart(content='hi'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(
+            parts=[SystemPromptPart(content='Current note.', scope='request'), UserPromptPart(content='more')]
+        ),
+    ]
+    items = await seed_items(history, profile=RealtimeModelProfile(), provider_name='openai')
+    assert [(item['role'], [content['text'] for content in item['content']]) for item in items] == (
+        snapshot(
+            [
+                ('user', ['hi']),
+                ('assistant', ['hello']),
+                ('user', ['<system>Current note.</system>']),
+                ('user', ['more']),
+            ]
+        )
+    )
+
+    # A system prompt after a leading request-scoped one isn't the standing prompt, so dropping the
+    # request-scoped one doesn't make it one: it's seeded in place rather than lost.
+    history[0] = ModelRequest(
+        parts=[
+            SystemPromptPart(content='Answered note.', scope='request'),
+            SystemPromptPart(content='Later prompt.'),
+            UserPromptPart(content='hi'),
+        ]
+    )
+    assert session_instructions(history, ModelRequestParameters()) == ''
+    items = await seed_items(history, profile=RealtimeModelProfile(), provider_name='openai')
+    assert [(item['role'], [content['text'] for content in item['content']]) for item in items][:2] == [
+        ('user', ['<system>Later prompt.</system>']),
+        ('user', ['hi']),
+    ]
+
+
 async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:
     async def download_image(*args: Any, **kwargs: Any) -> Any:
         return {'data': b'url-image', 'data_type': 'image/png'}
@@ -1698,8 +1785,13 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='weather', content='sunny', tool_call_id='call-1'),
-                RetryPromptPart(tool_name='lookup', content='invalid id', tool_call_id='call-2'),
-                RetryPromptPart(content='answer in prose'),
+                legacy_retry_prompt_part(tool_name='lookup', content='invalid id', tool_call_id='call-2'),
+                legacy_retry_prompt_part(content='answer in prose'),
+                RetryFeedbackPart(content='answer in prose', retry=RetryInfo(cause='model_retry')),
+                RetryFeedbackPart(
+                    content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an integer', 'input': 'lots'}],
+                    retry=RetryInfo(cause='validation_error'),
+                ),
                 UserPromptPart(
                     content=[
                         ImageUrl(url='https://example.com/a.png'),
@@ -1772,7 +1864,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                 'item': {
                     'type': 'function_call_output',
                     'call_id': 'call-2',
-                    'output': 'invalid id\n\nFix the errors and try again.',
+                    'output': '{"error":"invalid id"}',
                 },
             },
             {
@@ -1783,7 +1875,48 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in prose
+</retry_feedback>\
+""",
+                        }
+                    ],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in prose
+</retry_feedback>\
+""",
+                        }
+                    ],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"not an integer","input":"lots"}]
+</validation_errors>\
+""",
                         }
                     ],
                 },
@@ -2450,7 +2583,7 @@ async def test_connection_send_commit_and_clear_audio() -> None:
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     await conn.send(CommitAudio())
     await conn.send(ClearAudio())
-    assert json.loads(ws.sent[0]) == {'type': 'input_audio_buffer.commit'}
+    assert json.loads(ws.sent[0]) == {'type': 'input_audio_buffer.commit', 'event_id': 'pydantic_ai.commit.0'}
     assert json.loads(ws.sent[1]) == {'type': 'input_audio_buffer.clear'}
 
 
@@ -5589,6 +5722,58 @@ async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_th
     assert streamed_part.audio is not None and streamed_part.audio.data[44:] == sent
 
 
+def _push_to_talk_session(ws: _QueuedWebSocket) -> RealtimeSession:
+    connection = OpenAIRealtimeConnection(ws, manual_turns=True)  # type: ignore[arg-type]
+    return RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='input_audio',
+    )
+
+
+@pytest.mark.anyio
+async def test_push_to_talk_turn_closed_before_its_commit_is_acknowledged_keeps_its_audio() -> None:
+    """A turn `commit_audio()` committed is recorded with its retained audio though the session closes before
+    reading the provider's `input_audio_buffer.committed`: the provider has it, and no transcript is coming."""
+    ws = _QueuedWebSocket()
+    session = _push_to_talk_session(ws)
+    pcm = b'\x01\x00' * 2_400
+    async with session:
+        await session.send_audio(pcm)
+        await session.commit_audio()
+
+    [request] = session.all_messages()
+    [part] = request.parts
+    assert isinstance(part, SpeechPart) and part.speaker == 'user' and part.transcript is None
+    assert part.audio is not None and part.audio.data[44:] == pcm
+
+
+@pytest.mark.anyio
+async def test_push_to_talk_commits_the_provider_refuses_or_of_nothing_make_no_turn_at_close() -> None:
+    """A commit with no audio sent since the last one, or one the provider refused as too short, is no turn when
+    the session closes before anything acknowledges it."""
+    ws = _QueuedWebSocket()
+    session = _push_to_talk_session(ws)
+    async with session:
+        await session.send_audio(b'\x01\x00' * 100)
+        await session.commit_audio()
+        ws.push(
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'code': 'input_audio_buffer_commit_empty',
+                    'message': 'Error committing input audio buffer: buffer too small.',
+                },
+            }
+        )
+        assert isinstance(await anext(aiter(session)), RealtimeSessionErrorEvent)
+        await session.commit_audio()
+
+    assert session.all_messages() == []
+
+
 @pytest.mark.anyio
 async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None:
     """What tools see is the core's history itself, so its retained audio is kept, and bounded, once.
@@ -6148,3 +6333,59 @@ async def test_evicted_output_audio_is_released() -> None:
         assert [audio is not None for audio in retained()] == [False, True]
         gc.collect()
         assert evicted is not None and evicted() is None
+
+
+async def test_prune_tool_items_deletes_each_answered_call_with_its_output() -> None:
+    """Both of a call's items go together; a kept tool's stay, and so does a call whose output isn't in view."""
+
+    def added(item_type: str, call_id: str, item_id: str, name: str | None = None) -> str:
+        item = {'id': item_id, 'type': item_type, 'call_id': call_id, **({'name': name} if name else {})}
+        return json.dumps({'type': 'conversation.item.added', 'item': item})
+
+    frames = [
+        added('function_call', 'c1', 'item_c1', 'drop_me'),
+        added('function_call_output', 'c1', 'item_o1'),
+        added('function_call', 'c2', 'item_c2', 'keep_me'),
+        added('function_call_output', 'c2', 'item_o2'),
+        added('function_call', 'c3', 'item_c3', 'drop_me'),
+        # The beta protocol's acknowledgement counts too.
+        json.dumps(
+            {'type': 'conversation.item.created', 'item': {'id': 'item_c5', 'type': 'function_call', 'call_id': 'c5'}}
+        ),
+        json.dumps(
+            {
+                'type': 'conversation.item.created',
+                'item': {'id': 'item_o5', 'type': 'function_call_output', 'call_id': 'c5'},
+            }
+        ),
+        # An output of a call this connection didn't see.
+        added('function_call_output', 'c4', 'item_o4'),
+        # Malformed: ignored here.
+        json.dumps({'type': 'conversation.item.added', 'item': 'not an item'}),
+    ]
+    ws = FakeWebSocket(frames)
+    conn = OpenAIRealtimeConnection(ws, prune_tool_items=True, keep_tool_items={'keep_me'})  # type: ignore[arg-type]
+    await collect_codec_events(conn)
+    # Content the tool returned besides its output follows it as a user message, which goes with the call too.
+    await conn.send(ToolResult(tool_call_id='c1', output='Taken.', content=['A photo of the table.']))
+    [content_item] = [json.loads(frame)['item'] for frame in ws.sent if '"role":"user"' in frame]
+    calls = [
+        ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c1'),
+        ToolCallPart(tool_name='keep_me', args='{}', tool_call_id='c2'),
+        ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c3'),
+        ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c5'),
+    ]
+    assert await conn._prune_tool_calls(calls) == ['c1', 'c5']  # pyright: ignore[reportPrivateUsage]
+    assert [json.loads(frame) for frame in ws.sent if 'item.delete' in frame] == [
+        {'type': 'conversation.item.delete', 'item_id': 'item_c1'},
+        {'type': 'conversation.item.delete', 'item_id': 'item_o1'},
+        {'type': 'conversation.item.delete', 'item_id': content_item['id']},
+        {'type': 'conversation.item.delete', 'item_id': 'item_c5'},
+        {'type': 'conversation.item.delete', 'item_id': 'item_o5'},
+    ]
+    # With pruning off, nothing is deleted: kept tools alone don't turn it on.
+    off_ws = FakeWebSocket(frames)
+    off = OpenAIRealtimeConnection(off_ws, keep_tool_items={'keep_me'})  # type: ignore[arg-type]
+    await collect_codec_events(off)
+    assert await off._prune_tool_calls(calls) == []  # pyright: ignore[reportPrivateUsage]
+    assert not [frame for frame in off_ws.sent if 'item.delete' in frame]

@@ -11,6 +11,8 @@ from typing import Literal, assert_never, overload
 
 import anyio
 
+from .._framing import SYSTEM_TAG, wrap
+from .._instrumentation import get_instructions
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -18,22 +20,73 @@ from ..messages import (
     BinaryContent,
     CachePoint,
     DocumentUrl,
+    FilePart,
     ImageUrl,
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    RetryFeedbackPart,
     SpeechPart,
     SpeechPartDelta,
+    SystemPromptPart,
     TextContent,
     TextPart,
+    ToolReturnPart,
     UploadedFile,
     UserContent,
     UserPromptPart,
     VideoUrl,
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
 )
-from ..models import ModelRequestParameters, download_item
+from ..models import (
+    ModelRequestParameters,
+    _drop_superseded_request_scoped_prompts,  # pyright: ignore[reportPrivateUsage]
+    _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
+    _wrap_non_leading_system_prompts,  # pyright: ignore[reportPrivateUsage]
+    download_item,
+)
 from ..models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from ..settings import ToolChoice
 from ..tools import ToolDefinition
 from .codec import RealtimeSessionInput
 from .settings import ReconnectPolicy
+
+
+def _standing_system_prompt(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
+    """The `SystemPromptPart`s the first request of `messages` opens with."""
+    first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+    if first_request is None:
+        return []
+    standing = first_request.parts[: _standing_system_prompt_count(first_request)]
+    return [part for part in standing if isinstance(part, SystemPromptPart)]
+
+
+def session_instructions(messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters) -> str:
+    """The instructions a realtime session is configured with.
+
+    The standing system prompt the first request opens with comes first, then the resolved
+    instructions, the order a standard run's providers send them in. `ModelRequest.instructions`
+    recorded in `messages` are never read: only `model_request_parameters.instruction_parts` count.
+    """
+    blocks = [part.content for part in _standing_system_prompt(messages) if part.content]
+    if instructions := get_instructions(messages, model_request_parameters):
+        blocks.append(instructions)
+    return '\n\n'.join(blocks)
+
+
+def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """Turn the mid-conversation `SystemPromptPart`s in seeded history into `<system>`-tagged user text.
+
+    The standing system prompt is left for the seeders to skip, as `session_instructions` carries it.
+    A later system prompt stays where it was in the conversation, and a request-scoped one whose request
+    has been answered is left out: what `Model.prepare_messages` does for a model without inline or
+    request-scoped system prompts.
+    """
+    # Counted on the history as authored, as `prepare_messages` does: dropping a leading request-scoped
+    # prompt mustn't promote the system prompt after it into the standing one `session_instructions` skips.
+    standing_prompt_count = len(_standing_system_prompt(messages))
+    messages = _drop_superseded_request_scoped_prompts(list(messages))
+    return _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
 
 
 def resolve_advertised_tools(
@@ -52,6 +105,27 @@ def resolve_advertised_tools(
         _, allowed = resolved
         return [tool for tool in tools if tool.name in allowed], resolved
     return tools, resolved
+
+
+def reject_forced_tool_choice(tool_choice: ResolvedToolChoice | None, message: str) -> None:
+    """Raise `UserError(message)` for a resolved `tool_choice` that forces a tool call.
+
+    No realtime session can honor one: a provider that takes a tool choice applies it to every response,
+    including the one after a tool result, so the model could never answer, and one that takes none
+    can't express it. `message` gives the provider's reason and what to use instead.
+    """
+    if (tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice) == 'required':
+        raise UserError(message)
+
+
+class SystemPromptText(str):
+    """`<system>`-tagged text a session delivers for system-prompt parts alone (`enqueue(SystemPromptPart(...))`).
+
+    It goes out as a `str` text turn like any other, so a connection that doesn't look for it delivers it as one; one
+    whose protocol says who wrote what can deliver it as the operator's rather than the user's.
+    """
+
+    __slots__ = ()
 
 
 DEFAULT_MAX_RECONNECTS = 50
@@ -130,6 +204,18 @@ async def seed_user_content(
         else:
             assert_never(item)
     return result
+
+
+def seed_retry_feedback_text(part: RetryFeedbackPart) -> str:
+    """The text a realtime session seeds retry feedback as.
+
+    A seeded turn has no mid-conversation system role, and a retry answers one response rather than
+    standing over the session, so it goes in as user text. Feedback bound for the system voice takes the
+    `<system>` tagging every model without a mid-conversation system message gets, which keeps the
+    model from reading it as something a person said (https://github.com/pydantic/pydantic-ai/issues/6404).
+    """
+    text = part.model_response()
+    return wrap(SYSTEM_TAG, text) if _retry_feedback_speaks_for_the_harness(part) else text
 
 
 @overload
@@ -288,3 +374,40 @@ def user_transcript_update(previous: str, text: str, *, cumulative: bool) -> tup
         return text, delta(text, text)
     # A revision: nothing was *added*, so only the corrected whole is reported.
     return text, delta(text, '')
+
+
+# What a spoken user turn with no transcript (transcription off, or the transcript never arrived)
+# replays as. Without it the turn would vanish and the fresh session would read the answer to it as the
+# model speaking unprompted. Written here, on the way to the provider, and never persisted: history
+# keeps the turn as the `SpeechPart` it was.
+_TRANSCRIPTLESS_SPEECH_MARKER = '[The user spoke; no transcript is available.]'
+
+
+def without_media(message: ModelMessage) -> ModelMessage | None:
+    """Strip audio and images from a message, dropping it entirely when nothing is left to replay.
+
+    A user `SpeechPart` without a transcript has nothing left once its audio goes, so it is replaced by
+    a marker saying the user spoke.
+    """
+    if isinstance(message, ModelRequest):
+        request_parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            if isinstance(part, SpeechPart):
+                if part.transcript:
+                    request_parts.append(replace(part, audio=None))
+                else:
+                    request_parts.append(UserPromptPart(content=_TRANSCRIPTLESS_SPEECH_MARKER))
+            elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                if text := [item for item in part.content if isinstance(item, (str, TextContent))]:
+                    request_parts.append(replace(part, content=text))
+            elif isinstance(part, ToolReturnPart) and part.files:
+                request_parts.append(replace(part, content=part.model_response_str(wrap_if_error=False)))
+            else:
+                request_parts.append(part)
+        return replace(message, parts=request_parts) if request_parts else None
+    response_parts = [
+        replace(part, audio=None) if isinstance(part, SpeechPart) else part
+        for part in message.parts
+        if not isinstance(part, FilePart)
+    ]
+    return replace(message, parts=response_parts) if response_parts else None

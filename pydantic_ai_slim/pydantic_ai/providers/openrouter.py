@@ -119,6 +119,32 @@ def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
     return merge_profile(profile, ModelProfile(json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer))
 
 
+_MANDATORY_REASONING_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    # Claude Sonnet 5.5 turns thinking off with `thinking={'type': 'between_tools'}` on the Anthropic API, which
+    # OpenRouter's `reasoning` field can't express.
+    'anthropic': ('claude-sonnet-5-5',),
+    'google': ('gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-4-argon'),
+    'moonshotai': ('kimi-k2.7-code', 'kimi-k2-thinking'),
+    'openai': ('gpt-5.2-codex', 'gpt-oss-'),
+    'qwen': (
+        'qwen3.8-max',
+        'qwen3.8-2.4t',
+        'qwen3-vl-30b-a3b-thinking',
+        'qwen3-next-80b-a3b-thinking',
+        'qwen3-235b-a22b-thinking',
+    ),
+    'x-ai': ('grok-4.20-multi-agent', 'grok-build'),
+    'z-ai': ('glm-5.3',),
+}
+"""Model-name prefixes, per upstream provider, of the OpenRouter routes that make reasoning mandatory.
+
+OpenRouter rejects `reasoning={'effort': 'none'}` on these with "Reasoning is mandatory for this endpoint and cannot
+be disabled", including for models that can turn reasoning off on their own API, so their OpenRouter profile marks
+them always-on and `thinking=False` asks for the lowest effort instead. Taken from `reasoning.mandatory` in
+[OpenRouter's model list](https://openrouter.ai/api/v1/models), for the providers that have a model profile here.
+"""
+
+
 class OpenRouterProvider(_OpenAICompatibleProvider):
     """Provider for OpenRouter API."""
 
@@ -172,6 +198,9 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
             # Inline GLM-5.3 schemas without importing Z.AI's native thinking settings.
             # See https://github.com/pydantic/pydantic-ai/issues/10243.
             profile = ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer)
+
+        if model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
+            profile = merge_profile(profile, ModelProfile(thinking_always_enabled=True))
 
         # Cache capability flags are set on the gateway layer based on the downstream provider.
         # The TTL / tool-cache / dynamic-instruction flags are kept separate even though they all

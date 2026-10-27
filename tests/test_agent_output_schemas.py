@@ -17,7 +17,7 @@ from pydantic_ai import (
     TextOutput,
     ToolOutput,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition
@@ -263,6 +263,57 @@ def test_output_json_schema_transitive_collision_preserves_branches(
     schema = Agent(TestModel(), output_type=[first, second]).output_json_schema()
 
     assert schema == expected
+
+
+def test_output_json_schema_contains_refs_preserve_branch_types():
+    """Use `json_schema_extra` to move `items` to `contains` and exercise colliding item definitions."""
+
+    def use_contains(schema: dict[str, Any]) -> None:
+        schema['contains'] = schema.pop('items')
+
+    first_item = create_model('Item', value=(int, ...))
+    second_item = create_model('Item', value=(str, ...))
+    first = create_model('First', values=(list[first_item], Field(json_schema_extra=use_contains)))
+    second = create_model('Second', values=(list[second_item], Field(json_schema_extra=use_contains)))
+
+    schema = Agent(TestModel(), output_type=[first, second]).output_json_schema()
+
+    assert schema == snapshot(
+        {
+            'anyOf': [
+                {
+                    'properties': {
+                        'values': {'contains': {'$ref': '#/$defs/Item'}, 'title': 'Values', 'type': 'array'}
+                    },
+                    'required': ['values'],
+                    'title': 'First',
+                    'type': 'object',
+                },
+                {
+                    'properties': {
+                        'values': {'contains': {'$ref': '#/$defs/Second_Item_1'}, 'title': 'Values', 'type': 'array'}
+                    },
+                    'required': ['values'],
+                    'title': 'Second',
+                    'type': 'object',
+                },
+            ],
+            '$defs': {
+                'Item': {
+                    'properties': {'value': {'title': 'Value', 'type': 'integer'}},
+                    'required': ['value'],
+                    'title': 'Item',
+                    'type': 'object',
+                },
+                'Second_Item_1': {
+                    'properties': {'value': {'title': 'Value', 'type': 'string'}},
+                    'required': ['value'],
+                    'title': 'Item',
+                    'type': 'object',
+                },
+            },
+        }
+    )
 
 
 async def test_tool_output_json_schema():
@@ -637,7 +688,7 @@ async def test_deferred_output_json_schema():
                         'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
                         'tool_kind': {
                             'anyOf': [
-                                {'enum': ['tool-search', 'capability-load'], 'type': 'string'},
+                                {'type': 'string'},
                                 {'type': 'null'},
                             ],
                             'default': None,
@@ -755,7 +806,7 @@ async def test_deferred_output_json_schema():
                         'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
                         'tool_kind': {
                             'anyOf': [
-                                {'enum': ['tool-search', 'capability-load'], 'type': 'string'},
+                                {'type': 'string'},
                                 {'type': 'null'},
                             ],
                             'default': None,
@@ -1049,7 +1100,11 @@ async def test_annotated_output_tool_schema_and_validation():
                 },
             ]
         )
-        retried = any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+        retried = any(
+            isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+            for message in messages
+            for part in message.parts
+        )
         return ModelResponse(parts=[ToolCallPart('final_result_Ticket', {'urgent': retried})])
 
     # Type checkers read an `Annotated[...]` expression as the `Annotated` special form rather than a type.
@@ -1093,7 +1148,9 @@ Answer = Annotated[str, Field(description='A plain answer.', min_length=5)]
 
 def urgent_on_retry(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Call the `Ticket` output tool with a non-urgent ticket, and with an urgent one once the validator objected."""
-    retried = any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+    retried = any(
+        isinstance(part, ToolReturnPart) and part.outcome == 'retried' for message in messages for part in message.parts
+    )
     return ModelResponse(parts=[ToolCallPart('final_result_Ticket', {'urgent': retried})])
 
 
@@ -1181,7 +1238,9 @@ async def test_structured_output_union_annotated_member(marker: type[NativeOutpu
         assert info.model_request_parameters.output_object is not None
         [ticket_schema, _] = info.model_request_parameters.output_object.json_schema['properties']['result']['anyOf']
         descriptions.append(ticket_schema['description'])
-        retried = any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+        # The model is handed the history `prepare_messages` translated, so the feedback arrives as a
+        # fenced user prompt rather than as the `RetryFeedbackPart` stored in the history.
+        retried = len(messages) > 1
         return ModelResponse(parts=[TextPart(json.dumps({'result': {'kind': 'Ticket', 'data': {'urgent': retried}}}))])
 
     output_type: Any = UrgentTicket | Escalation

@@ -182,7 +182,7 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
 
         provider = normalize_gateway_provider(provider)
 
-    if provider in ('openai', 'openai-chat', 'openai-responses'):
+    if provider in ('openai', 'openai-chat', 'openai-responses', 'openai-decisions'):
         from .openai import OpenAIProvider
 
         return OpenAIProvider
@@ -194,10 +194,6 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .openai_chatgpt import OpenAIChatGPTProvider
 
         return OpenAIChatGPTProvider
-    elif provider == 'openai-decisions':
-        from .openai_decisions import OpenAIDecisionsProvider
-
-        return OpenAIDecisionsProvider
     elif provider == 'deepseek':
         from .deepseek import DeepSeekProvider
 
@@ -258,6 +254,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .crusoe import CrusoeProvider
 
         return CrusoeProvider
+    elif provider == 'elevenlabs':
+        from .elevenlabs import ElevenLabsProvider
+
+        return ElevenLabsProvider
     elif provider == 'xai':
         from .xai import XaiProvider
 

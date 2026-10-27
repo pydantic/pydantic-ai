@@ -19,6 +19,7 @@ from anyio.to_thread import run_sync
 
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteSessionStore
+from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks
 from pydantic_clai2.runtime import claude_code_sessions, codex_sessions
 from pydantic_clai2.runtime.imported_history import Header
 from pydantic_clai2.ui import telemetry
@@ -39,6 +40,8 @@ class _Source:
     titles: Callable[[Path], dict[str, str]]
     header: Callable[[Path], Header | None]
     messages: Callable[[Path], list[ModelMessage]]
+    tasks: Callable[[Path, str], list[DelegationTask]]
+    """The session's sub-agents, as finished tasks of the CLAI conversation."""
 
 
 _SOURCES: dict[ImportSource, _Source] = {
@@ -50,6 +53,7 @@ _SOURCES: dict[ImportSource, _Source] = {
         titles=claude_code_sessions.titles,
         header=claude_code_sessions.header,
         messages=claude_code_sessions.messages,
+        tasks=claude_code_sessions.tasks,
     ),
     'codex': _Source(
         label='Codex',
@@ -59,6 +63,7 @@ _SOURCES: dict[ImportSource, _Source] = {
         titles=codex_sessions.titles,
         header=codex_sessions.header,
         messages=codex_sessions.messages,
+        tasks=lambda _path, _conversation_id: [],
     ),
 }
 
@@ -66,6 +71,39 @@ _SOURCES: dict[ImportSource, _Source] = {
 def import_source(name: str) -> ImportSource | None:
     """The source a `/resume` argument names, if it names one."""
     return next((source for source in IMPORT_SOURCES if source == name), None)
+
+
+def source_of(summary: ConversationSummary) -> ImportSource | None:
+    """The agent a session was imported from, or `None` for CLAI's own.
+
+    An import's ID derives from its source, unlike the random ID CLAI gives its own sessions, and its
+    first tag names the source; a topic tag a naming model chose that happens to name one is neither.
+    """
+    try:
+        derived = UUID(summary.id).version == 5
+    except ValueError:
+        derived = False
+    return import_source(summary.tags[0]) if derived and summary.tags else None
+
+
+def source_label(source: ImportSource) -> str:
+    """The name the agent goes by, such as `Claude Code`."""
+    return _SOURCES[source].label
+
+
+def imported_from(summary: ConversationSummary) -> str | None:
+    """The name of the agent a session was imported from, or `None` for CLAI's own."""
+    source = source_of(summary)
+    return None if source is None else source_label(source)
+
+
+def with_source_tags(previous: ConversationSummary, tags: Sequence[str]) -> tuple[str, ...]:
+    """`tags` without source names, led by the source of an import, so renaming it keeps where it came from.
+
+    Only an import keeps its source tag: a fork of one, under an ID of its own, is CLAI's and drops it.
+    """
+    source = previous.tags[:1] if imported_from(previous) is not None else ()
+    return (*source, *(tag for tag in tags if import_source(tag) is None))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -80,6 +118,10 @@ class ImportedSession:
     def messages(self) -> list[ModelMessage]:
         """Read the whole transcript. Blocking file IO, so call it off the event loop."""
         return _SOURCES[self.source].messages(self.path)
+
+    def tasks(self) -> list[DelegationTask]:
+        """Read the session's sub-agent transcripts. Blocking file IO, so call it off the event loop."""
+        return _SOURCES[self.source].tasks(self.path, self.summary.id)
 
 
 def _modified(path: Path) -> float | None:
@@ -184,11 +226,14 @@ def merge(
     return entries[:limit]
 
 
-async def save_import(store: SqliteSessionStore, imported: ImportedSession) -> str:
+async def save_import(
+    store: SqliteSessionStore, imported: ImportedSession, *, delegations: DelegationTasks | None = None
+) -> str:
     """Copy a session into the store, or refresh a copy CLAI has not continued, and return its CLAI ID.
 
     The refresh does not compare times: the original may change while it is being read, after its
-    time was taken, and that turn would never be imported.
+    time was taken, and that turn would never be imported. With `delegations`, the session's sub-agents
+    become its tasks too, except one CLAI has since resumed.
     """
     try:
         saved = (await store.get(conversation_id=imported.summary.id)).summary
@@ -216,5 +261,10 @@ async def save_import(store: SqliteSessionStore, imported: ImportedSession) -> s
         # Only once the new transcript has been read, so a failed refresh keeps the previous copy.
         await store.delete(source=saved)
     await store.save(summary=summary, messages=messages)
-    telemetry.record('conversation imported', source=imported.source, messages=len(messages))
+    tasks = await run_sync(imported.tasks) if delegations is not None else []
+    if delegations is not None:
+        for task in tasks:
+            # A task resumed since has a new run ID, and is kept.
+            await delegations.restore(task)
+    telemetry.record('conversation imported', source=imported.source, messages=len(messages), tasks=len(tasks))
     return imported.summary.id

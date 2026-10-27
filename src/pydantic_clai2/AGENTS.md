@@ -190,8 +190,12 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
 - **Shipped plugins register first, in declared order.** The menu's alphabetical
   order is for scanning only. Registration order is the order instructions,
   renderers, and status segments are consulted in, so `coder`'s guidance leads
-  the prompt. `customization_guide()` orders itself after the guidance plugins
-  contribute and before harness `RepoContext`, so the CLAI hint never leads.
+  the prompt.
+- **Integrations are deferred.** Only the coding loop and run plumbing are eager.
+  The customization guide (`clai_customization`) and every hosted integration
+  plugin pass `defer_loading=True` on the capability they build (on the one a
+  `for_run` function returns, never on the `DynamicCapability`), so each costs one
+  catalog line until the model calls `load_capability`. A new integration does the same.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
   `config/builtins.py` lists the library's built-ins (re-exported by `_app.py`,
   kept apart so `clai2 plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
@@ -248,6 +252,9 @@ summary failure; other exceptions propagate. Its `configure` is a `FieldMenu`
 over `CompactionSettings`; the loader's reload builds the new chain. The status
 row's window does not depend on it: `Session.on_context_window` reports each
 streamed request model's window, and the shell fills it in when no gauge has.
+Until a turn on the selected model runs in the conversation, `show_model` sets
+`Status.model_window` from its profile (`infer_model_profile`), which the row and
+web UI show while `context_window` is `None`; after one, an unresolved window stays `?`.
 
 ## Adding or changing a CLAI moment or contribution
 

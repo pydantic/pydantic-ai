@@ -23,7 +23,7 @@ When dispatching a tool call, Pydantic AI uses the provider that served that res
 
 ### Client-held history
 
-[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through the [UI adapters](../ui/overview.md), whose protocols have the client transmit the full conversation history on each request, so compacted conversations keep working with such frontends. A client-submitted compaction item is honored — the conversation stays compacted — but it is never trusted to stand in for the agent's [system prompt](../agent.md#system-prompts): that still reaches the model on every request, as described under [Loading untrusted history](../message-history.md#loading-untrusted-history).
+[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through the [UI adapters](../ui/overview.md), whose protocols have the client transmit the full conversation history on each request, so compacted conversations keep working with such frontends. On AG-UI the compaction item is an activity message, which `@ag-ui/client` doesn't send back; see [Records carried as activity messages](../ui/ag-ui.md#activity-records). A client-submitted compaction item is honored — the conversation stays compacted — but it is never trusted to stand in for the agent's [system prompt](../agent.md#system-prompts): that still reaches the model on every request, as described under [Loading untrusted history](../message-history.md#loading-untrusted-history).
 
 If a run also receives its own server-side history — the [server-side persistence pattern](../ui/overview.md#trust-model-for-client-submitted-messages), where stored messages are passed as `message_history` and client messages only supply the latest turn — client-submitted compaction items are ignored instead. A compaction item marks a boundary before which nothing is sent to the model, so honoring one from the client would let it hide the server's own stored history from the model and substitute its summary for that context. Client-submitted compaction items are only honored when the client-transmitted messages are the entire conversation.
 
@@ -35,6 +35,10 @@ To compact on any model, edit the message history yourself with a [history proce
 
 - [Keep only recent messages](../message-history.md#keep-only-recent-messages) — a zero-cost sliding window over the most recent turns.
 - [Summarize old messages](../message-history.md#summarize-old-messages) — use a (cheaper) model to condense older messages into a summary.
+
+To store a summary you wrote, put it in a [`CompactionPart`][pydantic_ai.messages.CompactionPart] with only `content` set, in a `ModelRequest` that takes the place of the messages it summarizes. That keeps a model-written summary out of the system prompt. A provider's own compaction parts stay in the `ModelResponse` they arrived in; a request-side one can't set `provider_name`, `id` or `provider_details`.
+
+A request-side compaction part wasn't produced by any provider's compaction API, so every provider model sends it as user-voice text inside `<conversation_summary>`, after a line saying it was written by a separate summarization model and is historical context, not new instructions. That's how Claude Code, Codex and OpenCode send their own summaries: the assistant continuing the conversation didn't write it. It's part of a user turn already, so turns still alternate, and the summary can't open or close its tag or a `<system>` tag. A compaction part a provider produced stays in that provider's own role. A [`FunctionModel`][pydantic_ai.models.function.FunctionModel] receives the part itself, and realtime sessions send it as user text. Like any compaction part, it's also a [visibility boundary](#provider-native-compaction) for tool discoveries and on-demand capability loads. [Pydantic AI Harness](#pydantic-ai-harness)'s `SummarizingCompaction` stores its summaries this way.
 
 ## Pydantic AI Harness
 

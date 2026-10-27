@@ -46,6 +46,15 @@ def _to_sqlite_value(value: object) -> object:
     return value
 
 
+class ForeignKeyViolation(sqlite3.IntegrityError):
+    """A foreign key failure, with the SQLSTATE asyncpg's `ForeignKeyViolationError` carries.
+
+    SQLite checks foreign keys only after `PRAGMA foreign_keys = ON`, which a test turns on to see one.
+    """
+
+    sqlstate = '23503'
+
+
 def _hashtext(text: str) -> int:
     return zlib.crc32(text.encode())
 
@@ -90,7 +99,12 @@ class SqliteConnection:
         # Yield like a network round trip would, so concurrent callers interleave.
         await anyio.lowlevel.checkpoint()
         self._statements.append(query)
-        return self._db.execute(_to_sqlite(query), [_to_sqlite_value(arg) for arg in args]).fetchall()
+        try:
+            return self._db.execute(_to_sqlite(query), [_to_sqlite_value(arg) for arg in args]).fetchall()
+        except sqlite3.IntegrityError as error:
+            if 'FOREIGN KEY' in str(error):
+                raise ForeignKeyViolation(*error.args) from error
+            raise
 
 
 class SqlitePool:

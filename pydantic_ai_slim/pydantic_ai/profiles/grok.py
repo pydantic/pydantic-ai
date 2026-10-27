@@ -13,10 +13,13 @@ GrokReasoningEffort: TypeAlias = Literal['none', 'low', 'medium', 'high']
 
 _GROK_BASIC_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('low', 'high'))
 _GROK_43_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('none', 'low', 'medium', 'high'))
+# Grok 3 Mini keeps its documented `low`/`high` set for the effort levels, plus `none` to turn reasoning off.
+_GROK_3_MINI_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('none', 'low', 'high'))
 # Grok 4.5 and 4.6 accept `low`/`medium`/`high` but reject `none` (unlike Grok 4.3), so they always
-# reason. Verified against the xAI API for both: `reasoning_effort='none'` returns 400 `This model does
-# not support 'reasoning_effort' value 'none'`. https://docs.x.ai/developers/models
+# reason. Grok 4.7 also supports `xhigh`; its mapping is tracked separately in issue #9744, so this
+# profile keeps the existing high fallback. https://docs.x.ai/developers/model-capabilities/text/reasoning
 _GROK_45_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('low', 'medium', 'high'))
+_GROK_47_REASONING_MODELS = frozenset(('grok-4.7',))
 _GROK_43_REASONING_MODELS = frozenset(
     (
         'grok-4.3',
@@ -37,17 +40,25 @@ _GROK_43_REASONING_MODELS = frozenset(
         'grok-3',
     )
 )
-_GROK_45_REASONING_MODELS = frozenset(
-    (
-        'grok-4.5',
-        'grok-4.5-latest',
-        # Grok 4.6 takes the same `reasoning_effort` values as 4.5, so it shares the set rather than
-        # getting a branch of its own. `grok-4.6-latest` is deliberately absent: xAI doesn't serve one.
-        'grok-4.6',
-        # `grok-build-latest` is xAI's floating alias for the newest Grok build model, currently Grok 4.5,
-        # so it accepts the same `reasoning_effort` values. https://docs.x.ai/developers/models
-        'grok-build-latest',
+# Grok 3 Mini accepts `reasoning_effort='none'`, though xAI's retirement guide doesn't list it: verified live
+# 2026-10-22, `grok-3-mini` and `grok-3-mini-fast` return no reasoning tokens for `none`, so `thinking=False`
+# turns reasoning off. The other levels keep mapping onto its documented `low`/`high`. They stay out of
+# `_GROK_43_REASONING_MODELS`, which also grants builtin tools. Other `grok-3-mini` ids keep the `low`/`high` set.
+_GROK_3_MINI_DISABLEABLE_MODELS = frozenset(('grok-3-mini', 'grok-3-mini-fast'))
+_GROK_45_REASONING_MODELS = (
+    frozenset(
+        (
+            'grok-4.5',
+            'grok-4.5-latest',
+            # Grok 4.6 takes the same `reasoning_effort` values as 4.5, so it shares the set rather than
+            # getting a branch of its own. `grok-4.6-latest` is deliberately absent: xAI doesn't serve one.
+            'grok-4.6',
+            # `grok-build-latest` is xAI's floating alias for the newest Grok build model, currently Grok 4.5,
+            # so it accepts the same `reasoning_effort` values. https://docs.x.ai/developers/models
+            'grok-build-latest',
+        )
     )
+    | _GROK_47_REASONING_MODELS
 )
 
 
@@ -69,6 +80,9 @@ class GrokModelProfile(ModelProfile, total=False):
     grok_reasoning_efforts: frozenset[GrokReasoningEffort]
     """Native `reasoning_effort` values supported by the Grok model. Default: empty (`frozenset()`)."""
 
+    grok_default_effort_omitted: bool
+    """Whether a default thinking request omits `reasoning_effort` so xAI applies its model default. Default: `False`."""
+
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Grok model."""
@@ -86,6 +100,8 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
     grok_reasoning_efforts: frozenset[GrokReasoningEffort]
     if model_name in _GROK_43_REASONING_MODELS:
         grok_reasoning_efforts = _GROK_43_REASONING_EFFORTS
+    elif model_name in _GROK_3_MINI_DISABLEABLE_MODELS:
+        grok_reasoning_efforts = _GROK_3_MINI_REASONING_EFFORTS
     elif model_name in _GROK_45_REASONING_MODELS:
         grok_reasoning_efforts = _GROK_45_REASONING_EFFORTS
     elif model_name.startswith('grok-3-mini'):
@@ -97,18 +113,24 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         SUPPORTED_NATIVE_TOOLS if grok_supports_builtin_tools else frozenset()
     )
 
-    return GrokModelProfile(
+    profile: GrokModelProfile = GrokModelProfile(
         supports_tools=True,
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_thinking=bool(grok_reasoning_efforts),
-        # A reasoning model whose `reasoning_effort` set lacks `'none'` (e.g. grok-3-mini) reasons by
+        # A reasoning model whose `reasoning_effort` set lacks `'none'` (e.g. Grok 4.5) reasons by
         # default and can't be disabled, so it's always-on; Grok 4.3 supports `'none'`, so it's not.
         thinking_always_enabled=bool(grok_reasoning_efforts) and 'none' not in grok_reasoning_efforts,
         grok_supports_builtin_tools=grok_supports_builtin_tools,
         grok_reasoning_efforts=grok_reasoning_efforts,
         supported_native_tools=supported_native_tools,
     )
+    if model_name in _GROK_43_REASONING_MODELS or model_name in _GROK_47_REASONING_MODELS:
+        profile['grok_default_effort_omitted'] = True
+    if model_name in _GROK_3_MINI_DISABLEABLE_MODELS:
+        # Grok 3 Mini reasons unless told not to.
+        profile['thinking_enabled_by_default'] = True
+    return profile
 
 
 def grok_realtime_model_profile(model_name: str) -> RealtimeModelProfile:

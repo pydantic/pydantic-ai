@@ -1,6 +1,7 @@
 """The `web` plugin's parts on their own: event translation, history, the answerer race, the server, and `--web`."""
 
 import asyncio
+import hashlib
 import io
 import json
 import os
@@ -29,7 +30,6 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -55,6 +55,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Diff,
     DiffAdded,
     EventTranslator,
+    ImageIds,
     Item,
     ItemAdded,
     ItemLog,
@@ -90,6 +91,7 @@ from pydantic_clai2.plugins.menus import Option
 from pydantic_clai2.runtime.monty_cells import MontyCell
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from pydantic_clai2.runtime.worktrees import Worktree
+from pydantic_clai2.ui.rendering.status import Status
 from tests.clai2.test_web import WIRE
 
 REQUEST = AskUserRequest(
@@ -143,7 +145,7 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
     assert translate(FunctionToolResultEvent(part=ToolReturnPart('shell', 'a.py', tool_call_id='c1'))) == [
         ToolDone(id='c1', text='a.py', state='done')
     ]
-    retry = RetryPromptPart('bad arguments', tool_name='shell', tool_call_id='c2')
+    retry = ToolReturnPart('shell', 'bad arguments', tool_call_id='c2', outcome='retried')
     [failed] = translate(FunctionToolResultEvent(part=retry))
     assert isinstance(failed, ToolDone) and failed.state == 'error' and 'bad arguments' in failed.text
 
@@ -201,7 +203,9 @@ def test_a_run_code_cell_streams_with_its_sandbox_calls() -> None:
     ]
     finished = SandboxCallFinishedEvent(result=ToolReturnPart('shell', 'a.py', tool_call_id='cell__1'))
     assert translate(finished) == [SubCallDone(id='cell', call_id='cell__1', text='a.py', state='done')]
-    failed = SandboxCallFinishedEvent(result=RetryPromptPart('no', tool_name='grep', tool_call_id='cell__spec_2'))
+    failed = SandboxCallFinishedEvent(
+        result=ToolReturnPart('grep', 'no', tool_call_id='cell__spec_2', outcome='retried')
+    )
     [done] = translate(failed)
     assert isinstance(done, SubCallDone) and (done.call_id, done.state) == ('cell__spec_2', 'error')
     call = ToolCallPart('run_code', {'code': 'ls'}, tool_call_id='cell')
@@ -242,7 +246,17 @@ def test_the_item_log_follows_a_cell() -> None:
 def test_history_items() -> None:
     long = 'x' * (RESULT_CHARS + 5)
     messages = [
-        ModelRequest(parts=[UserPromptPart(['Look', BinaryContent(b'png', media_type='image/png')])]),
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    [
+                        'Look',
+                        BinaryContent(b'png', media_type='image/png'),
+                        BinaryContent(b'pdf', media_type='application/pdf'),
+                    ]
+                )
+            ]
+        ),
         ModelResponse(
             parts=[
                 ThinkingPart('plan'),
@@ -257,7 +271,7 @@ def test_history_items() -> None:
         ModelRequest(
             parts=[
                 ToolReturnPart('read_file', long, tool_call_id='r1'),
-                RetryPromptPart('no such command', tool_name='shell', tool_call_id='s1'),
+                ToolReturnPart('shell', 'no such command', tool_call_id='s1', outcome='retried'),
                 ToolReturnPart('missing', 'orphan', tool_call_id='zz'),
             ]
         ),
@@ -271,7 +285,21 @@ def test_history_items() -> None:
         ('tool', 'shell', 'error'),
         ('tool', 'grep', 'interrupted'),
     ]
-    assert items[0].text == 'Look\n[BinaryContent]'
+    assert (items[0].text, items[0].images) == ('Look\n[image]\n[BinaryContent]', []), 'a preview serves no images'
+    image = BinaryContent(b'png', media_type='image/png')
+    image_only = ModelRequest(parts=[UserPromptPart(['', image])])
+    assert history_items([image_only])[0].text == '[image]', 'a prompt of images alone'
+    # A live session lists its images by ID, which it serves, rather than naming them.
+    ids = ImageIds()
+    [listed] = history_items([image_only], image_ids=ids)
+    assert (listed.text, listed.images) == ('', [hashlib.sha256(b'png').hexdigest()])
+    assert history_items([image_only], image_ids=ids)[0].images == listed.images, 'from the IDs already hashed'
+    assert history_items([ModelRequest(parts=[UserPromptPart('plain')])], image_ids=ids)[0].images == []
+    assert ids.find(listed.images[0]) is image
+    ids.keep([image])
+    assert ids.find(listed.images[0]) is image
+    ids.keep([])
+    assert ids.find(listed.images[0]) is None, 'not once the session no longer holds it'
     note = MontyCell(code='x = 1', returned='{}').note()
     assert history_items([ModelRequest(parts=[UserPromptPart([note, 'what is x?'])])])[0].text == 'what is x?'
     assert items[3].text.endswith('\n… 5 more characters') and len(items[3].text) < len(long) + 40
@@ -383,6 +411,17 @@ async def test_only_the_held_conversation_reaches_the_browser(monkeypatch: pytes
         assert '"text":"mine"' in queue.get_nowait()
         assert '"type":"status"' in queue.get_nowait()
     assert isinstance(StatusChanged(status=plugin.service.default().status()), StatusChanged)
+
+
+def test_the_browser_status_shows_the_known_window_before_a_request_measures_one() -> None:
+    status = Status(context_tokens=0, model_window=200_000)
+    host = PluginHost[None](
+        name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript(), status=status
+    )
+    channel = WebPlugin.from_host(host).service.default()
+    assert (channel.status().context_tokens, channel.status().context_window) == (0, 200_000)
+    status.context_window = 100_000
+    assert channel.status().context_window == 100_000
 
 
 async def test_runs_of_the_held_conversation_are_turns() -> None:

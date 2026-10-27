@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai_harness.subagents import DelegationStartEvent
+from pydantic_ai_harness.subagents import DelegationStartEvent, SubAgentMessage, TaskBackgroundedEvent
 from pydantic_clai2.builtin_plugins.web.protocol import (
     EventTranslator,
     Item,
@@ -33,6 +33,7 @@ def task_entry(task: TaskInfo) -> TaskEntry:
         started_at=task.started_at,
         finished_at=task.finished_at,
         background=task.background,
+        backgroundable=task.backgroundable,
         resumable=task.resumable,
         activity=task.activity,
         usage=Usage(
@@ -78,6 +79,12 @@ class Workers:
         if task.status == 'finished':
             self._live.pop(task.id, None)
             return
+        # `None` and a task-control event are about the task, not its run, and can come before the run starts
+        # or while it waits for an answer: the run's `DelegationStartEvent`, or its next event, starts it.
+        if task.id not in self._live and (
+            event.event is None or isinstance(event.event, (SubAgentMessage, TaskBackgroundedEvent))
+        ):
+            return
         live = self._live.get(task.id) or self._start(task, event)
         if event.event is not None:
             self._send(task.id, live, live.translator.translate(event.event))
@@ -91,7 +98,7 @@ class Workers:
         # such as when the shell switches back to its conversation.
         items = [replace(item, id=scope + item.id) for item in history_items(self._history(task.id))]
         started = event.event
-        if started is None or (isinstance(started, DelegationStartEvent) and started.task_id in (None, task.id)):
+        if isinstance(started, DelegationStartEvent) and started.task_id in (None, task.id):
             # A run that starts now has not recorded its own request yet.
             items.append(Item(id=f'{scope}prompt', kind='user', text=task.prompt))
         self._send(task.id, live, [ItemAdded(item=item) for item in items])

@@ -103,6 +103,12 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
 - no typecasting (`as` in TypeScript, `cast()` in Python) -- use type narrowing instead
 - prefer the most generic input types possible (reduce dependency chains)
 - don't add comments that restate what the code does
+- capabilities that add to or edit message history, instructions or tools follow core's
+  `agent_docs/message-history-and-caching.md`: history is append-only, content goes in the channel
+  matching who wrote it, framework records are found by type or metadata, never by their text, and
+  any tag a capability wraps around content follows that guide's tag rules (`snake_case` names,
+  escaping every opening and closing spelling of every registered framing tag, through
+  `_framing.wrap()`/`neutralize_tags()`, never a hand-rolled escaper, attributes, no preambles)
 
 ## Writing style
 
@@ -142,10 +148,16 @@ CI runs the repository-wide typecheck, test, and combined coverage gates.
 Do not run repository-wide Pyright, pytest, or coverage locally.
 If CI reports a coverage gap, run coverage only for the flagged file or focused test.
 
+The durable-exec contract manifest (`scripts/durable_exec_contract.json`) records the core
+definitions the Harness durable engines (`absurd`, `aws_lambda`, `pgtask`, `render`) depend on, and
+harness-only PRs run `tests/durable_exec/test_durable_exec_contract_manifest.py`, which fails when
+an engine change leaves it stale: see
+[Core changes that engines depend on](../../pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md#core-changes-that-engines-depend-on).
+
 ### Workspace and Python versions
 
 ```bash
-uv sync --locked --all-packages --all-extras --group lint
+uv sync --locked --all-packages --all-extras --no-extra mcp-tasks --group lint
 ```
 
 Harness and `pydantic-clai2` share the root `uv.lock`, `.venv`, and Pyright

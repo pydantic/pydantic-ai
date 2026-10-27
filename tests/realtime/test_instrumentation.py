@@ -38,12 +38,14 @@ from pydantic_ai import Agent
 from pydantic_ai._instrumentation import provider_attributes
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -69,6 +71,7 @@ from pydantic_ai.realtime import (
     RealtimeSession as _RealtimeSession,
     RealtimeSessionReconnectEvent,
 )
+from pydantic_ai.realtime._instrumentation import SessionInstrumentation
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     InputTranscript,
@@ -84,8 +87,14 @@ from pydantic_ai.realtime.lifecycle import RealtimeFrame, ResponseEnded, Respons
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
+from ..conftest import try_import
 from ..realtime_connections import InferredConnection
 from .test_session import FakeRealtimeModel, make_tool_manager
+
+with try_import() as mcp_installed:
+    from fastmcp import FastMCP
+
+    from pydantic_ai.mcp import MCPToolset
 
 
 def RealtimeSession(connection: RealtimeConnection, runner: Any, **kwargs: Any) -> _RealtimeSession:
@@ -635,6 +644,79 @@ async def test_session_and_chat_spans_carry_request_config() -> None:
     assert chat_attributes['logfire.msg'] == 'response gpt-realtime'
 
 
+@pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize('direct_toolset', [False, True])
+async def test_mcp_url_derived_identity_is_withheld_from_realtime_request_config(
+    include_content: bool, direct_toolset: bool
+) -> None:
+    server = FastMCP('test', instructions='server guidance')
+
+    @server.tool
+    def ping() -> str:
+        return 'pong'
+
+    settings, exporter = _settings(include_content=include_content)
+    capability = MCP('https://mcp.example.test/private/SENTINEL-mcp-path-token', native=False, local=server)
+    assert isinstance(capability.local, MCPToolset)
+    toolset = capability.get_toolset()
+    assert toolset is not None
+    agent = (
+        Agent(toolsets=[toolset], capabilities=[Instrumentation(settings=settings)])
+        if direct_toolset
+        else Agent(capabilities=[capability, Instrumentation(settings=settings)])
+    )
+    async with agent.realtime(
+        _Model(_Connection([OutputTranscript(text='done', is_final=True), ResponseDone()]))
+    ).session() as session:
+        _ = [event async for event in session]
+
+    # The id is derived from the hostname alone, so the path's token never reaches it.
+    assert capability.id == 'mcp.example.test'
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    for name in ('invoke_agent agent', 'chat gpt-realtime'):
+        attributes = spans[name].attributes
+        assert attributes is not None
+        serialized = attributes['model_request_parameters']
+        assert isinstance(serialized, str)
+        assert 'SENTINEL-mcp-path-token' not in serialized
+        assert json.loads(serialized)['function_tools']
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+def test_realtime_chat_and_session_mask_url_derived_native_names(include_content: bool) -> None:
+    identity = 'mcp.example.test'
+    settings, exporter = _settings(include_content=include_content)
+    instrumentation = SessionInstrumentation(
+        settings,
+        model_request_parameters=ModelRequestParameters(_telemetry_mcp_url_ids={identity}),
+    )
+    response = ModelResponse(parts=[NativeToolCallPart(tool_name=f'mcp_server:{identity}', tool_call_id='call-1')])
+    instrumentation.start_session_span()
+    instrumentation.ensure_chat_span('response-1')
+    instrumentation.end_chat_span('response-1', [ModelRequest.user_text_prompt('go')], response)
+    instrumentation.end_session_span(
+        None,
+        usage=RunUsage(),
+        messages=[response],
+        new_message_index=0,
+        final_result=None,
+        audio_chunks_dropped=0,
+        transcript_items_dropped=0,
+        queue_dropped_deltas=0,
+        queue_dropped_structural=0,
+    )
+
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    chat_attributes = spans['chat'].attributes
+    session_attributes = spans['invoke_agent agent'].attributes
+    assert chat_attributes is not None and session_attributes is not None
+    assert identity not in str(chat_attributes['gen_ai.output.messages'])
+    assert identity not in str(session_attributes['pydantic_ai.all_messages'])
+    assert isinstance(response.parts[0], NativeToolCallPart)
+    assert response.parts[0].tool_name == f'mcp_server:{identity}'
+
+
 async def test_tool_call_otel_metadata_comes_from_definition() -> None:
     settings, exporter = _settings()
     conn = _Connection([ToolCall(tool_call_id='c1', tool_name='run_code', args='{"python_code":"1 + 1"}')])
@@ -863,6 +945,25 @@ async def test_interrupt_records_lifecycle_span_with_audio_offset() -> None:
 
     interrupt = next(s for s in exporter.get_finished_spans() if s.name == 'interrupt')
     assert dict(interrupt.attributes or {}) == {'pydantic_ai.realtime': True, 'played_ms': 1500}
+
+
+async def test_interrupt_at_playback_without_truncation_records_the_offset() -> None:
+    # Without output truncation (xAI), no position goes to the provider, but the span still records how far
+    # playback got, as history does.
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection([AudioDelta(b'a' * 4800), AudioDelta(b'b' * 4800)], hold_open=True),
+        _ok_runner,
+        instrumentation=settings,
+        profile=RealtimeModelProfile(supports_interruption=True, supports_output_truncation=False),
+    )
+    async with session:
+        stream = session.stream_audio()
+        await anext(stream)  # the second chunk stays buffered and unheard
+        assert await session.interrupt(played_bytes=4800) is True
+
+    interrupt = next(s for s in exporter.get_finished_spans() if s.name == 'interrupt')
+    assert dict(interrupt.attributes or {}) == {'pydantic_ai.realtime': True, 'played_ms': 100}
 
 
 async def test_interrupt_without_offset_records_bare_lifecycle_span() -> None:
@@ -1295,6 +1396,12 @@ async def test_session_span_includes_resolved_run_attributes() -> None:
         # session span renders it as an object.
         'model_request_parameters': {'type': 'object'},
     }
+    # Each response's `chat` span reports the session's instructions, like a classic run's.
+    chat = next(s for s in exporter.get_finished_spans() if s.name.startswith('chat'))
+    assert chat.attributes is not None
+    assert json.loads(str(chat.attributes['gen_ai.system_instructions'])) == [
+        {'type': 'text', 'content': 'Keep answers concise.'}
+    ]
 
 
 async def test_session_span_marks_seeded_history_boundary() -> None:

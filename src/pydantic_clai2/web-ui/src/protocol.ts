@@ -32,6 +32,8 @@ export interface Item {
   calls: SubCall[]
   /** A cell the user ran with `/monty`, rather than one the model wrote. */
   by_user: boolean
+  /** The IDs of a prompt's images, which the session's `images/ID` route serves. */
+  images: string[]
 }
 
 export interface Option {
@@ -93,6 +95,7 @@ export interface StatusInfo {
   context_tokens: number | null
   context_window: number | null
   cost: string | null
+  cost_is_lower_bound: boolean
   /** The turn's output so far, estimated from streamed characters. */
   streamed_tokens: number
   /** The last turn's reported output tokens, once it ends. */
@@ -130,6 +133,7 @@ export interface UsageReport {
   total: TurnUsage
   /** The models without price data, whose responses no cost counts. */
   unpriced: string[]
+  unmeasured_requests: number
 }
 
 export interface Palette {
@@ -169,6 +173,8 @@ export interface TaskEntry {
   started_at: string
   finished_at: string | null
   background: boolean
+  /** Whether the Background button can let the run that waits for it go on. */
+  backgroundable: boolean
   resumable: boolean
   /** Its last action, such as `thinking` or `running: shell`. */
   activity: string
@@ -228,9 +234,20 @@ export interface LiveEntry {
   workspace: string
 }
 
+/** A prompt can steer the running turn; a `/command` or `!` shell line, queued from the terminal, cannot. */
+export type InputKind = 'prompt' | 'command' | 'shell'
+
+/** An input waiting for the session's running turn or command to end, editable until it runs. */
+export interface QueuedItem {
+  id: string
+  text: string
+  kind: InputKind
+}
+
 /** A message about one live session, sent only to the connections watching it. */
 export type SessionMessage = (
   | ChatMessage
+  | { type: 'queue'; queue: QueuedItem[] }
   | { type: 'status'; status: StatusInfo }
   | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null; usage: UsageReport | null }
   | { type: 'title'; title: string | null }
@@ -270,9 +287,13 @@ export type ServerMessage =
       tasks: TaskEntry[]
       /** Each running task's transcript so far, by task ID. */
       task_items: Record<string, Item[]>
+      /** The input waiting for the session's running turn or command, oldest first. */
+      queue: QueuedItem[]
       /** The running CLAI's version, or a `main` build's short commit. */
       version: string
       update: UpdateInfo | null
+      /** The conversation the session held before, when it switched to this one; its watchers watch this one now. */
+      replaces?: string | null
     }
   | SessionMessage
   | { type: 'orchestrator'; message: OrchestratorEvent }
@@ -409,24 +430,6 @@ export interface MenuField {
   menu: boolean
 }
 
-/** A workspace as the sidebar lists it; never its token. */
-export interface WorkspaceRow {
-  id: string
-  kind: string
-  repo: string
-  branch: string
-  path: string
-  status: 'ready' | 'running' | 'stopped'
-  /** Its page's address without the token, while its CLAI runs. */
-  url: string | null
-}
-
-/** The sidebar's Workspaces section: shown while the `workspaces` plugin is on. */
-export interface WorkspacesInfo {
-  enabled: boolean
-  workspaces: WorkspaceRow[]
-}
-
 export interface MenuInfo {
   title: string
   fields: MenuField[]
@@ -435,6 +438,11 @@ export interface MenuInfo {
 /** What entering input did: `menu` names the bare command whose menu the page shows instead of running it. */
 export interface Entered {
   menu: string | null
+}
+
+/** What Alt+Enter did: `steered` when the running turn took it, else it was entered as Enter enters it. */
+export interface Steering extends Entered {
+  steered: boolean
 }
 
 export interface MenuEdited {

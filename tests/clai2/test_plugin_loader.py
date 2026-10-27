@@ -1313,7 +1313,7 @@ async def test_a_process_plugin_follows_the_session_being_handled(
             commands=commands,
             session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
             submit_prompt=lambda text: calls.append(f'{name} submit {text}'),
-            send_input=lambda text: calls.append(f'{name} send {text}'),
+            send_input=lambda text, images: calls.append(f'{name} send {text}'),
             interrupt=lambda: calls.append(f'{name} interrupt') is None,
             setting=lambda key: f'{name}-{key}',
             workspace=lambda: tmp_path / name,

@@ -15,11 +15,13 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryContent,
     BinaryImage,
+    CompactionPart,
     ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -27,7 +29,9 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.compaction import SummarizingCompaction, compact_now
 from pydantic_ai_harness.step_persistence.conversations import SessionConflict
+from pydantic_ai_harness.subagents import DelegationTask
 from pydantic_clai2 import chat
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Conversation, Transcript
@@ -49,7 +53,9 @@ def test_menu_selects_run_boundaries_and_sanitizes_preview(monkeypatch: pytest.M
         ModelRequest(parts=[ToolReturnPart('tool', 'done', 'call'), UserPromptPart('steer')], run_id='first'),
         ModelRequest(parts=[UserPromptPart('more steering')], run_id='first'),
         ModelResponse(parts=[TextPart('done')], run_id='first'),
-        ModelRequest(parts=[RetryPromptPart('retry'), UserPromptPart('not a boundary')]),
+        ModelRequest(
+            parts=[RetryFeedbackPart('retry', retry=RetryInfo(cause='model_retry')), UserPromptPart('not a boundary')]
+        ),
         ModelRequest(parts=[UserPromptPart('second')], run_id='second'),
         ModelResponse(parts=[TextPart('legacy answer')]),
     ]
@@ -70,6 +76,27 @@ def test_menu_selects_run_boundaries_and_sanitizes_preview(monkeypatch: pytest.M
     assert 'Replaces your current draft' in text and 'and its attachments.' in text
     assert 'steering' not in text and 'not a boundary' not in text
     assert '\x1b]52;' not in output.getvalue() and '\x07' not in output.getvalue()
+
+
+def test_background_task_reports_are_not_rewind_points(monkeypatch: pytest.MonkeyPatch) -> None:
+    record = DelegationTask(
+        id='a' * 32, agent_name='worker', prompt='p', conversation_id='c', status='finished', outcome='ok'
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('first')], run_id='first'),
+        ModelResponse(parts=[TextPart('launched')], run_id='first'),
+        ModelRequest(parts=[record.report()], run_id='report'),
+        ModelResponse(parts=[TextPart('reviewed')], run_id='report'),
+    ]
+    output = StringIO()
+    monkeypatch.setattr('sys.stdout', output)
+    keys = iter(['enter'])
+    monkeypatch.setattr('pydantic_clai2.ui.menus.rewind.menu_key', lambda: next(keys))
+    result = build_rewind_menu(messages).run()
+    assert result.item is not None
+    assert result.item.value == RewindPoint(message_index=0, text='first', images=())
+    text = ' '.join(Text.from_ansi(output.getvalue().replace('\r\n', '\n')).plain.split())
+    assert '1. first' in text and '2.' not in text and '[attachment]' not in text
 
 
 @pytest.mark.parametrize(
@@ -107,6 +134,32 @@ async def test_compacted_prompts_are_disabled_but_new_turns_can_rewind(monkeypat
     result = build_rewind_menu(session.messages).run()
     assert result.item is not None
     assert result.item.value == RewindPoint(message_index=2, text='after compaction', images=())
+
+
+async def test_prompts_a_compaction_kept_stay_disabled_after_its_request_is_merged() -> None:
+    """Continuing merges the summary's request into the oldest prompt it kept, and that request's timestamp wins,
+    so the guard reads when the summary was written from the summary part itself."""
+    session = Session(Agent(TestModel()), deps=None)
+    for text in ('first', 'second', 'third'):
+        await session.prompt(text)
+    compacted = await compact_now(
+        SummarizingCompaction(max_messages=1, keep_messages=4, preserve_first_user_message=False),
+        session.messages,
+        model=TestModel(custom_output_text='summary of the first turns'),
+    )
+    session = Session(Agent(TestModel()), deps=None, message_history=compacted)
+    await session.prompt('after compaction')
+
+    summary_request = session.messages[0]
+    assert isinstance(summary_request, ModelRequest)
+    assert [type(part) for part in summary_request.parts] == [CompactionPart, UserPromptPart]
+    menu = build_rewind_menu(session.messages)
+    items = menu._items  # pyright: ignore[reportPrivateUsage]
+    assert [(item.value.text, item.disabled) for item in items if isinstance(item.value, RewindPoint)] == [
+        ('after compaction', False),
+        ('third', True),
+        ('second', True),
+    ]
 
 
 async def test_replacement_images_do_not_count_discarded_draft_against_limit() -> None:

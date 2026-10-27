@@ -4,7 +4,6 @@ from pydantic import BaseModel, ValidationError
 from rich.console import Console
 
 from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
-from pydantic_ai.messages import ToolReturnPart
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.tool_output import print_tool_header, terminal_text
 
@@ -44,7 +43,7 @@ class GrepOutput:
             return False
         if not self.show_output:
             return True
-        if not isinstance(event.part, ToolReturnPart) or not isinstance(event.part.content, str):
+        if event.part.outcome == 'retried' or not isinstance(event.part.content, str):
             self.console.print(
                 f'{terminal_text(label)}: tool did not return text results.',
                 style=theme.color(theme.MUTED),

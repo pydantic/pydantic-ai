@@ -3,13 +3,16 @@
 import json
 import os
 from collections.abc import Sequence
+from dataclasses import replace
 from io import StringIO
 from pathlib import Path
+from uuid import UUID, uuid4, uuid5
 
 import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from pydantic import TypeAdapter
 from rich.console import Console
 from termflow.tui.completion import CompleteEvent, Document
 from termflow.tui.keys import Key
@@ -20,7 +23,10 @@ from pydantic_ai.messages import (
     ImageUrl,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -30,6 +36,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteSessionStore
+from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, is_task_report
 from pydantic_clai2 import chat
 from pydantic_clai2._app import create_stock_agent
 from pydantic_clai2.cli import _cli, headless
@@ -39,11 +46,19 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.runtime import claude_code_sessions, codex_sessions
 from pydantic_clai2.runtime._session import Session
-from pydantic_clai2.runtime.imported_history import Header, HistoryBuilder, records, timestamp
+from pydantic_clai2.runtime.imported_history import (
+    Header,
+    HistoryBuilder,
+    is_imported_context,
+    records,
+    tail_records,
+    timestamp,
+)
 from pydantic_clai2.runtime.imported_sessions import (
     ImportCatalog,
     find_import,
     import_source,
+    imported_from,
     merge,
     save_import,
 )
@@ -70,6 +85,8 @@ def claude_entry(uuid: str, parent: str | None, kind: str, content: object, **ex
         message['model'] = extra.pop('model')
     if 'usage' in extra:
         message['usage'] = extra.pop('usage')
+    if 'id' in extra:
+        message['id'] = extra.pop('id')
     return {'type': kind, 'uuid': uuid, 'parentUuid': parent, 'timestamp': AT, 'message': message, **extra}
 
 
@@ -209,34 +226,330 @@ def parts(messages: Sequence[ModelMessage]) -> list[tuple[str, list[str]]]:
     return [(type(m).__name__, [type(p).__name__ for p in m.parts]) for m in messages]
 
 
+def context(part: ModelRequestPart | ModelResponsePart) -> tuple[str, str]:
+    """The kind and text of imported context."""
+    assert isinstance(part, UserPromptPart) and is_imported_context(part) and not isinstance(part.content, str)
+    item = part.content[0]
+    assert isinstance(item, TextContent)
+    metadata: dict[str, str] = item.metadata
+    return metadata['kind'], item.content
+
+
 def test_claude_code_transcript_continues_the_last_branch(tmp_path: Path) -> None:
     path = claude_session(tmp_path)
     messages = claude_code_sessions.messages(path)
     assert parts(messages) == [
-        ('ModelRequest', ['UserPromptPart']),
-        ('ModelResponse', ['ThinkingPart', 'TextPart', 'ToolCallPart', 'ToolCallPart']),
-        ('ModelRequest', ['ToolReturnPart', 'ToolReturnPart', 'UserPromptPart', 'UserPromptPart']),
+        ('ModelRequest', ['UserPromptPart', 'UserPromptPart', 'UserPromptPart']),
+        ('ModelResponse', ['ThinkingPart', 'TextPart', 'ToolCallPart', 'ThinkingPart', 'ToolCallPart']),
+        ('ModelRequest', ['ToolReturnPart', 'ToolReturnPart', 'UserPromptPart']),
         ('ModelResponse', ['TextPart']),
+        ('ModelRequest', ['UserPromptPart']),
     ]
-    request, response, results, answer = messages
-    assert isinstance(request.parts[0], UserPromptPart) and request.parts[0].content == 'Fix the parser please'
+    request, response, results, answer, end = messages
+    start, typed, caveat = request.parts
+    # Notes on the change of harness open and close the history, apart from what the user typed.
+    assert context(start)[0] == 'import_start'
+    assert context(start)[1].startswith(f'This conversation was imported from Claude Code session {CLAUDE_ID}.')
+    assert context(end.parts[0])[0] == 'import_end'
+    assert context(end.parts[0])[1].startswith('The conversation above was imported from Claude Code')
+    assert isinstance(typed, UserPromptPart) and typed.content == 'Fix the parser please'
+    # Claude Code's own messages on the user's channel were sent to the model, so they are kept, as context.
+    assert context(caveat) == ('meta', 'Caveat: local command output')
     assert isinstance(response, ModelResponse)
     assert response.parts[0] == ThinkingPart('Read it first', signature='sig', provider_name='anthropic')
     assert response.parts[2] == ToolCallPart('Read', {'file_path': 'a.py'}, tool_call_id='t1')
+    assert response.parts[3] == ThinkingPart('', id='redacted_thinking', signature='x', provider_name='anthropic')
     assert response.model_name == 'claude-sonnet-4-5' and response.provider_name == 'anthropic'
     assert response.usage == RequestUsage(
         input_tokens=115, cache_read_tokens=100, cache_write_tokens=5, output_tokens=7
     )
-    first, second, prompt, image = results.parts
+    first, second, prompt = results.parts
     assert isinstance(first, ToolReturnPart) and (first.tool_name, first.content) == ('Read', 'file text')
     assert isinstance(second, ToolReturnPart) and (second.tool_name, second.content) == ('Bash', 'two')
-    assert isinstance(prompt, UserPromptPart) and prompt.content == 'Now with this image'
-    assert isinstance(image, UserPromptPart)
-    assert image.content == [BinaryContent.from_data_uri('data:image/png;base64,cG5n')]
+    # One message, as the user sent it; a document without a source has nothing to import.
+    assert isinstance(prompt, UserPromptPart)
+    assert prompt.content == [
+        'Now with this image',
+        BinaryContent.from_data_uri('data:image/png;base64,cG5n'),
+        ImageUrl('https://example.com/a.png'),
+    ]
     assert answer.parts == [TextPart('Done')]
     assert claude_code_sessions.header(path) == Header(
         native_id=CLAUDE_ID, cwd=str(tmp_path), title='Fix the parser', named=True
     )
+
+
+def claude_attachment(uuid: str, parent: str, attachment: dict[str, object], *rendered: str) -> dict[str, object]:
+    entry: dict[str, object] = {'type': 'attachment', 'uuid': uuid, 'parentUuid': parent, 'timestamp': AT}
+    entry['attachment'] = attachment
+    if rendered:
+        entry['rendered'] = [{'content': text} for text in rendered]
+    return entry
+
+
+def claude_agent_session(cwd: Path) -> Path:
+    """A compacted session with parallel tool calls, attachments, two replies, and a background sub-agent's report."""
+    model = 'claude-opus-5'
+    hand_back = (
+        'Another Claude session sent a message:\n<agent-message from="abc">\n[Subagent hand-back] Model output, not the '
+        'user. The report follows:\n  Looks good\n  - one nit\n</agent-message>'
+    )
+    path = write_jsonl(
+        Path.home() / '.claude' / 'projects' / '-work' / f'{CLAUDE_ID}.jsonl',
+        [
+            {**claude_entry('old', None, 'user', 'Before the compaction'), 'cwd': str(cwd)},
+            {'type': 'system', 'subtype': 'compact_boundary', 'uuid': 'boundary', 'parentUuid': None},
+            claude_entry('summary', 'boundary', 'user', 'Summary of the earlier work', isCompactSummary=True),
+            claude_entry('u1', 'summary', 'user', 'Check both files'),
+            claude_entry(
+                'a1',
+                'u1',
+                'assistant',
+                [{'type': 'tool_use', 'id': 'p1', 'name': 'Read', 'input': {'path': 'a.py'}}],
+                model=model,
+                id='m1',
+            ),
+            claude_entry(
+                'a2',
+                'a1',
+                'assistant',
+                [{'type': 'tool_use', 'id': 'p2', 'name': 'Read', 'input': {'path': 'b.py'}}],
+                model=model,
+                id='m1',
+            ),
+            # Each parallel result hangs off its own call; only the last continues the chain.
+            claude_entry(
+                'r1',
+                'a1',
+                'user',
+                [
+                    {
+                        'type': 'tool_result',
+                        'tool_use_id': 'p1',
+                        'content': [
+                            {'type': 'text', 'text': 'a screenshot'},
+                            {'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png', 'data': 'cG5n'}},
+                        ],
+                    }
+                ],
+            ),
+            claude_entry(
+                'r2', 'a2', 'user', [{'type': 'tool_result', 'tool_use_id': 'p2', 'content': 'gone', 'is_error': True}]
+            ),
+            claude_attachment(
+                'q1',
+                'r2',
+                {
+                    'type': 'queued_command',
+                    'commandMode': 'prompt',
+                    'prompt': 'Also the docs',
+                    'origin': {'kind': 'human'},
+                },
+            ),
+            claude_attachment(
+                't1', 'q1', {'type': 'total_tokens_reminder'}, '<system-reminder>1000 tokens left</system-reminder>'
+            ),
+            claude_attachment('f1', 't1', {'type': 'file'}, '<system-reminder>Contents of a.py</system-reminder>'),
+            claude_attachment('k1', 'f1', {'type': 'credential_org'}),
+            claude_attachment(
+                'n1',
+                'k1',
+                {
+                    'type': 'queued_command',
+                    'commandMode': 'task-notification',
+                    'prompt': '<task-notification>done</task-notification>',
+                },
+            ),
+            claude_entry('b1', 'n1', 'assistant', [{'type': 'text', 'text': 'Checked'}], model=model, id='m2'),
+            claude_entry('b2', 'b1', 'assistant', [{'type': 'text', 'text': 'A second reply'}], model=model, id='m3'),
+            claude_entry('h1', 'b2', 'user', hand_back, isMeta=True),
+            claude_entry('h2', 'h1', 'user', hand_back.replace('"abc"', '"unknown"'), isMeta=True),
+            claude_entry('b3', 'h2', 'assistant', [{'type': 'text', 'text': 'Done'}], model=model, id='m4'),
+            {'type': 'ai-title', 'aiTitle': 'Generated name'},
+            {'type': 'custom-title', 'customTitle': 'My name'},
+            {'type': 'ai-title', 'aiTitle': 'Later generated name'},
+        ],
+    )
+    agents = path.with_suffix('') / 'subagents'
+    write_jsonl(
+        agents / 'agent-abc.jsonl',
+        [
+            claude_entry('s1', None, 'user', 'Review the diff', isSidechain=True),
+            claude_entry(
+                's2',
+                's1',
+                'assistant',
+                [{'type': 'tool_use', 'id': 'hb', 'name': 'SubagentHandback', 'input': {'message': 'Looks good'}}],
+                model=model,
+                isSidechain=True,
+            ),
+            claude_entry(
+                's3',
+                's2',
+                'user',
+                [{'type': 'tool_result', 'tool_use_id': 'hb', 'content': 'Delivered'}],
+                isSidechain=True,
+            ),
+        ],
+    )
+    (agents / 'agent-abc.meta.json').write_text(json.dumps({'agentType': 'general-purpose', 'description': 'Review'}))
+    write_jsonl(agents / 'agent-child.jsonl', [claude_entry('c1', None, 'user', 'Look deeper', isSidechain=True)])
+    (agents / 'agent-child.meta.json').write_text('not json')
+    # Metadata without a transcript is no sub-agent to import.
+    (agents / 'agent-gone.meta.json').write_text('{}')
+    return path
+
+
+async def test_claude_code_import_keeps_what_the_model_saw(tmp_path: Path) -> None:
+    path = claude_agent_session(tmp_path)
+    messages = claude_code_sessions.messages(path)
+    assert parts(messages) == [
+        ('ModelRequest', ['UserPromptPart', 'UserPromptPart', 'UserPromptPart']),
+        ('ModelResponse', ['ToolCallPart', 'ToolCallPart']),
+        ('ModelRequest', ['ToolReturnPart', 'ToolReturnPart', 'UserPromptPart', 'UserPromptPart', 'UserPromptPart']),
+        ('ModelResponse', ['TextPart']),
+        ('ModelResponse', ['TextPart']),
+        ('ModelRequest', ['UserPromptPart', 'UserPromptPart']),
+        ('ModelResponse', ['TextPart']),
+        ('ModelRequest', ['UserPromptPart']),
+    ]
+    opening, calls, results, checked, second, reports, done, closing = messages
+    # The model's history starts at the compaction, which Claude Code's summary stands in for.
+    assert context(opening.parts[1]) == ('compact_summary', 'Summary of the earlier work')
+    assert isinstance(calls, ModelResponse) and calls.provider_response_id == 'm1'
+    screenshot, missing, typed, attached, notified = results.parts
+    assert isinstance(screenshot, ToolReturnPart)
+    assert screenshot.content == ['a screenshot', BinaryContent.from_data_uri('data:image/png;base64,cG5n')]
+    assert isinstance(missing, ToolReturnPart) and (missing.content, missing.outcome) == ('gone', 'failed')
+    # Typed while the model worked; the token count and Claude Code's bookkeeping are left out.
+    assert isinstance(typed, UserPromptPart) and typed.content == 'Also the docs'
+    assert context(attached) == ('file', '<system-reminder>Contents of a.py</system-reminder>')
+    assert context(notified) == ('queued_command:task-notification', '<task-notification>done</task-notification>')
+    # Separate API responses stay separate.
+    assert isinstance(checked, ModelResponse) and isinstance(second, ModelResponse)
+    assert (checked.provider_response_id, second.provider_response_id) == ('m2', 'm3')
+    report, unknown = reports.parts
+    task_id = claude_code_sessions.tasks(path, 'conversation')[0].id
+    assert (
+        isinstance(report, UserPromptPart)
+        and is_task_report(report)
+        and isinstance(report.content, list)
+        and isinstance(report.content[0], TextContent)
+    )
+    assert report.content[0].content == (
+        f'<task_output task_id="{task_id}" agent_name="self">\nLooks good\n- one nit\n</task_output>'
+    )
+    assert context(unknown)[0] == 'meta'
+    assert isinstance(done, ModelResponse) and done.parts == [TextPart('Done')]
+    assert context(closing.parts[0])[1].endswith(
+        f'- Claude Code agent abc is task {task_id} (general-purpose: Review)\n'
+        f'- Claude Code agent child is task {claude_code_sessions.tasks(path, "conversation")[1].id} '
+        '(general-purpose: )'
+    )
+    assert claude_code_sessions.header(path) == Header(
+        native_id=CLAUDE_ID, cwd=str(tmp_path), title='My name', named=True
+    )
+
+
+async def test_claude_code_sub_agents_become_tasks(tmp_path: Path) -> None:
+    path = claude_agent_session(tmp_path)
+    review, child = claude_code_sessions.tasks(path, 'conversation')
+    # CLAI runs `general-purpose` as itself, by the name a resume checks.
+    assert (review.agent_name, review.prompt, review.output) == ('self', 'Review the diff', 'Looks good')
+    assert (review.conversation_id, review.status, review.outcome, review.background) == (
+        'conversation',
+        'finished',
+        'ok',
+        True,
+    )
+    # Already reported in the parent's history, so never delivered again; resumable as CLAI's own agent.
+    assert review.delivered and review.resumable
+    assert context(review.messages[0].parts[0])[1].startswith('This sub-agent conversation (abc) was imported')
+    # Stopped before it reported: resumable, and delivered, so opening the session starts no turn by itself.
+    assert (child.prompt, child.outcome, child.delivered, child.resumable) == ('Look deeper', 'cancelled', True, True)
+    assert child.output.startswith('Stopped in Claude Code before it reported.')
+    assert parts(child.messages) == [('ModelRequest', ['UserPromptPart', 'UserPromptPart', 'UserPromptPart'])]
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
+    async with DelegationTasks(directory=tmp_path / 'tasks').opened() as owner:
+        conversation_id = await save_import(store, find_import('claude', CLAUDE_ID), delegations=owner)
+        assert owner.records[review.id].conversation_id == conversation_id
+        assert (tmp_path / 'tasks' / f'{review.id}.json').is_file()
+        assert owner.reports(conversation_id=conversation_id) == []
+
+        async def run(task: DelegationTask) -> str:
+            assert task.messages[-1].parts[-1] == review.messages[-1].parts[-1]
+            return 'Resumed'
+
+        # The model resumes it as CLAI's own task; from then on, it is CLAI's.
+        await owner.delegate(
+            agent_name='self',
+            prompt='Go on',
+            conversation_id=conversation_id,
+            model=None,
+            background=False,
+            resume=review.id,
+            run=run,
+        )
+        resumed = owner.records[review.id]
+        assert (resumed.output, resumed.generation) == ('Resumed', 2)
+        await save_import(store, find_import('claude', CLAUDE_ID), delegations=owner)
+        assert owner.records[review.id] is resumed
+    async with DelegationTasks(directory=tmp_path / 'tasks').opened() as reopened:
+        assert set(reopened.records) == {review.id, child.id}
+
+
+async def test_resume_by_id_saves_sub_agents_before_the_task_owner_opens(tmp_path: Path) -> None:
+    service, _ = sessions_service(tmp_path)
+    # The process's owner, as `--resume-claude` imports before the shell opens it.
+    service.tasks = DelegationTasks(directory=tmp_path / 'tasks')
+    path = claude_agent_session(tmp_path)
+    await service.command(['claude', CLAUDE_ID])
+    async with service.tasks.opened() as owner:
+        assert {task.id for task in owner.records.values()} == {
+            task.id for task in claude_code_sessions.tasks(path, service.session.summary.id)
+        }
+
+
+async def test_reimport_keeps_a_task_resumed_on_disk(tmp_path: Path) -> None:
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
+    path = claude_agent_session(tmp_path)
+    await save_import(
+        store, find_import('claude', CLAUDE_ID), delegations=DelegationTasks(directory=tmp_path / 'tasks')
+    )
+    review = claude_code_sessions.tasks(path, 'conversation')[0]
+    saved = tmp_path / 'tasks' / f'{review.id}.json'
+    resumed = replace(review, run_id='f' * 32, output='Resumed')
+    saved.write_bytes(TypeAdapter(DelegationTask).dump_json(resumed))
+    # A later launch's owner has not opened, so only the file says the task was resumed.
+    await save_import(
+        store, find_import('claude', CLAUDE_ID), delegations=DelegationTasks(directory=tmp_path / 'tasks')
+    )
+    assert TypeAdapter(DelegationTask).validate_json(saved.read_bytes()).output == 'Resumed'
+
+
+def test_claude_code_import_keeps_a_message_queued_last(tmp_path: Path) -> None:
+    path = write_jsonl(
+        tmp_path / 'queued.jsonl',
+        [
+            claude_entry('u1', None, 'user', 'Start'),
+            claude_entry('a1', 'u1', 'assistant', [{'type': 'text', 'text': 'Working'}], model='claude-opus-5'),
+            claude_attachment(
+                'q1',
+                'a1',
+                {'type': 'queued_command', 'commandMode': 'prompt', 'prompt': 'Also this', 'origin': {'kind': 'human'}},
+            ),
+        ],
+    )
+    *_, last = claude_code_sessions.messages(path)
+    assert isinstance(last, ModelRequest) and isinstance(last.parts[0], UserPromptPart)
+    assert last.parts[0].content == 'Also this'
+
+
+def test_tail_records_skip_the_cut_line(tmp_path: Path) -> None:
+    path = write_jsonl(tmp_path / 'lines.jsonl', [{'n': 'x' * 20}, {'n': 1}, 'not json', '[1]'])
+    assert tail_records(path, size=25) == [{'n': 1}]
+    assert tail_records(path) == [{'n': 'x' * 20}, {'n': 1}]
+    assert tail_records(path, containing=b'1') == [{'n': 1}]
 
 
 def test_claude_code_headers_and_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -567,7 +880,13 @@ async def test_an_archived_copy_keeps_its_original_out_of_resume(
 
 
 def test_browser_marks_sessions_to_import() -> None:
-    entries = [ConversationSummary(id='claude', workspace='/w', title='From Claude Code', tags=('claude',))]
+    imported = str(uuid5(UUID(int=0), 'claude:session'))
+    entries = [
+        ConversationSummary(id=imported, workspace='/w', title='From Claude Code', tags=('claude',)),
+        # CLAI's own, with a topic tag that names a source.
+        ConversationSummary(id=str(uuid4()), workspace='/w', title='About Claude', tags=('claude',)),
+    ]
+    importing = [True]
     keys = iter(['d', 'r', 'ctrl-c'])
     browser = SessionBrowser(
         entries=entries,
@@ -578,13 +897,20 @@ def test_browser_marks_sessions_to_import() -> None:
         delete=lambda entry: pytest.fail('not imported'),
         rename=lambda entry, title: pytest.fail('not imported'),
         archive=lambda entry, archived: pytest.fail('not imported'),
-        importing=lambda entry: True,
+        importing=lambda entry: importing[0],
         output=StringIO(),
         key_source=lambda: next(keys),
         size=lambda: (100, 20),
     )
     browser.mode = 'sessions'
-    assert 'to import' in '\n'.join(browser.frame(width=100, height=20))
+    frame = '\n'.join(browser.frame(width=100, height=20))
+    # Where it comes from, in place of a topic tag; a copy keeps saying so once imported.
+    assert frame.count('Claude Code · to import') == 1 and frame.count('#claude') == 1
+    assert imported_from(ConversationSummary(id='not-a-uuid', workspace='/w', tags=('claude',))) is None
+    importing[0] = False
+    frame = '\n'.join(browser.frame(width=100, height=20))
+    assert frame.count('Claude Code · 0 msgs') == 1 and frame.count('#claude') == 1
+    importing[0] = True
     assert browser.handle_key('d') is None
     assert browser.confirm is None and browser.notice.startswith('Not imported yet.')
     browser.notice = ''
@@ -593,7 +919,7 @@ def test_browser_marks_sessions_to_import() -> None:
     browser.notice = ''
     assert browser.handle_key('a') is None
     assert browser.notice.startswith('Not imported yet.')
-    assert browser.handle_key(Key.ENTER) == 'claude'
+    assert browser.handle_key(Key.ENTER) == imported
 
 
 async def test_startup_flags_import_through_chat_and_headless(

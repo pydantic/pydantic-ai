@@ -2,14 +2,16 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from decimal import Decimal
 from math import isfinite
 from typing import Annotated, ClassVar, Literal, assert_never, cast
 
 import httpx2
 from pydantic import Field, TypeAdapter, ValidationError
 
+from .. import _model_errors
 from .._http import to_httpx2_timeout
-from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from ..exceptions import ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.system_one import SystemOneProvider
@@ -41,6 +43,12 @@ __all__ = (
 
 SystemOneModelName = str
 """The name the API serves a model under, such as `clm-latest`."""
+
+# How far an unrounded probability or score may be from the exact value, on top of display rounding. Jev rounds
+# what it sends to two decimals, but a server such as vLLM sends a softmax and its expected level unrounded, with
+# all their float digits, and computed in float32 or float64: their sum is one, and the score their mean, only
+# within that arithmetic's error, which float32 puts near 1e-7. A wrong answer is off by far more than this.
+_FLOAT_TOLERANCE = Decimal('1e-6')
 
 
 class SystemOneModelSettings(DecisionModelSettings, total=False):
@@ -173,13 +181,17 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
         try:
             response = await self.client.send(http_request)
         except httpx2.TransportError as e:
-            raise ModelAPIError(model_name=self._model_name, message=f'{type(e).__name__}: {e}') from e
+            raise _model_errors.connection_error(
+                self._model_name, f'{type(e).__name__}: {e}', e, timeout=isinstance(e, httpx2.TimeoutException)
+            ) from e
 
         if response.is_error:
-            raise ModelHTTPError(
+            error_body = _error_body(response)
+            raise ModelHTTPError.for_category(
+                _model_errors.http_status_category(response.status_code, str(error_body)),
                 status_code=response.status_code,
                 model_name=self._model_name,
-                body=_error_body(response),
+                body=error_body,
                 headers=dict(response.headers),
             )
         try:
@@ -213,7 +225,8 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
                 assert_never(question)
             if isinstance(answer, (ChoiceAnswer, ScoreAnswer)):
                 probabilities = answer.probabilities.values()
-                # Jev displays probabilities to two decimal places, so each may differ by half a unit.
+                # Jev displays probabilities to two decimal places, so each may differ by half a unit, which also
+                # covers the float error of a backend that sends them unrounded.
                 valid = (
                     valid
                     and isfinite(answer.confidence)
@@ -222,13 +235,14 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
                     and abs(sum(probabilities) - 1) <= 1e-6 + len(answer.probabilities) * 0.005
                 )
                 if valid and isinstance(question, ScoreQuestion) and isinstance(answer, ScoreAnswer):
-                    # A displayed score and its probabilities may each be rounded. Check whether any distribution
-                    # within their rounding intervals could produce that score, using at least Jev's two decimals.
+                    # A displayed score and its probabilities may each be rounded, or carry float error. Check
+                    # whether any distribution within their intervals could produce that score, using at least
+                    # Jev's two decimals and never less than the float tolerance.
                     probabilities_by_level: list[float] = [
                         answer.probabilities[level] for level in range(len(question.criteria))
                     ]
-                    lower, upper = _probability_bounds(probabilities_by_level)
-                    valid = _score_fits(lower, upper, answer.score)
+                    lower, upper = _probability_bounds(probabilities_by_level, float_tolerance=_FLOAT_TOLERANCE)
+                    valid = _score_fits(lower, upper, answer.score, float_tolerance=_FLOAT_TOLERANCE)
             if not valid:
                 raise UnexpectedModelBehavior(
                     f'Invalid response from the System One API: answer {name!r} does not match its question: {answer!r}',

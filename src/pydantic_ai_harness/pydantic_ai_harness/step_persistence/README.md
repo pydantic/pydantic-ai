@@ -98,6 +98,28 @@ still be looked up by the id passed to or returned from `Agent.run`.
 
 ## Durable execution
 
+`StepPersistence` and a durable execution engine recover from different
+failures:
+
+- **`StepPersistence`** saves message-history snapshots, a step-event trail,
+  and a tool-effect ledger to a store you choose, with no engine to run. After
+  a crash, your code decides what happens next: load the latest complete
+  snapshot's messages with `continue_run` or `fork_run` and pass them to a new
+  `Agent.run(message_history=...)`, in the same process or another one. A step
+  that was in flight is not retried: its tool calls show up as `started`
+  effects in the ledger, and you decide whether redoing them is safe.
+- **A durable engine** replays the run itself after a restart and retries the
+  call that was in flight, as
+  [Durable Execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/)
+  describes.
+
+Use `StepPersistence` alone when a run can be resumed or forked from its last
+settled step, for example by an orchestrator that continues a delegate's
+investigation. Use a durable engine when a run must finish without your code
+restarting it, including a step interrupted partway through. Use both to have
+the engine keep the run alive while the store keeps a history you can inspect,
+continue, or fork after the run ends.
+
 `StepPersistence` has the stable capability id `step_persistence`, so it can
 be attached alongside a Pydantic AI durability capability without passing
 `id=`. Pass an explicit id only when the same agent has more than one
@@ -362,7 +384,9 @@ configured retention can delete older snapshots.
   table for externalized blobs (see [Persisting media](#persisting-media)
   below), plus `snapshot_messages` and `snapshot_message_refs` (see
   [Storing each message once](#storing-each-message-once)). WAL mode is
-  enabled; `tool_effects` upserts per
+  enabled, and a write waits up to 30 seconds for another writer, such as
+  another process sharing the file, before raising `database is locked`;
+  `tool_effects` upserts per
   `(run_id, tool_call_id)` so the latest state wins; snapshots use
   `AUTOINCREMENT seq` to mirror `FileStepStore._next_snapshot_seq`.
   Databases created before the snapshot `state` column existed gain it
@@ -370,7 +394,8 @@ configured retention can delete older snapshots.
   Pass `connection=` instead of `database=` to share a `sqlite3.Connection`
   with the rest of your application; the connection must be opened with
   `check_same_thread=False` because hook calls are dispatched onto a
-  worker thread.
+  worker thread; the store leaves its busy timeout and journal mode as the
+  caller set them.
 - `MongoStepStore(client= or db_url=, database=...)` -- MongoDB collections
   `runs`, `events`, `snapshots`, `snapshot_messages`, `snapshot_idempotency_keys`,
   `tool_effects`, and `counters` (atomic `$inc` for monotonic `seq`). Run registration uses an
@@ -627,6 +652,18 @@ missing snapshot rather than an exception. That rejection is the version gate
 and is intended, but store users have to anticipate it. Keep a current reader
 for persisted snapshots that contain escaped markers.
 
+Two later additions follow the same upgrade-only rule. A dict the walker leaves
+inline but which carries `__harness_external_media__` or
+`__harness_external_literal__` (a tool return, say) is written wrapped under
+`__harness_external_literal__` with a `__harness_external_marker_format__`
+stamp, so it is never read back as a marker; a wrapper stamped with a version
+this reader does not know is rejected. An older reader leaves the wrapper in the
+restored payload, and still misreads a wrapped dict whose
+`__harness_external_media__` is `true`. A binary marker whose source used
+URL-safe base64, which is how pydantic serializes `bytes`, carries
+`__harness_external_urlsafe__` so the restored `data` uses the same alphabet; an
+older reader keeps that key in the restored part, which validation ignores.
+
 | StepStore           | Default `media_store`                  | Where blobs live                      |
 | ------------------- | --------------------------------------- | ------------------------------------- |
 | `InMemoryStepStore` | _(not applicable)_                     | bytes stay in the in-memory snapshot  |
@@ -745,20 +782,25 @@ class MediaContext:
 All fields default; new fields are added non-breakingly as use cases
 emerge. Pass what you have, ignore the rest.
 
-**Persistence by store.** `get_metadata(uri)` round-trips the
-user-supplied `metadata` mapping on all five stores. `media_type` is
-also persisted but is not part of what `get_metadata` returns (it is
-stored for the byte payload itself, e.g. as the `Content-Type`).
+**Persistence by store.** `get_metadata(uri)` returns the stored
+`metadata` mapping and raises `FileNotFoundError` for a blob that was
+never stored. A repeated `put` keeps the first metadata on the SQLite,
+MongoDB, and PostgreSQL stores. On `DiskMediaStore` a later `put` with
+metadata replaces it; on `S3MediaStore` every `put` replaces it, and one
+without metadata clears it. On Disk and S3 this holds for puts that
+resolve to the same key, which a custom `key_strategy` may not.
+`get_metadata` does not return `media_type`: S3 sends it as
+`Content-Type`, the database stores keep it in a column, and
+`DiskMediaStore` does not persist it.
 
 - `SqliteMediaStore` writes `metadata` to a JSON column and `media_type`
   to a dedicated column
-- `S3MediaStore` sends `metadata` as signed `x-amz-meta-*` headers
-  (ASCII alphanumeric + dash key names) and `media_type` as
-  `Content-Type`; `get_metadata` reads the `x-amz-meta-*` values back
-  from the HEAD response
+- `S3MediaStore` sends `metadata` as signed `x-amz-meta-*` headers and
+  `media_type` as `Content-Type`; `get_metadata` reads the `x-amz-meta-*`
+  values back from the HEAD response. Keys must match `[A-Za-z0-9-]+` and
+  come back lowercased
 - `DiskMediaStore` writes a sidecar JSON file (`<resolved>.meta.json`)
-  alongside each blob, atomic via tmp + rename. Sidecars are absent
-  only when the put carried no metadata
+  alongside each blob, atomically through a uniquely named temporary file
 - `MongoMediaStore` writes `metadata` as a JSON string and `media_type`
   as a dedicated field on the blob's manifest document (the `media`
   collection by default); `get_metadata` decodes the JSON string back.
@@ -865,13 +907,13 @@ at or above `media_threshold_bytes` (64 KiB by default) are externalized like st
 store:
 
 - `SqliteConversationStore(database= or connection=)` -- tables `conversation_records`, `conversation_entries`,
-  and `conversation_messages`. A save writes its new entries and the record in one transaction. Deleting a
-  conversation also deletes the entries and messages its history alone used. A rewritten history, from
-  compaction or a history processor that trims it, is stored as a branch, and the entries it replaced stay stored.
+  `conversation_messages`, and `conversation_branches`. A save writes its new entries and the record in one
+  transaction. Deleting a conversation also deletes the entries and messages no other conversation's history or
+  branches use, including the branches it left.
 - `PostgresConversationStore(pool, table='step_persistence')` -- tables `{table}_conv_records`,
-  `{table}_conv_entries`, and `{table}_conv_messages`, which don't clash with `PostgresStepStore`'s, so the two
+  `{table}_conv_entries`, `{table}_conv_messages`, and `{table}_conv_branches`, which don't clash with `PostgresStepStore`'s, so the two
   can share a prefix. Saves and deletes work as for SQLite. Foreign keys keep a concurrent save from
-  pointing at an entry or message a delete is removing: one of the two fails instead.
+  pointing at an entry or message a delete is removing: the save raises `ConversationConflict` instead.
 - `MongoConversationStore(client= or db_url=, database=...)` -- collections `conversation_records`,
   `conversation_entries`, and `conversation_messages`. The store uses no transactions, so deleting a conversation
   deletes only its record: without one, it can't tell an entry no conversation uses from one a concurrent save or

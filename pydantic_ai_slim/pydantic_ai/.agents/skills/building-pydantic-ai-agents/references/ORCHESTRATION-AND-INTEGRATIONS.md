@@ -86,6 +86,10 @@ Temporal entry points:
 - `PydanticAIPlugin`
 - `AgentPlugin`
 
+For runs long enough to approach Temporal's history limit, pass `TemporalDurability(continue_as_new=...)`. Before each model request where Temporal suggests continuing as new, it calls your function with the `RunContext`. The function calls `workflow.continue_as_new()` with everything the workflow's run method needs to resume, typically `None` as the prompt plus `ctx.messages`, `ctx.usage`, and `ctx.usage_limits`, or returns to defer.
+
+To delegate to a nested durable agent under Temporal, run the delegating async function tool as a child workflow with `metadata={'temporal': {'child_workflow': ChildWorkflowConfig(...)}}` (or the same metadata through `SetToolMetadata`). The nested agent's model requests and tool calls then become activities in the child's own history instead of the parent's. List the nested agent in `__pydantic_ai_agents__` too, and register the worker through `PydanticAIPlugin` or `AgentPlugin`: `TemporalDurability.temporal_activities` raises when a tool uses a child workflow, because it would leave the child workflow definition unregistered. The metadata must be in place when the worker is configured; tools added with `@agent.tool` count. An exception in the tool body fails the child workflow, like a failed activity. Child workflows aren't supported for sync, dynamic, or MCP tools.
+
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
 Capability hooks that must behave differently in deterministic workflow code check `ctx.in_durable_context`: `True` inside the durable workflow or flow, `False` in Temporal activities and DBOS steps (where tools run) and outside durable execution. Prefect tasks inherit their flow's context, so it is `True` there. Don't detect the engine by module or class name.

@@ -25,14 +25,15 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
 - React to prompts or session lifecycle: override on_session_start,
   on_session_end, on_turn_start, on_turn_end, on_conversation_changed, or
   on_command_end. Follow delegated tasks with on_task_event, which fires for every
-  stream event of every task, text deltas included, so keep it cheap.
+  stream event of every task, text deltas included, so keep it cheap. It also gets
+  the task's sub_agents events, such as TaskQuestionEvent when a task asks its parent.
 - Drive the prompt from somewhere other than the keyboard, such as a remote UI:
   host.send_input(text) enters a prompt or /command as if typed, host.interrupt()
   cancels the running turn or command, await host.complete(text) returns what Tab offers, and
   host.sessions lists, reads, renames, forks, archives, and deletes the saved sessions /resume shows.
   host.setting(KEY) reads a setting such as run.code_mode. host.plugins lists what /plugins
   shows, turns plugins on and off, reloads them, and saves a loaded plugin's settings.
-  host.tasks lists the delegated tasks /tasks shows and stops, backgrounds, or resumes them;
+  host.tasks lists the delegated tasks /tasks shows and stops, backgrounds, resumes, or prompts them;
   it is None while no task owner runs them, such as in a headless -p run.
 - Configure a plugin: declare a Pydantic settings model as the class's type
   parameter, `Plugin[MySettings]`, and read self.settings.

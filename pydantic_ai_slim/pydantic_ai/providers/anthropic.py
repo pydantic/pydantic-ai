@@ -82,6 +82,22 @@ the way it does a plain system entry. Verified live per model, including `claude
 """
 
 
+_MID_CONVERSATION_EFFORT_MODEL_PREFIXES = (
+    'claude-fable-5-1',
+    'claude-mythos-5-1',
+    'claude-opus-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+)
+"""Models that accept an effort-only `{'role': 'system'}` entry with a per-message `output_config`.
+
+The list Anthropic publishes for the `mid-conversation-output-config-2026-07-01` beta on the Claude API and
+Google Cloud: Claude Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5. `claude-fable-5`
+(5.0) rejects it with `requires a model that supports per-turn effort`. Amazon Bedrock serves fewer, which
+`AnthropicModel.profile` narrows per client. https://platform.claude.com/docs/en/build-with-claude/effort
+"""
+
+
 class AnthropicProvider(Provider[AsyncAnthropicClient]):
     """Provider for Anthropic API."""
 
@@ -126,8 +142,9 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
                 supports_request_scoped_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
             ),
             # Prompt caching is likewise a fact about the Messages API rather than the model family.
-            # `AnthropicModel` narrows `supports_auto_cache` per client (the legacy Bedrock SDK client doesn't
-            # support the top-level automatic caching parameter), and `supported_cache_retentions` on Bedrock, which
+            # `AnthropicModel` narrows `supports_auto_cache` per client and model (the legacy Bedrock SDK client only
+            # takes the top-level automatic caching parameter on some models), before the user's `profile=` so an
+            # explicit value still wins, and `supported_cache_retentions` on Bedrock, which
             # grants the 1-hour TTL to only a subset of Claude models. Anthropic documents the 1-hour TTL on Vertex
             # for all active models: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
             AnthropicModelProfile(
@@ -138,6 +155,9 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(tool_addition_mode='by_reference')
             if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)
             else AnthropicModelProfile(),
+            AnthropicModelProfile(
+                supports_mid_conversation_effort=model_name.startswith(_MID_CONVERSATION_EFFORT_MODEL_PREFIXES)
+            ),
             AnthropicModelProfile(
                 # Anthropic-managed caches have a 5-minute minimum TTL refreshed on use across the direct,
                 # Bedrock, and Vertex SDK paths. Paid 1-hour cache points are handled by `prompt_cache_outlook`.
@@ -271,4 +291,31 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
     def transform(self, schema: JsonSchema) -> JsonSchema:
         schema.pop('title', None)
         schema.pop('$schema', None)
+        if self.strict is True:
+            _const_to_typed_enum(schema)
         return schema
+
+
+def _const_to_typed_enum(schema: JsonSchema) -> None:
+    """Rewrite a scalar `const` as a typed one-value `enum`, which Anthropic's `transform_schema()` keeps.
+
+    `transform_schema()` moves a `const` into the description, which would leave the value unconstrained, while
+    it keeps an `enum`. Pydantic emits a typed `const` for a single-value `Literal`, such as a discriminator field.
+    A described `Enum`, `Choices()` and `BoolCriteria` render their options as `anyOf` of untyped `const`s, which
+    get the type of their value, as `transform_schema()` rejects a node without a `type`.
+    """
+    const = schema.get('const')
+    # `bool` before `int`, which it subclasses.
+    if isinstance(const, bool):
+        type_ = 'boolean'
+    elif isinstance(const, str):
+        type_ = 'string'
+    elif isinstance(const, int):
+        type_ = 'integer'
+    elif isinstance(const, float):
+        type_ = 'number'
+    else:
+        return
+    del schema['const']
+    schema.setdefault('type', type_)
+    schema['enum'] = [const]

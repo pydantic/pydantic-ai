@@ -18,7 +18,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -65,8 +64,8 @@ class Script:
             self.instructions.append(info.instructions or '')
             args: dict[str, object] = {'code': self.CODE[part.content], 'restart': part.content == 'restart'}
             return ModelResponse(parts=[ToolCallPart('run_code', args)])
-        assert isinstance(part, ToolReturnPart | RetryPromptPart)
-        self.results.append(f'retry: {part.content}' if isinstance(part, RetryPromptPart) else str(part.content))
+        assert isinstance(part, ToolReturnPart)
+        self.results.append(f'retry: {part.content}' if part.outcome == 'retried' else str(part.content))
         return ModelResponse(parts=[TextPart('done')])
 
     async def stream(self, messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:

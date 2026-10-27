@@ -16,7 +16,7 @@ import anyio
 import pytest
 
 from pydantic_ai import BinaryImage, Conversation, ModelRequest, UserPromptPart
-from pydantic_ai.conversation_store import ConversationConflict, ConversationRecord
+from pydantic_ai.conversation_store import ConversationConflict, ConversationEntry, ConversationRecord
 from pydantic_ai_harness.media import SqliteMediaStore
 from pydantic_ai_harness.step_persistence import PostgresConversationStore, SqliteConversationStore
 from tests.harness._postgres_sqlite import SqlitePool
@@ -191,6 +191,33 @@ async def test_concurrent_saves_on_a_caller_connection_take_turns() -> None:
                 tg.start_soon(store.save, conversation)
 
         assert [await store.load(c.conversation_id) for c in conversations] == conversations
+
+
+async def test_postgres_a_record_pointing_at_a_released_entry_conflicts() -> None:
+    pool = SqlitePool()
+    pool.db.execute('PRAGMA foreign_keys = ON')
+    store = PostgresConversationStore(pool, media_store=None)
+
+    with pytest.raises(ConversationConflict):
+        await store.write_record(ConversationRecord(conversation_id='c', head_id='released'), expected_revision=None)
+
+    assert await store.read_record('c') is None
+    pool.close()
+
+
+async def test_postgres_other_write_errors_are_not_conflicts() -> None:
+    pool = SqlitePool()
+    store = PostgresConversationStore(pool, media_store=None)
+    entry = ConversationEntry(parent_id=None, message=ModelRequest(parts=[UserPromptPart('one')]))
+    await store.write_record(
+        ConversationRecord(conversation_id='a', head_id=entry.id), new_entries=[entry], expected_revision=None
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        await store.write_record(
+            ConversationRecord(conversation_id='b', head_id=entry.id), new_entries=[entry], expected_revision=None
+        )
+    pool.close()
 
 
 def test_sqlite_store_rejects_an_in_memory_database_path() -> None:

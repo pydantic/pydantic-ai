@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import pytest
@@ -1187,8 +1187,19 @@ async def test_later_segment_error_cancels_suspended_job() -> None:
     assert model.cancelled[0].provider_response_id == 'r1'
 
 
-async def test_check_usage_error_cancels_suspended_job() -> None:
-    """A `check_usage` failure between segments cancels the still-suspended server-side job."""
+@pytest.mark.parametrize(
+    ('second_state', 'expected_cancelled'),
+    [('suspended', ['r2']), ('complete', [])],
+)
+async def test_check_usage_error_cancels_suspended_job(
+    second_state: Literal['suspended', 'complete'], expected_cancelled: list[str]
+) -> None:
+    """A `check_usage` failure between segments cancels the newest still-suspended job, and nothing once complete.
+
+    Mirrors the non-streaming continuation loop: the limit is checked on the merged response, so a trip
+    tears down the job that merge left suspended rather than the previous segment's, and a completed merge
+    has no live job to cancel.
+    """
 
     def _reject_second(usage: RequestUsage) -> None:
         if usage.output_tokens > 1:  # first segment alone is 1; the merge with segment 2 trips this
@@ -1205,7 +1216,7 @@ async def test_check_usage_error_cancels_suspended_job() -> None:
             _Segment(
                 events=_starts((0, 'b')),
                 response=_response(
-                    parts=['b'], provider_response_id='r2', state='complete', input_tokens=1, output_tokens=5
+                    parts=['b'], provider_response_id='r2', state=second_state, input_tokens=1, output_tokens=5
                 ),
             ),
         ]
@@ -1216,8 +1227,7 @@ async def test_check_usage_error_cancels_suspended_job() -> None:
         async for _ in stream:
             pass
 
-    assert len(model.cancelled) == 1
-    assert model.cancelled[0].provider_response_id == 'r1'
+    assert [response.provider_response_id for response in model.cancelled] == expected_cancelled
 
 
 async def test_cancel_during_between_segment_sleep_skips_next_request() -> None:

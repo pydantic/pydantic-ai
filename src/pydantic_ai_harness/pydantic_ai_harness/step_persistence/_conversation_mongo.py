@@ -155,8 +155,12 @@ class MongoConversationStore(ConversationStore):
         if not written:
             raise ConversationConflict(record.conversation_id)
 
-    async def delete_record(self, conversation_id: str) -> None:
-        await self._db['conversation_records'].delete_one({'_id': conversation_id})
+    async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
+        deleted = await self._db['conversation_records'].delete_one(
+            {'_id': conversation_id, 'revision': expected_revision}
+        )
+        if deleted.deleted_count == 0:
+            raise ConversationConflict(conversation_id)
 
     async def read_entry(self, entry_id: str) -> ConversationEntry:
         doc = await self._db['conversation_entries'].find_one({'_id': entry_id})
@@ -172,30 +176,30 @@ class MongoConversationStore(ConversationStore):
             message=await load_message(str(message['message']), media_store=self._media_store),
         )
 
-    async def read_history(self, head_id: str | None) -> list[ConversationEntry]:
-        """The entries from the first one up to `head_id`, in order, read with one `$graphLookup`."""
-        if head_id is None:
+    async def read_history(self, head_id: str | None, *, limit: int | None = None) -> list[ConversationEntry]:
+        """The entries from the first one up to `head_id`, in order, or only the last `limit` of them, read with one `$graphLookup`."""
+        if head_id is None or limit == 0:
             return []
+        lookup: _MongoDocument = {
+            'from': 'conversation_entries',
+            'startWith': '$parent_id',
+            'connectFromField': 'parent_id',
+            'connectToField': '_id',
+            'as': 'ancestors',
+            'depthField': 'depth',
+        }
+        if limit is not None:
+            # Depth 0 is the head's parent, so `limit - 2` keeps `limit` entries with the head.
+            lookup['maxDepth'] = limit - 2
+        pipeline: list[_MongoDocument] = [{'$match': {'_id': head_id}}]
+        if limit != 1:
+            pipeline.append({'$graphLookup': lookup})
         chain: list[_EntryDocument] = []
-        async for doc in await self._db['conversation_entries'].aggregate(
-            [
-                {'$match': {'_id': head_id}},
-                {
-                    '$graphLookup': {
-                        'from': 'conversation_entries',
-                        'startWith': '$parent_id',
-                        'connectFromField': 'parent_id',
-                        'connectToField': '_id',
-                        'as': 'ancestors',
-                        'depthField': 'depth',
-                    }
-                },
-            ]
-        ):
-            ancestors = _ENTRY_DOCUMENTS_ADAPTER.validate_python(doc.pop('ancestors'))
+        async for doc in await self._db['conversation_entries'].aggregate(pipeline):
+            ancestors = _ENTRY_DOCUMENTS_ADAPTER.validate_python(doc.pop('ancestors', []))
             chain = [_ENTRY_DOCUMENT_ADAPTER.validate_python(doc), *sorted(ancestors, key=lambda a: a.get('depth', 0))]
         chain.reverse()
-        if not chain or chain[0]['parent_id'] is not None:
+        if not chain or (chain[0]['parent_id'] is not None and (limit is None or len(chain) < limit)):
             raise missing_entries_error(head_id)
         stored = {
             str(message['_id']): str(message['message'])

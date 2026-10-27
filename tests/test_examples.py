@@ -14,7 +14,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, S
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from importlib.util import find_spec
-from inspect import FrameInfo
+from inspect import FrameInfo, unwrap
 from pathlib import Path
 from textwrap import indent
 from typing import Any
@@ -33,21 +33,27 @@ from pytest_mock import MockerFixture
 from pydantic_ai import (
     AbstractToolset,
     BinaryImage,
+    Citation,
+    ContentCitationAnchor,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     ImageUrl,
+    MarkerCitationAnchor,
     ModelHTTPError,
     ModelMessage,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    StructuredContent,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     ToolsetTool,
     UserPromptPart,
+    WebCitationSource,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
@@ -74,7 +80,7 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
 )
 
-from .conftest import TestEnv, try_import
+from .conftest import TestEnv, legacy_retry_prompt_part, try_import
 from .docs_model_aliases import resolve_model_aliases, restore_model_aliases
 from .realtime_connections import InferredConnection
 
@@ -118,6 +124,15 @@ class ExamplesConfig(BaseExamplesConfig):
         return config
 
 
+RUNNABLE_HARNESS_PAGES = frozenset({'memory.md'})
+"""`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
+
+
+def _is_harness_page(path: Path) -> bool:
+    root_dir = Path(__file__).parent.parent
+    return (root_dir / path).resolve().is_relative_to(root_dir / 'docs' / 'harness')
+
+
 def find_filter_examples() -> Iterable[ParameterSet]:
     # Ensure this is run from the package root regardless of where/how the tests are run
     root_dir = Path(__file__).parent.parent
@@ -126,7 +141,7 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     for ex in find_examples('README.md', 'docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if '.agents' in ex.path.parts:
             continue
-        if ex.path.resolve().is_relative_to(root_dir / 'docs' / 'harness'):
+        if _is_harness_page(ex.path) and ex.path.name not in RUNNABLE_HARNESS_PAGES:
             # Written for the harness repository, which never ran them; not yet made runnable here.
             continue
         if ex.path.name == 'README.md' and (
@@ -453,24 +468,55 @@ def examples_type_errors(
             time.sleep(0.5)
     else:
         try:
-            result: dict[str, Any] = {'errors': _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))}
+            result: dict[str, object] = {'errors': _typecheck_examples(examples, tmp_path_factory.mktemp('pyright'))}
         except Exception as e:  # pragma: no cover
             result = {'failure': repr(e)}
         tmp_file = result_file.with_suffix('.tmp')
         tmp_file.write_text(json.dumps(result), encoding='utf-8')
         tmp_file.replace(result_file)
 
-    result = json.loads(result_file.read_text(encoding='utf-8'))
-    if failure := result.get('failure'):  # pragma: no cover
+    cached_result = json.loads(result_file.read_text(encoding='utf-8'))
+    if failure := cached_result.get('failure'):  # pragma: no cover
         raise RuntimeError(f'Type-checking the examples failed: {failure}')
-    return result['errors']
+    return cached_result['errors']
+
+
+def test_typecheck_examples_shares_worker_result(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+):
+    """The lock owner publishes errors once, and another worker reuses them without running pyright."""
+    worker_dir = tmp_path / 'worker'
+    worker_dir.mkdir()
+    mocker.patch.object(tmp_path_factory, 'getbasetemp', return_value=worker_dir)
+    example = CodeExample.create('x: int = 1\n')
+    example_params: dict[str, CodeExample] = {'example': example}
+    item = mocker.Mock(spec=pytest.Function, originalname='test_docs_examples')
+    item.callspec = mocker.Mock(params=example_params)
+    fixture_request = mocker.Mock(spec=pytest.FixtureRequest)
+    fixture_request.session.items = [item]
+    mocker.patch(f'{__name__}._typecheck_enabled', return_value=True)
+    monkeypatch.setenv('PYTEST_XDIST_WORKER', 'gw0')
+    errors: dict[str, list[str]] = {'docs/example.md:10': ['example error']}
+    typecheck = mocker.patch(f'{__name__}._typecheck_examples', return_value=errors)
+
+    assert unwrap(examples_type_errors)(fixture_request, tmp_path_factory) == errors
+    assert unwrap(examples_type_errors)(fixture_request, tmp_path_factory) == errors
+    typecheck.assert_called_once_with([example], mocker.ANY)
 
 
 @pytest.mark.subprocess(reason='runs pyright, which is launched through `python -m pyright`')
 @pytest.mark.skipif(not _typecheck_enabled(), reason='type checking the examples is off')
-def test_typecheck_examples_reports_errors_at_their_source(tmp_path: Path):
-    """A type error is reported at its line and column in the Markdown or docstring the example came from."""
-    example = CodeExample.create("x: int = 'a'\n", path=Path('docs/example.md'), start_line=10, indent=4)
+def test_typecheck_examples_reports_errors_at_their_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Report the example's own errors at their source location, excluding errors in required files."""
+    dependency = CodeExample.create("value: int = 'b'\n")
+    monkeypatch.setitem(code_examples, 'example_dependency.py', dependency)
+    example = CodeExample.create(
+        "x: int = 'a'\nfrom example_dependency import value\n",
+        path=Path('docs/example.md'),
+        start_line=10,
+        indent=4,
+        prefix='requires="example_dependency.py"',
+    )
 
     errors = _typecheck_examples([example], tmp_path)
 
@@ -571,6 +617,7 @@ def test_docs_examples(
     env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
+    env.set('ELEVENLABS_API_KEY', 'testing')
     env.set('TAVILY_API_KEY', 'testing')
     env.set('ZAI_API_KEY', 'testing')
     env.set('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
@@ -618,6 +665,11 @@ def test_docs_examples(
             else:  # pragma: no cover
                 raise KeyError(f'Example {req} not found, check the `requires` header of this example.')
 
+    known_first_party = ['pydantic_ai', 'pydantic_evals', 'pydantic_graph']
+    if _is_harness_page(example.path):
+        # Harness pages group harness imports with Pydantic AI's, like their package READMEs.
+        known_first_party.append('pydantic_ai_harness')
+
     ruff_ignore: list[str] = ['D', 'Q001']
     # `from bank_database import DatabaseConn` wrongly sorted in imports
     # waiting for https://github.com/pydantic/pytest-examples/issues/43
@@ -637,7 +689,7 @@ def test_docs_examples(
         isort=True,
         upgrade=True,
         quotes='single',
-        known_first_party=['pydantic_ai', 'pydantic_evals', 'pydantic_graph'],
+        known_first_party=known_first_party,
         known_local_folder=known_local_folder,
     )
     eval_example.print_callback = print_callback
@@ -734,7 +786,7 @@ class MockMCPServer(AbstractToolset[Any]):
 
     @property
     def id(self) -> str | None:
-        return None
+        return None  # pragma: no cover
 
     async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         return None
@@ -755,6 +807,9 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    # docs/capabilities/thinking.md
+    'Plan the database migration.': 'Export, recreate the schema, import, then verify row counts.',
+    'Now check the plan for anything that could lose data.': 'Take a backup before the import.',
     # docs/workspace.md
     'Explain what fizzbuzz.py does.': 'It prints the numbers 1 to 15, with fizz, buzz or fizzbuzz for multiples of 3 and 5.',
     'Now add a test for it.': 'Added test_fizzbuzz.py.',
@@ -913,6 +968,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     ],
     'Begin infinite retry loop!': ToolCallPart(
         tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id'
+    ),
+    'Research the latest advances in battery technology.': ToolCallPart(
+        tool_name='search_web', args={'query': 'battery'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
+    'What is the status of order 1234?': ToolCallPart(
+        tool_name='get_order_status', args={'order_id': '1234'}, tool_call_id='pyd_ai_tool_call_id'
     ),
     'Please generate 5 jokes.': ToolCallPart(
         tool_name='final_result',
@@ -1141,7 +1202,25 @@ async def model_logic(  # noqa: C901
     if not messages[-1].parts:
         # docs/models/decision.md: a run with no new prompt judges the history it was given
         return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
+    if any(isinstance(p, ToolReturnPart) and p.tool_name == 'search_web' for p in messages[-1].parts):
+        # docs/agent.md wrap-up recipe: keep searching until the capability takes the tools away.
+        # Checked before `m` because the recipe's request-scoped prompt follows the tool return.
+        if info.function_tools:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='search_web', args={'query': 'battery'}, tool_call_id='pyd_ai_tool_call_id')
+                ]
+            )
+        return ModelResponse(parts=[TextPart('Solid-state batteries entered pilot production in 2032.')])
     m = messages[-1].parts[-1]
+    # The framework now answers a retried tool call with `ToolReturnPart(outcome='retried')` rather
+    # than a `RetryPromptPart`. This mock dispatches on the legacy shape in a dozen places, so map it
+    # back here rather than splitting every tool-return branch below in two.
+    if isinstance(m, ToolReturnPart) and m.outcome == 'retried':
+        m = legacy_retry_prompt_part(
+            content=m.model_response_str(wrap_if_error=False), tool_name=m.tool_name, tool_call_id=m.tool_call_id
+        )
+
     # Handle multimodal tool returns (content directly in ToolReturnPart)
     if (
         isinstance(m, ToolReturnPart)
@@ -1195,8 +1274,57 @@ async def model_logic(  # noqa: C901
         ):
             # `select_the_model_per_step.py`: the router is asked which model takes the run's prompt
             return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': route})])
+        elif isinstance(m.content, list) and isinstance(m.content[0], DocumentUrl):
+            # docs/capabilities/file-understanding.md and docs/models/typesafe.md: the describing model
+            return ModelResponse(parts=[TextPart('A field guide to the animals of the Serengeti.')])
+        elif (
+            isinstance(m.content, list) and isinstance(m.content[0], str) and m.content[0].startswith('-----BEGIN FILE')
+        ):
+            # docs/capabilities/file-understanding.md and docs/models/typesafe.md: Jev judges the description
+            wants_bool = info.output_tools[0].parameters_json_schema['properties']['response'].get('type') == 'boolean'
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': True if wants_bool else 'animals'})]
+            )
         elif isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
+        elif (
+            isinstance(m.content, list)
+            and isinstance(m.content[0], StructuredContent)
+            and '"expected_answer":"4"' in m.content[0].content
+        ):
+            # docs/models/decision.md: a decision model judges a structured value
+            return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': True})])
+        elif isinstance(m.content, list) and m.content[0] == 'How long do customers have to return an item?':
+            # docs/citations.md: a document citation covering the whole text part
+            text = 'Items may be returned within 30 days.'
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        text,
+                        citations=[
+                            Citation(
+                                sources=[DocumentCitationSource(excerpts=[text])],
+                                anchor=ContentCitationAnchor(start=0, end=len(text)),
+                            )
+                        ],
+                    )
+                ]
+            )
+        elif m.content == 'What is the tallest mountain in Alberta?':
+            # docs/citations.md: a web citation whose anchor is the marker the model wrote
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        'Mount Columbia is the tallest mountain in Alberta. ([example.com](https://example.com))',
+                        citations=[
+                            Citation(
+                                sources=[WebCitationSource('https://example.com', title='Mount Columbia')],
+                                anchor=MarkerCitationAnchor(start=51, end=87),
+                            )
+                        ],
+                    )
+                ]
+            )
         assert isinstance(m.content, str)
         if m.content == 'Mark task 1 as done, then stop without saying anything.' and any(
             t.name == 'mark_task_done' for t in info.function_tools
@@ -1623,7 +1751,7 @@ async def model_logic(  # noqa: C901
         if 'Write fizzbuzz to fizzbuzz.py and run it.' in prompts:
             return ModelResponse(parts=[TextPart('fizzbuzz.py is written and runs clean.')])
     if (
-        isinstance(m, RetryPromptPart)
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and isinstance(m.content, str)
         and m.content.startswith("No user found with name 'Joh")
     ):
@@ -1634,7 +1762,7 @@ async def model_logic(  # noqa: C901
                 )
             ]
         )
-    elif isinstance(m, RetryPromptPart) and m.tool_name == 'infinite_retry_tool':
+    elif isinstance(m, RetryPromptPart) and m.tool_name == 'infinite_retry_tool':  # pyright: ignore[reportDeprecated]
         return ModelResponse(
             parts=[ToolCallPart(tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
@@ -1648,7 +1776,9 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'do_work':
         return ModelResponse(parts=[ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id')])
-    elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_order_status':
+        return ModelResponse(parts=[TextPart('Order 1234 shipped on 2032-01-02.')])
+    elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':  # pyright: ignore[reportDeprecated]
         return ModelResponse(
             parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id')]
         )
@@ -1709,7 +1839,7 @@ async def model_logic(  # noqa: C901
             parts=[ToolCallPart(tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif (
-        isinstance(m, RetryPromptPart)
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and m.tool_name == 'final_result_run_sql_query'
         and m.content == "Only 'SELECT *' is supported, you'll have to do column filtering manually."
     ):
@@ -1723,7 +1853,7 @@ async def model_logic(  # noqa: C901
             ]
         )
     elif (
-        isinstance(m, RetryPromptPart)
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and m.tool_name == 'final_result_hand_off_to_sql_agent'
         and m.content
         == "SQL agent failed: Unknown table 'capitals' in query 'SELECT * FROM capitals;'. Available tables: capital_cities."
@@ -1738,7 +1868,7 @@ async def model_logic(  # noqa: C901
             ]
         )
     elif (
-        isinstance(m, RetryPromptPart)
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and m.tool_name == 'final_result_run_sql_query'
         and m.content == "Unknown table 'pets' in query 'SELECT * FROM pets;'. Available tables: capital_cities."
     ):
@@ -1755,7 +1885,7 @@ async def model_logic(  # noqa: C901
         )
     # SQL agent failed: The table 'pets' does not exist in the database. Only the table 'capital_cities' is available.
     elif (
-        isinstance(m, RetryPromptPart)
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
         and m.tool_name == 'final_result_hand_off_to_sql_agent'
         and m.content
         == "SQL agent failed: The table 'pets' does not exist in the database. Only the table 'capital_cities' is available."

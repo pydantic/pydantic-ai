@@ -108,6 +108,14 @@ agent = Agent(model=model, model_settings=bedrock_model_settings)
 
 When `trace` is set to `'enabled'` in the guardrail configuration (as in the example above), the guardrail assessment returned by Bedrock is stored verbatim under the `'trace'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], e.g. `result.all_messages()[-1].provider_details['trace']`.
 
+### Output token limit
+
+When you don't set [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], Pydantic AI sends Claude's maximum output, like 64,000 on Claude Sonnet 4.5 or 128,000 on Claude Opus 5.5, as it does on [Anthropic](anthropic.md), so responses are only cut off at the model's own limit. Bedrock's own default can be much lower (4,096 on Claude Opus 5.5), and thinking counts toward it. An inference profile or foundation model ARN counts as the model it names. Models older than Claude Sonnet 4.5, models other than Claude, and models named by an application inference profile ARN get Bedrock's default, so set `max_tokens` yourself for those, or pass the application inference profile ARN as [`bedrock_inference_profile`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_inference_profile] with the base model name.
+
+Such a request is streamed behind the scenes, since a response that long can take longer than the client's read timeout (`aws_read_timeout` on [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider], 300 seconds by default), which then limits the wait between streamed chunks rather than the whole response. That wait includes the time the model spends thinking, which can arrive as a single chunk. Streaming needs the `bedrock:InvokeModelWithResponseStream` IAM permission, which streamed runs already needed, and tool call `args` in the response are the streamed JSON string rather than a dict, as on streamed runs; [`args_as_dict()`][pydantic_ai.messages.BaseToolCallPart.args_as_dict] gives the same value.
+
+Bedrock reserves `maxTokens` against your tokens-per-minute quota when a request starts, so an account with a small Claude quota can see more `ThrottlingException`s. Set `max_tokens` close to the output you expect to reserve less and send a non-streaming `Converse` request.
+
 ### Thinking and structured output
 
 Claude answers a forced tool choice without thinking, and manual extended thinking
@@ -128,9 +136,24 @@ The output mode is chosen on the run's first request and kept for the rest of th
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], where each model chooses on every request), so a thinking
 setting that changes from step to step doesn't add or remove the output tool between requests and
 [invalidate the prompt cache](../capabilities/caching.md#what-invalidates-a-cache). A Claude run that starts with tool
-output keeps it once thinking turns on, with the output tool offered under `toolChoice={'auto': {}}`. Models other than
-Claude don't accept output tools alongside thinking, so there a request that thinks switches to
+output keeps it once thinking turns on, with the output tool offered under `toolChoice={'auto': {}}`. OpenAI GPT-5.6
+and GPT-6 accept output tools while they think, so they keep tool output (offered without a forced `toolChoice`, as
+for these models without thinking). Models other than Claude, xAI Grok, and OpenAI GPT-5.6 and GPT-6 don't accept
+output tools alongside thinking, so there a request that thinks switches to
 [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
+
+xAI Grok 4.6 and 4.7 (`us.xai.grok-4.6`, `global.xai.grok-4.6`, `us.xai.grok-4.7`, `global.xai.grok-4.7`) always
+reason, and Pydantic AI keeps forcing tool choice with them, since Converse accepts a forced tool choice with Grok 4.6
+while it reasons. A `thinking` setting does not change this: `tool_choice='required'`, a single forced tool, and
+[`ToolOutput`][pydantic_ai.output.ToolOutput] keep working.
+
+### Array constraints in structured output
+
+For Claude, GLM, Qwen, and Gemma models that support structured output, Pydantic AI moves array `contains`
+constraints into field descriptions when using [`NativeOutput`][pydantic_ai.output.NativeOutput] or explicitly strict tools. Bedrock rejects this
+keyword for these models. The description preserves the constraint as a hint; Bedrock does not enforce it.
+For Claude, this also applies to nullable arrays expressed as `type: ['array', 'null']`.
+Non-strict tools keep the original constraint.
 
 ### Custom HTTP headers
 
@@ -404,6 +427,8 @@ model = BedrockConverseModel(
 
 agent = Agent(model)
 ```
+
+You don't need this for a system-defined (cross-region) inference profile ARN or a foundation model ARN: since Pydantic AI v2.59.0, you can pass either directly as the model name, and Pydantic AI detects the capabilities of the model it names. An application inference profile ARN doesn't name its model, so it still needs `bedrock_inference_profile`.
 
 ### Configuring Retries
 

@@ -30,6 +30,8 @@
 
 ::: pydantic_ai.providers.xai
 
+::: pydantic_ai.providers.elevenlabs
+
 ::: pydantic_ai.providers.deepseek
 
 ::: pydantic_ai.providers.bedrock

@@ -241,12 +241,14 @@ async def test_steering_reaches_running_agent_and_is_cleared() -> None:
         return 'done'
 
     session = Session(agent, deps=None)
+    image = BinaryContent(data=b'alone', media_type='image/png')
     assert not session.steer('idle')
     async with anyio.create_task_group() as tasks:
         tasks.start_soon(session.prompt, 'start')
         await started.wait()
         assert session.steer('change direction')
         assert session.steer('image direction', images=[BinaryContent(data=b'image', media_type='image/png')])
+        assert session.steer('', images=[image])
         release.set()
     prompts = [
         part.content
@@ -256,6 +258,7 @@ async def test_steering_reaches_running_agent_and_is_cleared() -> None:
         if isinstance(part, UserPromptPart)
     ]
     assert 'change direction' in prompts
+    assert [image] in prompts, 'no empty text block beside an image alone'
     assert not session.steer('finished')
 
 

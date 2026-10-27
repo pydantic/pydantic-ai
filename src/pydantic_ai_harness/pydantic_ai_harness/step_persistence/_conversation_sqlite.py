@@ -53,15 +53,23 @@ CREATE TABLE IF NOT EXISTS conversation_records (
 CREATE INDEX IF NOT EXISTS conversation_records_head ON conversation_records (head_id);
 CREATE INDEX IF NOT EXISTS conversation_records_scope ON conversation_records (scope, updated_at);
 CREATE INDEX IF NOT EXISTS conversation_records_updated_at ON conversation_records (updated_at);
+CREATE TABLE IF NOT EXISTS conversation_branches (
+    conversation_id TEXT NOT NULL,
+    entry_id TEXT NOT NULL REFERENCES conversation_entries (id),
+    PRIMARY KEY (conversation_id, entry_id)
+);
+CREATE INDEX IF NOT EXISTS conversation_branches_entry ON conversation_branches (entry_id);
 """
 
-# The entries from `head_id` back to the first, deepest first, with each one's message.
+# The entries from `head_id` back to the first, or at most `limit` of them (a negative one is no limit), deepest
+# first, with each one's message.
 _HISTORY_SQL = """
 WITH RECURSIVE chain (id, parent_id, kind, sha256, depth) AS (
     SELECT id, parent_id, kind, sha256, 0 FROM conversation_entries WHERE id = ?
     UNION ALL
     SELECT e.id, e.parent_id, e.kind, e.sha256, chain.depth + 1
     FROM conversation_entries e JOIN chain ON e.id = chain.parent_id
+    WHERE ? < 0 OR chain.depth + 1 < ?
 )
 SELECT chain.id, chain.parent_id, m.message
 FROM chain LEFT JOIN conversation_messages m ON m.sha256 = chain.sha256
@@ -83,14 +91,14 @@ class SqliteConversationStore(ConversationStore):
 
     A save writes its new entries and the record together, in a transaction on a connection the
     store opened and in a savepoint on a caller-owned one. Deleting a conversation also deletes
-    the entries and messages its history alone used; externalized media stays, and so do the
-    entries a rewritten history replaced.
+    the entries and messages no other conversation's history or branch uses; externalized media stays.
 
     Tables:
 
     - `conversation_records(conversation_id PK, revision, head_id, scope, updated_at, record)`
     - `conversation_entries(id PK, parent_id, kind, sha256)`
     - `conversation_messages(sha256 PK, message)`
+    - `conversation_branches(conversation_id, entry_id)`: the last entry of each branch a record lists.
     """
 
     def __init__(
@@ -239,18 +247,29 @@ class SqliteConversationStore(ConversationStore):
                         RECORD_ADAPTER.dump_json(record).decode(),
                     ),
                 )
+                conn.execute('DELETE FROM conversation_branches WHERE conversation_id = ?', (record.conversation_id,))
+                conn.executemany(
+                    'INSERT INTO conversation_branches (conversation_id, entry_id) VALUES (?, ?)',
+                    [(record.conversation_id, entry_id) for entry_id in record.branches],
+                )
 
-    async def delete_record(self, conversation_id: str) -> None:
-        await anyio.to_thread.run_sync(self._sync_delete_record, conversation_id)
+    async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
+        await anyio.to_thread.run_sync(self._sync_delete_record, conversation_id, expected_revision)
 
-    def _sync_delete_record(self, conversation_id: str) -> None:
+    def _sync_delete_record(self, conversation_id: str, expected_revision: str) -> None:
         with self._connected() as conn:
             with _atomically(conn, store_owned=self._connection is None, begin='BEGIN IMMEDIATE'):
                 row = conn.execute(
-                    'DELETE FROM conversation_records WHERE conversation_id = ? RETURNING head_id', (conversation_id,)
+                    'DELETE FROM conversation_records WHERE conversation_id = ? AND revision = ? RETURNING head_id',
+                    (conversation_id, expected_revision),
                 ).fetchone()
-                if row is not None:
-                    _release(conn, row[0])
+                if row is None:
+                    raise ConversationConflict(conversation_id)
+                tips = conn.execute(
+                    'DELETE FROM conversation_branches WHERE conversation_id = ? RETURNING entry_id', (conversation_id,)
+                ).fetchall()
+                for (entry_id,) in [row, *tips]:
+                    _release(conn, entry_id)
 
     async def read_entry(self, entry_id: str) -> ConversationEntry:
         row = await anyio.to_thread.run_sync(self._sync_read_entry, entry_id)
@@ -269,12 +288,12 @@ class SqliteConversationStore(ConversationStore):
                 (entry_id,),
             ).fetchone()
 
-    async def read_history(self, head_id: str | None) -> list[ConversationEntry]:
-        """The entries from the first one up to `head_id`, in order, read in one query."""
-        if head_id is None:
+    async def read_history(self, head_id: str | None, *, limit: int | None = None) -> list[ConversationEntry]:
+        """The entries from the first one up to `head_id`, in order, or only the last `limit` of them, read in one query."""
+        if head_id is None or limit == 0:
             return []
-        rows = await anyio.to_thread.run_sync(self._sync_read_history, head_id)
-        if not rows or rows[0][1] is not None:
+        rows = await anyio.to_thread.run_sync(self._sync_read_history, head_id, -1 if limit is None else limit)
+        if not rows or (rows[0][1] is not None and (limit is None or len(rows) < limit)):
             raise missing_entries_error(head_id)
         entries: list[ConversationEntry] = []
         for entry_id, parent_id, message in rows:
@@ -287,23 +306,25 @@ class SqliteConversationStore(ConversationStore):
             )
         return entries
 
-    def _sync_read_history(self, head_id: str) -> list[tuple[str, str | None, str | None]]:
+    def _sync_read_history(self, head_id: str, limit: int) -> list[tuple[str, str | None, str | None]]:
         with self._connected() as conn:
-            return conn.execute(_HISTORY_SQL, (head_id,)).fetchall()
+            return conn.execute(_HISTORY_SQL, (head_id, limit, limit)).fetchall()
 
 
 def _release(conn: sqlite3.Connection, entry_id: str | None) -> None:
-    """Delete `entry_id` and its ancestors, up to the first one another record's history still reaches.
+    """Delete `entry_id` and its ancestors, up to the first one another record's history or branch still reaches.
 
-    That's a record's head, or an entry with another child. A message no remaining entry holds goes too.
+    That's a record's head, the last entry of a branch a record lists, or an entry with another child. A
+    message no remaining entry holds goes too.
     """
     while entry_id is not None:
         deleted = conn.execute(
             'DELETE FROM conversation_entries WHERE id = ? '
             'AND NOT EXISTS (SELECT 1 FROM conversation_records WHERE head_id = ?) '
+            'AND NOT EXISTS (SELECT 1 FROM conversation_branches WHERE entry_id = ?) '
             'AND NOT EXISTS (SELECT 1 FROM conversation_entries WHERE parent_id = ?) '
             'RETURNING parent_id, sha256',
-            (entry_id, entry_id, entry_id),
+            (entry_id, entry_id, entry_id, entry_id),
         ).fetchone()
         if deleted is None:
             break

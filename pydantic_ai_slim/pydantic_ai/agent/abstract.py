@@ -14,7 +14,7 @@ from collections.abc import (
 )
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import FrameType, TracebackType
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeAlias, cast, overload
 
@@ -1023,6 +1023,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             # f_back because `asynccontextmanager` adds one frame
             if frame := inspect.currentframe():  # pragma: no branch
                 self._infer_name(frame.f_back)
+            # This generator's frame would otherwise refer to itself and keep `deps` alive until garbage collection.
+            del frame
 
         event_stream_handler = event_stream_handler or self.event_stream_handler
 
@@ -1930,7 +1932,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 (but not `new_messages()`). Hand off from a prior session or a standard
                 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] by passing its messages here.
         """
-        message_history, usage, conversation_id, conversation_revision = _agent_graph.resolve_conversation(
+        # A realtime session's history can rewrite turns it already recorded (a reply cut off by a barge-in), so its
+        # `conversation` doesn't track the unsaved messages: a store compares it with the stored history instead.
+        message_history, usage, conversation_id, conversation_revision, _, _ = _agent_graph.resolve_conversation(
             conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
         )
         # Infer the agent name from the calling frame like `run`/`iter` do, so an unnamed agent's
@@ -2273,6 +2277,12 @@ class _RealtimeSessionResolution(Generic[AgentDepsT]):
     ) = None
     lifecycle: _RealtimeSessionLifecycle | None = None
     """Set only when the caller asked for run-lifecycle hooks, i.e. by `_open_realtime_session`."""
+    session_instructions: str | None = None
+    """What the provider session is configured with: the standing system prompt, then `instructions`."""
+    message_history: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
+    """The seeded history, with its dynamic system prompts re-evaluated."""
+    system_prompt: list[_messages.SystemPromptPart] = field(default_factory=list[_messages.SystemPromptPart])
+    """The agent's resolved system prompt, which a fresh session records first; empty when history was seeded."""
     short_circuited: bool = False
     """A `wrap_run` hook returned a result without opening the session; nothing below was resolved."""
 
@@ -2367,16 +2377,16 @@ class AgentRealtime(Generic[AgentDepsT]):
                 if self._message_history and _accepts_message_history(resolved.model.answer_webrtc_offer):
                     return await resolved.model.answer_webrtc_offer(
                         sdp_offer,
-                        instructions=resolved.instructions,
+                        instructions=resolved.session_instructions,
                         tools=resolved.model_request_parameters.function_tools,
                         model_settings=resolved.model_settings,
-                        message_history=self._message_history,
+                        message_history=resolved.message_history,
                     )
                 # The keyword is only passed when there is history and the model takes it, so a `RealtimeModel`
                 # written before it existed keeps working: its sideband seeds the history, as it always did.
                 return await resolved.model.answer_webrtc_offer(
                     sdp_offer,
-                    instructions=resolved.instructions,
+                    instructions=resolved.session_instructions,
                     tools=resolved.model_request_parameters.function_tools,
                     model_settings=resolved.model_settings,
                 )
@@ -2435,7 +2445,7 @@ class AgentRealtime(Generic[AgentDepsT]):
             message_history=self._message_history,
         ) as resolved:
             return await resolved.model.create_client_secret(
-                instructions=resolved.instructions,
+                instructions=resolved.session_instructions,
                 tools=resolved.model_request_parameters.function_tools,
                 model_settings=resolved.model_settings,
                 expires_after_seconds=expires_after_seconds,

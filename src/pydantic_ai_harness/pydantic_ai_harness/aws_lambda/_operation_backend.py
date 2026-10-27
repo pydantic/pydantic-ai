@@ -58,7 +58,14 @@ class AWSLambdaOperationConfig(RoleBasedOperationConfig[StepConfig | None]):
                 )
             config = dict(base or {})
             if metadata_config:
-                config.update(_STEP_CONFIG_MAPPING_ADAPTER.validate_python(metadata_config, strict=True))
+                try:
+                    config.update(_STEP_CONFIG_MAPPING_ADAPTER.validate_python(metadata_config, strict=True))
+                except ValidationError:
+                    # Raised as a `ValidationError`, this would reach the model as invalid tool arguments.
+                    raise UserError(
+                        f'Tool {tool_name!r} has invalid {_TOOL_CONFIG_KEY!r} metadata: '
+                        'step config keys must be strings.'
+                    ) from None
             return _parse_step_config(config)
 
         super().__init__(

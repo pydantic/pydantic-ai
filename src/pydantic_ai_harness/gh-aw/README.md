@@ -46,7 +46,9 @@ pins are separate: the ref decides which definition compiles, and `engine.versio
 inside it decides which harness release runs. A workflow's own `engine: version:`
 overrides the package version the definition pins, because gh-aw applies the
 imported definition's version only when the workflow left it empty
-(`applyEngineImportDefaults` in `pkg/workflow/compiler_orchestrator_engine.go`).
+(`applyEngineImportDefaults` in `pkg/workflow/compiler_orchestrator_engine.go`). The
+override has to be 0.59.0 or newer: each harness release pins its own
+`pydantic-ai-slim`, and the definition installs `pydantic-ai-slim>=2.59.0` alongside it.
 
 `model` is required and must be `provider/model`. gh-aw accepts `copilot`,
 `anthropic`, `openai` and `codex` as the provider segment; it selects which backend
@@ -54,7 +56,12 @@ of the AWF api-proxy serves the request. The proxy holds the credentials, so a
 workflow supplies none. `anthropic/` is served over the Anthropic Messages API,
 because that backend forwards the request path to `api.anthropic.com` unchanged and
 does not translate Chat Completions into Messages; the other three are
-OpenAI-shaped and use Chat Completions.
+OpenAI-shaped and use Chat Completions. `copilot/` runs on Pydantic AI's
+`github-copilot:` model, which applies Copilot's per-family model profiles and reads
+the thinking Copilot's Claude and Gemini models return in `reasoning_text`. The
+engine points it at the proxy with `GITHUB_COPILOT_BASE_URL` and a placeholder
+`GITHUB_COPILOT_API_KEY`, and sets `GITHUB_COPILOT_INTEGRATION_ID` to
+`agentic-workflows`, the id the proxy adds to requests that carry none.
 
 ## What actually runs
 
@@ -70,7 +77,7 @@ The engine creates a generated module with a private wrapper around either the h
 JSON/YAML spec once, retaining import tracebacks. CLAI 2 runs the wrapper with `-a`,
 `engine.model` as `-m <provider:model>`, and the prompt with `-p`. The engine installs
 `pydantic-clai2` and `pydantic-ai-harness` at the release `engine.version` pins, plus
-`pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0`; the explicit provider extras keep
+`pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0`; the explicit provider extras keep
 Anthropic and OpenAI model support available. Gateway MCP tools are attached
 through Pydantic AI's public dynamic toolset interface, preserving the agent's existing
 tools. gh-aw writes the MCP server configuration outside the checkout and mounts it
@@ -242,6 +249,29 @@ these re-enables checkout configuration and credentials. Such a module also has
 to install `logfire` through the workflow's own `steps:` if it imports it on runs that
 configure no endpoint.
 
+## Threat detection
+
+When a workflow declares safe outputs, gh-aw runs a threat-detection job over the
+agent's output before applying them. That job runs only on gh-aw's built-in engines,
+so this definition sets `detection-engine: copilot`: detection runs on the Copilot
+engine and reads `COPILOT_GITHUB_TOKEN`, or the run's `github.token` under
+`permissions: copilot-requests: write`, whatever provider the agent itself uses.
+
+A workflow with neither credential overrides the choice. Point detection at
+the built-in engine whose key the workflow already has, `codex` for an `openai/` or
+`codex/` model and `claude` for an `anthropic/` one, or set `false` to skip the AI
+analysis:
+
+```yaml
+safe-outputs:
+  add-comment:
+  threat-detection:
+    engine: codex
+```
+
+gh-aw's [threat detection reference](https://github.github.com/gh-aw/reference/threat-detection/)
+covers the rest of the job's configuration.
+
 ## gh-aw compatibility
 
 This definition requires gh-aw [v0.91.1](https://github.com/github/gh-aw/releases/tag/v0.91.1)
@@ -287,9 +317,9 @@ Three things to get right:
 - **Keep the `provider/` prefix on `model`.** gh-aw requires it and only accepts its
   four known providers, but the engine strips it before calling the endpoint. Write
   `openai/<model-id>`, and `<model-id>` is what goes upstream. `openai` here means
-  "OpenAI-compatible", not OpenAI the company. `PAI_BASE_URL` keeps Chat Completions
-  whichever prefix is written, `anthropic/` included: it names an endpoint of that
-  shape by definition.
+  "OpenAI-compatible", not OpenAI the company. `PAI_BASE_URL` keeps the generic
+  Chat Completions client whichever prefix is written, `anthropic/` and `copilot/`
+  included: it names an endpoint of that shape by definition.
 
 `PAI_BASE_URL` is a variable of this engine's own rather than `OPENAI_BASE_URL`,
 because gh-aw sets `OPENAI_BASE_URL` itself, pointing at the proxy. It is always

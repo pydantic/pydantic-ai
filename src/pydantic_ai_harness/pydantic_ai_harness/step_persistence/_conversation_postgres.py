@@ -28,6 +28,8 @@ from pydantic_ai_harness.step_persistence._store import (
     _AutoMedia,  # pyright: ignore[reportPrivateUsage]
 )
 
+_FOREIGN_KEY_VIOLATION = '23503'
+
 
 class PostgresConversationStore(ConversationStore):
     """A [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] in PostgreSQL.
@@ -39,15 +41,16 @@ class PostgresConversationStore(ConversationStore):
     - `{table}_conv_records(conversation_id PK, revision, head_id, scope, updated_at, record)`
     - `{table}_conv_entries(id PK, parent_id, kind, sha256)`
     - `{table}_conv_messages(sha256 PK, message)`: each message's JSON once, however many entries hold it.
+    - `{table}_conv_branches(conversation_id, entry_id)`: the last entry of each branch a record lists.
 
     Binary and text parts at or above `media_threshold_bytes` (default 64 KiB) are externalized to
     `media_store`, by default a `PostgresMediaStore` on the same pool with the table `{table}_media`,
     which the step store shares too: media is keyed by content.
 
     A save writes its new entries and the record in one transaction. Deleting a conversation also
-    deletes the entries and messages its history alone used; externalized media stays, and so do
-    the entries a rewritten history replaced. Foreign keys keep a concurrent save from pointing at an entry or message a delete is
-    removing: one of the two fails instead.
+    deletes the entries and messages no other conversation's history or branch uses; externalized
+    media stays. Foreign keys keep a concurrent save from pointing at an entry or message a delete
+    is removing: the save raises `ConversationConflict` instead.
     """
 
     def __init__(
@@ -65,6 +68,7 @@ class PostgresConversationStore(ConversationStore):
         self._records = f'{table}_conv_records'
         self._entries = f'{table}_conv_entries'
         self._messages = f'{table}_conv_messages'
+        self._branches = f'{table}_conv_branches'
         if media_store == 'auto':
             media_store = PostgresMediaStore(pool, table=f'{table}_media')
         self._media_store: MediaStore | None = media_store
@@ -116,6 +120,15 @@ class PostgresConversationStore(ConversationStore):
                 await connection.execute(
                     f'CREATE INDEX IF NOT EXISTS {self._records}_updated_at ON {self._records} (updated_at DESC)'
                 )
+                await connection.execute(
+                    f'CREATE TABLE IF NOT EXISTS {self._branches} ('
+                    'conversation_id TEXT NOT NULL, '
+                    f'entry_id TEXT NOT NULL REFERENCES {self._entries} (id), '
+                    'PRIMARY KEY (conversation_id, entry_id))'
+                )
+                await connection.execute(
+                    f'CREATE INDEX IF NOT EXISTS {self._branches}_entry ON {self._branches} (entry_id)'
+                )
             self._schema_ready = True
 
     async def read_record(self, conversation_id: str) -> ConversationRecord | None:
@@ -152,48 +165,69 @@ class PostgresConversationStore(ConversationStore):
         messages = await keyed_entry_messages(
             new_entries, media_store=self._media_store, threshold_bytes=self._media_threshold_bytes
         )
-        async with self._pool.acquire() as connection, connection.transaction():
-            await self._insert_messages(connection, dict(messages))
-            entries = [
-                (entry.id, entry.parent_id, entry.kind, sha256)
-                for entry, (sha256, _) in zip(new_entries, messages, strict=True)
-            ]
-            for start in range(0, len(entries), _MESSAGES_PER_INSERT):
-                batch = entries[start : start + _MESSAGES_PER_INSERT]
-                values = ', '.join(
-                    f'(${4 * i + 1}, ${4 * i + 2}, ${4 * i + 3}, ${4 * i + 4})' for i in range(len(batch))
-                )
-                await connection.execute(
-                    f'INSERT INTO {self._entries} (id, parent_id, kind, sha256) VALUES {values}',
-                    *(value for row in batch for value in row),
-                )
-            text = RECORD_ADAPTER.dump_json(record).decode()
-            if expected_revision is None:
-                written = await connection.fetchval(
-                    f'INSERT INTO {self._records} (conversation_id, revision, head_id, scope, updated_at, record) '
-                    'VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (conversation_id) DO NOTHING RETURNING conversation_id',
-                    record.conversation_id,
-                    record.revision,
-                    record.head_id,
-                    record.scope,
-                    record.updated_at,
-                    text,
-                )
-            else:
-                written = await connection.fetchval(
-                    f'UPDATE {self._records} SET revision = $2, head_id = $3, scope = $4, updated_at = $5, record = $6 '
-                    'WHERE conversation_id = $1 AND revision = $7 RETURNING conversation_id',
-                    record.conversation_id,
-                    record.revision,
-                    record.head_id,
-                    record.scope,
-                    record.updated_at,
-                    text,
-                    expected_revision,
-                )
-            if written is None:
-                # Raising rolls back the transaction, so the entries above go with it.
-                raise ConversationConflict(record.conversation_id)
+        try:
+            async with self._pool.acquire() as connection, connection.transaction():
+                await self._write_record(connection, record, new_entries, messages, expected_revision)
+        except Exception as error:
+            # A concurrent delete released an entry this save points at: its parent, or a fork's head.
+            if getattr(error, 'sqlstate', None) == _FOREIGN_KEY_VIOLATION:
+                raise ConversationConflict(record.conversation_id) from error
+            raise
+
+    async def _write_record(
+        self,
+        connection: PostgresConnection,
+        record: ConversationRecord,
+        new_entries: Sequence[ConversationEntry],
+        messages: list[tuple[str, str]],
+        expected_revision: str | None,
+    ) -> None:
+        await self._insert_messages(connection, dict(messages))
+        entries = [
+            (entry.id, entry.parent_id, entry.kind, sha256)
+            for entry, (sha256, _) in zip(new_entries, messages, strict=True)
+        ]
+        for start in range(0, len(entries), _MESSAGES_PER_INSERT):
+            batch = entries[start : start + _MESSAGES_PER_INSERT]
+            values = ', '.join(f'(${4 * i + 1}, ${4 * i + 2}, ${4 * i + 3}, ${4 * i + 4})' for i in range(len(batch)))
+            await connection.execute(
+                f'INSERT INTO {self._entries} (id, parent_id, kind, sha256) VALUES {values}',
+                *(value for row in batch for value in row),
+            )
+        text = RECORD_ADAPTER.dump_json(record).decode()
+        if expected_revision is None:
+            written = await connection.fetchval(
+                f'INSERT INTO {self._records} (conversation_id, revision, head_id, scope, updated_at, record) '
+                'VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (conversation_id) DO NOTHING RETURNING conversation_id',
+                record.conversation_id,
+                record.revision,
+                record.head_id,
+                record.scope,
+                record.updated_at,
+                text,
+            )
+        else:
+            written = await connection.fetchval(
+                f'UPDATE {self._records} SET revision = $2, head_id = $3, scope = $4, updated_at = $5, record = $6 '
+                'WHERE conversation_id = $1 AND revision = $7 RETURNING conversation_id',
+                record.conversation_id,
+                record.revision,
+                record.head_id,
+                record.scope,
+                record.updated_at,
+                text,
+                expected_revision,
+            )
+        if written is None:
+            # Raising rolls back the transaction, so the entries above go with it.
+            raise ConversationConflict(record.conversation_id)
+        await connection.execute(f'DELETE FROM {self._branches} WHERE conversation_id = $1', record.conversation_id)
+        for entry_id in record.branches:
+            await connection.execute(
+                f'INSERT INTO {self._branches} (conversation_id, entry_id) VALUES ($1, $2)',
+                record.conversation_id,
+                entry_id,
+            )
 
     async def _insert_messages(self, connection: PostgresConnection, messages: dict[str, str]) -> None:
         """Insert the messages `{table}_messages` lacks, in key order so concurrent saves can't deadlock."""
@@ -206,24 +240,33 @@ class PostgresConversationStore(ConversationStore):
                 *(value for row in batch for value in row),
             )
 
-    async def delete_record(self, conversation_id: str) -> None:
+    async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
         await self._ensure_schema()
         async with self._pool.acquire() as connection, connection.transaction():
-            entry_id = await connection.fetchval(
-                f'DELETE FROM {self._records} WHERE conversation_id = $1 RETURNING head_id', conversation_id
+            deleted = await connection.fetchrow(
+                f'DELETE FROM {self._records} WHERE conversation_id = $1 AND revision = $2 RETURNING head_id',
+                conversation_id,
+                expected_revision,
             )
-            if entry_id is not None:
-                await self._release(connection, str(entry_id))
+            if deleted is None:
+                raise ConversationConflict(conversation_id)
+            tips = await connection.fetch(
+                f'DELETE FROM {self._branches} WHERE conversation_id = $1 RETURNING entry_id', conversation_id
+            )
+            for (entry_id,) in [deleted, *tips]:
+                await self._release(connection, None if entry_id is None else str(entry_id))
 
     async def _release(self, connection: PostgresConnection, entry_id: str | None) -> None:
-        """Delete `entry_id` and its ancestors, up to the first one another record's history still reaches.
+        """Delete `entry_id` and its ancestors, up to the first one another record's history or branch still reaches.
 
-        That's a record's head, or an entry with another child. A message no remaining entry holds goes too.
+        That's a record's head, the last entry of a branch a record lists, or an entry with another child. A
+        message no remaining entry holds goes too.
         """
         while entry_id is not None:
             deleted = await connection.fetchrow(
                 f'DELETE FROM {self._entries} WHERE id = $1 '
                 f'AND NOT EXISTS (SELECT 1 FROM {self._records} WHERE head_id = $1) '
+                f'AND NOT EXISTS (SELECT 1 FROM {self._branches} WHERE entry_id = $1) '
                 f'AND NOT EXISTS (SELECT 1 FROM {self._entries} WHERE parent_id = $1) '
                 'RETURNING parent_id, sha256',
                 entry_id,
@@ -255,9 +298,9 @@ class PostgresConversationStore(ConversationStore):
             message=await load_message(str(message), media_store=self._media_store),
         )
 
-    async def read_history(self, head_id: str | None) -> list[ConversationEntry]:
-        """The entries from the first one up to `head_id`, in order, read in one query."""
-        if head_id is None:
+    async def read_history(self, head_id: str | None, *, limit: int | None = None) -> list[ConversationEntry]:
+        """The entries from the first one up to `head_id`, in order, or only the last `limit` of them, read in one query."""
+        if head_id is None or limit == 0:
             return []
         await self._ensure_schema()
         async with self._pool.acquire() as connection:
@@ -266,13 +309,15 @@ class PostgresConversationStore(ConversationStore):
                 f'SELECT id, parent_id, sha256, 0 FROM {self._entries} WHERE id = $1 '
                 'UNION ALL '
                 'SELECT e.id, e.parent_id, e.sha256, chain.depth + 1 '
-                f'FROM {self._entries} e JOIN chain ON e.id = chain.parent_id) '
+                f'FROM {self._entries} e JOIN chain ON e.id = chain.parent_id '
+                'WHERE $2 < 0 OR chain.depth + 1 < $2) '
                 'SELECT chain.id, chain.parent_id, m.message '
                 f'FROM chain LEFT JOIN {self._messages} m ON m.sha256 = chain.sha256 '
                 'ORDER BY chain.depth DESC',
                 head_id,
+                -1 if limit is None else limit,
             )
-        if not rows or rows[0][1] is not None:
+        if not rows or (rows[0][1] is not None and (limit is None or len(rows) < limit)):
             raise missing_entries_error(head_id)
         entries: list[ConversationEntry] = []
         for entry_id, parent_id, message in rows:
