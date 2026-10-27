@@ -79,7 +79,7 @@ def _check_private_directory(path: Path) -> Path:
 def _socket_directory() -> Path:
     base = os.environ.get('XDG_RUNTIME_DIR') or os.environ.get('TMPDIR')
     if base:
-        return _private_directory(Path(base) / f'pydantic-clai2-{os.getuid()}')
+        return _private_directory(Path(base).absolute() / f'pydantic-clai2-{os.getuid()}')
     return _private_directory(Path('/tmp') / f'pydantic-clai2-{os.getuid()}')
 
 

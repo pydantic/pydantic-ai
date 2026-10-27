@@ -136,6 +136,33 @@ async def test_unverified_records_never_remove_a_live_socket(
         assert registry.socket_path.exists() == (outcome != 'missing')
 
 
+@pytest.mark.parametrize('variable', ['TMPDIR', 'XDG_RUNTIME_DIR'])
+async def test_relative_runtime_environment_is_discoverable(
+    private_runtime: Path, monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    monkeypatch.chdir(private_runtime.parent.parent)
+    monkeypatch.delenv('XDG_RUNTIME_DIR', raising=False)
+    monkeypatch.setenv(variable, 'runtime')
+    registry = LiveRegistry(lambda: [], directory=private_runtime)
+    async with registry.serving(subscribe):
+        record = registry.snapshot()
+        write_private(private_runtime / f'{registry.pid}.json', TypeAdapter(type(record)).dump_json(record).decode())
+        assert [found.instance for found in await listing(directory=private_runtime)] == [record.instance]
+        assert registry.socket_path is not None and registry.socket_path.is_absolute()
+
+
+async def test_socket_directory_symlink_is_not_followed(private_runtime: Path) -> None:
+    root = private_runtime.parent.parent
+    target = root / 'private-target'
+    target.mkdir(mode=0o700)
+    (root / f'pydantic-clai2-{os.getuid()}').symlink_to(target, target_is_directory=True)
+    registry = LiveRegistry(lambda: [], directory=private_runtime)
+    with pytest.raises(PermissionError, match='Unsafe CLAI directory'):
+        async with registry.serving(subscribe):
+            pass
+    assert list(target.iterdir()) == []
+
+
 async def test_client_refuses_oversized_frames(private_runtime: Path) -> None:
     with pytest.raises(ValueError, match='exceeds 64 KiB'):
         await request(private_runtime / 'not-connected.sock', {'op': 'x' * 65_536})
