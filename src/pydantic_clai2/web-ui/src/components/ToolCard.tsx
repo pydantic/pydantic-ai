@@ -150,9 +150,9 @@ const lines = (text: string, sign: string) =>
     .map((line) => sign + line)
     .join('\n')
 
-/** The diffs a replayed edit or write made, rebuilt from its arguments; live runs send the real ones. */
+/** The diffs an edit or write made, or tried to make, rebuilt from its arguments; live runs send the real ones. */
 function argumentDiffs(item: Item, args: Args): Diff[] {
-  if (item.diffs.length > 0 || item.state === 'error') return item.diffs
+  if (item.diffs.length > 0) return item.diffs
   const path = str(args.path)
   if (item.name === 'write_file' && typeof args.content === 'string') {
     const content = args.content.split('\n').slice(0, 400).join('\n')
@@ -252,7 +252,9 @@ const PREVIEW_LINES = 8
 export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
   const cards = useContext(OpenCardsContext)
   const args = parseArgs(raw.args)
-  const item = { ...raw, diffs: argumentDiffs(raw, args) }
+  const attempted = argumentDiffs(raw, args)
+  // A failed call changed nothing: its row shows no stats and starts closed; open, it shows what it tried.
+  const item = { ...raw, diffs: raw.state === 'error' ? raw.diffs : attempted }
   const changed = item.diffs.length > 0
   const open = cards.open.get(raw.id) ?? changed
   const openWorkspace = useContext(WorkspaceLinkContext)
@@ -307,7 +309,7 @@ export const ToolCard = memo(function ToolCard({ item: raw }: { item: Item }) {
         row
       )}
       <WorkerChips item={raw} />
-      {open && <ToolDetails item={item} args={args} />}
+      {open && <ToolDetails item={{ ...item, diffs: attempted }} args={args} />}
     </div>
   )
 })
@@ -338,8 +340,13 @@ function ToolDetails({ item, args }: { item: Item; args: Args }) {
       </div>
     )
   }
+  // A failed edit or write leads with why it failed, then what it tried to change.
+  const errorFirst = item.state === 'error' && item.diffs.length > 0
+  const result =
+    item.text && (item.state === 'error' ? <FailureResult text={item.text} /> : <pre className="result">{item.text}</pre>)
   return (
     <div className="tool-body">
+      {errorFirst && result}
       {item.diffs.map((diff, index) => (
         <DiffView key={index} diff={diff} preview={PREVIEW_LINES} />
       ))}
@@ -351,7 +358,7 @@ function ToolDetails({ item, args }: { item: Item; args: Args }) {
           />
         </pre>
       )}
-      {item.text && (item.state === 'error' ? <FailureResult text={item.text} /> : <pre className="result">{item.text}</pre>)}
+      {!errorFirst && result}
     </div>
   )
 }

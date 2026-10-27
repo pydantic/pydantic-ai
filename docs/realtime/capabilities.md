@@ -18,7 +18,7 @@ load exactly the same way as in a regular run; nothing realtime-specific is requ
 | `get_native_tools` | Contributes native tools before connecting; a dynamic native-tool function is resolved once against the connect-time context, like dynamic instructions. |
 | Tool validation/execution hooks | Runs around each local function-tool call. |
 | `handle_deferred_tool_calls` | Resolves deferred requests inline; see [deferred and approval-required tools](tools.md#deferred-and-approval-required-tools). |
-| Graph node, model-request, and output-processing hooks | Do not run; no agent graph or output-processing stage exists. |
+| Graph node, model-request, `get_wrapper_model`, and output-processing hooks | Do not run; no agent graph, model request, or output-processing stage exists. |
 
 All regular [tool validation](../hooks.md#tool-validation-hooks) and
 [tool execution](../hooks.md#tool-execution-hooks) hooks — `before`, `after`, `wrap`, and `on_error`
@@ -51,6 +51,15 @@ shared [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members and r
 `event_stream_handler` parameter on `realtime()`; a handler-style consumer is attached with the
 [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] capability, which works through
 this same stream.
+
+[Custom events](../agent.md#custom-events) and [capability events](../capabilities/overview.md#capability-events)
+emitted with [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] from tools and hooks flow through this
+stream, and reach `on_event` listeners, as they do in [`iter()`][pydantic_ai.agent.AbstractAgent.iter].
+Events emitted before the session connects, from `before_run`, lead the stream; a tool's events land
+between its [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] and
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Events emitted from
+`after_run` come after the stream has ended, so as in `iter()` they aren't delivered, except to the
+listeners of an [immediately dispatched](../capabilities/overview.md#reacting-to-events) event.
 
 ## Model settings and `RunContext`
 

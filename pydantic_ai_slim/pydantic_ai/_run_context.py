@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import sys
 import warnings
+from collections import Counter
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -72,6 +73,40 @@ class EventStreamBuffer(list[_messages.AgentStreamEvent]):
         super().append(event)
         for waiter in self.waiters:
             waiter.set()
+
+
+class RealtimeEventBuffer(list[_messages.AgentStreamEvent]):
+    """A realtime run's `RunContext.emit` buffer, which hands emitted events to the live session's stream.
+
+    Created with the run's context, so events emitted before the session connects (from `before_run`, say)
+    are held until the session binds the buffer and then lead its stream, as they lead a graph run's. While
+    bound, each event goes straight onto the session's event queue, in emission order relative to the
+    session's own events, as a graph run streams them the moment they're emitted. Events emitted once the
+    session has closed (from `after_run`, say) stay here undelivered, as a graph run's do once its stream
+    has ended.
+    """
+
+    __slots__ = ('_sink',)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._sink: Callable[[_messages.AgentStreamEvent], None] | None = None
+
+    def bind(self, sink: Callable[[_messages.AgentStreamEvent], None]) -> None:
+        self._sink = sink
+        held = self[:]
+        self.clear()
+        for event in held:
+            sink(event)
+
+    def unbind(self) -> None:
+        self._sink = None
+
+    def append(self, event: _messages.AgentStreamEvent) -> None:
+        if self._sink is None:
+            super().append(event)
+        else:
+            self._sink(event)
 
 
 async def dispatch_event_immediate(ctx: RunContext[Any], event: _messages.AgentStreamEvent) -> None:
@@ -626,10 +661,28 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Because it grows step by step, where you read it in the
         [hook order](../hooks.md#hook-ordering) determines what you see — e.g. a capability
         loaded during one step is not reflected until the next step's hooks.
+
+        A capability inside a deferred group (a `CombinedCapability` with an `id` and
+        `defer_loading=True`) is active only once the group is loaded.
         """
+        # The registry first: a Temporal run context without it raises an error that names it.
+        registry = self.capabilities
+        loaded = self.loaded_capability_ids
+        # How often each object occurs beneath an unloaded deferred capability.
+        hidden: Counter[int] = Counter()
+        for capability_id, cap in registry.items():
+            if cap.defer_loading is True and capability_id not in loaded:
+                # `apply` visits the capability itself first, then what is registered beneath it.
+                beneath: list[AbstractCapability[RunContextAgentDepsT]] = []
+                cap.apply(beneath.append)
+                hidden.update(map(id, beneath[1:]))
+        # The registry holds one id per occurrence, so an object that also occurs elsewhere stays active.
+        occurrences = Counter(map(id, registry.values()))
         return {
-            id for id, cap in self.capabilities.items() if cap.defer_loading is not True
-        } | self.loaded_capability_ids
+            capability_id
+            for capability_id, cap in registry.items()
+            if cap.defer_loading is not True and hidden[id(cap)] < occurrences[id(cap)]
+        } | loaded
 
     @property
     def _dispatch_active_capability_ids(self) -> set[str]:
@@ -817,7 +870,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         signature to async later would break every caller.
         The event reaches the run's `event_stream_handler`,
         [`Agent.run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events],
-        [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter] streaming, and the UI adapters.
+        [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter] streaming, the UI adapters, and the event stream
+        of a [realtime session](../realtime/capabilities.md#the-event-stream).
 
         When emitted from within a tool call and the event doesn't already set a
         [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id], the current

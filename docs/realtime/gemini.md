@@ -61,7 +61,8 @@ differs from every other Live model in three ways the model handles for you:
   possible" here rather than "off", since the model has no off.
 - **Its tool calls are always asynchronous.** Its profile's
   [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode] is
-  `'always'`, since the model has no blocking mode, so an explicit `async_tool_calls=False` is ignored.
+  `'always'`, since the model has no blocking mode, so an explicit `async_tool_calls=False` is ignored, with an
+  [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] when the session has tools.
 - **Its spoken filler doesn't end the turn.** Gemini closes the filler's response and says the
   interaction is still in progress, so the filler and the tool call it was stalling for are recorded
   as one `ModelResponse`, and `RealtimeTurnCompleteEvent` and
@@ -116,6 +117,13 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 `google_voice` is the provider voice setting. `google_thinking_config` takes precedence over the
 shared [`thinking`](../capabilities/thinking.md) setting when a token budget or other
 Gemini-specific control is needed.
+
+Gemini Live has no tool-choice configuration, so it can't force a tool call: a
+[`tool_choice`](tools.md#restricting-the-available-tools) of `'required'` or a list of tool names
+raises a `UserError` before connecting. To limit the model to some tools, pass
+[`ToolOrOutput(function_tools=[...])`][pydantic_ai.settings.ToolOrOutput] instead. It also can't stop
+the model from calling several tools at once, so `parallel_tool_calls=False` warns with an
+[`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning].
 
 !!! note "`google_proactive_audio` dials the `v1alpha` API"
     Gemini serves `proactivity` on the Developer API's `v1alpha` only; on any other version the

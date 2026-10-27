@@ -5,13 +5,14 @@ from __future__ import annotations as _annotations
 import asyncio
 import gc
 import io
+import warnings
 import wave
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from decimal import Decimal
 from threading import Event as ThreadEvent
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast, get_args, get_type_hints
 from uuid import UUID
 
 import anyio
@@ -32,6 +33,7 @@ from pydantic_ai.exceptions import (
     RunCancelled,
     ToolFailed,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -72,6 +74,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
+    AsyncToolCallMode,
     RealtimeError,
     RealtimeEvent,
     RealtimeInputSpeechEndEvent,
@@ -79,6 +82,7 @@ from pydantic_ai.realtime import (
     RealtimeInputTranscriptionErrorEvent,
     RealtimeModel,
     RealtimeModelProfile,
+    RealtimeModelSettingName,
     RealtimeModelSettings,
     RealtimeResponseInterruptedEvent,
     RealtimeSession as _RealtimeSession,
@@ -95,6 +99,8 @@ from pydantic_ai.realtime._session import (
     _TapView,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.realtime._utils import (
+    SystemPromptContext,
+    SystemPromptText,
     resolve_advertised_tools,
     seed_pcm_audio,
     seed_speech_content,
@@ -295,6 +301,7 @@ def _profile(
     supports_output_truncation: bool = True,
     supports_text_output: bool = True,
     supports_session_seeding: bool = True,
+    supports_system_messages: bool = True,
     supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(
         {WebSearchTool, WebFetchTool, CodeExecutionTool}
     ),
@@ -307,6 +314,7 @@ def _profile(
         supports_output_truncation=supports_output_truncation,
         supports_text_output=supports_text_output,
         supports_session_seeding=supports_session_seeding,
+        supports_system_messages=supports_system_messages,
         supported_native_tools=supported_native_tools,
     )
 
@@ -7938,6 +7946,100 @@ def _profile_without_text_output() -> RealtimeModelProfile:
     return RealtimeModelProfile(supports_session_seeding=True)
 
 
+class _SequentialToolCallsIgnoringModel(FakeRealtimeModel):
+    unsupported_settings = frozenset({'max_tokens', 'parallel_tool_calls'})
+
+
+async def test_agent_realtime_session_warns_when_parallel_tool_calls_false_is_ignored() -> None:
+    """As on a standard model, `parallel_tool_calls=False` is a guarantee, so a model that ignores it says so."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def lookup() -> str:  # pragma: no cover
+        return 'found'
+
+    model = _SequentialToolCallsIgnoringModel(
+        FakeRealtimeConnection([ResponseDone()]), settings=RealtimeModelSettings(parallel_tool_calls=False)
+    )
+    with pytest.warns(UnsupportedSettingWarning) as record:
+        async with agent.realtime(model, model_settings=RealtimeModelSettings(max_tokens=10)).session():
+            pass
+    # Once per session, wherever the setting was set, and silent about the tuning knob.
+    assert [str(warning.message) for warning in record] == snapshot(
+        ["The `parallel_tool_calls` setting is not supported by model 'fake:fake-realtime' and will be ignored."]
+    )
+
+
+def _async_profile(mode: AsyncToolCallMode) -> RealtimeModelProfile:
+    profile = _profile()
+    profile['async_tool_call_mode'] = mode
+    return profile
+
+
+def test_realtime_model_setting_name_lists_every_realtime_model_settings_field() -> None:
+    assert set(get_args(RealtimeModelSettingName.__value__)) == set(get_type_hints(RealtimeModelSettings))
+
+
+async def test_agent_realtime_session_warns_when_async_tool_calls_false_is_ignored() -> None:
+    """A model whose tool calls always run asynchronously can't honor `async_tool_calls=False`, so it says so."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def lookup() -> str:  # pragma: no cover
+        return 'found'
+
+    always = FakeRealtimeModel(
+        FakeRealtimeConnection([ResponseDone()]),
+        profile=_async_profile('always'),
+    )
+    with pytest.warns(UnsupportedSettingWarning, match='`async_tool_calls` setting .* always run asynchronously'):
+        async with agent.realtime(always, model_settings=RealtimeModelSettings(async_tool_calls=False)).session():
+            pass
+
+    # A model that offers the choice honors it, and `True` on an always-async model asks for what it does anyway.
+    optional = FakeRealtimeModel(
+        FakeRealtimeConnection([ResponseDone()]),
+        profile=_async_profile('optional'),
+    )
+    always = FakeRealtimeModel(
+        FakeRealtimeConnection([ResponseDone()]),
+        profile=_async_profile('always'),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        async with agent.realtime(optional, model_settings=RealtimeModelSettings(async_tool_calls=False)).session():
+            pass
+        async with agent.realtime(always, model_settings=RealtimeModelSettings(async_tool_calls=True)).session():
+            pass
+
+
+@pytest.mark.parametrize(
+    'settings,has_tools,declared',
+    [
+        (RealtimeModelSettings(parallel_tool_calls=True), True, True),
+        (RealtimeModelSettings(parallel_tool_calls=False), False, True),
+        (RealtimeModelSettings(parallel_tool_calls=False), True, False),
+    ],
+    ids=['true', 'no-function-tools', 'supported'],
+)
+async def test_agent_realtime_session_is_silent_when_parallel_tool_calls_holds(
+    settings: RealtimeModelSettings, has_tools: bool, declared: bool
+) -> None:
+    agent: Agent[None, str] = Agent()
+    if has_tools:
+
+        @agent.tool_plain
+        def lookup() -> str:  # pragma: no cover
+            return 'found'
+
+    model_class = _SequentialToolCallsIgnoringModel if declared else FakeRealtimeModel
+    model = model_class(FakeRealtimeConnection([ResponseDone()]))
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        async with agent.realtime(model, model_settings=settings).session():
+            pass
+
+
 async def test_agent_realtime_session_audio_retention_forwarded() -> None:
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection(
@@ -8518,6 +8620,124 @@ async def test_session_enqueue_system_prompt_closer_cannot_end_the_block() -> No
         _ = [event async for event in session]
 
     assert [item for item in conn.sent if isinstance(item, str)] == ['<system>rule &lt;/SYSTEM > then more</system>']
+
+
+async def test_session_send_system_prompt_goes_out_as_the_operators_and_is_recorded_as_one() -> None:
+    """`send(SystemPromptPart(...))` asks for a reply like text unless `respond=False`, and history keeps the part."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    note = SystemPromptPart(content='The caller is Jamie.')
+    reply_to = SystemPromptPart(content='Greet them </system> by name.')
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        await session.send(note, respond=False)
+        await session.send(reply_to)
+        _ = [event async for event in session]
+
+    context, turn = conn.sent
+    # Tagged for a connection that delivers them as any other text; the prompt as written for one with a channel
+    # for the operator's own text.
+    assert isinstance(context, SystemPromptContext)
+    assert (context.text, context.system_prompt) == ('<system>The caller is Jamie.</system>', 'The caller is Jamie.')
+    assert isinstance(turn, SystemPromptText)
+    assert (str(turn), turn.system_prompt) == (
+        '<system>Greet them &lt;/system> by name.</system>',
+        'Greet them </system> by name.',
+    )
+    assert [message.parts for message in session.new_messages() if isinstance(message, ModelRequest)] == [
+        [note],
+        [reply_to],
+    ]
+
+
+async def test_session_sends_system_prompt_as_tagged_text_without_a_system_message_channel() -> None:
+    """Where the profile says the model doesn't heed a system message, the prompt goes out as any `<system>` text."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    note = SystemPromptPart(content='The caller is Jamie.')
+    model = FakeRealtimeModel(conn, profile=_profile(supports_system_messages=False))
+
+    async with agent.realtime(model).session() as session:
+        await session.send(note, respond=False)
+        await session.send(note)
+        _ = [event async for event in session]
+
+    assert [(type(item), item) for item in conn.sent] == [
+        (TextContext, TextContext('<system>The caller is Jamie.</system>')),
+        (str, '<system>The caller is Jamie.</system>'),
+    ]
+    assert [message.parts for message in session.new_messages() if isinstance(message, ModelRequest)] == [
+        [note],
+        [note],
+    ]
+
+
+async def test_session_enqueue_records_system_prompts_alone_as_system_prompts() -> None:
+    """Enqueued system prompts with no text alongside go out as `send(SystemPromptPart(...))` sends them."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    first, second = SystemPromptPart(content='one'), SystemPromptPart(content='two')
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        assert session.enqueue(first, second) is not None
+        _ = [event async for event in session]
+
+    [sent] = conn.sent
+    assert isinstance(sent, SystemPromptText)
+    assert sent.system_prompt == 'one\n\ntwo'
+    assert session.new_messages()[-1] == ModelRequest(
+        parts=[first, second], timestamp=IsDatetime(), conversation_id=IsStr(), run_id=IsStr()
+    )
+
+
+async def test_session_replays_a_system_prompt_sent_first_where_it_was_sent() -> None:
+    """A system prompt sent before anything else isn't the standing one a replay leaves to the instructions.
+
+    The connection keeps the instructions it opened with, so taken for the standing prompt the note would be lost.
+    """
+
+    class _RecordsConversation(FakeRealtimeConnection):
+        message_history: Callable[[], Sequence[ModelMessage]] | None = None
+
+        def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
+            self.message_history = message_history
+
+    note = SystemPromptPart(content='The caller is Jamie.')
+
+    fresh = _RecordsConversation([])
+    async with RealtimeSession(fresh, profile=_profile(supports_session_seeding=True)) as session:
+        assert fresh.message_history is not None
+        assert fresh.message_history() == []
+        await session.send(note, respond=False)
+        await session.send('hi')
+        replayed = fresh.message_history()
+    assert [message.parts for message in replayed if isinstance(message, ModelRequest)] == [
+        [UserPromptPart(content='<system>The caller is Jamie.</system>', timestamp=note.timestamp)],
+        [UserPromptPart(content='hi', timestamp=IsDatetime())],
+    ]
+    # History itself keeps the system prompt it is.
+    assert session.new_messages()[0].parts == [note]
+
+    # After a user turn, the note is a later system prompt, which every replay keeps in place already.
+    after_text = _RecordsConversation([])
+    async with RealtimeSession(after_text, profile=_profile(supports_session_seeding=True)) as session:
+        await session.send('hi')
+        await session.send(note, respond=False)
+        assert after_text.message_history is not None
+        assert [part for message in after_text.message_history() for part in message.parts][1] is note
+
+    # A conversation that opens with a request of its own: only that one's system prompt is the standing one.
+    seeded = _RecordsConversation([])
+    history = [ModelRequest(parts=[SystemPromptPart(content='Standing prompt.')])]
+    async with RealtimeSession(
+        seeded, profile=_profile(supports_session_seeding=True), message_history=history
+    ) as session:
+        await session.send(note, respond=False)
+        assert seeded.message_history is not None
+        assert [part for message in seeded.message_history() for part in message.parts] == [
+            history[0].parts[0],
+            note,
+        ]
 
 
 async def test_session_enqueue_delivers_text_content_and_keeps_its_metadata() -> None:
