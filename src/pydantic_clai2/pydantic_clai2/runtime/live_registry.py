@@ -158,6 +158,7 @@ async def listing(*, directory: Path | None = None) -> list[LiveRecord]:
                 if not socket_path.exists() and socket_path == _socket_directory() / f'{record.pid}.sock':
                     _unlink_if_unchanged(path, info.st_ino)
                 continue
+            socket_inode = socket_path.lstat().st_ino
             try:
                 os.kill(record.pid, 0)
             except ProcessLookupError:
@@ -166,8 +167,7 @@ async def listing(*, directory: Path | None = None) -> list[LiveRecord]:
                 try:
                     await request(socket_path, {'op': 'hello', 'protocol': _PROTOCOL})
                 except (ConnectionRefusedError, FileNotFoundError):
-                    if _owned_socket(socket_path):
-                        _unlink_if_unchanged(socket_path, socket_path.lstat().st_ino)
+                    _unlink_if_unchanged(socket_path, socket_inode)
                     _unlink_if_unchanged(path, info.st_ino)
                 continue
             except PermissionError:

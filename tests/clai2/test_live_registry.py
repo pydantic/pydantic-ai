@@ -52,6 +52,30 @@ async def test_control_lifecycle_and_bounded_frames(private_runtime: Path) -> No
     assert not registry.socket_path.exists()
 
 
+@pytest.mark.parametrize('frame', [b'{\n', b'[]\n'])
+async def test_malformed_frame_is_closed_without_server_errors(private_runtime: Path, frame: bytes) -> None:
+    registry = LiveRegistry(lambda: [], directory=private_runtime)
+    loop = asyncio.get_running_loop()
+    errors: list[dict[str, object]] = []
+    previous = loop.get_exception_handler()
+
+    def record_error(loop: asyncio.AbstractEventLoop, context: dict[str, object]) -> None:
+        errors.append(context)
+
+    loop.set_exception_handler(record_error)
+    try:
+        async with registry.serving(subscribe):
+            reader, writer = await asyncio.open_unix_connection(str(registry.socket_path))
+            writer.write(frame)
+            await writer.drain()
+            assert await reader.read() == b''
+            writer.close()
+            await writer.wait_closed()
+        assert not errors
+    finally:
+        loop.set_exception_handler(previous)
+
+
 async def test_listing_validates_instance_and_does_not_unlink_replacement_socket(private_runtime: Path) -> None:
     registry = LiveRegistry(lambda: [], directory=private_runtime)
     async with registry.serving(subscribe):
@@ -89,6 +113,32 @@ async def test_stale_dead_pid_cannot_delete_live_socket(private_runtime: Path) -
         assert not path.exists()
         assert not stale_socket.exists()
         assert registry.socket_path.exists()
+
+
+async def test_cleanup_preserves_socket_replaced_during_probe(
+    private_runtime: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = LiveRegistry(lambda: [], directory=private_runtime)
+    dead_pid = registry.pid + 100_000_000
+    socket_directory = private_runtime.parent.parent / 'pydantic-clai2'
+    socket_directory.mkdir(mode=0o700)
+    socket_path = socket_directory / f'{dead_pid}.sock'
+    with socket.socket(socket.AF_UNIX) as abandoned, socket.socket(socket.AF_UNIX) as replacement:
+        abandoned.bind(str(socket_path))
+        socket_path.chmod(0o600)
+        record = replace(registry.snapshot(), pid=dead_pid, socket=str(socket_path))
+        write_private(private_runtime / f'{dead_pid}.json', TypeAdapter(type(record)).dump_json(record).decode())
+
+        async def replaced_during_probe(path: Path, frame: dict[str, object]) -> dict[str, object]:
+            path.rename(path.with_suffix('.old'))
+            replacement.bind(str(path))
+            path.chmod(0o600)
+            replacement.listen()
+            raise ConnectionRefusedError
+
+        monkeypatch.setattr(live_registry, 'request', replaced_during_probe)
+        assert await listing(directory=private_runtime) == []
+        assert socket_path.exists(), 'cleanup must not unlink the replacement listener'
 
 
 async def test_second_owner_cannot_replace_live_socket(private_runtime: Path) -> None:
