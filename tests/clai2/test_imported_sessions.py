@@ -852,7 +852,9 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
         assert isinstance(kept, UserPromptPart) and kept.content[1:] == [ImageUrl(image)]
     # A boundary for OpenAI models, `openai-codex` or `openai`, which continue from the summary as Codex's did;
     # others read past it.
-    assert openai_model().accepts_stateless_artifacts(messages[5], messages[5].parts[0])
+    compacted = messages[5]
+    assert isinstance(compacted, ModelResponse)
+    assert openai_model().accepts_stateless_artifacts(compacted, compacted.parts[0])
     assert messages[5].parts == [
         CompactionPart(
             None,

@@ -73,6 +73,21 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.snowflake import SnowflakeProvider
     from pydantic_ai.providers.xai import XaiProvider
 
+    class ClaudeCodeProvider(AnthropicProvider):
+        """A third-party provider that only renames `AnthropicProvider`, like a Claude Code subscription plugin."""
+
+        @property
+        def name(self) -> str:
+            return 'claude-code'
+
+    class GatewayOpenAIProvider(OpenAIProvider):
+        """The documented custom-gateway subclass of `OpenAIProvider`, which talks to another service."""
+
+        @property
+        def name(self) -> str:
+            return 'my-gateway'
+
+
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='model provider SDKs not installed')
 
 SIGNATURE = base64.b64encode(b'signature').decode()
@@ -81,22 +96,6 @@ VERTEX_URL = 'https://us-central1-aiplatform.googleapis.com/'
 
 
 # Providers and models, built offline.
-
-
-class ClaudeCodeProvider(AnthropicProvider):
-    """A third-party provider that only renames `AnthropicProvider`, like a Claude Code subscription plugin."""
-
-    @property
-    def name(self) -> str:
-        return 'claude-code'
-
-
-class GatewayOpenAIProvider(OpenAIProvider):
-    """The documented custom-gateway subclass of `OpenAIProvider`, which talks to another service."""
-
-    @property
-    def name(self) -> str:
-        return 'my-gateway'
 
 
 def openai_provider() -> OpenAIProvider:
