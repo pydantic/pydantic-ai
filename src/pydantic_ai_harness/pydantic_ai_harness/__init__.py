@@ -2,7 +2,6 @@
 
 from typing import TYPE_CHECKING
 
-from . import _framing_tags  # noqa: F401  # registers every harness framing tag on first import
 from ._warn import HarnessDeprecationWarning, MCPReadOnlyNoToolsWarning
 
 if TYPE_CHECKING:
