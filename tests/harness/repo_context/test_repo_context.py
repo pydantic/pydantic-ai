@@ -200,6 +200,27 @@ class TestRender:
         rendered = render_context_files([cf], relative_to=tmp_path / 'inner')
         assert outside.as_posix() in rendered
 
+    async def test_walk_up_labels_ancestor_files_relative_to_the_working_dir(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'AGENTS.md', 'repo root')
+        _write(tmp_path / 'packages' / 'AGENTS.md', 'packages')
+        _write(tmp_path / 'packages' / 'foo' / 'AGENTS.md', 'foo package')
+        cap = RepoContext[object](home_dir=str(tmp_path))
+        ctx = _run_context(workspace=Workspace(LocalWorkspaceBackend(tmp_path / 'packages' / 'foo')))
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) == snapshot("""\
+<context-file path="../../AGENTS.md">
+repo root
+</context-file>
+
+<context-file path="../AGENTS.md">
+packages
+</context-file>
+
+<context-file path="AGENTS.md">
+foo package
+</context-file>\
+""")
+
     def test_trailing_newline_does_not_open_a_gap_before_the_closing_tag(self, tmp_path: Path) -> None:
         # The terminator goes; the two spaces before it stay, being a hard line break in Markdown.
         path = _write(tmp_path / 'CLAUDE.md', 'be nice  \n')

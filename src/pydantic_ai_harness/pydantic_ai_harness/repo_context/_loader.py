@@ -150,8 +150,17 @@ def render_context_files(files: Sequence[ContextFile], *, relative_to: Path) -> 
 
 
 def _label(path: Path, relative_to: Path) -> str:
-    """A stable display label: relative to `relative_to` when possible."""
+    """A stable display label: relative to `relative_to`, with `..` steps for a file in one of its ancestors.
+
+    An ancestor's file is labeled `../AGENTS.md` rather than by its absolute path, so the label doesn't
+    carry the host's directory layout into the instructions or vary between machines.
+    """
     try:
         return path.relative_to(relative_to).as_posix()
     except ValueError:
+        pass
+    try:
+        steps = len(relative_to.relative_to(path.parent).parts)
+    except ValueError:
         return path.as_posix()
+    return '../' * steps + path.name
