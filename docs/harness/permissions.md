@@ -64,7 +64,7 @@ Approvals that other capabilities ask for, such as a tool registered with `requi
 ## Which calls are checked
 
 - **File writes** are the `FileSystem` tools `write_file`, `edit_file`, and `create_directory`, recognized by their tool kind, so a renamed or prefixed tool is still recognized. They only reach files inside the file system's root, so `'auto'` lets them run.
-- **Commands** are the tools whose metadata declares a shell `code_arg_name`, as the `Shell` tools that take a command (`run_command`, `start_command`, and `shell`) do.
+- **Commands** are the tools whose metadata declares `code_arg_language='shell'`, as the `Shell` tools that take a command (`run_command`, `start_command`, and `shell`) do. The command is the `code_arg_name` argument, or `command` when a wrapper removed `code_arg_name`, as a host folding the tool into [Code Mode](code-mode.md) may.
 - Every other tool runs in every mode. Gate a tool of your own with `requires_approval=True`, a [`ToolGuardrail`](guardrails.md), or a [`ToolCallJudge`](tool-call-judge.md).
 
 `ask_commands` is a list of regular expressions, each searched for anywhere in the command. `DEFAULT_ASK_COMMANDS` asks about forced or recursive deletes (`rm -rf`), `git push`, `git reset --hard` and `git clean`, `sudo`, network clients (`curl`, `wget`, `ssh`, and others), package installs, `dd`, and `mkfs`. It is a convenience, not a sandbox: a command can do the same thing in a form no pattern matches, such as a script it writes first. Use a [sandbox](../workspace.md) when the agent must not reach something.

@@ -8,10 +8,12 @@ import pytest
 from rich.console import Console
 
 from pydantic_ai import Agent, DeferredToolRequests, Tool
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.permissions import PermissionDecision, PermissionRequest
+from pydantic_ai_harness.shell import Shell
 from pydantic_clai2.builtin_plugins.ask_user_menu import terminal_approver
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer
@@ -34,6 +36,8 @@ from pydantic_clai2.runtime.permissions import (
 )
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
+from pydantic_clai2.runtime.speculation import SpeculationCounters
+from pydantic_clai2.runtime.speculative_mode import speculative_capabilities
 from tests.clai2.test_speculative_mode import streamed
 
 COMMAND = 'rm -rf doomed'
@@ -251,3 +255,25 @@ async def test_approval_handler_answers_held_calls_and_leaves_others(tmp_path: P
     other = DeferredToolRequests(approvals=[ToolCallPart('other', {}, tool_call_id='x')])
     [_, unanswered] = session_permissions(lambda: 'auto')
     assert await unanswered.handle_deferred_tool_calls(None, requests=other) is None  # pyright: ignore[reportArgumentType]
+
+
+async def test_code_mode_holds_a_shell_call_from_run_code(tmp_path: Path) -> None:
+    """Code mode folds `shell` into `run_code` by dropping its `code_arg_name`; its commands are still held."""
+    (tmp_path / 'doomed').mkdir()
+    asked: list[PermissionRequest] = []
+
+    async def deny(held: PermissionRequest) -> PermissionDecision:
+        asked.append(held)
+        return PermissionDecision(approved=False)
+
+    calls = iter([ToolCallPart('run_code', {'code': "await shell(command='rm -rf doomed')"})])
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[next(calls, TextPart('done'))])
+
+    granted = (Shell[object](tools=['shell'], denied_commands=[]), *session_permissions(lambda: 'auto'))
+    sandbox = speculative_capabilities(SpeculationCounters(), granted)
+    capabilities = [LocalWorkspace(tmp_path), *granted, approval_handler(deny), *sandbox]
+    await Agent(streamed(respond), capabilities=capabilities).run('go')
+    assert [held.subject for held in asked] == ['rm -rf doomed']
+    assert (tmp_path / 'doomed').is_dir()

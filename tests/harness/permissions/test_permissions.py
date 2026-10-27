@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai import Agent, DeferredToolRequests, Tool
 from pydantic_ai.capabilities import HandleDeferredToolCalls, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -180,6 +180,30 @@ class TestPermissions:
         await _agent(tmp_path, _calls(command, command), mode, person).run('go')
 
         assert len(person.asked) == 1
+
+    async def test_a_shell_tool_without_code_arg_name_reads_command(self, tmp_path: Path) -> None:
+        """A host folding the tool into code mode drops `code_arg_name` and keeps the language."""
+
+        def run(command: str) -> str:
+            return command  # pragma: no cover
+
+        def other(script: str) -> str:
+            return script
+
+        folded = Tool(run, name='shell', metadata={'code_arg_language': 'shell'})
+        python = Tool(other, metadata={'code_arg_language': 'python', 'code_arg_name': 'script'})
+        agent = Agent[None, 'str | DeferredToolRequests'](
+            _calls(('other', {'script': 'rm -rf x'}), ('shell', {'command': 'rm -rf x'})),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            tools=[folded, python],
+            capabilities=[Permissions('auto')],
+        )
+
+        result = await agent.run('go')
+
+        assert isinstance(result.output, DeferredToolRequests)
+        assert [request.subject for request in permission_requests(result.output)] == ['rm -rf x']
 
     async def test_without_a_handler_the_call_is_deferred(self, tmp_path: Path) -> None:
         agent = _agent(tmp_path, _calls(('run_command', {'command': 'git push'})), 'auto')

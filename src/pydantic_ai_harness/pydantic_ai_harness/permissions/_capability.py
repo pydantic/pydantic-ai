@@ -119,8 +119,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
     [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output.
 
     File writes are the `FileSystem` tools `write_file`, `edit_file`, and `create_directory`, recognized by
-    their tool kind whatever they are named. Commands are the tools whose metadata declares a shell
-    `code_arg_name`, as the `Shell` tools that take a command do. Other tools are not checked.
+    their tool kind whatever they are named. Commands are the tools whose metadata declares
+    `code_arg_language='shell'`, as the `Shell` tools that take a command do; the command is the
+    `code_arg_name` argument, or `command` when a wrapper removed that name. Other tools are not checked.
 
     `mode` can be a function of the run context. It is read on every call, so a mode changed during a run
     applies from the run's next call.
@@ -204,10 +205,12 @@ class Permissions(AbstractCapability[AgentDepsT]):
 def _command(tool_def: ToolDefinition, args: dict[str, Any]) -> str | None:
     """The shell command a call runs, when its tool declares one."""
     metadata = tool_def.metadata or {}
-    name = metadata.get('code_arg_name')
-    if metadata.get('code_arg_language') != 'shell' or not isinstance(name, str):
+    if metadata.get('code_arg_language') != 'shell':
         return None
-    command = args.get(name)
+    # A host that folds the tool into code mode drops `code_arg_name` and keeps the language; the `Shell`
+    # tools name the argument `command`.
+    name = metadata.get('code_arg_name', 'command')
+    command = args.get(name) if isinstance(name, str) else None
     return command if isinstance(command, str) else None
 
 

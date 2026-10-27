@@ -43,11 +43,8 @@ export function ApprovalCard({ request, approval, asker, answer, onError }: Prop
         <span className="approval-tool">{approval.tool}</span>
       </div>
       <p className="approval-reason">{approval.reason}</p>
-      {approval.diff ? (
-        <DiffView diff={approval.diff} preview={12} />
-      ) : (
-        <pre className="approval-subject">{approval.subject}</pre>
-      )}
+      <pre className="approval-subject">{approval.subject}</pre>
+      {approval.diff && <DiffView diff={approval.diff} preview={12} />}
       <input
         className="option-custom"
         placeholder="Reason for denying (optional), sent to the model"
