@@ -83,6 +83,9 @@ store accepts the write, a bounded truncation otherwise -- zero LLM cost and no 
 `Passthrough()` is an explicit no-op action for `bands` or `per_tool` lists, leaving matching
 returns untouched.
 
+When an agent gets two `ToolOutputLimits` with the same `id`, their `bands` merge into one list
+that is still matched largest threshold first. At a threshold both state, the later band wins.
+
 ### Fallbacks with `then`
 
 Every action takes an optional `then`, applied when the action cannot run: a `Spill` whose

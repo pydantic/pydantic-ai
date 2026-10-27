@@ -436,6 +436,37 @@ class TestConstruction:
         assert 'read_file' in cap._per_tool  # pyright: ignore[reportPrivateUsage]
 
 
+class TestCombine:
+    async def test_merged_bands_run_largest_threshold_first(self):
+        merged = ToolOutputLimits[object].combine(
+            [
+                ToolOutputLimits(bands=[Band(over=100, action=Truncate())]),
+                ToolOutputLimits(bands=[Band(over=1000, action=Summarize(model=_fixed_model('summary')))]),
+            ]
+        )
+        assert isinstance(merged, ToolOutputLimits)
+        assert [b.over for b in merged._bands] == [1000, 100]  # pyright: ignore[reportPrivateUsage]
+        assert await _run(merged, 'x' * 1500) == 'summary'
+
+    def test_later_band_wins_a_shared_threshold(self):
+        later = Truncate(max_chars=20)
+        merged = ToolOutputLimits[object].combine(
+            [
+                ToolOutputLimits(bands=[Band(over=100, action=Truncate(max_chars=10)), Band(over=500, action=Spill())]),
+                ToolOutputLimits(bands=[Band(over=100, action=later)]),
+            ]
+        )
+        assert isinstance(merged, ToolOutputLimits)
+        assert [(b.over, b.action) for b in merged._bands] == [(500, Spill()), (100, later)]  # pyright: ignore[reportPrivateUsage]
+        assert _select_action(merged._bands, 150) is later  # pyright: ignore[reportPrivateUsage]
+
+    def test_stated_store_survives_the_merge(self, tmp_path: Path):
+        store = LocalFileStore(base_dir=tmp_path)
+        merged = ToolOutputLimits[object].combine([ToolOutputLimits(store=store), ToolOutputLimits()])
+        assert isinstance(merged, ToolOutputLimits)
+        assert merged._store is store  # pyright: ignore[reportPrivateUsage]
+
+
 # ---------------------------------------------------------------------------
 # Passthrough / filtering / guards
 # ---------------------------------------------------------------------------
