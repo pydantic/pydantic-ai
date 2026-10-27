@@ -212,28 +212,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     def _run_input_declares_1_0(self) -> bool:
         """Whether the client declared AG-UI 1.0 or newer on `RunAgentInput.protocolVersion`.
 
-        The field only exists on 1.0 SDKs, and a stream is constructible with no run input at all, so an
-        absent declaration means a peer from before the protocol carried a version. A declaration this
-        server cannot read, or one newer than the version its SDK speaks, is handled like a newer one
-        with a warning, as the spec requires.
+        Only called on a 1.0 SDK. No declaration means a peer from before the protocol carried a version; one
+        outside the `MAJOR.MINOR` grammar is read as newer, as the spec requires.
         """
-        declared = getattr(self.run_input, 'protocol_version', None)
-        if not isinstance(declared, str):
+        declared = self.run_input.protocol_version if self.run_input is not None else None
+        if declared is None:
             return False
         version = parse_protocol_declaration(declared)
-        # `PROTOCOL_VERSION` is set whenever this runs, since `_emit_1_0_fields` gates the call on the 1.0
-        # SDK. The SDK generates it from its schema id, so a future release could take it outside the
-        # grammar this server reads; with nothing to compare against, a declared peer is handled as newer.
-        spoken = parse_protocol_declaration(PROTOCOL_VERSION)
-        if version is None or spoken is None or version > spoken:
-            warnings.warn(
-                f'AG-UI protocol version {declared!r} on the run input is not one this server speaks '
-                f'(up to {PROTOCOL_VERSION}); treating the client as newer than this server.',
-                UserWarning,
-                stacklevel=4,
-            )
-            return True
-        return version >= LIFECYCLE_1_0_VERSION
+        return version is None or version >= LIFECYCLE_1_0_VERSION
 
     @property
     def _event_encoder(self) -> EventEncoder:

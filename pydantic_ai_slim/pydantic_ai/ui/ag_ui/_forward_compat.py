@@ -102,9 +102,10 @@ def _unknown_source_tag(item: dict[str, JsonValue]) -> str | None:
 def _translate_binary_part(item: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
     """The typed media part for a retired `binary` part, or `None` when it has no MIME type or payload.
 
-    `url` wins over `data`, as it did in the legacy loader. A base64 data URI in `url` is how 0.x
-    clients inlined bytes, so it becomes a data source, and its own media type wins over the declared
-    one, as `BinaryContent.from_data_uri` did.
+    `url` wins over `data`, and `data` over `id`, as in the legacy loader. A base64 data URI in `url` is how
+    0.x clients inlined bytes, so it becomes a data source, and its own media type wins over the declared
+    one, as `BinaryContent.from_data_uri` did. An `id` becomes 1.0's `file` source with no provider, which
+    `load_messages` drops with a warning since nothing can resolve it.
     """
     mime_type = item.get('mimeType', item.get('mime_type'))
     if not isinstance(mime_type, str):
@@ -118,6 +119,8 @@ def _translate_binary_part(item: dict[str, JsonValue]) -> dict[str, JsonValue] |
         source: dict[str, JsonValue] = {'type': 'url', 'value': url, 'mimeType': mime_type}
     elif isinstance(data, str) and data:
         source = {'type': 'data', 'value': data, 'mimeType': mime_type}
+    elif isinstance(file_id := item.get('id'), str) and file_id:
+        source = {'type': 'file', 'value': file_id, 'mimeType': mime_type}
     else:
         return None
     return {'type': media_part_type(mime_type), 'source': source}

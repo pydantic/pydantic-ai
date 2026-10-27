@@ -7,7 +7,6 @@ here; `HAS_BINARY_INPUT_PART` in `_forward_compat` says whether the installed SD
 
 from __future__ import annotations
 
-import warnings
 from base64 import b64decode
 from typing import TYPE_CHECKING, cast
 
@@ -38,12 +37,8 @@ _URL_CONTENT_TYPES: dict[MediaPartType, type[ImageUrl | VideoUrl | AudioUrl | Do
 }
 
 
-def legacy_binary_to_content(part: BinaryInputContent) -> UserContent | None:
-    """Convert a legacy `binary` input part to Pydantic AI content.
-
-    The part's third payload source, `id`, names bytes held somewhere the part doesn't say, so a part
-    carrying only that is dropped with a warning, like a `file` source with no known provider.
-    """
+def legacy_binary_to_content(part: BinaryInputContent) -> UserContent:
+    """Convert a legacy `binary` input part to Pydantic AI content."""
     if part.url:
         try:
             return BinaryContent.from_data_uri(part.url)
@@ -51,13 +46,7 @@ def legacy_binary_to_content(part: BinaryInputContent) -> UserContent | None:
             return _URL_CONTENT_TYPES[media_part_type(part.mime_type)](url=part.url, media_type=part.mime_type)
     if part.data:
         return BinaryContent(data=b64decode(part.data), media_type=part.mime_type)
-    warnings.warn(
-        'AG-UI binary content with only an `id` was skipped; there is no provider to resolve it. '
-        'Send the bytes as `data` or a `url`, or a typed `file` source with its `provider` on ag-ui-protocol >= 1.0.',
-        UserWarning,
-        stacklevel=4,
-    )
-    return None
+    raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
 
 
 def legacy_binary_input(*, mime_type: str, url: str | None = None, data: str | None = None) -> InputContent:

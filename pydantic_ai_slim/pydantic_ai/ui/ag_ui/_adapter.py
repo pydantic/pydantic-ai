@@ -13,7 +13,6 @@ from typing import (
     Any,
     Literal,
     assert_never,
-    cast,
 )
 
 from pydantic import TypeAdapter, ValidationError
@@ -232,8 +231,7 @@ def _input_content_to_user_content(
             case _ if isinstance(part, BinaryInputContent):
                 # A guard, not a class pattern: AG-UI 1.0 retired the part from the content union,
                 # but an install below 1.0 still sends it.
-                if (legacy := legacy_binary_to_content(part)) is not None:
-                    converted.append(legacy)
+                converted.append(legacy_binary_to_content(part))
             case ImageInputContent() | AudioInputContent() | VideoInputContent() | DocumentInputContent():
                 from ._multimodal import multimodal_input_to_content
 
@@ -604,22 +602,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
 
                     if isinstance(tool_msg.content, list):
-                        # From 1.0 a tool message can carry content parts. They load as a user message's
-                        # do, then pass the validation a string return's JSON does, so media narrows to
-                        # the type a reloaded return has and `sanitize_messages` sees typed content. A
-                        # single part is the return itself, so a lone text part rehydrates like string
-                        # content. A message with no parts left keeps its place with no content, which is
-                        # what `sanitize_messages` leaves an emptied return with.
-                        parts = cast(
-                            list[Any],  # validating a list gives a list; the adapter's type is the whole union
-                            tool_return_content_ta.validate_python(_input_content_to_user_content(tool_msg.content)),
-                        )
-                        if not parts:
-                            content = None
-                        elif len(parts) == 1:
+                        # From 1.0 a tool message can carry content parts, which load as a user message's do.
+                        # A lone text part is the string form, so it rehydrates like string content; anything
+                        # else is validated so media narrows as a reloaded return's does. A message with no
+                        # parts left keeps its place with no content.
+                        parts = _input_content_to_user_content(tool_msg.content)
+                        if len(parts) == 1 and isinstance(parts[0], str):
                             content = rehydrate_tool_return_content(parts[0])
+                        elif parts:
+                            content = tool_return_content_ta.validate_python(parts[0] if len(parts) == 1 else parts)
                         else:
-                            content = parts
+                            content = None
                     else:
                         # Rehydrate here (not in a later `ModelMessagesTypeAdapter` pass) so structured and
                         # multimodal content comes back as real types; see `rehydrate_tool_return_content`.

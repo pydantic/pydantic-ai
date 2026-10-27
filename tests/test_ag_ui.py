@@ -4822,23 +4822,17 @@ def test_load_messages_legacy_binary_content(image_content: BinaryContent, docum
 
 
 @skip_if_ag_ui_1_0
-def test_load_messages_legacy_binary_id_only_is_skipped() -> None:
-    """A retired `binary` part carrying only an `id` has nothing to load and is dropped with a warning."""
+def test_load_messages_legacy_binary_id_only_is_rejected() -> None:
+    """Below 1.0 a `binary` part carrying only an `id` has nothing to load and fails, as it always has.
+
+    On 1.0 the same part becomes a `file` source; see `test_retired_binary_part_with_only_an_id_is_dropped_on_1_0`.
+    """
     message = UserMessage(
         id='msg-1', content=[TextInputContent(text='see file'), legacy_binary(mime_type='image/png', id='file-1')]
     )
 
-    with pytest.warns(UserWarning, match='binary content with only an `id` was skipped'):
-        messages = AGUIAdapter.load_messages([message])
-
-    assert messages == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='see file', timestamp=IsDatetime())],
-                metadata={'__pydantic_ai__': {'ui_message_id': 'msg-1'}},
-            )
-        ]
-    )
+    with pytest.raises(ValueError, match='BinaryInputContent must have either a `url` or `data` field'):
+        AGUIAdapter.load_messages([message])
 
 
 async def test_messages() -> None:
@@ -9547,29 +9541,28 @@ async def test_undeclared_client_gets_bare_run_finished_on_cancellation() -> Non
 
 @requires_ag_ui('1.0.0')
 @pytest.mark.parametrize(
-    'declared',
+    ('declared', 'outcome'),
     [
-        pytest.param('next', id='unreadable'),
-        pytest.param('1.0-next', id='suffixed'),
-        pytest.param('1', id='one_component'),
-        pytest.param('1.1', id='newer_minor'),
-        pytest.param('2.0', id='newer_major'),
+        pytest.param('0.9', None, id='older'),
+        pytest.param('next', {'type': 'cancelled'}, id='unreadable'),
+        pytest.param('1.0-next', {'type': 'cancelled'}, id='suffixed'),
+        pytest.param('1', {'type': 'cancelled'}, id='one_component'),
+        pytest.param('1.1', {'type': 'cancelled'}, id='newer_minor'),
+        pytest.param('2.0', {'type': 'cancelled'}, id='newer_major'),
     ],
 )
-async def test_client_protocol_version_the_server_does_not_speak_is_treated_as_newer(declared: str) -> None:
-    """A `protocolVersion` outside the `MAJOR.MINOR` grammar, or newer than the SDK speaks, is handled like
-    a newer one: warn, and send the 1.0 shapes."""
+async def test_client_protocol_version_decides_1_0_outcomes(declared: str, outcome: dict[str, str] | None) -> None:
+    """A client declaring a version before 1.0 gets the pre-1.0 shapes. One newer than the SDK speaks, or outside the
+    `MAJOR.MINOR` grammar, is handled like a newer one, as the spec requires, and gets the 1.0 shapes without a warning:
+    the server operator can't change what the client declares."""
     agent = _cancelling_agent()
 
-    with pytest.warns(
-        UserWarning, match=f'protocol version {declared!r} on the run input is not one this server speaks'
-    ):
-        events = await _collect_adapter_events(
-            agent,
-            create_input(UserMessage(id='m1', content='hi'), protocol_version=declared),
-            ag_ui_version='1.0.0',
-        )
-    assert next(event for event in events if event['type'] == 'RUN_FINISHED')['outcome'] == {'type': 'cancelled'}
+    events = await _collect_adapter_events(
+        agent,
+        create_input(UserMessage(id='m1', content='hi'), protocol_version=declared),
+        ag_ui_version='1.0.0',
+    )
+    assert next(event for event in events if event['type'] == 'RUN_FINISHED').get('outcome') == outcome
 
 
 _IMAGE_FROM_URL = {
@@ -9622,6 +9615,27 @@ def test_retired_binary_part_is_translated_on_1_0(part: dict[str, Any], expected
     content = run_input.messages[0].content
     assert isinstance(content, list)
     assert content[0].model_dump(exclude_none=True) == expected
+
+
+@requires_ag_ui('1.0.0')
+def test_retired_binary_part_with_only_an_id_is_dropped_on_1_0() -> None:
+    """1.0 replaced the `binary` part's `id` with the `file` source, so an id-only part becomes one with no provider
+    and is dropped with that source's warning, keeping the rest of the message."""
+    run_input = AGUIAdapter.build_run_input(
+        build_run_input_body(
+            {
+                'id': 'msg-1',
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'text': 'see file'},
+                    {'type': 'binary', 'mimeType': 'image/png', 'id': 'f'},
+                ],
+            }
+        )
+    )
+    with pytest.warns(UserWarning, match='with no provider was skipped'):
+        messages = AGUIAdapter.load_messages(run_input.messages)
+    assert message_part(messages, UserPromptPart).content == 'see file'
 
 
 @requires_ag_ui('1.0.0')
