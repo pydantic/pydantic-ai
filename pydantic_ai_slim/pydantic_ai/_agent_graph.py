@@ -83,6 +83,7 @@ from . import (
 )
 from ._cancel import RunCancellation
 from ._capability_loads import keep_capability_loads
+from ._compaction_view import CompactionView
 from ._context_size import (
     context_input_tokens,
     context_tokens,
@@ -726,7 +727,11 @@ class _AttemptCompaction:
     requested: RequestedCompaction | None = None
     """The pending request, which is settled when the attempt is accepted, or `None` when there was none."""
     result: CompactionResult | None = None
-    """The compacted history, or `None` when no capability compacted."""
+    """What the capability that compacted returned, or `None` when none did."""
+    committed: list[_messages.ModelMessage] | None = None
+    """The history to commit: the compacted one, with the persistent originals of what it kept."""
+    sent: list[_messages.ModelMessage] | None = None
+    """The messages to send: the compacted history, with this request's own edits to what it kept."""
     record: _messages.CompactionRecord | None = None
     """What the run result reports about the compaction once it's kept."""
     error: exceptions.ModelAPIError | None = None
@@ -738,12 +743,12 @@ class _AttemptCompaction:
         """Replace the run's history with the compacted one, now that a response to it is kept."""
         if self.requested is not None:
             ctx.state.compaction_requests.settle(self.requested)
-        if self.result is None or self.record is None:
+        if self.committed is None or self.record is None:
             return
         history = ctx.state.message_history
-        removed = len(history) - len(self.result.messages)
+        removed = len(history) - len(self.committed)
         # In place: `capture_run_messages` and every `RunContext` of the run hold this list.
-        history[:] = self.result.messages
+        history[:] = self.committed
         ctx.state.compactions.append(self.record)
         if ctx.deps.resumed_request_index is not None:
             # As after the before-chain: the request a run resumes from history is the last one, which compaction keeps.
@@ -763,12 +768,14 @@ class _AttemptCompaction:
         """Count the discarded compaction's usage like that of a response a hook rejected to make another attempt."""
         if self.billed is not None:
             request_context._usage_response_ledger.rejected.append(self.billed)  # pyright: ignore[reportPrivateUsage]
-        self.result = self.record = self.billed = self.error = None
+        self.result = self.committed = self.sent = self.record = self.billed = self.error = None
 
     def take(self, other: _AttemptCompaction) -> None:
         """Make `other` this attempt's compaction, in place, once this one has been discarded."""
         self.requested = other.requested
         self.result = other.result
+        self.committed = other.committed
+        self.sent = other.sent
         self.record = other.record
         self.error = other.error
         self.billed = other.billed
@@ -838,30 +845,30 @@ def _check_compaction_result(result: CompactionResult, given: Sequence[_messages
 
 def _keep_capability_loads(
     run_context: RunContext[Any],
-    given: list[_messages.ModelMessage],
-    result: CompactionResult,
+    original: list[_messages.ModelMessage],
+    compacted: list[_messages.ModelMessage],
     kept_from: int,
-) -> tuple[CompactionResult, int]:
+) -> tuple[list[_messages.ModelMessage], int]:
     """Record again, after the compaction, the deferred capability loads it dropped, whichever capability compacted.
 
-    Returns the result with the records, and where its kept messages start now: the records go ahead of them, or, after
-    a provider's compaction response and the requests following it, into them, which ends the kept tail after them.
+    Returns the compacted history with the records, and where its kept messages start now: the records go ahead of
+    them, or, after a provider's compaction response and the requests following it, into them, which ends the kept tail
+    after them.
 
     TODO(#11264): tool search discoveries are dropped the same way, and aren't recorded again yet.
     """
     deferred_ids = {
         capability_id for capability_id, capability in run_context.capabilities.items() if capability.defer_loading
     }
-    messages = keep_capability_loads(given, result.messages, kept_from=kept_from, deferred_ids=deferred_ids)
-    if messages is result.messages:
-        return result, kept_from
-    inserted = len(messages) - len(result.messages)
+    messages = keep_capability_loads(original, compacted, kept_from=kept_from, deferred_ids=deferred_ids)
+    if messages is compacted:
+        return compacted, kept_from
+    inserted = len(messages) - len(compacted)
     index = next(
-        (index for index, (new, old) in enumerate(zip(messages, result.messages)) if new is not old),
-        len(result.messages),
+        (index for index, (new, old) in enumerate(zip(messages, compacted)) if new is not old),
+        len(compacted),
     )
-    kept_from = kept_from + inserted if index <= kept_from else index + inserted
-    return replace(result, messages=messages, kept_from=kept_from), kept_from
+    return messages, (kept_from + inserted if index <= kept_from else index + inserted)
 
 
 def _latest_context_tokens(messages: Sequence[_messages.ModelMessage]) -> int | None:
@@ -3269,8 +3276,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> None:
         """Prepare the attempt for sending, from the request the `prepare_model_request` hooks left and its compaction."""
         prepared.restore(request_context)
-        if compaction.result is not None:
-            request_context.messages = list(compaction.result.messages)
+        if compaction.sent is not None:
+            request_context.messages = list(compaction.sent)
         root_capability = ctx.deps.root_capability
 
         # After `prepare_model_request`, so capability model wrappers apply to the model serving this attempt, including
@@ -3421,22 +3428,25 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if overflow
             else pending
         )
-        messages = prepared.messages
         # A continuation completes a turn the provider already has, so it can't be sent a different history. That
         # also covers a batch request waiting for its batch's result: it's a suspended response the step resumes.
-        if requested is None or resumed_response(messages) is not None:
+        if requested is None or resumed_response(prepared.messages) is not None:
             return
+        # Made from the persistent history as this request shows it, without what only this request adds, so nothing
+        # request-only reaches the history through the compaction. See `CompactionView`.
+        view = CompactionView.of(ctx.state.message_history, prepared.messages)
+        history = view.history
         # Before the batch wrapper is applied, so a compaction call is never batched: a pending compaction is
         # nothing the history could hold. Under durable execution it's the model durability wrapped, which runs a
         # compaction call as a durable model operation whose model isn't wrapped for serving either.
         model = prepared.model
-        tokens_before = _latest_context_tokens(messages)
+        tokens_before = _latest_context_tokens(history)
         start = _messages.CompactionStartEvent(
             reason=requested.reason,
             focus=requested.focus,
             model_name=model.model_name,
             provider_name=model.system,
-            messages_before=len(messages),
+            messages_before=len(history),
             tokens_before=tokens_before,
         )
         await run_context._publish_event(start)  # pyright: ignore[reportPrivateUsage]
@@ -3450,7 +3460,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             reason=requested.reason,
             focus=requested.focus,
             model=model,
-            messages=list(messages),
+            messages=list(view.messages),
             model_settings=prepared.model_settings,
             model_request_parameters=prepared.model_request_parameters,
         )
@@ -3462,8 +3472,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return
         if result is None:
             return
-        kept_from = _check_compaction_result(result, request.messages)
-        result, kept_from = _keep_capability_loads(run_context, request.messages, result, kept_from)
+        kept_from = _check_compaction_result(result, view.messages)
+        committed, committed_kept_from = _keep_capability_loads(
+            run_context, history, view.committed(result.messages, kept_from), kept_from
+        )
+        sent, _ = _keep_capability_loads(run_context, view.view, view.sent(result.messages, kept_from), kept_from)
         holder = next(message for message in result.messages if result.part in message.parts)
         if isinstance(holder, _messages.ModelResponse) and all(
             isinstance(part, _messages.CompactionPart) for part in holder.parts
@@ -3472,16 +3485,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # its context size is the summary's: a size trigger reading it doesn't fire again straight away.
             mark_context_input_tokens(holder, 0)
         compaction.result = result
+        compaction.committed = committed
+        compaction.sent = sent
         compaction.record = _messages.CompactionRecord(
             part=result.part,
             handler=result.handler,
             reason=requested.reason,
             model_name=model.model_name,
             provider_name=model.system,
-            messages_before=len(messages),
-            messages_after=len(result.messages),
-            kept_from=kept_from,
-            replaced=request.messages,
+            messages_before=len(history),
+            messages_after=len(committed),
+            kept_from=committed_kept_from,
+            replaced=history,
             metadata=result.metadata,
         )
         # Committed at the provider boundary, like a response: billed whether or not the attempt is accepted.
@@ -3502,9 +3517,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 handler=result.handler,
                 model_name=model.model_name,
                 provider_name=model.system,
-                messages_before=len(messages),
-                messages_after=len(result.messages),
-                kept_from=kept_from,
+                messages_before=len(history),
+                messages_after=len(committed),
+                kept_from=committed_kept_from,
                 tokens_before=tokens_before,
                 summary_tokens=result.usage.output_tokens or None,
                 usage=result.usage,

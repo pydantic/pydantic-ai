@@ -1127,9 +1127,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         message — belongs in `before_model_request` instead.
 
         Changes made here shape the request that goes on the wire but are not persisted to the
-        agent's message history, which is finalized by `before_model_request`. The exception is an
-        attempt whose history is compacted: the compaction is made from, and replaces the history with,
-        the messages as these hooks left them, so the ones it keeps carry this attempt's changes.
+        agent's message history, which is finalized by `before_model_request`, also when the attempt
+        compacts the history: see [request-only changes and compaction](../capabilities/custom.md#request-only-changes-and-compaction).
         """
         return request_context
 
@@ -1219,9 +1218,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         The returned [`CompactionResult.messages`][pydantic_ai.capabilities.CompactionResult.messages] are sent
         in place of [`request.messages`][pydantic_ai.capabilities.CompactionRequest.messages], and replace the
-        run's message history once a response to them is accepted, so the messages kept from `request.messages`
-        carry the `prepare_model_request` hooks' changes for this attempt, like the compaction itself is made for
-        its model: a compaction for a model that then fails
+        run's message history once a response to them is accepted. What's committed has the persistent originals of the
+        messages it kept, and what's sent has this request's own changes to them; see
+        [`CompactionRequest.messages`][pydantic_ai.capabilities.CompactionRequest.messages]. A compaction for a
+        model that then fails
         is discarded, and its usage is counted like a failed attempt's. A
         [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] raised here fails the attempt like an error
         from the model itself, so it reaches
