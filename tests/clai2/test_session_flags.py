@@ -1,5 +1,6 @@
 """`--session-id` and `--fork-session` name a new conversation or continue in a copy, as Claude Code's do."""
 
+import asyncio
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
@@ -15,16 +16,16 @@ from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2 import chat
-from pydantic_clai2._app import create_stock_agent
-from pydantic_clai2.cli import _cli, headless
+from pydantic_clai2.app import create_stock_agent
+from pydantic_clai2.cli import cli, headless, web
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Plugin, SessionStart
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 
@@ -304,12 +305,16 @@ async def test_headless_fork(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         ['--resume', 'x', '--session-id', NEW_ID],
         ['--session-id', NEW_ID, 'config'],
         ['--fork-session', 'plugins'],
+        ['-c', '--resume', 'x'],
+        ['--continue', 'config'],
+        ['-c', '--worktree'],
+        ['-c', '--session-id', NEW_ID],
     ],
 )
 def test_invalid_flag_combinations(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> None:
     monkeypatch.setattr('sys.argv', ['clai2', *args])
     with pytest.raises(SystemExit) as error:
-        _cli.run()
+        cli.run()
     assert error.value.code == 2
 
 
@@ -327,10 +332,61 @@ def test_flags_reach_the_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         await launch(session_id=session_id, fork_session=fork_session)
 
     monkeypatch.setattr(headless, 'run_headless', launch)
-    monkeypatch.setattr('pydantic_clai2._app.chat', chat)
+    monkeypatch.setattr('pydantic_clai2.app.chat', chat)
     if prompt:
         with pytest.raises(SystemExit):
-            _cli.run()
+            cli.run()
     else:
-        _cli.run()
+        cli.run()
     assert seen == [(NEW_ID, True)]
+
+
+@pytest.mark.parametrize('mode', [[], ['-p', 'hi'], ['--web']])
+def test_continue_resumes_the_newest_session_here(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], mode: list[str]
+) -> None:
+    """`--continue` restores this directory's newest unarchived session, whichever way CLAI runs, or starts fresh."""
+    here, other, empty = tmp_path / 'here', tmp_path / 'other', tmp_path / 'empty'
+    for directory in (here, other, empty):
+        directory.mkdir()
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+
+    async def save(workspace: Path, *, archived: bool = False) -> str:
+        summary = await store.save(summary=ConversationSummary(workspace=str(workspace.resolve())), messages=[])
+        if archived:
+            await store.set_archived(conversation_id=summary.id, archived=True)
+        return summary.id
+
+    async def save_all() -> str:
+        await save(here)
+        newest_here = await save(here)
+        await save(other)
+        await save(here, archived=True)
+        return newest_here
+
+    newest_here = asyncio.run(save_all())
+    seen: list[tuple[str | None, str | None, bool]] = []
+
+    async def launch(*, resume: str | None, session_id: str | None, fork_session: bool, **_: object) -> int:
+        seen.append((resume, session_id, fork_session))
+        return 0
+
+    async def chat(*args: object, resume: str | None, session_id: str | None, fork_session: bool, **_: object) -> None:
+        await launch(resume=resume, session_id=session_id, fork_session=fork_session)
+
+    monkeypatch.setattr(headless, 'run_headless', launch)
+    monkeypatch.setattr(web, 'run_web', launch)
+    monkeypatch.setattr('pydantic_clai2.app.chat', chat)
+    for directory in (here, empty):
+        monkeypatch.chdir(directory)
+        monkeypatch.setattr(
+            'sys.argv',
+            ['clai2', '--database', str(tmp_path / 'config.db'), '-c', '--fork-session', '--session-id', NEW_ID, *mode],
+        )
+        try:
+            cli.run()
+        except SystemExit as exit:
+            assert exit.code == 0
+    # With none saved here, there is nothing to copy: the new session is not a fork, and takes the given ID.
+    assert seen == [(newest_here, NEW_ID, True), (None, NEW_ID, False)]
+    assert capsys.readouterr().err == f'No saved session in {empty}; starting a new one.\n'

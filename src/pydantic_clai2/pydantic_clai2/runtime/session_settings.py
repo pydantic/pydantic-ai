@@ -9,7 +9,7 @@ from rich.console import Console
 
 from pydantic_ai.usage import UsageLimits
 from pydantic_clai2.config import Settings
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.ui.rendering import theme
 
 DepsT = TypeVar('DepsT')

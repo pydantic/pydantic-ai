@@ -55,7 +55,8 @@ with try_import() as imports_successful:
     )
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
-    from pydantic_ai.models.anthropic import AnthropicModel, _map_computer_member  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.anthropic._computer import map_computer_member
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -415,7 +416,7 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
     ],
 )
 def test_toolset_members_map_onto_the_computer_tool(name: str, input: dict[str, Any], action: Any) -> None:
-    assert _map_computer_member(name, input) == (action if isinstance(action, list) else [action])
+    assert map_computer_member(name, input) == (action if isinstance(action, list) else [action])
 
 
 @pytest.mark.parametrize(

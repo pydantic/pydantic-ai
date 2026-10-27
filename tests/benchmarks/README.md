@@ -40,3 +40,26 @@ The workloads contain 256 or 8,192 deferred tools and perform one or five sequen
 Fixture warmup removes startup costs. It does not move the measured run's tool preparation or search calls outside the benchmark. The five-search workload includes its first search as well as subsequent searches.
 
 The parallel-search cases send five or twenty `search_tools` calls in one model response. They measure two model requests, the first search and subsequent searches over one prepared corpus, tool execution, and result handling. Every call sees the same pre-discovery snapshot, so assertions require identical first-page matches for all calls. These cases complement sequential discovery and keep any future index construction inside the measured run.
+
+## CodSpeed dependency filter
+
+Pull requests run CodSpeed when they change a benchmark dependency. Pushes to `main` and manual dispatch always run the full suite. The classifier stays inline in the workflow: its token-bearing job reads file names and statuses from the GitHub API without checking out or executing pull-request code. Both rename paths are checked. API failures, incomplete file lists, unknown statuses, and unknown paths run benchmarks.
+
+The workflow's [`affects_benchmarks` function](../../.github/workflows/benchmark.yml) is the dependency map; its case branches contain the group rationale and exact paths. Imports during collection, fixtures, warmup, measured execution, and teardown all count, even outside the measured operation.
+
+Other test suites and their data, provider implementations, and harness/CLI source skip because the isolated benchmark run never loads them. Installation and test configuration still trigger benchmarks even in skipped packages. New/copied/renamed Python source in core, graph, or evals runs until its dependencies can be audited. Unknown paths and statuses remain conservative triggers.
+
+### Checking dependency drift
+
+After an isolated benchmark run, the conftest checks loaded repository files against the workflow's actual `affects_benchmarks` function. It fails only when a loaded dependency would skip CodSpeed, or the classifier cannot run. Included new modules need no inventory update. Mixed or unrelated suites skip the guard so their collection imports cannot contaminate this audit. Directory paths, trailing slashes, absolute paths, individual files, and test-node selections are supported.
+
+This executes the extracted function only in the benchmark/test process. The token-bearing classifier job still executes no pull-request files.
+
+Check the dependencies with the workflow's installation and a correctness run:
+
+```sh
+uv sync --frozen
+uv run pytest tests/benchmarks
+```
+
+If the guard reports a path, trace its import through collection, fixtures, or runtime and add its trigger before the matching exclusion in `affects_benchmarks`. Run `uv run pytest .github/scripts/test_ci_content_classifier.py` to check scheduling. The ordinary correctness command uses the smallest workloads; the full CodSpeed commands above also audit lazy imports in larger workloads. Changes to benchmark code, loaded dependencies, installation/configuration, or new core/graph/evals source trigger the full CodSpeed job, where the guard checks its actual benchmark run.
