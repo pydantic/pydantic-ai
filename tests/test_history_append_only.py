@@ -98,6 +98,10 @@ with try_import() as mcp_imports_successful:
 
     from pydantic_ai.mcp import MCPToolset
 
+# The module is skipped without the provider extras, so this needs no flag of its own.
+with try_import():
+    from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+
 pytestmark = pytest.mark.skipif(not provider_imports_successful(), reason='anthropic or openai not installed')
 
 
@@ -968,8 +972,6 @@ async def test_server_held_ui_history_keeps_openai_responses_chaining(
     """
     if not ui_imports_successful():  # pragma: lax no cover
         pytest.skip('ag-ui-protocol not installed')
-    from pydantic_ai.models.openai import OpenAIResponsesModelSettings
-
     scenario = Scenario(
         ui_adapter=protocol,
         serialize_history=True,
