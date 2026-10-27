@@ -43,6 +43,30 @@ When every model has failed or been rejected, `ModelFallback` raises [`FallbackE
 
 A run that reaches its `timeout=` stops with [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] wherever it is, including in the middle of a candidate's request: the remaining candidates aren't attempted. Likewise, a request that exceeds the run's [usage limits](../agent.md#usage-limits) raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] whatever `fallback_on` says, as another model wouldn't change that.
 
+## In agent specs {#agent-specs}
+
+`ModelFallback` can be declared in an [agent spec](../agent-spec.md), with its models as a list of model names:
+
+```yaml {title="fallback_agent.yaml" test="skip"}
+model: {{ openai:medium }}
+capabilities:
+  - ModelFallback: [{{ anthropic:medium }}]
+```
+
+As in Python, the spec's `model:` is attempted first, and a spec without one uses the first of `ModelFallback`'s models for the first attempt.
+
+To choose when to fall back, give the models and `fallback_on` as keyword arguments. In a spec, `fallback_on` takes the names of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] and its subclasses in [`pydantic_ai.exceptions`][pydantic_ai.exceptions], such as [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] and [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError]. Exception and response handlers can only be passed in Python:
+
+```yaml {title="fallback_on_agent.yaml" test="skip"}
+model: {{ openai:medium }}
+capabilities:
+  - ModelFallback:
+      models: [{{ anthropic:medium }}, {{ google:medium }}]
+      fallback_on: [ModelRateLimitError, ModelUnavailableError]
+```
+
+Model names are resolved when they're attempted, like those passed to `ModelFallback(...)`, so a spec can also list model IDs of your own that a [`ResolveModelId`](resolve-model-id.md) capability resolves, passed to [`Agent.from_spec()`][pydantic_ai.agent.Agent.from_spec] or [`Agent.from_file()`][pydantic_ai.agent.Agent.from_file] with `capabilities=`.
+
 ## How attempts work
 
 Each model attempted is an *attempt* within the same request step, not a new step:

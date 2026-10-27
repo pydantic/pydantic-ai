@@ -33,6 +33,7 @@ from pydantic_ai.capabilities import (
     IncludeToolReturnSchemas,
     Instrumentation,
     LocalWorkspace,
+    ModelFallback,
     NativeTool,
     PrefixTools,
     RaiseContentFilterError,
@@ -107,6 +108,7 @@ def test_capability_types() -> None:
             'Instrumentation': Instrumentation,
             'LocalWorkspace': LocalWorkspace,
             'MCP': MCP,
+            'ModelFallback': ModelFallback,
             'PrefixTools': PrefixTools,
             'ReinjectSystemPrompt': ReinjectSystemPrompt,
             'SetToolMetadata': SetToolMetadata,
@@ -2034,6 +2036,25 @@ def test_model_json_schema_with_capabilities():
                     'title': 'short_spec_NativeTool',
                     'type': 'object',
                 },
+                'short_spec_ModelFallback': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'ModelFallback': {
+                            'anyOf': [
+                                {'$ref': '#/$defs/KnownModelName'},
+                                {'type': 'string'},
+                                {
+                                    'items': {'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}]},
+                                    'type': 'array',
+                                },
+                            ],
+                            'title': 'Modelfallback',
+                        }
+                    },
+                    'required': ['ModelFallback'],
+                    'title': 'short_spec_ModelFallback',
+                    'type': 'object',
+                },
                 'short_spec_MCP': {
                     'additionalProperties': False,
                     'properties': {'MCP': {'title': 'Mcp', 'type': 'string'}},
@@ -2119,6 +2140,13 @@ def test_model_json_schema_with_capabilities():
                     'properties': {'Thinking': {'$ref': '#/$defs/spec_params_Thinking'}},
                     'required': ['Thinking'],
                     'title': 'spec_Thinking',
+                    'type': 'object',
+                },
+                'spec_ModelFallback': {
+                    'additionalProperties': False,
+                    'properties': {'ModelFallback': {'$ref': '#/$defs/spec_params_ModelFallback'}},
+                    'required': ['ModelFallback'],
+                    'title': 'spec_ModelFallback',
                     'type': 'object',
                 },
                 'spec_ImageGeneration': {
@@ -2323,6 +2351,71 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_params_Thinking',
                     'type': 'object',
                 },
+                'spec_params_ModelFallback': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'models': {
+                            'anyOf': [
+                                {'$ref': '#/$defs/KnownModelName'},
+                                {'type': 'string'},
+                                {
+                                    'items': {'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}]},
+                                    'type': 'array',
+                                },
+                            ],
+                            'title': 'Models',
+                        },
+                        'fallback_on': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'ModelAPIError',
+                                        'ModelHTTPError',
+                                        'ModelRateLimitError',
+                                        'ModelQuotaExceededError',
+                                        'ModelUnavailableError',
+                                        'ModelOverloadedError',
+                                        'ModelServerError',
+                                        'ModelConnectionError',
+                                        'ModelTimeoutError',
+                                        'ModelRequestRejectedError',
+                                        'ModelContextWindowExceededError',
+                                        'ModelAuthenticationError',
+                                        'ModelNotFoundError',
+                                        'ModelRequestTimeout',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {
+                                    'items': {
+                                        'enum': [
+                                            'ModelAPIError',
+                                            'ModelHTTPError',
+                                            'ModelRateLimitError',
+                                            'ModelQuotaExceededError',
+                                            'ModelUnavailableError',
+                                            'ModelOverloadedError',
+                                            'ModelServerError',
+                                            'ModelConnectionError',
+                                            'ModelTimeoutError',
+                                            'ModelRequestRejectedError',
+                                            'ModelContextWindowExceededError',
+                                            'ModelAuthenticationError',
+                                            'ModelNotFoundError',
+                                            'ModelRequestTimeout',
+                                        ],
+                                        'type': 'string',
+                                    },
+                                    'type': 'array',
+                                },
+                            ],
+                            'title': 'Fallback On',
+                        },
+                    },
+                    'required': ['models'],
+                    'title': 'spec_params_ModelFallback',
+                    'type': 'object',
+                },
                 'spec_params_ImageGeneration': {
                     'additionalProperties': False,
                     'properties': {
@@ -2519,6 +2612,8 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/spec_LocalWorkspace'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
+                                {'$ref': '#/$defs/short_spec_ModelFallback'},
+                                {'$ref': '#/$defs/spec_ModelFallback'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
                                 {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
@@ -2754,6 +2849,8 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/spec_LocalWorkspace'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
+                            {'$ref': '#/$defs/short_spec_ModelFallback'},
+                            {'$ref': '#/$defs/spec_ModelFallback'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
                             {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
