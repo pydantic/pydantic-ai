@@ -37,9 +37,6 @@ jobs:
       E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
       SPRITE_TOKEN: ${{ secrets.SPRITE_TOKEN }}
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
   report:
     needs: [live]
