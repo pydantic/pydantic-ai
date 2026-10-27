@@ -69,6 +69,7 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',

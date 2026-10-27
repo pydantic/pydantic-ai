@@ -326,7 +326,7 @@ agent = Agent(
 )
 ```
 
-`fallback_on` defaults to `ModelAPIError`; it also takes exception types, exception handlers, and response handlers (`(ModelResponse) -> bool`, which reject a successful response). Each candidate gets its own `prepare_model_request` pass, so provider-specific preparation is redone per model, and outer capabilities only see the accepted response. Use `FallbackModel` instead only outside an agent (direct model requests or a standalone `Model`).
+`fallback_on` defaults to `ModelAPIError`; it also takes exception types, exception handlers, and response handlers (`(ModelResponse) -> bool`, which reject a successful response). Each candidate gets its own `prepare_model_request` pass and native tool factory call (with the candidate as `ctx.model`), so provider-specific preparation is redone per model, and outer capabilities only see the accepted response. Use `FallbackModel` instead only outside an agent (direct model requests or a standalone `Model`).
 
 Good defaults:
 

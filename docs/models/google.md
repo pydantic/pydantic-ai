@@ -71,6 +71,10 @@ See [Google Cloud](google-cloud.md) for Gemini and Claude access, authentication
 - <span id="api-key"></span>[API Key](google-cloud.md#api-key)
 - <span id="customizing-location-or-project"></span>[Customizing Location or Project](google-cloud.md#customizing-location-or-project)
 
+### Switching between the Gemini API and Google Cloud
+
+The Gemini API and Google Cloud reject each other's [thought signatures](https://ai.google.dev/gemini-api/docs/thought-signatures), even though a [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] is named `google` on either. So when history from one continues on the other, for example in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] that falls back from Google Cloud to the Gemini API, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] sends the documented `skip_thought_signature_validator` signature in place of the other transport's, which both accept, and thinking as text. It tells the transports apart by the response's [`canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system], which `GoogleModel` always sets: `google` for a Gemini API response and `google-cloud` for a Google Cloud one, whatever the base URL. For history recorded before Pydantic AI stored it, a first-party Gemini API or Google Cloud `provider_url` decides, and one through a proxy URL is still sent with its signatures to a model with the same provider name. Google Cloud and the Pydantic AI Gateway's Google route, which uses Google Cloud, accept each other's signatures. See [Sending history to another provider](../message-history.md#sending-history-to-another-provider).
+
 ### Service tier (`service_tier`, `google_cloud_service_tier`)
 
 The unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field works on both Google subsystems, with [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier] available for finer Google Cloud routing control. The provider-specific field wins when both are set.

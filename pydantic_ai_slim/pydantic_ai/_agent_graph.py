@@ -21,7 +21,7 @@ from copy import copy, deepcopy
 from dataclasses import field, replace
 from datetime import datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeGuard, assert_never, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeGuard, assert_never, cast
 
 import anyio
 from opentelemetry.trace import Tracer
@@ -133,13 +133,14 @@ from .models._continuation import (
     resumed_response,
 )
 from .models._request_timeout import enforce_request_deadline, start_request_deadline, without_carried_deadline
-from .models.wrapper import serving_wrapper_scope
+from .models.wrapper import WrapperModel, serving_wrapper_scope
 from .output import OutputDataT, OutputSpec, PendingModelResponse, StructuredOutputMode
 from .settings import ModelSettings
 from .tools import (
     AgentNativeTool,
     DeferredToolResult,
     DeferredToolResults,
+    NativeToolFunc,
     RunContext,
     ToolDefinition,
 )
@@ -455,10 +456,22 @@ class _AttemptBaseline:
 
     Only when a `prepare_model_request` hook could edit them for one attempt, to keep the common path cheap.
     """
+    native_tool_factories: list[tuple[NativeToolFunc[Any], int | None]] = dataclasses.field(
+        default_factory=list[tuple[NativeToolFunc[Any], int | None]]
+    )
+    """The native tool factories resolved for the step's model, each with the position of what it resolved to.
+
+    `None` when it resolved to no tool. A factory whose tool the hooks removed isn't listed, so it stays removed.
+    """
 
     @classmethod
     def capture(
-        cls, request_context: ModelRequestContext, step_settings: StepModelSettings, *, copy_tool_definitions: bool
+        cls,
+        request_context: ModelRequestContext,
+        step_settings: StepModelSettings,
+        *,
+        copy_tool_definitions: bool,
+        native_tool_factories: Sequence[_NativeToolFactoryResult[Any]] = (),
     ) -> _AttemptBaseline:
         """Capture the request as the hooks left it, and what they changed in the step's resolved settings.
 
@@ -467,6 +480,13 @@ class _AttemptBaseline:
         """
         final: dict[str, Any] = dict(request_context.model_settings or {})
         resolved: dict[str, Any] = dict(step_settings.merged or {})
+        native_tools = request_context.model_request_parameters.native_tools
+        factories: list[tuple[NativeToolFunc[Any], int | None]] = []
+        for factory, tool in native_tool_factories:
+            if tool is None:
+                factories.append((factory, None))
+            elif (index := next((i for i, native in enumerate(native_tools) if native is tool), None)) is not None:
+                factories.append((factory, index))
         return cls(
             messages=list(request_context.messages),
             model_settings=request_context.model_settings,
@@ -476,6 +496,7 @@ class _AttemptBaseline:
             hook_removed_settings={key for key in resolved if key not in final},
             layered_settings=step_settings.layered,
             copy_tool_definitions=copy_tool_definitions,
+            native_tool_factories=factories,
         )
 
     def settings_for(self, model: models.Model) -> ModelSettings | None:
@@ -508,6 +529,28 @@ class _AttemptBaseline:
             and last.state == 'suspended'
         ):
             self.messages.pop()
+
+    async def resolve_native_tools(self, run_context: RunContext[Any], request_context: ModelRequestContext) -> None:
+        """Resolve the native tool factories again for an attempt at another model than the step's.
+
+        A factory decides from `ctx.model` which native tool, if any, the model gets, and what it decided for the
+        step's model may not be supported by, or mean the same to, another one. Only the factory sees the model
+        serving the attempt as `ctx.model`; to everything else, `RunContext.model` stays the step's model.
+        """
+        if not self.native_tool_factories or _unwrap_model(request_context.model) is _unwrap_model(self.model):
+            return
+        attempt_context = replace(run_context, model=request_context.model)
+        parameters = request_context.model_request_parameters
+        native_tools: list[AbstractNativeTool | None] = list(parameters.native_tools)
+        for factory, index in self.native_tool_factories:
+            tool = await _resolve_native_tool_factory(factory, attempt_context)
+            if index is None:
+                native_tools.append(tool)
+            else:
+                native_tools[index] = tool
+        request_context.model_request_parameters = replace(
+            parameters, native_tools=[tool for tool in native_tools if tool is not None]
+        )
 
     def restore(self, request_context: ModelRequestContext) -> None:
         # Fresh containers, down to the lists, dicts and sets inside the settings and parameters at any depth, so
@@ -1355,12 +1398,37 @@ def _apply_instruction_parts(
         request.instructions = _messages.InstructionPart.join(instruction_parts)
 
 
+_NativeToolFactoryResult: TypeAlias = tuple[NativeToolFunc[DepsT], AbstractNativeTool | None]
+"""A native tool factory, and what it resolved to."""
+
+
+def _unwrap_model(model: models.Model) -> models.Model:
+    while isinstance(model, WrapperModel):
+        model = model.wrapped
+    return model
+
+
+async def _resolve_native_tool_factory(
+    factory: NativeToolFunc[DepsT], run_context: RunContext[DepsT]
+) -> AbstractNativeTool | None:
+    tool = factory(run_context)
+    if inspect.isawaitable(tool):
+        tool = await tool
+    return tool
+
+
 async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     instruction_parts: list[_messages.InstructionPart] | None,
     loaded_instruction_parts: Sequence[_messages.InstructionPart] = (),
+    *,
+    native_tool_factories: list[_NativeToolFactoryResult[DepsT]] | None = None,
 ) -> models.ModelRequestParameters:
-    """Build tools and create an agent model."""
+    """Build tools and create an agent model.
+
+    `native_tool_factories` collects what each native tool factory resolved to for the step's model, so an attempt at
+    another model can resolve them again for that model.
+    """
     output_schema = ctx.deps.output_schema
 
     prompted_output_template = (
@@ -1390,9 +1458,9 @@ async def _prepare_request_parameters(
             if isinstance(tool, AbstractNativeTool):
                 native_tools.append(tool)
             else:
-                t = tool(run_context)
-                if inspect.isawaitable(t):
-                    t = await t
+                t = await _resolve_native_tool_factory(tool, run_context)
+                if native_tool_factories is not None:
+                    native_tool_factories.append((tool, t))
                 if t is not None:
                     native_tools.append(t)
 
@@ -2082,6 +2150,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     _step_model_settings: StepModelSettings = field(
         repr=False, init=False, default=StepModelSettings(merged=None, layered=None)
     )
+    _native_tool_factories: list[_NativeToolFactoryResult[DepsT]] = field(
+        repr=False, init=False, default_factory=list[_NativeToolFactoryResult[DepsT]]
+    )
+    """The native tool factories this request step resolved for its model, and what each resolved to."""
+    _serving_model: models.Model | None = field(default=None, init=False, repr=False)
+    """The model the latest attempt was sent to, with the capabilities' model wrappers."""
     _resolved_loaded_parts: dict[str, list[_messages.InstructionPart]] = field(
         repr=False, init=False, default_factory=dict[str, list[_messages.InstructionPart]]
     )
@@ -2176,6 +2250,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 req_ctx,
                 self._step_model_settings,
                 copy_tool_definitions=ctx.deps.root_capability._has_prepare_model_request,  # pyright: ignore[reportPrivateUsage]
+                native_tool_factories=self._native_tool_factories,
             )
             try:
                 async with AsyncExitStack() as stream_stack:
@@ -2546,11 +2621,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             request_context,
             self._step_model_settings,
             copy_tool_definitions=ctx.deps.root_capability._has_prepare_model_request,  # pyright: ignore[reportPrivateUsage]
+            native_tool_factories=self._native_tool_factories,
         )
         failed = _FailedAttempts()
         state.described_attempts = failed.log.attempts
         while True:
             baseline.restore(request_context)
+            await baseline.resolve_native_tools(run_context, request_context)
             state.response = None
             state.usage_recorded = False
             try:
@@ -2708,8 +2785,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self._resolved_loaded_parts = await _get_loaded_instructions(
             ctx, run_context, LoadedInstructionValues.of(ctx.state.message_history).values
         )
+        self._native_tool_factories = []
         model_request_parameters = await _prepare_request_parameters(
-            ctx, instruction_parts, [part for parts in self._resolved_loaded_parts.values() for part in parts]
+            ctx,
+            instruction_parts,
+            [part for parts in self._resolved_loaded_parts.values() for part in parts],
+            native_tool_factories=self._native_tool_factories,
         )
         model_settings = self._resolve_step_model_settings(ctx, run_context)
 
@@ -2775,7 +2856,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         instructions = _get_history_instructions(ctx.state.message_history)
         instruction_parts = _resumed_instruction_parts(ctx.state.message_history, instructions)
 
-        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
+        self._native_tool_factories = []
+        model_request_parameters = await _prepare_request_parameters(
+            ctx, instruction_parts, native_tool_factories=self._native_tool_factories
+        )
         model_settings = self._resolve_step_model_settings(ctx, run_context)
 
         # Show the hooks the exact history that will be echoed back (ending in the suspended
@@ -3034,6 +3118,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return wrapper
 
         request_context.model = attempt_model._with_serving_wrapper(wrap)  # pyright: ignore[reportPrivateUsage]
+        self._serving_model = request_context.model
         # The wrapper is entered around each call it serves for this attempt, like a model passed to the agent is
         # around a run. One applied on this side of a durable unit only answers questions like `continuation_delay`,
         # and the unit enters the one that sends the request.
@@ -3177,6 +3262,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         failed = _FailedAttempts()
         while True:
             baseline.restore(request_context)
+            await baseline.resolve_native_tools(run_context, request_context)
             try:
                 request_context, attempt_model = await self._prepare_attempt(ctx, run_context, request_context)
             except exceptions.RetryModelRequest as retry:
@@ -3353,6 +3439,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
         self._result = CallToolsNode(response)
+        self._result._serving_model = self._serving_model  # pyright: ignore[reportPrivateUsage]
 
         return self._result
 
@@ -3509,6 +3596,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         default=None, init=False, repr=False
     )
     _stream_error: BaseException | None = field(default=None, init=False, repr=False)
+    _serving_model: models.Model | None = field(default=None, init=False, repr=False)
+    """The model the attempt that produced `model_response` was sent to, when this run made that attempt."""
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -3790,7 +3879,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         run_context = build_run_context(ctx)
         evidence_window = _messages._post_compaction_window_for_response(  # pyright: ignore[reportPrivateUsage]
-            ctx.state.message_history, self.model_response
+            ctx.state.message_history,
+            self.model_response,
+            # The model that served the response, which may not be the step's, as when `ModelFallback` moved on.
+            (self._serving_model or ctx.deps.model)._compaction_window_predicate(self.model_response),  # pyright: ignore[reportPrivateUsage]
         )
         # Held in a local because it lands in two places below.
         anchored_evidence = AnchoredEvidence(
