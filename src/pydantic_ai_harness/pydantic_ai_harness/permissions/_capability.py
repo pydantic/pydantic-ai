@@ -121,7 +121,8 @@ class Permissions(AbstractCapability[AgentDepsT]):
     File writes are the `FileSystem` tools `write_file`, `edit_file`, and `create_directory`, recognized by
     their tool kind whatever they are named. Commands are the tools whose metadata declares
     `code_arg_language='shell'`, as the `Shell` tools that take a command do; the command is the
-    `code_arg_name` argument, or `command` when a wrapper removed that name. Other tools are not checked.
+    `code_arg_name` argument; when a wrapper removed that name, it is the `command` argument, or else every string
+    argument joined. Other tools are not checked.
 
     `mode` can be a function of the run context. It is read on every call, so a mode changed during a run
     applies from the run's next call.
@@ -207,11 +208,16 @@ def _command(tool_def: ToolDefinition, args: dict[str, Any]) -> str | None:
     metadata = tool_def.metadata or {}
     if metadata.get('code_arg_language') != 'shell':
         return None
-    # A host that folds the tool into code mode drops `code_arg_name` and keeps the language; the `Shell`
-    # tools name the argument `command`.
-    name = metadata.get('code_arg_name', 'command')
-    command = args.get(name) if isinstance(name, str) else None
-    return command if isinstance(command, str) else None
+    name = metadata.get('code_arg_name')
+    if isinstance(name, str):
+        command = args.get(name)
+        return command if isinstance(command, str) else None
+    # A host that folds the tool into code mode drops `code_arg_name` and keeps the language. Not knowing which
+    # argument is the command, check them all, so a tool whose command argument has another name is still held.
+    command = args.get('command')
+    if isinstance(command, str):
+        return command
+    return ' '.join(value for value in args.values() if isinstance(value, str)) or None
 
 
 def _remember(metadata: object) -> bool:

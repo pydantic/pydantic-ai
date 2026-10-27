@@ -181,19 +181,30 @@ class TestPermissions:
 
         assert len(person.asked) == 1
 
-    async def test_a_shell_tool_without_code_arg_name_reads_command(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize('argument', ['command', 'cmd'])
+    async def test_a_shell_tool_without_code_arg_name_is_still_held(self, argument: str) -> None:
         """A host folding the tool into code mode drops `code_arg_name` and keeps the language."""
 
-        def run(command: str) -> str:
-            return command  # pragma: no cover
+        def run(**kwargs: str) -> str:
+            return ''  # pragma: no cover
 
         def other(script: str) -> str:
             return script
 
-        folded = Tool(run, name='shell', metadata={'code_arg_language': 'shell'})
+        folded = Tool.from_schema(
+            run,
+            name='shell',
+            description='Run a command.',
+            json_schema={
+                'type': 'object',
+                'properties': {argument: {'type': 'string'}, 'timeout': {'type': 'integer'}},
+            },
+            takes_ctx=False,
+        )
+        folded.metadata = {'code_arg_language': 'shell'}
         python = Tool(other, metadata={'code_arg_language': 'python', 'code_arg_name': 'script'})
         agent = Agent[None, 'str | DeferredToolRequests'](
-            _calls(('other', {'script': 'rm -rf x'}), ('shell', {'command': 'rm -rf x'})),
+            _calls(('other', {'script': 'rm -rf x'}), ('shell', {argument: 'rm -rf x', 'timeout': 5})),
             deps_type=type(None),
             output_type=[str, DeferredToolRequests],
             tools=[folded, python],
