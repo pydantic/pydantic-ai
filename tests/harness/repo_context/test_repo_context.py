@@ -588,14 +588,18 @@ class TestNestedTraversal:
         )
 
     @pytest.mark.parametrize(
-        'call',
+        ('call', 'notes'),
         [
-            pytest.param(('read_file', {'path': 'sub/AGENTS.md'}), id='read'),
-            pytest.param(('write_file', {'path': 'sub/AGENTS.md', 'content': 'WRITTEN'}), id='write'),
+            pytest.param(('write_file', {'path': 'sub/AGENTS.md', 'content': 'WRITTEN'}), 0, id='write'),
+            # A read can return a window of the file and an edit changes part of it, so the note still comes.
+            pytest.param(('read_file', {'path': 'sub/AGENTS.md'}), 1, id='read'),
+            pytest.param(
+                ('edit_file', {'path': 'sub/AGENTS.md', 'old_text': 'NESTED', 'new_text': 'EDITED'}), 1, id='edit'
+            ),
         ],
     )
-    async def test_touching_the_instruction_file_itself_surfaces_nothing(
-        self, tmp_path: Path, call: tuple[str, dict[str, str]]
+    async def test_only_writing_the_instruction_file_itself_counts_as_surfacing_it(
+        self, tmp_path: Path, call: tuple[str, dict[str, str]], notes: int
     ) -> None:
         _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
         _write(tmp_path / 'sub' / 'one.py', 'one')
@@ -605,7 +609,7 @@ class TestNestedTraversal:
             if returns == 0:
                 yield {0: DeltaToolCall(name=call[0], json_args=json.dumps(call[1]), tool_call_id='call')}
             elif returns == 1:
-                # The directory counts as surfaced, so a later read there adds nothing either.
+                # Either way the directory now counts as surfaced, so a later read there adds nothing.
                 yield {0: DeltaToolCall(name='read_file', json_args='{"path":"sub/one.py"}', tool_call_id='one')}
             else:
                 yield 'done'
@@ -617,7 +621,7 @@ class TestNestedTraversal:
                 RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
             ],
         ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
-        assert _repo_notes(result.all_messages()) == []
+        assert len(_repo_notes(result.all_messages())) == notes
 
     async def test_filesystem_rooted_above_the_workspace_resolves_against_its_own_root(self, tmp_path: Path) -> None:
         project = tmp_path / 'project'

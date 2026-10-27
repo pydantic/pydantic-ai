@@ -279,16 +279,17 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return
         working_dir = await self._working_dir(ctx.workspace)
         path = Path(await ctx.workspace.resolve(event.path, base=event.root_dir))
-        touched_file = None if isinstance(event, DirectoryListedEvent) else path
-        directory = path if touched_file is None else path.parent
+        directory = path if isinstance(event, DirectoryListedEvent) else path.parent
+        # Only `write_file` shows the model a whole file: a read can return a window of it, and an edit changes part.
+        written_file = path if type(event) is FileWrittenEvent else None
         try:
             directory.relative_to(working_dir)
         except ValueError:
             return
-        await self._enqueue_context(ctx, directory, touched_file=touched_file)
+        await self._enqueue_context(ctx, directory, written_file=written_file)
 
     async def _enqueue_context(
-        self, ctx: RunContext[AgentDepsT], directory: Path, *, touched_file: Path | None = None
+        self, ctx: RunContext[AgentDepsT], directory: Path, *, written_file: Path | None = None
     ) -> None:
         key = str(directory)
         if key in self._seen_dirs:
@@ -298,15 +299,15 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if context_file is None or key in self._seen_dirs:
             return
         self._seen_dirs.add(key)
-        # The model just read or wrote the instruction file itself, so a note would repeat what it has.
-        if touched_file is not None and await self._same_file(ctx.workspace, touched_file, context_file.path):
+        # The model just wrote the instruction file itself, so a note would repeat what it wrote.
+        if written_file is not None and await self._same_file(ctx.workspace, written_file, context_file.path):
             return
         ctx.enqueue(*self._render_note(context_file))
 
-    async def _same_file(self, workspace: Workspace, touched_file: Path, context_file: Path) -> bool:
-        if touched_file.name not in self.filenames:
+    async def _same_file(self, workspace: Workspace, written_file: Path, context_file: Path) -> bool:
+        if written_file.name not in self.filenames:
             return False
-        return await workspace.realpath(str(touched_file)) == await workspace.realpath(str(context_file))
+        return await workspace.realpath(str(written_file)) == await workspace.realpath(str(context_file))
 
     async def _resolve_directory(self, workspace: Workspace, raw_path: str) -> Path:
         working_dir = await self._working_dir(workspace)

@@ -66,8 +66,9 @@ With `FileSystem` on the agent, the inventory tool steps aside for `FileSystem`'
 ### 3. Nested-on-traversal (off by default)
 
 When the model lists or reads a directory, or writes or edits a file in it,
-surface that directory's `CLAUDE.md`/`AGENTS.md`. Reading or writing the
-instruction file itself counts as surfacing it, so no note repeats it. This strategy subscribes to `FileReadEvent`,
+surface that directory's `CLAUDE.md`/`AGENTS.md`. Writing the instruction
+file itself with `write_file` counts as surfacing it, so no note repeats it. A
+read can return part of a file and an edit changes part of it, so those don't. This strategy subscribes to `FileReadEvent`,
 `DirectoryListedEvent` and `FileWrittenEvent`, so it receives normalized, containment-checked paths
 instead of inspecting raw tool arguments. It remains opt-in:
 
