@@ -584,6 +584,11 @@ unarchives it, since the conversation is in use again. Archiving deletes nothing
 `listing(archived=False)` leaves archived conversations out, `archived=True` lists
 only those, and the default `None` lists both, as before archiving existed.
 
+An application that copies a conversation may set `ConversationSummary.forked_from`
+to the `id` of the conversation it copied; later saves keep it. It names the source
+conversation, not a message in it, and the application decides which copies record it.
+`listing(forked_from=...)` lists only the conversations recording that ID.
+
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.
 

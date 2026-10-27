@@ -57,7 +57,7 @@ the rest briefly in the review body.
 
 ## Targeted checks
 
-Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests, the third to every bug fix, the fourth to every PR that touches message history, the fifth to every PR that touches a model adapter:
+Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests, the third to every bug fix, the fourth to every PR that touches message history, the fifth to every PR that touches a model adapter, the sixth to every PR that changes a core definition a durable engine depends on:
 
 - **Profile-flag test pinning.** When the diff adds or modifies a
   `profile.get(...)` read under `pydantic_ai_slim/pydantic_ai/models/`, verify
@@ -114,6 +114,17 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   changes a request or a replayed history, or that the user's `profile=` can't
   override. Rate a violation of code shape alone **MEDIUM**. Calibration is
   Example 7 in `.review-context/review-instructions.md`.
+- **Durable-exec contract.** When `.review-context/durable-exec-contract.md`
+  exists, the diff changes core definitions a durable engine depends on. The
+  file lists each touched entry with its engines and engine sites. For each
+  entry, open its sites and check they still hold against the change: serialized
+  field lists and allowlists, overridden signatures, projection fields, and
+  activity, step or task names. When the change moves runtime behavior at the
+  durable boundary, ask for a workflow-level test, as "Core changes that engines
+  depend on" in `pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md` (in
+  `agents-md.txt`) asks. Without the file, skip this check. Rate a broken site
+  with a concrete trigger **HIGH**; otherwise **MEDIUM**. Calibration is
+  Example 8 in `.review-context/review-instructions.md`.
 
 ## Review process
 
