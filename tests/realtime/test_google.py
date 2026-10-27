@@ -2140,7 +2140,10 @@ def _redialing_client(
             except StopIteration:
                 raise ConnectionClosed(None, None)
 
-    return cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    return cast(
+        'Client',
+        type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient(), 'vertexai': False})(),
+    )
 
 
 def _model(session: _RecordingSession, captured: dict[str, Any] | None = None, **kwargs: Any) -> GoogleRealtimeModel:
@@ -2185,7 +2188,10 @@ def _rejecting_client(error: Exception) -> Client:
         def connect(self, *, model: str, config: Any) -> _RejectingConnect:
             return _RejectingConnect()
 
-    return cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    return cast(
+        'Client',
+        type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient(), 'vertexai': False})(),
+    )
 
 
 async def test_connect_maps_rejected_config_to_realtime_error() -> None:
@@ -2294,7 +2300,10 @@ async def test_connect_bounds_handshake_with_handshake_timeout(on_model: bool) -
         def connect(self, *, model: str, config: Any) -> _HangingConnect:
             return _HangingConnect()
 
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    client = cast(
+        'Client',
+        type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient(), 'vertexai': False})(),
+    )
     settings = RealtimeModelSettings(handshake_timeout=0.01)
     model = GoogleRealtimeModel(
         'gemini-2.5-flash-native-audio-latest',
@@ -3287,8 +3296,8 @@ async def test_an_id_less_lost_call_does_not_end_the_stream(vertexai: bool) -> N
 
         def __init__(self, turns: list[list[Any]]) -> None:
             super().__init__(turns)
-            self._api_client = SimpleNamespace(vertexai=vertexai)
-            self._sdk = AsyncSession(api_client=cast(Any, self._api_client), websocket=cast(Any, self._ws))
+            api_client = SimpleNamespace(vertexai=vertexai)
+            self._sdk = AsyncSession(api_client=cast(Any, api_client), websocket=cast(Any, self._ws))
 
         async def send_tool_response(self, *, function_responses: Any) -> None:
             await self._sdk.send_tool_response(function_responses=function_responses)
@@ -3300,7 +3309,10 @@ async def test_an_id_less_lost_call_does_not_end_the_stream(vertexai: bool) -> N
     s2 = _SdkSession([[_turn('back')]])
     dial, _ = _dialer(s2)
     conn = GoogleRealtimeConnection(
-        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
+        cast('AsyncSession', s1),
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False},
+        vertexai=vertexai,
     )
 
     events = [e async for e in conn]
@@ -3909,7 +3921,10 @@ async def test_connect_reconnect_retries_a_redial_that_exceeds_handshake_timeout
             except StopIteration:
                 raise ConnectionClosed(None, None)
 
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    client = cast(
+        'Client',
+        type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient(), 'vertexai': False})(),
+    )
     model = GoogleRealtimeModel(
         'gemini-2.5-flash-native-audio-latest',
         provider=GoogleProvider(client=client),
@@ -4985,6 +5000,8 @@ async def test_separate_tool_call_turn_boundary_applies_on_vertex_ai_only(vertex
     model = GoogleRealtimeModel('gemini-live-2.5-flash', provider=GoogleProvider(client=client))
     async with _connect(model, '') as conn:
         assert conn._closes_tool_call_turn_separately is vertexai  # pyright: ignore[reportPrivateUsage]
+        # The connection learns which API it's on from the client, for answering id-less lost calls.
+        assert conn._vertexai is vertexai  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_drop_after_the_tool_call_turn_boundary_closes_the_turn_as_interrupted() -> None:

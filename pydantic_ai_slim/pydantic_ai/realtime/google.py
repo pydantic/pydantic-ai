@@ -1537,6 +1537,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 input_transcription_enabled=self._input_transcription(settings),
                 async_tool_calls=self._async_tool_calls(settings),
                 text_output=settings.get('output_modality', 'audio') == 'text',
+                vertexai=client.vertexai,
             )
             yield connection
         finally:
@@ -1617,8 +1618,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         async_tool_calls: bool = False,
         provider_url: str = '',
         text_output: bool = False,
+        vertexai: bool = False,
     ) -> None:
         self._session = session
+        # Whether the session is on Vertex AI rather than the Gemini Developer API, whose SDK refuses a function
+        # response without the call's id. A connection built without it assumes the stricter Developer API.
+        self._vertexai = vertexai
         # Whether the session asked for text rather than audio (`output_modality='text'`). A text-only model
         # streams its text answer as `output_transcription` (`gemini-robotics-er-2-streaming-preview`, verified
         # live), which is then the answer itself, written rather than spoken.
@@ -2050,7 +2055,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         unanswered rather than ending the event stream. On Vertex AI the SDK sends one without an id.
         """
         _, gemini_id = call
-        return gemini_id is not None or bool(self._session._api_client.vertexai)  # pyright: ignore[reportPrivateUsage]
+        return gemini_id is not None or self._vertexai
 
     async def _answer_lost_tool_calls(self) -> None:
         """Answer calls a resumed session lost with an error, so they don't swallow the next input.
