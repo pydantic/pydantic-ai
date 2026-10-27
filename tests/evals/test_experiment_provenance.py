@@ -39,11 +39,17 @@ _GITHUB_ENV = {
 
 
 @pytest.fixture(autouse=True)
-def _clear_github_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Start each test from a clean slate, since the suite itself runs in GitHub Actions."""
+def _clean_provenance_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Turn detection back on, from a clean slate: no CI variables, and no `git` checkout around the current directory.
+
+    The suite itself runs in GitHub Actions and in this repository's checkout.
+    """
     for name in list(os.environ):
-        if name.startswith(('GITHUB_', 'GITLAB_', 'CI_')):
+        if name.startswith(('GITHUB_', 'GITLAB_', 'CI_', 'PYDANTIC_EVALS_', 'GIT_')):
             monkeypatch.delenv(name)
+    monkeypatch.chdir(tmp_path)
+    # `git` looks in the current directory but not in its parents.
+    monkeypatch.setenv('GIT_CEILING_DIRECTORIES', str(tmp_path))
 
 
 async def _task(inputs: Any) -> str:
@@ -63,6 +69,7 @@ async def _provenance(capfire: CaptureLogfire) -> dict[str, Any]:
 
 
 async def test_not_in_ci(capfire: CaptureLogfire):
+    """Outside CI and outside a `git` checkout, nothing is detected."""
     assert await _provenance(capfire) == {}
 
 
@@ -330,7 +337,6 @@ def _git(cwd: Path, *args: str) -> str:
 @pytest.fixture
 def git_checkout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """A `git` checkout as the current directory, outside any CI."""
-    monkeypatch.delenv('GIT_DIR')
     _git(tmp_path, 'init', '--quiet', '--initial-branch=feature-x')
     _git(tmp_path, 'commit', '--quiet', '--allow-empty', '-m', 'init')
     monkeypatch.chdir(tmp_path)

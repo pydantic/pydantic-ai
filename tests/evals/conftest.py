@@ -7,21 +7,12 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _no_ci_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep `Dataset.evaluate` span snapshots independent of the CI the suite runs in.
+    """Keep `Dataset.evaluate` span snapshots independent of the CI and `git` checkout the suite runs in.
 
-    Detection would otherwise add `vcs.*`/`cicd.*` attributes to every experiment span, from GitHub Actions in CI
-    and from the repository's own `git` checkout everywhere. Tests that exercise detection set what they need.
+    Detection is turned off, so no test runs `git` or depends on GitHub Actions variables.
+    `test_experiment_provenance.py` turns it back on for the tests that exercise it.
     """
-    for name in (
-        'GITHUB_ACTIONS',
-        'GITLAB_CI',
-        'PYDANTIC_EVALS_CI_METADATA',
-        'PYDANTIC_EVALS_GIT_COMMIT_SHA',
-        'PYDANTIC_EVALS_GIT_BRANCH',
-    ):
-        monkeypatch.delenv(name, raising=False)
-    # Points `git` at no repository, so reading the checkout finds nothing.
-    monkeypatch.setenv('GIT_DIR', '/nonexistent')
+    monkeypatch.setenv('PYDANTIC_EVALS_CI_METADATA', 'false')
 
 
 @pytest.fixture(autouse=True)
