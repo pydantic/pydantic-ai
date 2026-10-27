@@ -17,13 +17,13 @@ import httpx
 import httpx2
 import pytest
 
-from pydantic_ai import Agent, ModelResponse, TextPart
+from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, ModelFallback
 from pydantic_ai.capabilities._gateway_fallback import GatewayFallback
 from pydantic_ai.durable_exec._utils import reject_serving_wrapper
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 
@@ -298,9 +298,19 @@ async def test_a_step_follows_the_gateway_at_most_five_times(allow_model_request
     assert len(gateway.seen) == 6
 
 
-async def test_a_hand_back_to_a_model_outside_the_gateway_is_not_followed(allow_model_requests: None):
-    """Only a `gateway/` model is followed: it goes back to the same gateway, with the same credentials."""
-    gateway = FakeGateway([('/responses', lambda _: hand_back('anthropic:claude-sonnet-4-5', 'state-1'))])
+@pytest.mark.parametrize(
+    'response',
+    [
+        pytest.param(lambda: hand_back('anthropic:claude-sonnet-4-5', 'state-1'), id='outside-the-gateway'),
+        pytest.param(lambda: hand_back('gateway/anthropic', 'state-1'), id='no-model-name'),
+        pytest.param(lambda: httpx2.Response(424, headers={'x-should-retry': 'false'}), id='no-model-header'),
+    ],
+)
+async def test_a_424_that_names_no_gateway_model_is_not_followed(
+    allow_model_requests: None, response: Callable[[], httpx2.Response]
+):
+    """Only a `gateway/<provider>:<model>` is followed: it goes back to the same gateway, with the same credentials."""
+    gateway = FakeGateway([('/responses', lambda _: response())])
     agent = Agent(gateway.openai_model())
 
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -526,9 +536,11 @@ async def test_converse_requests_advertise_too(allow_model_requests: None):
 
     with converse_responses(model, seen):
         result = await Agent(model).run('Hello')
+        # Outside an agent run, nothing follows a hand-back, so nothing says so.
+        await model.request([ModelRequest.user_text_prompt('Hello')], None, ModelRequestParameters())
 
     assert result.output == 'Hello from Converse'
-    assert seen == [ADVERTISED]
+    assert seen == [ADVERTISED, {}]
 
 
 def test_the_capability_is_not_spec_constructible():
