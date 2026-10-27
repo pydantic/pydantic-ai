@@ -237,3 +237,4 @@ Tool, toolset, and capability authors should preserve the same contract:
 - Keep tool definitions and their ordering stable across steps.
 - Use date-only timestamps in instructions.
 - Give instructions that change mid-conversation [`on_change='append'`](../agent.md#appending-instruction-changes), which needs an `id` on your capability or toolset, and [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
+- Register [framing tags](custom.md#framing-data-in-prompt-text) at import time, not partway through a conversation.

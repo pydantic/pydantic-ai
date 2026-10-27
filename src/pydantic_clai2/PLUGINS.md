@@ -272,10 +272,12 @@ Bare `/login` asks which sign-in to run.
 
 ## Herdr integration
 
-The built-in `herdr` plugin (`pydantic_clai2.builtin_plugins.herdr`) starts disabled.
-Run `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane. Use
-`/plugins disable herdr` to release the pane and stop reporting. No herdr-side
-integration install is needed. The plugin requires `HERDR_ENV=1`,
+The built-in `herdr` plugin (`pydantic_clai2.builtin_plugins.herdr`) is enabled
+by default and reports automatically inside a [herdr](https://herdr.dev) pane.
+Use `/plugins disable herdr` to release the pane and persistently stop reporting;
+`/plugins enable herdr` restores it. On upgrade, eligible panes that used the
+previous disabled default begin reporting; an existing saved opt-out stays disabled.
+No herdr-side integration install is needed. The plugin requires `HERDR_ENV=1`,
 `HERDR_SOCKET_PATH`, and `HERDR_PANE_ID`; optional `HERDR_TAB_ID` enables tab titles.
 Outside herdr, on Windows, or in a session without a terminal (such as `clai2 --web`),
 it contributes nothing and starts no worker.
@@ -287,9 +289,10 @@ request ID. Tool names supply activity text, never tool arguments or results.
 User-opened menus do not report `blocked`. `AskUser` is the only built-in
 question that waits for the user during a run, since CLAI2 asks for no tool
 approvals; a third-party plugin's own approval UI is not tracked. Herdr owns
-attention notifications; this plugin sends none. To avoid duplicate desktop
-alerts, separately disable CLAI2's `notifications` plugin if you prefer herdr's
-alerts.
+attention notifications; this plugin sends none. CLAI2's separate `notifications`
+plugin remains enabled by default and is not automatically disabled inside herdr.
+To avoid duplicate desktop alerts, use `/plugins disable notifications` if you
+prefer herdr's alerts.
 
 Reports use the source `clai2`. Persisted sessions report their stable
 conversation ID and SQLite database path, not a per-run ID, along with the

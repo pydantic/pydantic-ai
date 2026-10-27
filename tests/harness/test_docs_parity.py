@@ -190,6 +190,7 @@ _CAPABILITY_PAGE_META = {
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),
     'planning.md': ('planning', 'Planning'),
     'system-reminders.md': ('system_reminders', 'System Reminders'),
+    'detect-loops.md': ('detect_loops', 'Detect Loops'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
