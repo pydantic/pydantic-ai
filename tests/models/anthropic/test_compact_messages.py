@@ -254,7 +254,7 @@ async def test_compact_messages_on_aws(
 ):
     """Both Amazon Bedrock APIs compact, and accept the block back, although Anthropic's docs don't list Bedrock.
 
-    The legacy InvokeModel API carries the beta in the body's `anthropic_beta`, the AWS-operated Messages API
+    The legacy InvokeModel API carries the beta in the body's `anthropic_beta`, the Bedrock Messages API
     (`AsyncAnthropicBedrockMantle`) in the `anthropic-beta` header, on the compaction request and on the request that
     sends the block back. The Messages API serves neither Claude Haiku 5.5 nor Sonnet 4.6, so it's recorded with
     Claude Opus 5.5.

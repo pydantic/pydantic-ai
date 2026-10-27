@@ -731,7 +731,7 @@ async def test_in_flight_tool_search_call_is_answered_in_the_next_response(
     (https://github.com/anthropics/anthropic-sdk-python/issues/1325) and delivers it at the start of
     the next response, as long as the request still carries the call. Dropping the call made the
     model search again (https://github.com/pydantic/pydantic-ai/issues/10966). Recorded on the direct
-    API, the legacy Bedrock InvokeModel API and Claude Platform on AWS, which all accept the shape.
+    API, the legacy Bedrock InvokeModel API and the Bedrock Messages API, which all accept the shape.
     """
     if transport == 'bedrock':
         client = request.getfixturevalue('anthropic_bedrock_client')

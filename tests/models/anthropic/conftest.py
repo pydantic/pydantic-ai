@@ -53,7 +53,7 @@ def anthropic_bedrock_client(request_capture: RequestCapture) -> AsyncAnthropicB
 
 @pytest.fixture
 def anthropic_bedrock_mantle_client(request_capture: RequestCapture) -> AsyncAnthropicBedrockMantle:
-    """An `AsyncAnthropicBedrockMantle` (Claude Platform on AWS) client routed through `request_capture`."""
+    """An `AsyncAnthropicBedrockMantle` (Bedrock Messages API) client routed through `request_capture`."""
     return AsyncAnthropicBedrockMantle(
         api_key=_bedrock_api_key(),
         aws_region=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
