@@ -232,17 +232,14 @@ def _part_of_unloaded_group_message(ctx: RunContext[Any], capability_id: str) ->
 
 def _is_active_or_loading(ctx: RunContext[Any], queue: PendingMessageQueue, capability_id: str) -> bool:
     """Whether `capability_id` is active, or a load of it is queued or among the model's calls being executed."""
-    if capability_id in ctx.active_capability_ids or _is_load_pending(queue, capability_id):
+    if capability_id in ctx.active_capability_ids or any(
+        capability_id in record.capabilities_added for record in queue.capability_loads
+    ):
         return True
     response = next((message for message in reversed(ctx.messages) if isinstance(message, ModelResponse)), None)
     return response is not None and any(
         isinstance(part, LoadCapabilityCallPart) and part.capability_id == capability_id for part in response.parts
     )
-
-
-def _is_load_pending(queue: PendingMessageQueue, capability_id: str) -> bool:
-    """Whether a load of `capability_id` was queued from code and hasn't reached message history yet."""
-    return any(capability_id in record.capabilities_added for record in queue.capability_loads)
 
 
 def _is_duplicate_load_in_response(ctx: RunContext[Any], capability_id: str) -> bool:
