@@ -1,5 +1,6 @@
 """`/commit`, `/push`, `/pr`, and the web UI's git routes, against real repositories and a stand-in `gh`."""
 
+import os
 import shutil
 import subprocess
 import sys
@@ -10,9 +11,11 @@ import pytest
 from anyio.from_thread import BlockingPortal
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_clai2 import gh_cli
+from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.runtime import git_actions
 from pydantic_clai2.runtime.git_actions import (
     ChangedFile,
@@ -47,6 +50,7 @@ if [ "$1 $2" = "auth token" ]; then
   exit 1
 fi
 if [ "$1 $2" = "pr create" ]; then
+  cat > "$FAKE_GH_STATE/body"
   [ -f "$FAKE_GH_STATE/fail" ] && cat "$FAKE_GH_STATE/fail" >&2 && exit 1
   [ -f "$FAKE_GH_STATE/silent" ] && exit 0
   echo "Creating pull request for feature into main in octo/repo"
@@ -188,6 +192,73 @@ async def test_commit_only_the_chosen_files_then_the_chip_counts_the_commit(repo
     assert summary(status) == 'feature: 0 changed, 2 ahead'
 
 
+async def test_commit_staged_renames_deletions_and_awkward_names_from_a_subdirectory(repo: Path) -> None:
+    """Paths are the repository's, whatever directory the session works in, and none is read as an option."""
+    git(repo, 'mv', 'old.txt', 'moved.txt')
+    git(repo, 'rm', '--quiet', 'gone.txt')
+    (repo / '-dash name.txt').write_text('dash\n')
+    inside = repo / 'sub'
+    inside.mkdir()
+    (inside / 'deep.txt').write_text('deep\n')
+    status = await git_status(inside)
+    assert status is not None
+    assert sorted(file.path for file in status.files) == ['-dash name.txt', 'gone.txt', 'moved.txt', 'sub/deep.txt']
+    await commit(inside, message='Move, remove, and add')
+    assert sorted(git(repo, 'show', '--name-status', '--format=', 'HEAD').splitlines()) == [
+        'A\t-dash name.txt',
+        'A\tsub/deep.txt',
+        'D\tgone.txt',
+        'R100\told.txt\tmoved.txt',
+    ]
+    status = await git_status(inside)
+    assert status is not None and status.files == []
+    git(repo, 'rm', '--quiet', 'notes.txt')
+    await commit(repo, message='Only a removal')
+    assert git(repo, 'show', '--name-status', '--format=', 'HEAD').splitlines() == ['D\tnotes.txt']
+
+
+async def test_an_upstream_branch_gone_from_the_remote_is_pushed_again(repo: Path) -> None:
+    git(repo, 'checkout', '-b', 'feature')
+    (repo / 'notes.txt').write_text('feature\n')
+    await commit(repo, message='Feature')
+    await push(repo)
+    git(repo, 'update-ref', '-d', 'refs/remotes/origin/feature')
+    status = await git_status(repo)
+    assert status is not None
+    assert (status.upstream, status.ahead) == (None, 1)
+
+
+async def test_the_default_branch_may_be_master(tmp_path: Path, gh_state: Path) -> None:
+    work = tmp_path / 'old'
+    subprocess.run(['git', 'init', '-b', 'master', str(work)], check=True, capture_output=True)
+    git(work, 'commit', '--allow-empty', '-m', 'init')
+    git(work, 'remote', 'add', 'origin', GITHUB)
+    git(work, 'update-ref', 'refs/remotes/origin/master', 'HEAD')
+    status = await git_status(work)
+    assert status is not None
+    assert status.default_branch
+    assert status.pull_request == 'master is the default branch: open a pull request from another branch.'
+    # A clone records the remote's default branch, whatever its name.
+    git(work, 'update-ref', 'refs/remotes/origin/trunk', 'HEAD')
+    git(work, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk')
+    git(work, 'checkout', '-q', '-b', 'trunk')
+    status = await git_status(work)
+    assert status is not None
+    assert (status.branch, status.default_branch) == ('trunk', True)
+
+
+def test_new_files_are_read_as_git_commits_them(tmp_path: Path) -> None:
+    read_start = git_actions._read_start  # pyright: ignore[reportPrivateUsage]
+    assert read_start(tmp_path) == '(not a regular file)'
+    locked = tmp_path / 'locked.txt'
+    locked.write_text('secret')
+    locked.chmod(0)
+    try:
+        assert read_start(locked).startswith('(unreadable: ') or os.geteuid() == 0
+    finally:
+        locked.chmod(0o600)
+
+
 async def test_commit_refuses_what_it_cannot_commit(repo: Path) -> None:
     with pytest.raises(ValueError, match='Write a commit message first'):
         await commit(repo, message='  ')
@@ -254,6 +325,16 @@ async def test_pull_requests_need_github_and_a_signed_in_gh(
     with pytest.raises(RuntimeError, match='not signed in'):
         await open_pull_request(repo, title='Feature', body='')
 
+    def locked(host: str) -> str | None:
+        raise UserError('gh auth token did not answer within 10 seconds.')
+
+    (gh_state / 'token').write_text('gho_test')
+    monkeypatch.setattr(gh_cli, 'gh_token', locked)
+    status = await git_status(repo)
+    assert status is not None
+    assert status.pull_request == 'gh auth token did not answer within 10 seconds.'
+    assert await push(repo) == 'Pushed feature to origin.', 'pushing never asks gh'
+
     monkeypatch.setattr(gh_cli, 'gh_command', lambda: None)
     status = await git_status(repo)
     assert status is not None
@@ -280,7 +361,8 @@ async def test_open_a_pull_request(repo: Path, gh_state: Path) -> None:
     await commit(repo, message='Feature')
 
     assert await open_pull_request(repo, title=' Add a feature ', body='It adds one.\n') == PR_URL
-    assert calls(gh_state)[-1] == 'pr create --head feature --title Add a feature --body It adds one.'
+    assert calls(gh_state)[-1] == 'pr create --head=feature --title=Add a feature --body-file=-'
+    assert (gh_state / 'body').read_text() == 'It adds one.'
     status = await git_status(repo)
     assert status is not None
     assert (status.upstream, status.ahead) == ('origin/feature', 0), 'the branch was pushed first'
@@ -347,7 +429,7 @@ async def test_draft_a_commit_message_from_the_changes(repo: Path) -> None:
     assert 'New file new.txt:\nfresh content' in shown
     assert '[... the rest is cut]' in shown
     assert 'New file image.bin:\n(binary)' in shown
-    assert 'New file dangling:\n(unreadable: ' in shown
+    assert f'New file dangling:\n(symbolic link to {repo / "nowhere"})' in shown
 
     await draft_commit_message(repo, model=drafter.resolved, files=['new.txt'])
     assert drafter.prompts[-1] == 'New file new.txt:\nfresh content\n'
@@ -422,9 +504,18 @@ async def test_commands(repo: Path, gh_state: Path) -> None:
     await run('commit', 'Feature')
     assert await run('push') == 'Pushed feature to origin.\nfeature: 0 changed, 0 ahead'
     assert await run('pr') == f'Opened {PR_URL}'
-    assert calls(gh_state)[-1] == 'pr create --head feature --title Add a feature --body It adds one.'
+    assert calls(gh_state)[-1] == 'pr create --head=feature --title=Add a feature --body-file=-'
     assert await run('pr', 'My title') == f'Opened {PR_URL}'
-    assert calls(gh_state)[-1] == 'pr create --head feature --title My title --body It adds one.'
+    assert calls(gh_state)[-1] == 'pr create --head=feature --title=My title --body-file=-'
+
+
+def test_a_plugins_own_git_command_takes_over() -> None:
+    commands = Commands()
+    built_in = git_commands(workspace=Path.cwd, model=no_model)
+    commands.register_many(built_in)
+    own = Command(name='pr', description='Open a pull request my way', handler=lambda args: 'mine')
+    assert commands.register_many([own]) == [built_in[2]]
+    assert commands.get('pr') is own
 
 
 def agents(drafter: Drafter, *names: str) -> Callable[[BlockingPortal], dict[str, Agent[None, str]]]:

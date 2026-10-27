@@ -23,6 +23,8 @@ export function GitChip({
   const git = useMemo(() => gitApi(session), [session])
   const [status, setStatus] = useState<GitStatus | null>(null)
   const [open, setOpen] = useState(false)
+  const opened = useRef(false)
+  opened.current = open
   // Only the latest answer is shown, however the requests resolve.
   const request = useRef(0)
   const load = useCallback(async () => {
@@ -31,8 +33,8 @@ export function GitChip({
       const found = await git.status()
       if (mine === request.current) setStatus(found)
     } catch {
-      // A session that closed, or a folder that is gone: no chip.
-      if (mine === request.current) setStatus(null)
+      // A session that closed, or a folder that is gone: no chip, unless the dialog shows what the user typed.
+      if (mine === request.current && !opened.current) setStatus(null)
     }
   }, [git])
   useEffect(() => {
@@ -65,7 +67,16 @@ export function GitChip({
         <span className="git-branch">{branch}</span>
         <span className="git-counts">{gitCounts(status)}</span>
       </button>
-      {open && <GitDialog git={git} status={status} onStatus={setStatus} onClose={close} onNotice={onNotice} />}
+      {open && (
+        <GitDialog
+          git={git}
+          status={status}
+          onStatus={setStatus}
+          onRefresh={() => void load()}
+          onClose={close}
+          onNotice={onNotice}
+        />
+      )}
     </>
   )
 }
@@ -77,12 +88,15 @@ function GitDialog({
   git,
   status,
   onStatus,
+  onRefresh,
   onClose,
   onNotice,
 }: {
   git: GitApi
   status: GitStatus
   onStatus: (status: GitStatus | null) => void
+  /** Ask for the repository's status again, as after opening a pull request, which may push. */
+  onRefresh: () => void
   onClose: () => void
   onNotice: (message: string) => void
 }) {
@@ -144,7 +158,7 @@ function GitDialog({
             }}
           />
         ) : (
-          <PullRequest git={git} busy={busy} act={act} onBack={() => setView('changes')} />
+          <PullRequest git={git} busy={busy} act={act} onOpened={onRefresh} onBack={() => setView('changes')} />
         )}
         {problem && (
           <pre className="setting-error git-problem" role="alert">
@@ -196,17 +210,20 @@ function Changes({
   const [draftProblem, setDraftProblem] = useState<string | null>(null)
   // The model's draft never replaces what the user typed.
   const typed = useRef(false)
+  // Only the latest draft is used: one still on its way when a commit lands is for files already committed.
+  const drafts = useRef(0)
   const draft = useCallback(
     async (files: string[] | null) => {
+      const mine = ++drafts.current
       setDrafting(true)
       setDraftProblem(null)
       try {
         const { message: drafted } = await git.draftCommit(files)
-        if (!typed.current) setText(drafted)
+        if (mine === drafts.current && !typed.current) setText(drafted)
       } catch (error) {
-        setDraftProblem(message(error))
+        if (mine === drafts.current) setDraftProblem(message(error))
       } finally {
-        setDrafting(false)
+        if (mine === drafts.current) setDrafting(false)
       }
     },
     [git],
@@ -220,7 +237,10 @@ function Changes({
   const selected = paths.filter((path) => chosen.has(path))
   const commit = () =>
     act(async () => {
-      const done = await git.commit(text, selected.length === paths.length ? null : selected)
+      // The files shown, not whatever has changed since.
+      const done = await git.commit(text, selected)
+      drafts.current++
+      setDrafting(false)
       typed.current = false
       setText('')
       onStatus(done.status)
@@ -241,7 +261,7 @@ function Changes({
           <>
             <div className="git-files" role="group" aria-label="Changed files">
               {status.files.map((file) => (
-                <label key={file.path} className="git-file" title={file.original ? `${file.original} → ${file.path}` : file.path}>
+                <label key={`${file.status}:${file.path}`} className="git-file" title={file.original ? `${file.original} → ${file.path}` : file.path}>
                   <input
                     type="checkbox"
                     checked={chosen.has(file.path)}
@@ -345,11 +365,13 @@ function PullRequest({
   git,
   busy,
   act,
+  onOpened,
   onBack,
 }: {
   git: GitApi
   busy: boolean
   act: (action: () => Promise<void>) => Promise<void>
+  onOpened: () => void
   onBack: () => void
 }) {
   const [title, setTitle] = useState('')
@@ -422,7 +444,12 @@ function PullRequest({
           className="primary"
           type="button"
           disabled={busy || !title.trim()}
-          onClick={() => void act(async () => setUrl((await git.openPullRequest(title, body)).url))}
+          onClick={() =>
+            void act(async () => {
+              setUrl((await git.openPullRequest(title, body)).url)
+              onOpened()
+            })
+          }
         >
           {busy ? 'Opening…' : 'Open pull request'}
         </button>

@@ -713,7 +713,9 @@ without MESSAGE the session's model drafts one from the changes. `/push` runs
 `git push -u origin BRANCH`; on the default branch it asks for `/push confirm`.
 `/pr [TITLE]` pushes the branch and opens a GitHub pull request with `gh`, the
 model drafting its description (and title, without TITLE). The web UI's git chip
-does the same, with a file list and the drafts to edit first.
+does the same, with a file list and the drafts to edit first. A plugin's own
+`/commit`, `/push`, or `/pr` replaces these; a skill of the same name is hidden
+by them, and CLAI says so.
 
 For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
