@@ -348,6 +348,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             extra_attributes['metadata'] = metadata
         if repeat > 1:
             extra_attributes['logfire.experiment.repeat'] = repeat
+        # The OTel test semantic conventions: a dataset is a test suite, and each case a test case.
+        extra_attributes['test.suite.name'] = self.name
         with (
             logfire_span(
                 'evaluate {name}',
@@ -1160,6 +1162,8 @@ async def _run_task_and_evaluators(
             trace_id = f'{context.trace_id:032x}'
             span_id = f'{context.span_id:016x}'
 
+        # The OTel test semantic conventions. Repeats of one case share its name, as they run the same test case.
+        case_span.set_attribute('test.case.name', source_case_name or report_case_name)
         if source_case_name is not None:
             case_span.set_attribute('logfire.experiment.source_case_name', source_case_name)
 
