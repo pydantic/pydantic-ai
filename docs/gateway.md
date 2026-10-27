@@ -424,7 +424,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 ### Falling back across API formats
 
-An endpoint's providers don't have to speak the same API format: an endpoint can fall back from an OpenAI provider to an Anthropic or Bedrock one, say. The Gateway can't forward a request to a provider in another format itself, so it hands the request back to Pydantic AI, naming the model to send it to, and the agent sends the request there instead. The request is built again for that model, with its own message format, settings and native tools, as it would be for a candidate of [`ModelFallback`](capabilities/model-fallback.md). This happens automatically for every `gateway/` model in an agent run, with the same API key, base URL and `route` as the model the run started with.
+An endpoint's providers don't have to speak the same API format: an endpoint can fall back from an OpenAI provider to an Anthropic or Bedrock one, say. The Gateway can't forward a request to a provider in another format itself, so it hands the request back to Pydantic AI, naming the model to send it to, and the agent sends the request there instead. The request is built again for that model, with its own message format, settings and native tools, as it would be for a candidate of [`ModelFallback`](capabilities/model-fallback.md). This happens automatically for every `gateway/` model in an agent run, with the same API key, base URL and `route` as the `gateway/` model whose request the Gateway handed back.
 
 Only Pydantic AI can follow a fallback like this, so other clients skip the providers in another format than the request's. A few things stay the same as for any fallback:
 

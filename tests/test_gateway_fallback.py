@@ -20,6 +20,7 @@ import pytest
 from pydantic_ai import Agent, ModelResponse, TextPart
 from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, ModelFallback
 from pydantic_ai.capabilities._gateway_fallback import GatewayFallback
+from pydantic_ai.durable_exec._utils import reject_serving_wrapper
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model
@@ -433,6 +434,22 @@ async def test_durable_runs_neither_advertise_nor_follow(allow_model_requests: N
     assert gateway.seen == [SeenRequest(path='/proxy/openai/responses', fallback_headers={})]
 
 
+def test_deprecated_durable_agents_dont_refuse_the_headers_wrapper():
+    """`TemporalAgent`, `DBOSAgent` and `PrefectAgent` refuse capabilities that wrap the model, which this one sits out.
+
+    Checked on the helper their models call, as the engines' own agents aren't needed to show it.
+    """
+    model = FakeGateway([]).openai_model()
+    agent = Agent(model)
+    durable = WrapperModel(model)
+
+    def wrap(model: Model) -> Model:
+        return agent.root_capability.get_wrapper_model(model) or model
+
+    assert wrap(model) is not model
+    assert reject_serving_wrapper(durable, wrap, 'TemporalAgent', 'TemporalDurability') is durable
+
+
 @pytest.mark.parametrize(
     'client, upstream, shared',
     [
@@ -455,7 +472,10 @@ def test_the_callers_http_client_is_shared_where_the_sdk_accepts_it(
 def test_the_next_provider_keeps_the_route_and_base_url():
     original = gateway_provider('openai', route='my-endpoint', api_key=API_KEY, base_url=BASE_URL)
 
-    assert _fallback_provider(original, 'anthropic').base_url == f'{BASE_URL}/my-endpoint/'
+    fallback = _fallback_provider(original, 'anthropic')
+    assert fallback.base_url == f'{BASE_URL}/my-endpoint/'
+    # Created once, so the requests handed back from `original` share its client.
+    assert _fallback_provider(original, 'anthropic') is fallback
 
 
 @contextmanager

@@ -64,10 +64,10 @@ class GatewayFallback(AbstractCapability[Any]):
         return ()
 
     def _handles_model_request_error(self, request_context: ModelRequestContext) -> bool:
-        return _follows(request_context.model)
+        return _advertising_model(request_context.model) is not None
 
     def get_wrapper_model(self, model: Model) -> Model | None:
-        if isinstance(model, _FallbackHeadersModel) or not _follows(model) or _in_durable_unit():
+        if isinstance(model, _FallbackHeadersModel) or not _is_gateway_model(model) or _in_durable_unit():
             # A model the gateway handed a request to sends the headers itself. A durable unit wraps the model it
             # rebuilds, and the hand-back it gets couldn't be followed on the other side of the unit.
             return None
@@ -80,24 +80,26 @@ class GatewayFallback(AbstractCapability[Any]):
         request_context: ModelRequestContext,
         error: Exception,
     ) -> ModelResponse:
-        hand_backs = _hand_backs(request_context.model)
+        # This hook only runs for an attempt that told the gateway it follows a hand-back, as
+        # `_handles_model_request_error` says.
+        advertised = _advertising_model(request_context.model)
+        assert advertised is not None
         if not (
             isinstance(error, ModelHTTPError)
             and error.status_code == _FALLBACK_STATUS_CODE
             and (target := _fallback_target(error.headers)) is not None
-            and hand_backs < _MAX_HAND_BACKS
+            and advertised.hand_backs < _MAX_HAND_BACKS
         ):
             raise error
         model_string, state = target
-        # This hook only runs for a gateway model, as `_handles_model_request_error` says.
-        provider = request_context.model.provider
-        assert provider is not None
+        provider = advertised.provider
+        assert provider is not None  # a gateway provider, or the request wouldn't have advertised
         try:
             model = _build_target(provider, model_string)
         except (UserError, ImportError) as e:
             # A model this install can't build, like one of an unknown format: the hand-back is the error.
             raise error from e
-        raise RetryModelRequest(_FallbackHeadersModel(model, state=state, hand_backs=hand_backs + 1))
+        raise RetryModelRequest(_FallbackHeadersModel(model, state=state, hand_backs=advertised.hand_backs + 1))
 
 
 def _build_target(provider: Provider[Any], model_string: str) -> Model:
@@ -107,30 +109,27 @@ def _build_target(provider: Provider[Any], model_string: str) -> Model:
     return infer_model(model_string, provider_factory=lambda _: target_provider)
 
 
-def _follows(model: Model) -> bool:
-    """Whether the gateway may hand back a request to `model` for this capability to follow."""
-    provider = model.provider
-    if provider is None or not is_gateway_provider(provider):
-        return False
+def _is_gateway_model(model: Model) -> bool:
+    return (provider := model.provider) is not None and is_gateway_provider(provider)
+
+
+def _advertising_model(model: Model) -> _FallbackHeadersModel | None:
+    """The wrapper that tells the gateway the request to `model` follows a hand-back, if the request is sent here.
+
+    A durable engine's model sends its request from a durable unit, which doesn't advertise: the model the next
+    attempt needs couldn't be built there, so the gateway falls back within the request's API format only, as it does
+    for any other client.
+    """
+    if not _is_gateway_model(model):
+        return None
     from pydantic_ai.durable_exec._utils import DurableModel
 
-    # Under durable execution the request is sent from a durable unit, and the model the next attempt needs can't be
-    # built there. The gateway then falls back within the request's API format only, as it does for any other client.
     current = model
-    while isinstance(current, WrapperModel):
-        if isinstance(current, DurableModel):
-            return False
+    while isinstance(current, WrapperModel) and not isinstance(current, DurableModel):
+        if isinstance(current, _FallbackHeadersModel):
+            return current
         current = current.wrapped
-    return True
-
-
-def _hand_backs(model: Model) -> int:
-    """How many hand-backs in a row led to the request to `model`."""
-    while not isinstance(model, _FallbackHeadersModel):
-        # `get_wrapper_model` wrapped every model whose errors this capability handles, under any outer wrappers.
-        assert isinstance(model, WrapperModel)
-        model = model.wrapped
-    return model.hand_backs
+    return None
 
 
 def _in_durable_unit() -> bool:

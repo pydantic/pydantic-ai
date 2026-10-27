@@ -461,7 +461,7 @@ _FALLBACK_FORMAT_SDKS: dict[str, str] = {
     'openai': 'openai',
     'anthropic': 'anthropic',
     'gemini': 'google.genai',
-    'bedrock-converse': 'botocore',
+    'bedrock-converse': 'boto3',
 }
 
 _fallback_headers: ContextVar[Mapping[str, str] | None] = ContextVar('_gateway_fallback_headers', default=None)
@@ -513,16 +513,24 @@ def _fallback_target(headers: Mapping[str, str] | None) -> tuple[str, str | None
 def _fallback_provider(provider: Provider[Any], upstream_provider: str) -> Provider[Any]:  # pyright: ignore[reportUnusedFunction]
     """A gateway provider for `upstream_provider` with the credentials, base URL and route gateway `provider` has.
 
-    The caller's HTTP client is shared when the new provider's SDK accepts it.
+    The caller's HTTP client is shared when the new provider's SDK accepts it. Each is created once per `provider` and
+    API format, so the requests the gateway hands back from it reuse one client, as those to `provider` itself do.
     """
-    config = _gateway_providers[provider]
-    return _create_gateway_provider(
-        upstream_provider,
-        route=config.route,
-        api_key=config.api_key,
-        base_url=config.base_url,
-        http_client=_shareable_http_client(normalize_gateway_provider(upstream_provider), config.http_client),
-    )
+    canonical = normalize_gateway_provider(upstream_provider)
+    created = _fallback_providers.setdefault(provider, {})
+    if (fallback := created.get(canonical)) is None:
+        config = _gateway_providers[provider]
+        fallback = created[canonical] = _create_gateway_provider(
+            canonical,
+            route=config.route,
+            api_key=config.api_key,
+            base_url=config.base_url,
+            http_client=_shareable_http_client(canonical, config.http_client),
+        )
+    return fallback
+
+
+_fallback_providers: weakref.WeakKeyDictionary[Provider[Any], dict[str, Provider[Any]]] = weakref.WeakKeyDictionary()
 
 
 def _shareable_http_client(canonical: str, http_client: AsyncHTTPClient | None) -> AsyncHTTPClient | None:
