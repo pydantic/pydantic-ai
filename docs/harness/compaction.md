@@ -704,10 +704,10 @@ Retaining user turns leaves any receipt and the retained turns as adjacent `Mode
 
 ## Anchored incremental summarization and the cross-model bridge
 
-With `incremental=True` (the default), a prior summary is not re-summarized -- summarizing summaries decays over successive compactions. It is fed back as an anchored `<previous-summary>` block with an *update* instruction: preserve still-true details, remove stale ones, merge in new facts. The summary becomes a living document updated in place under a fixed structure.
+With `incremental=True` (the default), a prior summary is not re-summarized -- summarizing summaries decays over successive compactions. It is fed back as an anchored `<previous_summary>` block with an *update* instruction: preserve still-true details, remove stale ones, merge in new facts. The summary becomes a living document updated in place under a fixed structure.
 
 !!! note "Behavior change: `incremental=True` is the default"
-    Every existing `SummarizingCompaction` user gets a different summary-call prompt from this release on: once a prior summary exists, the summarizer is asked to *update* it under `<previous-summary>` rather than regenerate one from the conversation. The summaries it produces will read differently. Set `incremental=False` to keep the previous regenerate-from-scratch behavior.
+    Every existing `SummarizingCompaction` user gets a different summary-call prompt from this release on: once a prior summary exists, the summarizer is asked to *update* it under `<previous_summary>` rather than regenerate one from the conversation. The summaries it produces will read differently. Set `incremental=False` to keep the previous regenerate-from-scratch behavior.
 
 `bridge_prefix=True` prepends a one-line note to the summary only when the summarizer's model family differs from the family that produced the history, derived from the history's `model_name` and the summarizer config. It marks the summary as a cross-model handoff so the resuming model builds on it rather than confabulating that it did the work itself. It never fires in the common same-model case, so it is cheap. It defaults to `False` because the note is prompt content.
 

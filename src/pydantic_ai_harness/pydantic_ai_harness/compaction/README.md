@@ -894,13 +894,13 @@ dispatch. `keep_user_messages` therefore needs no provider-specific handling.
 ## Anchored incremental summarization and the cross-model bridge
 
 With `incremental=True` (the default), a prior summary is not re-summarized (which decays over
-successive compactions). It is fed back as an anchored `<previous-summary>` block with an
+successive compactions). It is fed back as an anchored `<previous_summary>` block with an
 *update* instruction -- preserve still-true details, remove stale ones, merge in new facts --
 so the summary is a living document updated in place under a fixed structure.
 
 > **Behavior change: `incremental=True` is the default.** Every existing `SummarizingCompaction`
 > user gets a different summary-call prompt from this release on: once a prior summary exists, the
-> summarizer is asked to *update* it under `<previous-summary>` rather than regenerate one from the
+> summarizer is asked to *update* it under `<previous_summary>` rather than regenerate one from the
 > conversation. The summaries it produces will read differently. Set `incremental=False` to keep the
 > previous regenerate-from-scratch behavior.
 

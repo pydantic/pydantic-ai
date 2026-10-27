@@ -40,7 +40,7 @@ _ASSET_ROOTS_HINT = (
 )
 _POINTER_NOTE = (
     'A directory you just accessed has an instruction file, not loaded here. Its path is in the '
-    '`<context-file>` tag that follows. Read the file if it is relevant to your task.'
+    '`<context_file>` tag that follows. Read the file if it is relevant to your task.'
 )
 _DEFAULT_TRAVERSAL_TOOL_NAMES = frozenset({'list_directory', 'read_file'})
 _DEFAULT_TRAVERSAL_PATH_ARG = 'path'
@@ -310,7 +310,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         """The file's contents as repository data, or a framework pointer followed by the file's path as data.
 
         The contents and the path are the repository's, not the operator's or the framework's, so they go on
-        the user channel in a `<context-file>` tag. Only the pointer's own wording is in system voice.
+        the user channel in a `<context_file>` tag. Only the pointer's own wording is in system voice.
         """
         label = self._label(context_file.path)
         if self.nested_inject == 'contents':

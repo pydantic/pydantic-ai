@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import re
 import warnings
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -15,7 +14,7 @@ from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.framing import close_tag, neutralize_tags, open_tag
+from pydantic_ai.framing import close_tag, neutralize_tags, open_tag, wrap
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -35,7 +34,12 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import TextOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._framing_tags import HARNESS_DATA_TAG, MESSAGE_TAG
+from pydantic_ai_harness._framing_tags import (
+    HARNESS_DATA_TAG,
+    MESSAGE_TAG,
+    PREVIOUS_SUMMARY_TAG,
+    neutralize_legacy_tags,
+)
 from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts, with_text
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
@@ -128,7 +132,7 @@ Summaries are now a `CompactionPart`; this only recognizes ones in histories sav
 # back as an anchor to update in place rather than a summary to re-summarize, which avoids
 # summary-of-summary decay.  Wording is minimal/neutral and flagged pending the eval-rig pass.
 _INCREMENTAL_UPDATE_INSTRUCTION = (
-    'An anchored summary from earlier compaction is provided below in <previous-summary>. '
+    'An anchored summary from earlier compaction is provided below in <previous_summary>. '
     'Update it using the conversation above: preserve still-true details, remove stale '
     'details, and merge in new facts.  Keep the same section structure.'
 )
@@ -313,19 +317,14 @@ _TranscriptRole: TypeAlias = Literal[
 ]
 """The `role` of a `<message>` element in the summarizer transcript."""
 
-# TODO: register `previous-summary` with the other transcript tags in `_framing_tags`, or rename it, once #11497
-# settles whether framing tag names may have hyphens.
-_PREVIOUS_SUMMARY_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?previous-summary(?=[\s/>]|$))', re.IGNORECASE)
-"""The `<` of an opening or closing `previous-summary` tag, which `neutralize_tags` doesn't cover, in any spelling."""
-
 
 def _neutralize_transcript_tags(content: str) -> str:
-    """Escape every framing tag in *content*, core's and every registered one, and `<previous-summary>`.
+    """Escape every framing tag in *content*, core's, every registered one and the spellings earlier releases wrote.
 
     Content then can't open or close a message, the transcript, or the previous summary, and a
     `<system>`, `<context>` or `<tool_result>` tag in it stays inside its element.
     """
-    return _PREVIOUS_SUMMARY_TAG_OPENER.sub('&lt;', neutralize_tags(content))
+    return neutralize_legacy_tags(neutralize_tags(content))
 
 
 def _message_element(
@@ -341,9 +340,9 @@ def _message_element(
 
     *content* is escaped before it is cut to *max_chars*, so the cap bounds what the summarizer receives.
     *core_framed* content was framed by core, which escaped every framing tag in its body, the registered
-    transcript tags included, so its own frame stays as written and only `<previous-summary>` is escaped.
+    transcript tags included, so its own frame stays as written and only the legacy spellings are escaped.
     """
-    body = _PREVIOUS_SUMMARY_TAG_OPENER.sub('&lt;', content) if core_framed else _neutralize_transcript_tags(content)
+    body = neutralize_legacy_tags(content) if core_framed else _neutralize_transcript_tags(content)
     if max_chars is not None:
         body = _truncate_with_marker(body, max_chars)
     return f'{open_tag(MESSAGE_TAG, role=role, name=name, cause=cause)}\n{body}\n{close_tag(MESSAGE_TAG)}'
@@ -713,7 +712,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
     incremental: bool = True
     """When `True`, feed any existing summary from a prior compaction back as an anchored
-    `<previous-summary>` block with an update instruction (preserve still-true, remove stale,
+    `<previous_summary>` block with an update instruction (preserve still-true, remove stale,
     merge new) so it is updated in place rather than re-summarized -- avoiding
     summary-of-summary decay.
     """
@@ -1078,9 +1077,8 @@ async def write_summary(
         prompt = f'{prompt}\n\n{_HARNESS_DATA_INSTRUCTION}'
 
     if previous_summary is not None:
-        prompt = (
-            f'{prompt}\n\n{_INCREMENTAL_UPDATE_INSTRUCTION}\n\n'
-            f'<previous-summary>\n{_neutralize_transcript_tags(previous_summary)}\n</previous-summary>'
+        prompt = f'{prompt}\n\n{_INCREMENTAL_UPDATE_INSTRUCTION}\n\n' + wrap(
+            PREVIOUS_SUMMARY_TAG, f'\n{neutralize_legacy_tags(previous_summary)}\n'
         )
 
     model = summarizer.model if summarizer.model is not None else ctx.model

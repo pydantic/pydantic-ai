@@ -21,16 +21,16 @@ _PACKAGE = Path(__file__).parents[2] / 'src' / 'pydantic_ai_harness' / 'pydantic
 
 _HARNESS_TAGS = tuple(RegisteredTag(value) for name, value in vars(_framing_tags).items() if name.endswith('_TAG'))
 
-_PENDING_HYPHENATED_TAGS = ('context-file', 'plan-reminder', 'previous-summary', 'task-output')
-"""Tags that can't be registered until #11497 settles whether framing tag names may have hyphens.
+_LEGACY_TAGS = ('context-file', 'previous-summary', 'task-output')
+"""Spellings earlier releases wrote, before tag names were snake_case. Only `neutralize_legacy_tags` names them."""
 
-Their capabilities still build and escape them by hand, at exactly the sites in the allowlists below.
-"""
+_PENDING_TAGS = ('plan-reminder',)
+"""`Planning`'s tag, renamed with the rest of its reminder in #11521. It's still built and escaped by hand."""
 
 _INTERPOLATION = '\x00'
 """Stands in for each `{…}` of an f-string, so a tag name followed by interpolated attributes still counts."""
 
-_GUARDED_TAGS = ('system', *get_args(DataTag), *_HARNESS_TAGS, *_PENDING_HYPHENATED_TAGS)
+_GUARDED_TAGS = ('system', *get_args(DataTag), *_HARNESS_TAGS, *_LEGACY_TAGS, *_PENDING_TAGS)
 _KNOWN_TAG = re.compile(
     rf'(?<!`)<\s*/?\s*(?:{"|".join(map(re.escape, _GUARDED_TAGS))})(?=[\s/>{_INTERPOLATION}]|$)', re.IGNORECASE
 )
@@ -44,7 +44,7 @@ _TAG_ESCAPER = re.compile(r'<\(\?=')
 
 _HAND_BUILT_ALLOWLIST = {
     # Prose naming a tag for the model, unquoted. It builds none.
-    ('compaction/_summarizing_compaction.py', 'provided below in <previous-summary>.'),
+    ('compaction/_summarizing_compaction.py', 'provided below in <previous_summary>.'),
     ('compaction/_summarizing_compaction.py', 'A <harness_data> element is content'),
     # Default prompt templates users copy and edit, so their frames are written out. The summarizer's
     # `{messages}` arrive escaped by `format_transcript`.
@@ -53,22 +53,19 @@ _HAND_BUILT_ALLOWLIST = {
     ('tool_output_limits/_capability.py', '<output>\n{output}\n</output>'),
     # browser-use's own placeholder for a secret the model types, not a frame.
     ('browser_use/_toolset.py', '<secret>\x00</secret>'),
-    # Pending #11497.
-    ('compaction/_summarizing_compaction.py', '<previous-summary>\n\x00\n</previous-summary>'),
+    # Pending #11521.
     ('planning/_capability.py', '<plan-reminder>\n'),
     ('planning/_capability.py', '\n</plan-reminder>'),
-    ('repo_context/_loader.py', '<context-file path='),
 }
 """`(file, snippet)` pairs: a string in `file` containing `snippet` may spell out a frame."""
 
 _ESCAPER_ALLOWLIST = {
     # The JSON spellings of its two tags (`<\/tool_call>`, `<tool_call"`), which the shared pattern doesn't cover.
     '_judge.py',
-    # Pending #11497.
-    '_task_report.py',
-    'compaction/_summarizing_compaction.py',
+    # The one pattern for the hyphenated spellings earlier releases wrote, which can't be registered.
+    '_framing_tags.py',
+    # Pending #11521.
     'planning/_capability.py',
-    'repo_context/_loader.py',
 }
 
 
@@ -100,11 +97,7 @@ def _strings(source: str) -> list[tuple[int, str]]:
 
 
 def _sources() -> list[tuple[str, str]]:
-    return [
-        (path.relative_to(_PACKAGE).as_posix(), path.read_text())
-        for path in sorted(_PACKAGE.rglob('*.py'))
-        if path.name != '_framing_tags.py'
-    ]
+    return [(path.relative_to(_PACKAGE).as_posix(), path.read_text()) for path in sorted(_PACKAGE.rglob('*.py'))]
 
 
 def _hand_built_frames_in(relative: str, source: str) -> list[tuple[str, int, str]]:
@@ -177,7 +170,9 @@ def test_every_module_that_frames_registers_the_harness_tags() -> None:
     assert [
         relative
         for relative, source in _sources()
-        if _imports_framing(tree := ast.parse(source)) and not _imports_framing_tags(tree)
+        if relative != '_framing_tags.py'
+        and _imports_framing(tree := ast.parse(source))
+        and not _imports_framing_tags(tree)
     ] == []
 
 

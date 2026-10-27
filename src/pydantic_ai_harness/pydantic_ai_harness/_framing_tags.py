@@ -15,6 +15,7 @@ some other way, never by hand.
 
 from __future__ import annotations
 
+import re
 from typing import Final
 
 from pydantic_ai.framing import register_tag
@@ -66,3 +67,23 @@ RECENT_CONTEXT_TAG: Final = register_tag('recent_context')
 
 EARLIER_STEP_TAG: Final = register_tag('earlier_step')
 """Frames the earlier step being judged in the same prompt."""
+
+CONTEXT_FILE_TAG: Final = register_tag('context_file')
+"""Frames an instruction file `RepoContext` loaded, or names one the model can read."""
+
+PREVIOUS_SUMMARY_TAG: Final = register_tag('previous_summary')
+"""Frames the summary an incremental `SummarizingCompaction` updates."""
+
+_LEGACY_TAG_OPENERS: Final = re.compile(
+    r'<(?=\s*(?:/\s*)?(?:context-file|previous-summary|task-output)(?=[\s/>]|$))', re.IGNORECASE
+)
+"""The `<` of an opening or closing tag in a spelling earlier releases wrote, before tag names were snake_case."""
+
+
+def neutralize_legacy_tags(text: str) -> str:
+    """Escape the `<` of `context-file`, `previous-summary` and `task-output` tags, which `neutralize_tags` doesn't know.
+
+    Histories saved by earlier releases still carry those frames, so content in a frame now must not be able to close
+    or forge one. Apply it in the bodies of the frames that replaced them.
+    """
+    return _LEGACY_TAG_OPENERS.sub('&lt;', text)

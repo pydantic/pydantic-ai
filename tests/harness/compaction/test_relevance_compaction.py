@@ -303,13 +303,13 @@ class TestRelevanceCompaction:
         result = await compact_now(compaction, history, model=TestModel())
 
         assert _shape(result)[:4] == ['system sys', 'user do the task', 'summary', 'call c2']
-        assert '<previous-summary>\nwhat happened before\n</previous-summary>' in prompts[0]
+        assert '<previous_summary>\nwhat happened before\n</previous_summary>' in prompts[0]
 
         # A second compaction replaces the summary the first one wrote, in its own request.
         later = [*result[:-2], *_step(7, 'GIST z '), *_step(8, 'last y '), *result[-2:]]
         again = await compact_now(compaction, later, model=TestModel())
         assert _shape(again).count('summary') == 1
-        assert '<previous-summary>\nthe summary\n</previous-summary>' in prompts[1]
+        assert '<previous_summary>\nthe summary\n</previous_summary>' in prompts[1]
 
     async def test_a_summary_recorded_before_its_time_was_kept_still_replays(self) -> None:
         """A durable run recorded `summarize` as a bare `str` before the write time was kept with it.
@@ -356,7 +356,7 @@ class TestRelevanceCompaction:
         assert isinstance(summary, CompactionPart)
         assert summary.content == 'the summary'
         # Without an anchor, the earlier summary is summarized again with the steps.
-        assert 'previous-summary' not in prompts[0]
+        assert 'previous_summary' not in prompts[0]
         assert f'<message role="system">\n{_SUMMARY}old\n</message>' in prompts[0]
 
     async def test_never_drops_a_step_holding_a_user_prompt(self) -> None:
