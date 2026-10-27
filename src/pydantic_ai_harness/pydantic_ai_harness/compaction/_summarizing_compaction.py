@@ -39,9 +39,9 @@ from pydantic_ai_harness._message_text import tool_return_text, user_prompt_text
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction._capability_loads import (
-    is_recorded_load_part,
+    deferred_capability_ids,
+    is_load_part,
     keep_capability_loads,
-    recorded_load_ids,
 )
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
@@ -244,17 +244,16 @@ def format_transcript(
     element carrying its `cause`, so the summarizer sees the correction a rejected call or output got
     rather than taking it for one that happened. A `RetryFeedbackPart` renders as the model was shown it.
     Tool returns and retry feedback are truncated to `tool_return_max_chars` characters with the
-    shared truncation marker; `None` renders them whole. A `load_capability` exchange a compaction
-    recorded is left out: the model didn't make it, and the compaction records it again if it's still
-    needed.
+    shared truncation marker; `None` renders them whole. `load_capability` calls and returns are left
+    out: which capabilities are loaded is carried by those exchanges, which a compaction records again
+    after the summary, never by the summary.
     """
     elements: list[str] = []
-    recorded = recorded_load_ids(messages)
     for msg in messages:
         if isinstance(msg, ModelRequest):
             kept = _is_kept_user_message(msg)
             for part in msg.parts:
-                if is_recorded_load_part(part, recorded):
+                if is_load_part(part):
                     continue
                 elif isinstance(part, UserPromptPart) and (origin := harness_data_origin(part)) is not None:
                     elements.append(_harness_data_element(origin, user_prompt_text(part), tool_return_max_chars))
@@ -297,7 +296,7 @@ def format_transcript(
             for part in msg.parts:
                 if isinstance(part, TextPart):
                     elements.append(_message_element('assistant', part.content))
-                elif isinstance(part, ToolCallPart) and not is_recorded_load_part(part, recorded):
+                elif isinstance(part, ToolCallPart) and not is_load_part(part):
                     elements.append(_message_element('tool_call', f'{part.args}', name=part.tool_name))
     return '\n'.join(elements)
 
@@ -484,24 +483,24 @@ def _without_bridge_prefix(summary: str) -> str:
     return summary.removeprefix(f'{_BRIDGE_PREFIX}\n\n')
 
 
-def _adds_nothing_to_summarize(message: ModelMessage, kept: Sequence[ModelMessage], recorded: set[str]) -> bool:
+def _adds_nothing_to_summarize(message: ModelMessage, kept: Sequence[ModelMessage]) -> bool:
     """Whether summarizing *message* would add nothing the compacted history does not already hold.
 
-    That is a message kept verbatim alongside the summary, a `load_capability` exchange a compaction
-    recorded (recorded again when still needed), or a request made up only of system prompts (prompts
-    copied into the new summary request, or a summary from an earlier release), pins (reinjected),
-    receipts (replaced), and earlier summaries.
+    That is a message kept verbatim alongside the summary, a `load_capability` exchange (left out of the
+    transcript, and recorded again when still needed), or a request made up only of system prompts (prompts
+    copied into the new summary request, or a summary from an earlier release), pins (reinjected), receipts
+    (replaced), and earlier summaries.
     """
     if any(message is retained for retained in kept):
         return True
     if isinstance(message, ModelResponse):
-        return bool(message.parts) and all(is_recorded_load_part(part, recorded) for part in message.parts)
+        return bool(message.parts) and all(is_load_part(part) for part in message.parts)
     return all(
         isinstance(part, SystemPromptPart)
         or is_pinned(part)
         or is_receipt_part(part)
         or is_summary_part(part)
-        or is_recorded_load_part(part, recorded)
+        or is_load_part(part)
         for part in message.parts
     )
 
@@ -831,8 +830,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 if idx < cutoff and first_user_msg not in preserved:
                     extra = [_kept_first_user_message(first_user_msg, system_parts)]
 
-        recorded = recorded_load_ids(to_summarize)
-        if self.keep_tokens and all(_adds_nothing_to_summarize(message, extra, recorded) for message in to_summarize):
+        if self.keep_tokens and all(_adds_nothing_to_summarize(message, extra) for message in to_summarize):
             # A large message can keep the retained token floor and the summary above the trigger;
             # re-summarizing only the earlier summary would then cost a model call on every request.
             return messages
@@ -859,7 +857,13 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         before, after = ([], extra) if self.keep_user_messages else (extra, [])
         result: list[ModelMessage] = [*standing, *before, summary_message, *after, *preserved]
         result = reinject_pinned(messages, result, protected_tail=len(preserved) if self.keep_tokens else 0)
-        result = keep_capability_loads(messages, result, ctx, preserve=self.preserve_loaded_capabilities)
+        result = keep_capability_loads(
+            messages,
+            result,
+            kept_from=len(result) - len(preserved),
+            deferred_ids=deferred_capability_ids(ctx),
+            preserve=self.preserve_loaded_capabilities,
+        )
         if self.receipts:
             result = self._insert_receipt(
                 summary_message, to_summarize, result, ctx, protected_tail=len(preserved) if self.keep_tokens else 0

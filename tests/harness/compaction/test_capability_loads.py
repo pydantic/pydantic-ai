@@ -7,11 +7,14 @@ from dataclasses import dataclass, field
 from functools import partial
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     CompactionPart,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -19,6 +22,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextContent,
     TextPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -34,6 +38,7 @@ from pydantic_ai_harness.compaction import (
     SummarizingCompaction,
     compact_now,
 )
+from pydantic_ai_harness.compaction._capability_loads import keep_capability_loads
 
 INSTRUCTIONS = 'Call get_forecast with a city name.'
 STATED_INSTRUCTIONS = f'<system><context id="capability:weather">\n{INSTRUCTIONS}\n</context></system>'
@@ -151,6 +156,44 @@ def _recorded_returns(messages: Sequence[ModelMessage]) -> list[LoadCapabilityRe
     ]
 
 
+def _shape(messages: Sequence[ModelMessage]) -> list[str]:
+    """Each message as one line naming its parts, so a snapshot pins where records go and what they hold."""
+
+    def describe(part: object, recorded: bool) -> str:
+        mark = ' [recorded]' if recorded else ''
+        match part:
+            case LoadCapabilityCallPart():
+                return f'load_capability({part.capability_id}){mark}'
+            case LoadCapabilityReturnPart():
+                marked = part.metadata == RECORDED
+                return f'load_capability return{" [recorded]" if marked else ""}'
+            case ToolAvailabilityDeltaPart():
+                return f'reveal {part.tools_added}'
+            case ToolCallPart():
+                return f'{part.tool_name}({part.args})'
+            case ToolReturnPart():
+                return f'{part.tool_name} return'
+            case UserPromptPart():
+                return f'user {" ".join(_user_texts([ModelRequest(parts=[part])]))!r}'
+            case TextPart():
+                return f'text {part.content!r}'
+            case CompactionPart():
+                return 'compaction' + (f' ({part.provider_name})' if part.provider_name else '')
+            case InstructionDeltaPart():
+                return f'instructions {part.id}'
+            case InstructionBaselinePart():
+                return 'baseline'
+            case _:  # pragma: no cover
+                return type(part).__name__
+
+    lines: list[str] = []
+    for message in messages:
+        recorded = isinstance(message, ModelResponse) and message.metadata == RECORDED
+        parts = ', '.join(describe(part, recorded) for part in message.parts)
+        lines.append(f'{message.kind}: {parts}')
+    return lines
+
+
 async def _first_turn_history() -> list[ModelMessage]:
     # The first turn doesn't compact, so the load it made is in the history the next turn compacts.
     first = await _agent(FunctionModel(_first_turn), Weather()).run('Weather in Athens?')
@@ -167,15 +210,18 @@ async def _run_second_turn(compaction: AbstractCapability[None]) -> tuple[_Later
 
 STRATEGIES = [
     pytest.param(
+        'summarizing',
         partial(SummarizingCompaction[None], max_messages=6, keep_messages=1, model=FunctionModel(_summarize)),
         id='summarizing',
     ),
-    pytest.param(partial(SlidingWindowCompaction[None], max_messages=6, keep_messages=1), id='sliding'),
+    pytest.param('sliding', partial(SlidingWindowCompaction[None], max_messages=6, keep_messages=1), id='sliding'),
     pytest.param(
+        'relevance-dropping',
         partial(RelevanceCompaction[None], FunctionModel(_judge), max_tokens=1, keep_tokens=1),
         id='relevance-dropping',
     ),
     pytest.param(
+        'relevance-summarizing',
         partial(
             RelevanceCompaction[None],
             FunctionModel(_judge),
@@ -188,9 +234,92 @@ STRATEGIES = [
 ]
 
 
+SHAPES = snapshot(
+    {
+        'summarizing': [
+            "request: user 'Weather in Athens?', baseline",
+            'request: compaction',
+            'response: load_capability(weather) [recorded]',
+            "request: load_capability return [recorded], reveal ['get_forecast']",
+            "response: get_forecast({'city': 'Oslo'})",
+            'request: get_forecast return, baseline, instructions capability:weather',
+            "response: text 'Sunny in Oslo'",
+        ],
+        'sliding': [
+            "request: user 'Weather in Athens?', baseline",
+            'response: load_capability(weather) [recorded]',
+            "request: load_capability return [recorded], reveal ['get_forecast']",
+            "request: user 'And in Oslo?', instructions capability:weather",
+            "response: get_forecast({'city': 'Oslo'})",
+            'request: get_forecast return',
+            "response: text 'Sunny in Oslo'",
+        ],
+        'relevance-dropping': [
+            "request: user 'Weather in Athens?', baseline",
+            'response: load_capability(weather) [recorded]',
+            "request: load_capability return [recorded], reveal ['get_forecast']",
+            "response: text 'Sunny in Athens.'",
+            "request: user 'And in Oslo?', instructions capability:weather",
+            "response: get_forecast({'city': 'Oslo'})",
+            'request: get_forecast return',
+            "response: text 'Sunny in Oslo'",
+        ],
+        'relevance-summarizing': [
+            "request: user 'Weather in Athens?', baseline",
+            'request: compaction',
+            'response: load_capability(weather) [recorded]',
+            "request: load_capability return [recorded], reveal ['get_forecast']",
+            "response: get_forecast({'city': 'Oslo'})",
+            'request: get_forecast return, baseline, instructions capability:weather',
+            "response: text 'Sunny in Oslo'",
+        ],
+    }
+)
+OPT_OUT_SHAPES = snapshot(
+    {
+        'summarizing': [
+            "request: user 'Weather in Athens?', baseline",
+            'request: compaction',
+            'request: user "Compacting the conversation unloaded these capabilities: \'weather\'. Their instructions and tools are no longer available. Call `load_capability` for any you still need before using its tools."',
+            "request: user 'And in Oslo?', baseline",
+            "response: get_forecast({'city': 'Oslo'})",
+            'request: get_forecast return',
+            "response: text \"Tool 'get_forecast' is not available yet: it belongs to capability 'weather'. Call `load_capability` for it first, then call the tool again once you've read the capability's instructions.\"",
+        ],
+        'sliding': [
+            "request: user 'Weather in Athens?', baseline",
+            'request: user "Compacting the conversation unloaded these capabilities: \'weather\'. Their instructions and tools are no longer available. Call `load_capability` for any you still need before using its tools."',
+            "request: user 'And in Oslo?'",
+            "response: get_forecast({'city': 'Oslo'})",
+            'request: get_forecast return',
+            "response: text \"Tool 'get_forecast' is not available yet: it belongs to capability 'weather'. Call `load_capability` for it first, then call the tool again once you've read the capability's instructions.\"",
+        ],
+        'relevance-dropping': [
+            "request: user 'Weather in Athens?', baseline",
+            'request: user "Compacting the conversation unloaded these capabilities: \'weather\'. Their instructions and tools are no longer available. Call `load_capability` for any you still need before using its tools."',
+            "response: text 'Sunny in Athens.'",
+            "request: user 'And in Oslo?'",
+            "response: get_forecast({'city': 'Oslo'})",
+            'request: get_forecast return',
+            "response: text \"Tool 'get_forecast' is not available yet: it belongs to capability 'weather'. Call `load_capability` for it first, then call the tool again once you've read the capability's instructions.\"",
+        ],
+        'relevance-summarizing': [
+            "request: user 'Weather in Athens?', baseline",
+            'request: user "Compacting the conversation unloaded these capabilities: \'weather\'. Their instructions and tools are no longer available. Call `load_capability` for any you still need before using its tools."',
+            'request: compaction',
+            "response: get_forecast({'city': 'Oslo'})",
+            'request: get_forecast return, baseline',
+            "response: text \"Tool 'get_forecast' is not available yet: it belongs to capability 'weather'. Call `load_capability` for it first, then call the tool again once you've read the capability's instructions.\"",
+        ],
+    }
+)
+
+
 class TestCapabilityLoadsAcrossCompaction:
-    @pytest.mark.parametrize('make', STRATEGIES)
-    async def test_a_loaded_capability_stays_loaded(self, make: Callable[..., AbstractCapability[None]]) -> None:
+    @pytest.mark.parametrize(('name', 'make'), STRATEGIES)
+    async def test_a_loaded_capability_stays_loaded(
+        self, name: str, make: Callable[..., AbstractCapability[None]]
+    ) -> None:
         second_turn, messages = await _run_second_turn(make())
 
         # The first request after the compaction offers the capability's tools and states its instructions.
@@ -198,27 +327,20 @@ class TestCapabilityLoadsAcrossCompaction:
         assert STATED_INSTRUCTIONS in _user_texts(second_turn.requests[0])
         # And the model's call to one of them runs.
         assert messages[-1].parts == [TextPart('Sunny in Oslo')]
-        # The recorded load is marked as the compaction's own, on the return and on its response.
-        (recorded,) = _recorded_returns(messages)
-        (call_response,) = [
-            message
-            for message in messages
-            if isinstance(message, ModelResponse)
-            and any(isinstance(part, LoadCapabilityCallPart) for part in message.parts)
-        ]
-        assert call_response.metadata == RECORDED
-        assert call_response.parts == [
-            LoadCapabilityCallPart(args={'id': 'weather'}, tool_call_id=recorded.tool_call_id)
-        ]
+        # The recorded load, marked as the compaction's own, and its reveal sit right after the summary, or ahead
+        # of the kept messages when nothing replaced the removed ones.
+        assert _shape(messages) == SHAPES[name]
 
-    @pytest.mark.parametrize('make', STRATEGIES)
-    async def test_the_opt_out_unloads_and_says_so(self, make: Callable[..., AbstractCapability[None]]) -> None:
+    @pytest.mark.parametrize(('name', 'make'), STRATEGIES)
+    async def test_the_opt_out_unloads_and_says_so(
+        self, name: str, make: Callable[..., AbstractCapability[None]]
+    ) -> None:
         second_turn, messages = await _run_second_turn(make(preserve_loaded_capabilities=False))
 
         assert second_turn.tools[0] == ['load_capability']
         assert STATED_INSTRUCTIONS not in _user_texts(second_turn.requests[0])
         assert UNLOADED_NOTE in _user_texts(second_turn.requests[0])
-        assert _recorded_returns(messages) == []
+        assert _shape(messages) == OPT_OUT_SHAPES[name]
 
     @pytest.mark.parametrize(
         'compaction',
@@ -267,11 +389,9 @@ class TestCapabilityLoadsAcrossCompaction:
             assert texts.index(STATED_INSTRUCTIONS) < texts.index(STATED_STYLE_INSTRUCTIONS)
             recorded_ids.append([part.tool_call_id for part in _recorded_returns(history)])
 
-        # The model's own loads were summarized; the loads a compaction recorded never were.
-        load_call = '<message role="tool_call" name="load_capability">'
-        assert load_call in summarizer.prompts[0]
+        # Load state is never summarized, the model's own loads included: the recorded exchanges carry it.
         assert len(summarizer.prompts) > 1
-        assert not any(load_call in prompt for prompt in summarizer.prompts[1:])
+        assert not any('load_capability' in prompt for prompt in summarizer.prompts)
         # The second compaction summarized the first one's records away and recorded the loads anew.
         first_ids, second_ids = recorded_ids
         assert len(first_ids) == len(second_ids) == 2
@@ -372,3 +492,57 @@ class TestCapabilityLoadsAcrossCompaction:
             LoadCapabilityCallPart(args={'id': 'weather'}, tool_call_id=recorded.tool_call_id)
         ]
         assert compacted[5:] == history[5:]
+
+    async def test_a_load_after_a_signed_block_opening_the_history_is_recorded_after_it(self) -> None:
+        # Anthropic's on-demand compaction leaves a signed block that must stay first in the history.
+        def judge(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[ToolCallPart(info.output_tools[0].name, {'needed_verbatim': 0, 'still_matters': 0})]
+            )
+
+        history: list[ModelMessage] = [
+            ModelResponse(
+                parts=[CompactionPart(content='signed summary', provider_name='anthropic')], provider_name='anthropic'
+            ),
+            ModelRequest(parts=[UserPromptPart('Weather in Athens?')]),
+            ModelResponse(
+                parts=[TextPart('x' * 4_000), LoadCapabilityCallPart(args={'id': 'weather'}, tool_call_id='load')]
+            ),
+            ModelRequest(parts=[LoadCapabilityReturnPart(content={'message': 'loaded'}, tool_call_id='load')]),
+            ModelResponse(parts=[TextPart('Sunny in Athens.')]),
+            ModelRequest(parts=[UserPromptPart('And in Oslo?')]),
+        ]
+
+        compacted = await compact_now(
+            RelevanceCompaction[None](FunctionModel(judge), max_tokens=1_000, target_tokens=500, keep_tokens=1),
+            history,
+            model=FunctionModel(_summarize),
+        )
+
+        assert _shape(compacted) == snapshot(
+            [
+                'response: compaction (anthropic)',
+                "request: user 'Weather in Athens?'",
+                'response: load_capability(weather) [recorded]',
+                'request: load_capability return [recorded]',
+                "response: text 'Sunny in Athens.'",
+                "request: user 'And in Oslo?'",
+            ]
+        )
+
+    @pytest.mark.parametrize('preserve', [True, False])
+    async def test_recording_again_on_its_own_result_changes_nothing(self, preserve: bool) -> None:
+        # Core's compaction step (#11454) calls this after whichever compaction ran, a strategy's included.
+        original = [*await _first_turn_history(), ModelRequest(parts=[UserPromptPart('And in Oslo?')])]
+        compacted = await compact_now(
+            SummarizingCompaction[None](max_messages=1, keep_messages=1, preserve_loaded_capabilities=preserve),
+            original,
+            model=FunctionModel(_summarize),
+        )
+        # The compaction recorded the load, or noted it was unloaded, itself.
+        assert any('[recorded]' in line or 'unloaded these capabilities' in line for line in _shape(compacted))
+
+        again = keep_capability_loads(
+            original, compacted, kept_from=len(compacted) - 1, deferred_ids={'weather'}, preserve=preserve
+        )
+        assert again == compacted

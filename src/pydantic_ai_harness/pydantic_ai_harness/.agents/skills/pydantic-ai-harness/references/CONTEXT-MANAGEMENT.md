@@ -243,7 +243,8 @@ capability to see post-compaction usage, before it to see what triggered compact
 - `SummarizingCompaction`, `SlidingWindowCompaction` and `RelevanceCompaction` keep on-demand capabilities
   loaded: when they summarize or drop a `load_capability` exchange, they record it again after the summary
   (marked `pydantic-ai-harness.compaction.recorded-load.v1` in metadata), so its tools and instructions come
-  back. `preserve_loaded_capabilities=False` unloads them instead and leaves a note naming them.
+  back. Summaries leave load exchanges out. `preserve_loaded_capabilities=False` unloads them instead and
+  leaves a note naming them.
   Provider-native compaction still unloads them.
 - `receipts=True` on `SlidingWindowCompaction` / `SummarizingCompaction` appends a note saying
   history was compacted; with `StepPersistence` attached it includes the run handle.

@@ -743,8 +743,9 @@ return, with the original return's content, right after the summary (or ahead of
 there's no summary). The capability stays loaded, its tools stay in the request, and Pydantic AI states
 its current instructions again in the system voice. The recorded exchange carries
 `{'pydantic-ai-harness.compaction.recorded-load.v1': True}` in the `metadata` of its `ModelResponse` and
-of its `LoadCapabilityReturnPart`, which the model never sees. A later summary leaves it out of what it
-summarizes, since the model didn't make the call, and the load is recorded again if it's still needed.
+of its `LoadCapabilityReturnPart`, which the model never sees. Summaries leave every `load_capability`
+exchange out, the model's own included: which capabilities are loaded is carried by the exchanges, recorded
+again after each compaction, never by the summary.
 Only capabilities the run still registers as on-demand are recorded. `compact_now`, which has no run to
 ask, records every load, and the next run ignores a load of a capability it doesn't register.
 

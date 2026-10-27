@@ -7,15 +7,17 @@ leave the request and its instructions stop being delivered, while a summary of 
 say it is loaded. So every shipped strategy that removes history records each such load again after what
 replaced it, and core then delivers the capability's current instructions again. With
 `preserve_loaded_capabilities=False`, it leaves them unloaded and says so instead.
+
+This module imports only Pydantic AI, and `keep_capability_loads` is a plain function of messages and
+capability ids, so it runs workflow-side in a durable run and can move into core's compaction step
+(#11454), which will call it once per attempt after whichever compaction ran, a provider's included.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
-
-from typing_extensions import TypeIs
 
 from pydantic_ai._deferred_capabilities import LoadExchanges
 from pydantic_ai._utils import is_str_dict
@@ -74,36 +76,40 @@ def _loads(messages: Sequence[ModelMessage]) -> dict[str, _Load]:
     }
 
 
-def _still_deferred(capability_id: str, ctx: RunContext[AgentDepsT]) -> bool:
-    """Whether a load of *capability_id* still means something to the run.
+def deferred_capability_ids(ctx: RunContext[AgentDepsT]) -> set[str] | None:
+    """The ids of the run's deferred capabilities, whose loads mean something to it, or `None` outside a run.
 
-    Outside a run, as with `compact_now`, there is no registry to ask, and core ignores a load of a
-    capability the next run doesn't register.
+    Outside a run, as with `compact_now`, there is no registry to ask; core ignores a load of a capability
+    the next run doesn't register. A stand-in context without a registry at all counts as outside a run.
     """
-    if not ctx.capabilities:
-        return True
-    capability = ctx.capabilities.get(capability_id)
-    return capability is not None and capability.defer_loading
+    capabilities = getattr(ctx, 'capabilities', None)
+    if not capabilities:
+        return None
+    return {capability_id for capability_id, capability in capabilities.items() if capability.defer_loading}
 
 
-def _insert_index(compacted: Sequence[ModelMessage], protected_tail: int) -> int:
+def _insert_index(compacted: Sequence[ModelMessage], kept_from: int) -> int:
     """Where records go so they are inside the post-compaction window, without splitting a tool call from its result.
 
-    That's right after the latest compaction part, which a summarizing strategy has just written into a
-    request of its own. A provider's compaction part is in a response, which may also hold tool calls, so
-    there they go after the requests that follow it. Without one the whole history is the window, and they
-    go after the leading requests, ahead of the first response. Either way the newest message stays last.
+    That's right after the latest compaction part, which a summarizing strategy writes into a request of its
+    own. A provider's compaction part is in a response, which may also hold tool calls (or, like Anthropic's
+    signed block, must stay first), so there they go after it and the requests that follow it. Without one the
+    whole history is the window, and they go after the leading requests and ahead of the kept messages, which
+    start at *kept_from*. Either way the newest message stays last.
+
+    TODO(#7449): a sliding-window truncation marker will be a `CompactionPart` too, and then counts as a
+    boundary here like a summary does.
     """
-    end = len(compacted) - max(protected_tail, 1)
-    for index in range(len(compacted) - 1, -1, -1):
+    last = len(compacted) - 1
+    for index in range(last, -1, -1):
         if any(isinstance(part, CompactionPart) for part in compacted[index].parts):
             after = index + 1
             if isinstance(compacted[index], ModelResponse):
-                while after < end and isinstance(compacted[after], ModelRequest):
+                while after < last and isinstance(compacted[after], ModelRequest):
                     after += 1
             return after
     leading = next((i for i, message in enumerate(compacted) if isinstance(message, ModelResponse)), len(compacted))
-    return min(leading, end)
+    return min(leading, kept_from, last)
 
 
 def _recorded_tool_call_id(load: _Load) -> str:
@@ -145,61 +151,74 @@ def _unloaded_note(capability_ids: Sequence[str]) -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(content=[TextContent(text, metadata=metadata)])])
 
 
+def _noted_unloaded(messages: Sequence[ModelMessage]) -> set[str]:
+    """The capabilities an unloaded-capabilities note in the post-compaction window of *messages* names."""
+    noted: set[str] = set()
+    for message in post_compaction_window(messages):
+        for part in message.parts:
+            if (
+                isinstance(part, UserPromptPart)
+                and not isinstance(part.content, str)
+                and part.content
+                and isinstance(note := part.content[0], TextContent)
+                and is_str_dict(note.metadata)
+                and note.metadata.get('origin') == UNLOADED_CAPABILITIES_ORIGIN
+            ):
+                noted.update(_unloaded_note_ids(note.metadata.get('capabilities')))
+    return noted
+
+
+def _unloaded_note_ids(value: object) -> list[str]:
+    """The capability ids a note's `capabilities` metadata names."""
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []  # pyright: ignore[reportUnknownVariableType]
+
+
 def keep_capability_loads(
     original: Sequence[ModelMessage],
     compacted: list[ModelMessage],
-    ctx: RunContext[AgentDepsT],
     *,
+    kept_from: int,
+    deferred_ids: Collection[str] | None,
     preserve: bool = True,
-    protected_tail: int = 0,
 ) -> list[ModelMessage]:
     """Record again each deferred capability load *compacted* lost from *original*, or note that it was lost.
 
-    A load is lost when its exchange is in *original*'s post-compaction window but not in *compacted*'s.
-    With *preserve*, each is recorded again with the content of its original return, after the compaction
-    that replaced it, so core keeps the capability loaded and delivers its current instructions again.
-    Without, a note names the capabilities that are no longer loaded. A no-op when nothing was lost.
-    `protected_tail` bounds where records go when there is no compaction part, as for `reinject_pinned`.
+    A load is lost when its exchange is in *original*'s post-compaction window but not in *compacted*'s, and
+    its capability is in *deferred_ids*, the capabilities the run still registers as deferred (`None` when
+    that's unknown, which keeps every load). With *preserve*, each is recorded again with the content of its
+    original return, after the compaction that replaced it, so core keeps the capability loaded and delivers
+    its current instructions again. Without, a note names the capabilities that are no longer loaded.
+    *kept_from* is the index in *compacted* where the kept messages start, which records go ahead of when
+    there is no compaction part.
 
     It depends only on the two histories, not on how one became the other: the latest compaction part may
-    be a summary a strategy wrote into a request or a provider's in a response. Every shipped strategy that
-    removes history calls it on its own result.
+    be a summary a strategy wrote into a request or a provider's in a response. A no-op when nothing was
+    lost, including on its own result, so calling it again on what it returned changes nothing.
+
+    TODO: tool search discoveries follow the same window rule and are lost the same way (#11264). A local
+    `search_tools` exchange could be recorded again like a load; a provider's native search can't be, so
+    that's left for the core compaction step (#11454) to settle.
     """
     after = _loads(compacted)
     lost = [
         load
         for capability_id, load in _loads(original).items()
-        if capability_id not in after and _still_deferred(capability_id, ctx)
+        if capability_id not in after and (deferred_ids is None or capability_id in deferred_ids)
     ]
+    if not preserve:
+        noted = _noted_unloaded(compacted)
+        lost = [load for load in lost if load.capability_id not in noted]
     if not lost:
         return compacted
     records = _recorded_exchange(lost) if preserve else [_unloaded_note([load.capability_id for load in lost])]
-    index = _insert_index(compacted, protected_tail)
+    index = _insert_index(compacted, kept_from)
     return [*compacted[:index], *records, *compacted[index:]]
 
 
-def recorded_load_ids(messages: Sequence[ModelMessage]) -> set[str]:
-    """The tool call ids of the `load_capability` exchanges compactions recorded in *messages*."""
-    return {
-        part.tool_call_id
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if is_recorded_load_return(part)
-    }
+def is_load_part(part: ModelRequestPart | ModelResponsePart) -> bool:
+    """Whether *part* records which capabilities are loaded: a `load_capability` call or return, or a tool reveal.
 
-
-def is_recorded_load_return(part: ModelRequestPart) -> TypeIs[LoadCapabilityReturnPart]:
-    """Whether *part* is the return of a `load_capability` exchange a compaction recorded."""
-    return (
-        isinstance(part, LoadCapabilityReturnPart)
-        and is_str_dict(part.metadata)
-        and part.metadata.get(RECORDED_LOAD_METADATA_KEY) is True
-    )
-
-
-def is_recorded_load_part(part: ModelRequestPart | ModelResponsePart, recorded: set[str]) -> bool:
-    """Whether *part* belongs to a recorded `load_capability` exchange, given the exchanges' tool call ids."""
-    if isinstance(part, LoadCapabilityCallPart | LoadCapabilityReturnPart | ToolAvailabilityDeltaPart):
-        return part.tool_call_id in recorded
-    return False
+    The summarizer leaves these out: load state is carried by the exchanges themselves, recorded again after
+    each compaction, or by the note saying they were unloaded, never by the summary.
+    """
+    return isinstance(part, LoadCapabilityCallPart | LoadCapabilityReturnPart | ToolAvailabilityDeltaPart)
