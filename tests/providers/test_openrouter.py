@@ -1,5 +1,6 @@
 import re
 from copy import deepcopy
+from typing import Literal
 
 import pytest
 from pytest_mock import MockerFixture
@@ -369,9 +370,13 @@ def test_openrouter_google_boolean_defs(definition: bool):
 
 
 def test_openrouter_google_resolves_property_names_ref_through_tool_preparation():
-    """The OpenRouter Google transformer drops `$defs`, so the `$ref` under `propertyNames` must be inlined too."""
+    """The OpenRouter Google transformer drops `$defs`, so the `$ref` under `propertyNames` must be inlined too.
 
-    def accept_values(values: dict[Key, int]) -> str:
+    A `propertyNames` without a `$ref` is left as written. A recording can't check either: cassettes match on
+    method and URI, not the request body.
+    """
+
+    def accept_values(values: dict[Key, int], labels: dict[Literal['a', 'b'], int]) -> str:
         return 'accepted'  # pragma: no cover
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -383,9 +388,14 @@ def test_openrouter_google_resolves_property_names_ref_through_tool_preparation(
                         'additionalProperties': {'type': 'integer'},
                         'propertyNames': {'type': 'string'},
                         'type': 'object',
-                    }
+                    },
+                    'labels': {
+                        'additionalProperties': {'type': 'integer'},
+                        'propertyNames': {'enum': ['a', 'b']},
+                        'type': 'object',
+                    },
                 },
-                'required': ['values'],
+                'required': ['values', 'labels'],
                 'type': 'object',
             }
         )

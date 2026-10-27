@@ -34,6 +34,15 @@ def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
     return node if isinstance(node, dict) else None
 
 
+def contains_ref(node: JsonValue) -> bool:
+    """Whether a `$ref` appears anywhere in `node`."""
+    if isinstance(node, dict):
+        return '$ref' in node or any(contains_ref(value) for value in node.values())
+    if isinstance(node, list):
+        return any(contains_ref(value) for value in node)
+    return False
+
+
 class UseEnumMemberDocstrings:
     """Mix into an `Enum` to describe each of its members by the docstring written under it.
 
@@ -236,8 +245,13 @@ class JsonSchemaTransformer(ABC):
                 handled_pattern_properties[key] = self._handle(value)
             schema['patternProperties'] = handled_pattern_properties
 
-        # Inlining drops `$defs`, so a `$ref` left under `propertyNames` would point at nothing.
-        if self.prefer_inlined_defs and (property_names := schema.get('propertyNames')) is not None:
+        # Inlining drops `$defs`, so a `$ref` left under `propertyNames` would point at nothing. A subtree
+        # without one is left as written, so `transform()` doesn't rewrite a schema that was already valid.
+        if (
+            self.prefer_inlined_defs
+            and (property_names := schema.get('propertyNames')) is not None
+            and contains_ref(property_names)
+        ):
             schema['propertyNames'] = self._handle(property_names)
 
         return schema
@@ -254,7 +268,7 @@ class JsonSchemaTransformer(ABC):
             schema['items'] = self._handle(items)
 
         # Same as `propertyNames` in `_handle_object`.
-        if self.prefer_inlined_defs and (contains := schema.get('contains')) is not None:
+        if self.prefer_inlined_defs and (contains := schema.get('contains')) is not None and contains_ref(contains):
             schema['contains'] = self._handle(contains)
 
         return schema
@@ -314,6 +328,20 @@ class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict, prefer_inlined_defs=True)
+
+    # Unlike the base class, walk `propertyNames` and `contains` even without a `$ref`: `transform()` is the
+    # identity here, so the walk only collapses single-member unions.
+    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
+        schema = super()._handle_object(schema)
+        if (property_names := schema.get('propertyNames')) is not None:
+            schema['propertyNames'] = self._handle(property_names)
+        return schema
+
+    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
+        schema = super()._handle_array(schema)
+        if (contains := schema.get('contains')) is not None:
+            schema['contains'] = self._handle(contains)
+        return schema
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         return schema

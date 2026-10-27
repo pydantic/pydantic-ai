@@ -211,7 +211,10 @@ def test_openapi_schema_transformer_prunes_map_schemas_before_traversal():
 
 
 def test_openapi_schema_transformer_prunes_contains_before_traversal():
-    """`Schema` has no `contains`, so a recursive one is dropped instead of refused."""
+    """`Schema` has no `contains`, so a recursive one is dropped instead of refused.
+
+    A recording can't check this: cassettes match on method and URI, not the request body.
+    """
     schema: JsonSchema = {
         '$defs': {
             'Node': {
