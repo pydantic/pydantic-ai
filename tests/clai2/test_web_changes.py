@@ -103,6 +103,15 @@ async def test_last_turn_and_session_from_the_file_tools(tmp_path: Path) -> None
     )
 
 
+async def test_a_change_to_the_final_newline_alone_shows(tmp_path: Path) -> None:
+    (tmp_path / 'a.py').write_text('x = 1')
+    history = History()
+    history.turn('one', edit('a.py', 'x = 1\n', 'x = 1'))
+    [change] = (await session_changes(history.messages, tmp_path, scope='session')).files
+    assert (change.status, change.added, change.removed) == ('M', 1, 1)
+    assert change.diff.diff.endswith('-x = 1\n+x = 1\n\\ No newline at end of file')
+
+
 async def test_edits_of_a_file_the_session_did_not_create_are_undone_from_the_disk(tmp_path: Path) -> None:
     (tmp_path / 'main.py').write_text('x = 3\ny = 4\n')
     history = History()

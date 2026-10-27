@@ -291,15 +291,31 @@ def file_change(path: str, old: str | None, new: str | None) -> FileChange | Non
         return None
     status: FileStatus = 'A' if old is None else 'D' if new is None else 'M'
     lines = difflib.unified_diff(
-        (old or '').splitlines(),
-        (new or '').splitlines(),
+        _lines(old or ''),
+        _lines(new or ''),
         fromfile='/dev/null' if old is None else f'a/{path}',
         tofile='/dev/null' if new is None else f'b/{path}',
         lineterm='',
     )
-    diff = '\n'.join(lines)
+    diff = '\n'.join(line[:-1] + NO_NEWLINE if line.endswith('\n') else line for line in lines)
+
     added, removed = _counts(diff)
     return FileChange(path=path, status=status, added=added, removed=removed, diff=_cut(path, diff))
+
+
+NO_NEWLINE = '\n\\ No newline at end of file'
+"""The marker `git diff` prints after a final line that lacks a newline."""
+
+
+def _lines(text: str) -> list[str]:
+    """`text`'s lines, with a line break kept on the last one when the text does not end in one.
+
+    No other line can hold a line break, so a change to the final newline alone still differs.
+    """
+    lines = text.splitlines()
+    if lines and not text.endswith(('\n', '\r')):
+        lines[-1] += '\n'
+    return lines
 
 
 def _counts(diff: str) -> tuple[int, int]:

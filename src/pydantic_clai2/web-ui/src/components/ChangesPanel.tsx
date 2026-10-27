@@ -49,7 +49,7 @@ export function useChanges(session: SessionApi, scope: ChangeScope, owner: strin
   return { changes: mine?.changes ?? null, error: mine?.error ?? null, refresh }
 }
 
-const anchor = (path: string) => `change-${path.replace(/[^A-Za-z0-9_-]/g, '-')}`
+const anchor = (path: string) => `change-${encodeURIComponent(path)}`
 
 function Counts({ change }: { change: Pick<FileChange, 'added' | 'removed'> }) {
   return (
