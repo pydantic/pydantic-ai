@@ -503,10 +503,10 @@ def test_a_session_the_browser_opened_keeps_update_menu_and_refuses_its_install(
     assert set(menu_rows(fleet, f'/api/sessions/{b}/commands/update/fields')) == {'version', 'updates.channel'}
     descriptions = {command.name: command.description for command in fleet.runtimes['b'].commands}
     assert (descriptions['update'], descriptions['reload']) == (
-        'Install the newest CLAI from the updates.channel setting (stable or main)',
+        'Show whether a newer CLAI is out on updates.channel (stable or main); /update now installs it',
         'Reload CLAI2 code without restarting',
     )
-    # No terminal shows it, so Update says why, as `/update` typed there would, instead of asking first.
+    # No terminal shows it, so Update says why, as `/update now` typed there would, instead of asking first.
     response = fleet.post(f'/api/sessions/{b}/commands/update/fields/version/action')
     assert response.status_code == 200, response.text
     assert response.json()['messages'] == [

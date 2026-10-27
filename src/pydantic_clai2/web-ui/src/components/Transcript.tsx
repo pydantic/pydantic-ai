@@ -64,7 +64,7 @@ const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live:
         </div>
       )
     case 'assistant':
-      return <Markdown className={`assistant ${live ? 'streaming' : ''}`} text={entry.text} />
+      return <Markdown className={`assistant ${live ? 'streaming' : ''}`} text={entry.text} live={live} />
     case 'thinking':
       return <Thinking text={entry.text} live={live} />
     case 'tool':

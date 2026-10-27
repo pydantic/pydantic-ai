@@ -85,6 +85,7 @@ from pydantic_ai.realtime.codec import (
 
 from .conftest import TestEnv, legacy_retry_prompt_part, try_import
 from .docs_model_aliases import resolve_model_aliases, restore_model_aliases
+from .function_model_prefix import TOOLS_CHANGE_MID_RUN
 from .realtime_connections import InferredConnection
 
 with try_import() as imports_successful:
@@ -136,6 +137,18 @@ def _is_harness_page(path: Path) -> bool:
     return (root_dir / path).resolve().is_relative_to(root_dir / 'docs' / 'harness')
 
 
+_MOVES_CACHE_PREFIX = {
+    'dynamic_toolset.py': TOOLS_CHANGE_MID_RUN,
+    'output_functions.py': (
+        'the router hands its conversation, without its last response, to an agent with other instructions and tools'
+    ),
+    'wrap_up_near_request_limit.py': (
+        'a request-scoped prompt counts down the requests left, and the last request withdraws the function tools'
+    ),
+}
+"""Examples whose `FunctionModel` conversation moves the prompt-cache prefix on purpose, by title, with the reason."""
+
+
 def find_filter_examples() -> Iterable[ParameterSet]:
     # Ensure this is run from the package root regardless of where/how the tests are run
     root_dir = Path(__file__).parent.parent
@@ -170,6 +183,8 @@ def find_filter_examples() -> Iterable[ParameterSet]:
                 if path == Path('docs/workspace.md') or title == 'mcp_client_sampling.py'
                 else []
             )
+            if title in _MOVES_CACHE_PREFIX:
+                marks.append(pytest.mark.moves_cache_prefix(reason=_MOVES_CACHE_PREFIX[title]))
             yield pytest.param(ex, id=test_id, marks=marks)
 
 
