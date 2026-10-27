@@ -93,7 +93,7 @@ export function renderMarkdown(text: string): string {
   return DOMPurify.sanitize(marked.parse(text, { async: false }))
 }
 
-/** How much Markdown source `cachedMarkdown` keeps the HTML of, in characters, before dropping the least recent. */
+/** How many characters of Markdown and its HTML `cachedMarkdown` keeps, before dropping the least recent. */
 const CACHED = 8_000_000
 const rendered = new Map<string, string>()
 let cachedSize = 0
@@ -112,11 +112,11 @@ export function cachedMarkdown(text: string): string {
   }
   const html = renderMarkdown(text)
   rendered.set(text, html)
-  cachedSize += text.length
-  for (const [oldest] of rendered) {
+  cachedSize += text.length + html.length
+  for (const [oldest, oldHtml] of rendered) {
     if (cachedSize <= CACHED) break
     rendered.delete(oldest)
-    cachedSize -= oldest.length
+    cachedSize -= oldest.length + oldHtml.length
   }
   return html
 }

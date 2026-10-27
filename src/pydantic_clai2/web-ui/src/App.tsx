@@ -444,19 +444,20 @@ export function App() {
         return
       }
       setOpening(session)
+      /** Show the saved session read-only when CLAI can only show it, as when its directory is gone; whether it did. */
+      const readOnly = async () => {
+        const saved = await api.transcript(session.id)
+        if (request !== picked.current || saved.openable) return false
+        focusing.current = null
+        setPreview(saved)
+        setOpening(null)
+        return true
+      }
+      // A saved session opens live, whatever the others run; a live one, or one its sidebar row says opens, at once.
+      const trusted = !(session.id in live) && session.openable === true
       try {
-        // A saved session opens live, whatever the others run, unless CLAI can only show it, as when its
-        // directory is gone; a live one, or one its sidebar row says opens, opens at once.
-        if (!(session.id in live) && session.openable !== true) {
-          const saved = await api.transcript(session.id)
-          if (request !== picked.current) return
-          if (!saved.openable) {
-            focusing.current = null
-            setPreview(saved)
-            setOpening(null)
-            return
-          }
-        }
+        if (!(session.id in live) && !trusted && (await readOnly())) return
+        if (request !== picked.current) return
         const { id } = await api.open(session.id)
         if (request !== picked.current) return
         // With `/web` from a terminal, the shown session itself switches to it, and its new snapshot follows.
@@ -464,11 +465,15 @@ export function App() {
         else setPreview(null)
       } catch (error) {
         if (request !== picked.current) return
+        // The row may be out of date, as when the session's directory went since the sidebar listed it.
+        if (trusted && (await readOnly().catch(() => false))) return
+        if (request !== picked.current) return
         focusing.current = null
         setOpening(null)
         showError(error instanceof Error ? error.message : String(error))
       }
     },
+
     [shown, chats, live, show, showError],
   )
 
@@ -536,7 +541,7 @@ export function App() {
       : opening
         ? opening.title
         : (chat.session?.title ?? 'New session')
-  const workspace = preview ? preview.workspace : opening ? (opening.workspace ?? '') : (chat.session?.workspace ?? '')
+  const workspace = preview ? preview.workspace : (opening?.workspace ?? chat.session?.workspace ?? '')
   const entries = preview ? preview.items : chat.entries
   const prompts = useMemo(() => entries.flatMap((entry) => (entry.kind === 'user' ? [entry.text] : [])), [entries])
   const project = (chat.session?.workspace ?? '').split('/').filter(Boolean).pop() ?? ''

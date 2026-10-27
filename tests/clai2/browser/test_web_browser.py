@@ -141,6 +141,8 @@ class WebUI:
     epsilon: str
     saved: str
     """Saved in Gamma's folder, so it opens while Gamma is the default session, and not live until a test opens it."""
+    moved: str
+    """Saved in Gamma's folder too, and never opened: its tests pretend the folder went."""
 
 
 @pytest.fixture(scope='module')
@@ -188,6 +190,8 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                 ModelResponse(parts=[TextPart(content='Saved answer')]),
             ]
             saved = portal.call(lambda: fleet.launch.process.conversations.save(summary=summary, messages=history))
+            moved_summary = ConversationSummary(workspace=str(fleet.folder('gamma')), title='Browser Moved')
+            moved = portal.call(lambda: fleet.launch.process.conversations.save(summary=moved_summary, messages=[]))
             server = portal.call(
                 lambda: WebServer.serve(
                     lambda port: create_app(service=fleet.service, token=TOKEN, hosts=frozenset({f'127.0.0.1:{port}'})),
@@ -205,6 +209,7 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                     delta=delta,
                     epsilon=epsilon,
                     saved=saved.id,
+                    moved=moved.id,
                 )
             finally:
                 portal.call(server.stop)
@@ -701,6 +706,16 @@ async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI
     await expect(composer).to_be_focused()
 
 
+async def list_gamma_folder_as_openable(page: Page, web_ui: WebUI) -> None:
+    """Opening Gamma makes it the default session, so the sidebar lists the sessions saved in its folder as openable."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    await page.reload()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+
+
 async def test_a_saved_session_opens_from_its_row_named_at_once(page: Page, web_ui: WebUI) -> None:
     """A saved session's row says it opens live: a click opens it without fetching its transcript first.
 
@@ -713,13 +728,7 @@ async def test_a_saved_session_opens_from_its_row_named_at_once(page: Page, web_
         if (title !== undefined && window.claiTestTitles.at(-1) !== title) window.claiTestTitles.push(title);
       }).observe(document, { subtree: true, childList: true, characterData: true });
     """)
-    await page.goto(f'{web_ui.url}/?token={TOKEN}')
-    # Opening Gamma makes it the default session, so the sidebar lists the session saved in its folder as openable.
-    await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
-    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
-    await expect(page.locator('.session.opening')).to_have_count(0)
-    await page.reload()
-    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+    await list_gamma_folder_as_openable(page, web_ui)
     requested: list[str] = []
     page.on('request', lambda request: requested.append(request.url))
     held: list[Route] = []
@@ -739,6 +748,28 @@ async def test_a_saved_session_opens_from_its_row_named_at_once(page: Page, web_
     assert f'{web_ui.url}/api/sessions/{web_ui.saved}' not in requested, 'the row said it opens'
     titles = await page.evaluate('window.claiTestTitles')
     assert 'New session' not in titles[titles.index('Browser Saved') :], titles
+
+
+async def test_a_row_that_says_it_opens_shows_read_only_when_it_no_longer_can(page: Page, web_ui: WebUI) -> None:
+    """A row listed before the session's folder went: opening fails, so it shows read-only, as its transcript says."""
+    await list_gamma_folder_as_openable(page, web_ui)
+    await page.route(
+        f'**/api/sessions/{web_ui.moved}/open',
+        lambda route: route.fulfill(status=400, json={'detail': 'The folder is gone.'}),
+    )
+    transcript: dict[str, object] = {
+        'id': web_ui.moved,
+        'title': 'Browser Moved',
+        'workspace': '/gone',
+        'items': [],
+        'openable': False,
+        'missing': True,
+    }
+    await page.route(f'**/api/sessions/{web_ui.moved}', lambda route: route.fulfill(json=transcript))
+    await page.locator('.sidebar').get_by_text('Browser Moved', exact=True).click()
+    await expect(page.locator('.preview-banner')).to_contain_text('which no longer exists')
+    await expect(page.locator('.topbar .title')).to_have_text('Browser Moved')
+    await expect(page.get_by_role('alert')).to_have_count(0)
 
 
 async def test_the_websocket_opens_before_the_page_renders(page: Page, web_ui: WebUI) -> None:

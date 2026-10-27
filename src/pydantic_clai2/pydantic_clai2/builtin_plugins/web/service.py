@@ -680,7 +680,9 @@ class WebService:
         places = placements(entries, identities=self._identities)
         here = places[workspace]
         default = self.default().id
-        openable = {folder: self._continuable(folder) for folder in {entry.workspace for entry in entries}}
+        saved_in = {entry.workspace for entry in entries}
+        # Whether each opens checks its folder too, off the event loop.
+        openable = await to_thread.run_sync(lambda: {folder: self._continuable(folder) for folder in saved_in})
         grouped: dict[str, dict[str, tuple[ProjectIdentity, list[SessionEntry]]]] = {}
         for entry in entries:
             identity = places[entry.workspace]
