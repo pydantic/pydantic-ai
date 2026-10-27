@@ -275,7 +275,8 @@ Bare `/login` asks which sign-in to run.
 The built-in `herdr` plugin (`pydantic_clai2.builtin_plugins.herdr`) is enabled
 by default and reports automatically inside a [herdr](https://herdr.dev) pane.
 Use `/plugins disable herdr` to release the pane and persistently stop reporting;
-`/plugins enable herdr` restores it. An existing saved opt-out stays disabled.
+`/plugins enable herdr` restores it. On upgrade, eligible panes that used the
+previous disabled default begin reporting; an existing saved opt-out stays disabled.
 No herdr-side integration install is needed. The plugin requires `HERDR_ENV=1`,
 `HERDR_SOCKET_PATH`, and `HERDR_PANE_ID`; optional `HERDR_TAB_ID` enables tab titles.
 Outside herdr, on Windows, or in a session without a terminal (such as `clai2 --web`),
