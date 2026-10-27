@@ -28,7 +28,6 @@ from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, Settings, feat
 from pydantic_clai2.config.api_keys import KeyReference
 from pydantic_clai2.config.plugin_requirements import apply_requirements, stored_requirements
 from pydantic_clai2.config.settings_store import SettingsStore, StoredAccount
-from pydantic_clai2.mcp import MCPPlugin
 from pydantic_clai2.models.model_settings import model_settings_from_json
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginLoader
@@ -978,8 +977,8 @@ async def test_saved_on_demand_mcp_servers_load_in_builds_with_and_without_the_f
     await older.load_all()
 
     [entry] = [entry for entry in older.entries() if entry.name == 'mcp']
-    assert entry.loaded is not None and isinstance(entry.loaded.plugin, MCPPlugin)
-    assert entry.loaded.plugin.settings.servers == {}, 'a build without on-demand servers drops them, not the plugin'
+    assert entry.loaded is not None, 'a build without on-demand servers drops them, not the plugin'
+    assert entry.loaded.plugin.settings.model_dump() == {'servers': {}}
     assert entry.ignored == 'mcp: ignored saved servers (needs mcp-defer-loading); using defaults.'
     assert store.plugins() == saved
     await older.close('exit')
