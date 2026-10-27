@@ -133,13 +133,13 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
 
         # Another `OnlineEvaluation` on this agent may already be capturing this run. Its task run
         # is what `should_evaluate()` sees, so join it instead of reading it as an outer evaluation.
-        run_evaluation = _CURRENT_RUN_EVALUATION.get()
-        joining = run_evaluation is not None and run_evaluation.run_id == ctx.run_id
+        captured = _CURRENT_RUN_EVALUATION.get()
+        joined = captured if captured is not None and captured.run_id == ctx.run_id else None
 
         # Skip if disabled or already inside an evaluation context (e.g. Dataset.evaluate). A joining
         # capability skips only the task-run check, which the capturing capability's own task run
         # would fail; `enabled` and `disable_evaluation()` still apply.
-        if joining:
+        if joined is not None:
             evaluate = config.enabled and not _online_internal.EVALUATION_DISABLED.get()
         else:
             evaluate = config.should_evaluate()
@@ -190,15 +190,15 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
 
             return dispatch_with
 
-        if run_evaluation is not None and joining:
+        if joined is not None:
             # The capturing capability dispatches for every capability that joined it, each with the
             # outcome its own handler saw: a capability between the two may have changed it.
             try:
                 result = await handler()
             except Exception as e:
-                run_evaluation.dispatchers.append(dispatch(e, failed=True))
+                joined.dispatchers.append(dispatch(e, failed=True))
                 raise
-            run_evaluation.dispatchers.append(dispatch(result.output, failed=False))
+            joined.dispatchers.append(dispatch(result.output, failed=False))
             return result
 
         run_evaluation = _RunEvaluation(run_id=ctx.run_id)
