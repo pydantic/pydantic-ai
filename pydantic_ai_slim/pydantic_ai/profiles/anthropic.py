@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from contextvars import ContextVar
 from typing import Literal, TypeAlias
 
 from ..native_tools import (
@@ -26,6 +27,13 @@ Models whose profile sets that flag reject these settings outright with a 400, s
 serving them has to drop and warn rather than forward. It lives here rather than beside either
 model because `models/bedrock.py` cannot import from `models/anthropic/` without pulling the
 `anthropic` SDK into the `bedrock` extra.
+"""
+
+_COUNTING_STRICT_SCHEMAS: ContextVar[bool] = ContextVar('pydantic_ai_counting_strict_schemas', default=False)
+"""Set while schemas are transformed only to count them against Anthropic's strict schema limits.
+
+The transformer then doesn't warn about a strict schema that may not be sent. It lives here, rather than beside either
+model, because `models/bedrock.py` cannot import from `models/anthropic/` without the `anthropic` SDK.
 """
 
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
@@ -191,6 +199,17 @@ class AnthropicModelProfile(ModelProfile, total=False):
     [`UploadedFile`][pydantic_ai.messages.UploadedFile] from Anthropic raises a `UserError`, a
     [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]'s Anthropic files aren't uploaded to its
     container, and no container from earlier in the history, including a paused turn's, is sent.
+    """
+
+    anthropic_enforces_strict_schema_limits: bool
+    """Whether the API rejects a request whose strict schemas exceed Anthropic's explicit complexity limits. Default: `False`.
+
+    Anthropic counts strict tools, optional parameters and union-typed parameters across all strict schemas in a
+    request, and rejects recursive schemas, as described under [schema complexity
+    limits](https://platform.claude.com/docs/en/build-with-claude/structured-outputs#schema-complexity-limits). When
+    True, an `output_type` that doesn't pick an output mode uses non-strict Tool Output instead of Native Output where
+    the Native Output schema wouldn't fit, and a request that explicitly asks for strict schemas over a limit raises a
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before it's sent.
     """
 
     anthropic_supports_message_batches: bool

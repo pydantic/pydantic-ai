@@ -156,7 +156,7 @@ Need deterministic, fast tests?
 | Scenario | Mode |
 |----------|------|
 | Need structured data and want maximum provider compatibility | `ToolOutput` (default) — works with all providers, supports streaming |
-| Want the provider to natively enforce JSON schema compliance | `NativeOutput` — OpenAI, Anthropic, Google only; limited streaming |
+| Want the provider to natively enforce JSON schema compliance | `NativeOutput` — OpenAI, Anthropic, Google only; limited streaming; Anthropic limits strict schema complexity per request (`ModelRequestRejectedError` before sending when over) |
 | Provider doesn't support tools or JSON mode | `PromptedOutput` — works everywhere as a fallback |
 | LLM returns non-JSON structured text (markdown, YAML, domain-specific) | `TextOutput` — custom parsing function |
 

@@ -62,6 +62,7 @@ from pydantic_ai import (
     VideoUrl,
     WebCitationSource,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool
 from pydantic_ai.exceptions import (
@@ -8038,7 +8039,7 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
         prepared, ModelRequestParameters(), BedrockModelSettings()
     )
 
-    assert system_prompt == [{'text': 'You are helpful.'}]
+    assert system_prompt == [{'text': 'You are helpful.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}]
     text_blocks = [
         block['text']
         for msg in cast(list[Any], bedrock_messages)
@@ -8701,7 +8702,7 @@ async def test_bedrock_empty_history_prepended_for_anthropic(bedrock_provider: B
     system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         model.prepare_messages(messages), ModelRequestParameters(), BedrockModelSettings()
     )
-    assert system_prompt == [{'text': 'Generate a short greeting.'}]
+    assert system_prompt == [{'text': 'Generate a short greeting.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}]
     assert bedrock_messages == snapshot([{'role': 'user', 'content': [{'text': '.'}]}])
 
 

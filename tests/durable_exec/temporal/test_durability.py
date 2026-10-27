@@ -129,6 +129,7 @@ from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceBackend, WorkspaceRef, WrapperWorkspace
 from pydantic_graph import GraphBuilder, StepContext
+from tests.function_model_prefix import FALLBACK_REWINDS, TOOLS_CHANGE_MID_RUN
 
 from ..._inline_snapshot import snapshot
 from ...batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, SlowBatchTestModel
@@ -777,6 +778,7 @@ class FallbackContinuationWorkflow:
         ]
 
 
+@pytest.mark.moves_cache_prefix(reason=FALLBACK_REWINDS)
 async def test_durability_fallback_continuation_keeps_its_deadline_across_activities(client: Client):
     """A `FallbackModel` runs inside each continuation segment's activity, and the deadline of the model it picked
     carries over from one activity to the next: the second segment times out, and the fallback answers."""
@@ -6216,6 +6218,7 @@ class DurabilityPrepareWorkflow:
         return (await _prepare_agent.run(prompt)).all_messages()
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_durability_static_tool_prepare_runs_only_in_workflow(client: Client):
     """`prepare` runs once per model step in workflow code, and the activity honours its `tool_def`.
 
