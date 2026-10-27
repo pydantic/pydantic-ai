@@ -103,6 +103,7 @@ from pydantic_ai.realtime import (
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging
 from ..realtime_connections import InferredConnection
@@ -1647,6 +1648,7 @@ def test_dbos_agent_explicit_run_id(dbos: DBOS):
     assert all(m.run_id == 'run-from-dbos' for m in result.all_messages())
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 def test_dynamic_toolset(dbos: DBOS):
     weather_deps = ToggleableDeps('weather')
 

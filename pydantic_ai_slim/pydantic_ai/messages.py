@@ -254,12 +254,14 @@ class SystemPromptPart:
     """How long the model sees this prompt.
 
     * `'conversation'` (the default): from where it sits in the history for the rest of the conversation.
-    * `'request'`: only for the model request it's part of, including a continuation of that same request
-      (such as an Anthropic `pause_turn`). Once a later request exists, the model no longer sees it.
+    * `'request'`: the model sees it only in the model request it's part of, including a continuation of
+      that same request (such as an Anthropic `pause_turn`): the next request, even the next step of the same
+      run, no longer shows it.
 
-    A request-scoped prompt stays in the message history like any other part. Use one for a nudge about the
-    current moment (a reminder against instruction fade, a note that tool output was hidden, a remaining
-    budget), not for something that stays true. See
+    A request-scoped prompt stays in the message history like any other part. Use one for a value that changes
+    from one request to the next, such as a remaining budget, sent with every request. Fixed text belongs in
+    instructions, and a note the model must still act on after the next request, such as one saying the user
+    can't see a tool's output, needs the default `'conversation'` scope. See
     [request-scoped system prompts](../message-history.md#request-scoped-system-prompts) for how each provider
     renders it.
     """

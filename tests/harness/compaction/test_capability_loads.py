@@ -39,6 +39,7 @@ from pydantic_ai_harness.compaction import (
     SummarizingCompaction,
     compact_now,
 )
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 INSTRUCTIONS = 'Call get_forecast with a city name.'
 STATED_INSTRUCTIONS = f'<system><context id="capability:weather">\n{INSTRUCTIONS}\n</context></system>'
@@ -219,6 +220,7 @@ STRATEGIES = [
         'relevance-dropping',
         partial(RelevanceCompaction[None], FunctionModel(_judge), max_tokens=1, keep_tokens=1),
         id='relevance-dropping',
+        marks=pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY),
     ),
     pytest.param(
         'relevance-summarizing',
@@ -345,7 +347,11 @@ class TestCapabilityLoadsAcrossCompaction:
     @pytest.mark.parametrize(
         'compaction',
         [
-            pytest.param(ClearToolResults[None](max_messages=1, keep_pairs=1, clear_tool_inputs=True), id='clear'),
+            pytest.param(
+                ClearToolResults[None](max_messages=1, keep_pairs=1, clear_tool_inputs=True),
+                id='clear',
+                marks=pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY),
+            ),
             pytest.param(
                 ClampOversizedMessages[None](max_part_chars=10, keep_head_chars=1, keep_tail_chars=1), id='clamp'
             ),
