@@ -240,6 +240,11 @@ boxlite = "2026-10-18T01:35:01Z"
 # TODO(DouweM): Remove after 2026-10-28 03:46 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 prefect = "2026-10-21T03:46:00Z"
+# vercel-sandbox 0.10.0 is the `vercel-sandbox` floor: in 0.9.1 a stdout reader waiting while the stderr
+# reader finishes reopens the process log stream and replays its output.
+# TODO(rohitlavu11): Remove after 2026-10-30 18:34 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+vercel-sandbox = "2026-10-23T18:34:00Z"
 
 [dependency-groups]
 dev = [
@@ -535,6 +540,7 @@ markers = [
     "e2b_live: runs against a real E2B sandbox; needs credentials",
     "sprites_live: runs against a real Sprites control plane; needs credentials",
     "daytona_live: runs against a real Daytona control plane; needs credentials",
+    "vercel_live: runs against a real Vercel Sandbox control plane; needs credentials",
     "smol_live: boots real smolvm VMs; needs a host that can run them",
     "boxlite_live: boots real BoxLite VMs; needs a host that can run them",
     "docker_live: starts real containers; needs a Docker daemon",

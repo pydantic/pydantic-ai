@@ -90,6 +90,7 @@ _PROVIDER_CAPABILITIES = {
     'e2b': 'E2BSandbox()',
     'sprites': 'SpritesSandbox()',
     'daytona': 'DaytonaSandbox()',
+    'vercel': 'VercelSandbox()',
 }
 """The capability that provides each first-party provider's workspaces, to name in an error."""
 

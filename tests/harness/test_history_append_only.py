@@ -364,6 +364,7 @@ OPTIONAL_DEPENDENCIES: dict[str, str] = {
     'PromptInjectionDefender': 'stackone_defender',
     'SmolSandbox': 'smol',
     'SpritesSandbox': 'sprites',
+    'VercelSandbox': 'vercel',
     'YouResearch': 'youdotcom',
     'YouSearch': 'youdotcom',
 }
