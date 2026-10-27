@@ -114,16 +114,6 @@ _OUTPUT_PREVIEW_CHARS = 64 * 1024
 # The only stderr, with exit code 125, of a command whose `working_dir` is missing.
 _MISSING_WORKING_DIR = f'pydantic-ai-missing-working-dir-{uuid.uuid4().hex}'
 
-_SESSION_ENDED = frozenset(
-    {
-        vercel.SandboxStatus.STOPPING,
-        vercel.SandboxStatus.STOPPED,
-        vercel.SandboxStatus.SNAPSHOTTING,
-        vercel.SandboxStatus.FAILED,
-        vercel.SandboxStatus.ABORTED,
-    }
-)
-
 
 def _require_asyncio() -> None:
     if not running_on_asyncio():
@@ -136,12 +126,6 @@ def _require_asyncio() -> None:
 def _new_client() -> SandboxClient:
     """A `SandboxClient` that reads its credentials from the environment on each request; building it does no I/O."""
     return vercel.SandboxClient.create()
-
-
-def _deleted_message(name: str) -> str:
-    return (
-        f"The Vercel sandbox {name!r} no longer exists (it was deleted). Pass `workspace='new'` to start a fresh one."
-    )
 
 
 def _translate(error: Exception, context: str) -> Exception:
@@ -643,7 +627,8 @@ class VercelSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                 if command.process is None
                 else 'Could not read the command result (the command may still be running)'
             )
-            translated = await self._failure(sandbox, error, context)
+            # Asking Vercel what became of the sandbox tells a deleted one or an ended session apart.
+            translated = await self._ended(sandbox) or _translate(error, context)
             if translated is error:
                 raise
             raise translated from error
@@ -663,24 +648,32 @@ class VercelSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             raise ended
         return CommandResult(exit_code=command.exit_code, stdout=stdout, stderr=stderr)
 
-    async def _failure(self, sandbox: Sandbox, error: Exception, context: str) -> Exception:
-        """The protocol's failure for an SDK error during a command, after asking Vercel what became of the sandbox."""
-        return await self._ended(sandbox) or _translate(error, context)
-
     async def _ended(self, sandbox: Sandbox) -> WorkspaceError | None:
         """Why `sandbox` cannot run a command now: deleted, or its session ended; `None` if neither, or Vercel cannot say."""
         client = self._client
-        assert client is not None
+        if client is None:  # pragma: no cover - only an operation ending during a direct `get_sandbox()` clears it
+            return None
         with anyio.move_on_after(_REQUEST_TIMEOUT):
             try:
                 current = await client.get_sandbox(name=sandbox.name)
             except vercel.SandboxApiError as lookup:
                 if lookup.status_code == 404:
-                    return WorkspaceUnavailableError(_deleted_message(sandbox.name))
+                    return WorkspaceUnavailableError(
+                        f'The Vercel sandbox {sandbox.name!r} no longer exists (it was deleted). '
+                        "Pass `workspace='new'` to start a fresh one."
+                    )
             except Exception:
+                # Any other failure, transport errors included, leaves the command's own outcome to stand.
                 pass
             else:
-                if current.status in _SESSION_ENDED:
+                ended = (
+                    vercel.SandboxStatus.STOPPING,
+                    vercel.SandboxStatus.STOPPED,
+                    vercel.SandboxStatus.SNAPSHOTTING,
+                    vercel.SandboxStatus.FAILED,
+                    vercel.SandboxStatus.ABORTED,
+                )
+                if current.status in ended:
                     return WorkspaceError(
                         f'The session of Vercel sandbox {sandbox.name!r} ended while the command ran: its '
                         '`sandbox_timeout` ran out, or it was stopped. The sandbox keeps its files, and the next '

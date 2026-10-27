@@ -155,7 +155,7 @@ async def delete_sandbox(ref: WorkspaceRef) -> None:
     await VercelSandbox().destroy(ref)
 ```
 
-`destroy(ref)` deletes the sandbox by name without resuming it, together with its snapshots that no other sandbox uses, and returns quietly for a sandbox that no longer exists. Only destroy sandboxes you own. To end a session early and keep the sandbox, stop it through the SDK: `await (await backend.get_sandbox()).stop()`. Use `backend(ref)` to construct a lazy backend for an existing sandbox; `get_sandbox()` attaches to it and returns its native `vercel.sandbox.Sandbox` (on a backend with no sandbox yet, it creates one).
+`destroy(ref)` deletes the sandbox by name without resuming it, together with its snapshots that no other sandbox uses, and returns quietly for a sandbox that no longer exists. Only destroy sandboxes you own. To end a session early and keep the sandbox, stop it through the SDK: `await (await backend.get_sandbox()).stop()`. Use `VercelSandbox().backend(ref)` to construct a lazy backend for an existing sandbox; `get_sandbox()` attaches to it and returns its native `vercel.sandbox.Sandbox` (on a backend with no sandbox yet, it creates one).
 
 A failed run returns no result, so there is no ref to store. To delete its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails:
 
