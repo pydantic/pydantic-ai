@@ -129,6 +129,10 @@ Some providers suspend a response and continue it on a later request, like Anthr
 
 A [`request_timeout`](../timeouts.md#model-request-deadlines) in the model settings bounds each model's attempt as a whole, across the provider SDK's own retries: each model `ModelFallback` tries gets a fresh deadline, and the [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] it raises when the deadline passes moves on to the next model by default. A model's own `settings` can set a different `request_timeout` for it.
 
+## Pydantic AI Gateway
+
+A [Pydantic AI Gateway endpoint](../gateway.md#falling-back-across-api-formats) can fall back to a model in another API format, which the agent follows automatically. That happens before `ModelFallback` gets to see the error: its chain only moves on once the model the Gateway handed the request to has failed too.
+
 ## Batching
 
 With [`BatchModelRequests`](../batch.md), every attempt is batched with the model that serves it, so when the first model's batch request fails, the request goes into a batch on the next model. Batching submits a request again itself after a transient failure, so `ModelFallback` only sees a batch failure once resubmitting is used up, or one resubmitting wouldn't fix.

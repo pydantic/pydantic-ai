@@ -280,6 +280,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'IncludeToolReturnSchemas': Anonymous('one per `ToolSelector`; several selectors compose'),
     'DeferredCapabilityLoader': Anonymous('auto-injected only when absent'),
     'PendingMessageDrainCapability': Anonymous('auto-injected only when absent'),
+    'GatewayFallback': Anonymous('auto-injected only when absent'),
     '_GroupMember': Anonymous('internal: dispatches a deferred group member, never registered'),
 }
 
