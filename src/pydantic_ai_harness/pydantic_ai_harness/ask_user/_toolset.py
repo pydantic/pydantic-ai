@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import anyio
 
-from pydantic_ai._framing import close_tag, neutralize_tags, open_tag
+from pydantic_ai._framing import ANSWER_NOTE_TAG, close_tag, neutralize_tags, open_tag
 from pydantic_ai.exceptions import CallDeferred
 from pydantic_ai.messages import TextContent, ToolReturn, UserContent
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -54,16 +54,16 @@ def ask_user_result(request: AskUserRequest, response: AskUserResponse) -> AskUs
         if not answer.note:
             continue
         metadata = {'origin': _ANSWER_NOTE_ORIGIN, 'request_id': request.id, 'header': answer.header}
-        content.append(TextContent(open_tag('answer_note', header=answer.header), metadata=metadata))
+        content.append(TextContent(open_tag(ANSWER_NOTE_TAG, header=answer.header), metadata=metadata))
         for item in answer.note:
             if isinstance(item, str):
                 content.append(neutralize_tags(item))
             elif isinstance(item, TextContent):
-                # Escaped text must not retain a StructuredContent value that bypasses that escaping.
-                content.append(TextContent(neutralize_tags(item.content), metadata=item.metadata))
+                # Neither a structured value nor user-supplied provenance metadata may bypass this text.
+                content.append(neutralize_tags(item.content))
             else:
                 content.append(item)
-        content.append(TextContent(close_tag('answer_note'), metadata=metadata))
+        content.append(TextContent(close_tag(ANSWER_NOTE_TAG), metadata=metadata))
     return ToolReturn(return_value=answers, content=content) if content else answers
 
 

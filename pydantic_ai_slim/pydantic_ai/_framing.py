@@ -87,6 +87,9 @@ The last clause holds because `<system>` tags in user prompts and tool returns a
 (16 of 16 runs with the clause, 9 of 16 without it).
 """
 
+ANSWER_NOTE_TAG: Final = 'answer_note'
+"""Frames a user's note accompanying a Harness `AskUser` answer, keyed by the question header."""
+
 _FRAMING_TAG_OPENERS: Final = _tag_openers(*get_args(FramingTag))
 _VOICE_TAG_OPENERS: Final = _tag_openers(SYSTEM_TAG)
 

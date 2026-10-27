@@ -99,6 +99,15 @@ contain nonblank text or an attachment, not only whitespace or cache markers. Ru
 `check_response(request, response)` before submitting client input. The harness sets no note size
 limit; the answerer should bound text and attachments from clients.
 
+File URLs must use HTTP(S) and `force_download=False`. Notes reject other URL schemes, forced
+download modes (including `True` and `'allow-local'`) and `UploadedFile` provider references,
+even when a server-side answerer constructed them. To attach a file instead, have the application
+authorize access and supply its bytes as `BinaryContent`.
+
+Only the rendered text of `TextContent` and `StructuredContent` is forwarded; user-supplied text
+metadata is dropped so notes cannot claim framework provenance. The answered event still carries
+the original response before validation, so observers must treat its note metadata as user input.
+
 With notes, `ask_user_result` returns a [`ToolReturn`][pydantic_ai.messages.ToolReturn]:
 `return_value` is the unchanged answer dictionary, and `content` sends the notes as
 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] content rather than tool data.

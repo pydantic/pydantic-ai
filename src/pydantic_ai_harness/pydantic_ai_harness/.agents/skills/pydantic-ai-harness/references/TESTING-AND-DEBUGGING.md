@@ -166,6 +166,9 @@ print(asked[0].questions[0].header)
   Notes use `answer_note` frames; boundary `TextContent.metadata` carries
   `origin='pydantic-ai-harness.ask_user.answer_note.v1'`, `request_id` and `header`.
   Keep image items multimodal when asserting note order. Blank-only notes and control characters fail validation.
+  Reject note URLs outside HTTP(S), any `force_download` value other than `False`, and `UploadedFile` references.
+  Only framework boundary text retains provenance metadata; input text metadata is not forwarded to history.
+  Answered events retain the original response before validation. Treat their note metadata as user input.
 - Annotate `ask_user_result` values with `AskUserResult` from `pydantic_ai_harness.ask_user`.
   Pass the result directly to `DeferredToolResults.calls` for deferred answers, including notes.
 

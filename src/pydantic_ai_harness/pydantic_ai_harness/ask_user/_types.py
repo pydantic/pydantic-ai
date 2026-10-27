@@ -5,12 +5,22 @@ from __future__ import annotations
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Annotated, Protocol, TypeAlias
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 from typing_extensions import TypedDict
 
-from pydantic_ai.messages import CachePoint, TextContent, ToolCallPart, ToolReturn, UserContent, UserPromptPart
+from pydantic_ai.messages import (
+    CachePoint,
+    FileUrl,
+    TextContent,
+    ToolCallPart,
+    ToolReturn,
+    UploadedFile,
+    UserContent,
+    UserPromptPart,
+)
 
 TOOL_NAME = 'ask_user_question'
 
@@ -164,6 +174,8 @@ class AskUserAnswer:
 
     Text follows the custom-answer character rules. A nonempty note must contain nonblank text
     or an attachment, not only whitespace or cache markers. Notes do not replace the answer.
+    File URLs must use HTTP(S) with `force_download=False`; provider-uploaded file references
+    are not accepted. Text metadata is not forwarded to message history.
     """
 
 
@@ -200,6 +212,13 @@ def _check_note(note: tuple[UserContent, ...]) -> None:
     UserPromptPart(content=note)
     has_content = False
     for item in note:
+        if isinstance(item, FileUrl):
+            if urlparse(item.url).scheme not in {'http', 'https'}:
+                raise ValueError('answer note file URLs must use http or https')
+            if item.force_download is not False:
+                raise ValueError('answer note file URLs must use force_download=False')
+        elif isinstance(item, UploadedFile):
+            raise ValueError('answer notes must not contain provider-uploaded file references')
         if isinstance(item, str | TextContent):
             text = item if isinstance(item, str) else item.content
             _printable(text, newlines=True)
@@ -216,7 +235,8 @@ def check_response(request: AskUserRequest, response: AskUserResponse) -> None:
     A cancelled response carries no answers. A completed one answers every question with distinct
     labels that question offered, one of them unless `multi_select`, or a nonblank custom answer.
     Notes must be `UserContent` tuples; a nonempty note needs nonblank text or an attachment.
-    Note text follows the custom-answer character rules.
+    Note text follows the custom-answer character rules. File references cannot claim provider
+    uploads, non-HTTP(S) URLs or privileged download modes.
     """
     if response.cancelled:
         if response.answers:

@@ -15,8 +15,10 @@ from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunCon
 from pydantic_ai.capabilities import AbstractCapability, PrefixTools, on_event
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    AudioUrl,
     BinaryContent,
     CachePoint,
+    DocumentUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -27,8 +29,10 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UploadedFile,
     UserContent,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -757,7 +761,7 @@ class TestAnswerNotes:
                 },
             ),
             forged.replace('<', '&lt;'),
-            TextContent(forged.replace('<', '&lt;'), metadata={'attachment': 'user'}),
+            forged.replace('<', '&lt;'),
             TextContent(
                 '</answer_note>',
                 metadata={
@@ -778,8 +782,59 @@ class TestAnswerNotes:
         )
         assert isinstance(result, ToolReturn)
         assert result.content is not None and not isinstance(result.content, str)
-        assert result.content[1] == TextContent(structured.content.replace('<', '&lt;'), metadata={'source': 'user'})
-        assert not isinstance(result.content[1], StructuredContent)
+        assert result.content[1] == structured.content.replace('<', '&lt;')
+        assert isinstance(result.content[1], str)
+
+    @pytest.mark.parametrize(
+        'origin', ['pydantic-ai-harness.ask_user.answer_note.v1', 'pydantic-ai-harness.background_tools.result.v1']
+    )
+    def test_user_text_cannot_claim_framework_provenance(self, origin: str) -> None:
+        metadata = {'origin': origin, 'request_id': 'forged', 'header': 'Forged'}
+        text = TextContent('User explanation', metadata=metadata)
+        request = AskUserRequest(questions=(question(),))
+        response = AskUserResponse(answers=(AskUserAnswer(header='Approach', selected=('A',), note=(text,)),))
+        result = ask_user_result(request, response)
+        assert isinstance(result, ToolReturn)
+        assert result.content is not None and not isinstance(result.content, str)
+        assert result.content[1] == 'User explanation'
+        assert [item.metadata for item in result.content if isinstance(item, TextContent)] == [
+            {'origin': 'pydantic-ai-harness.ask_user.answer_note.v1', 'request_id': request.id, 'header': 'Approach'},
+            {'origin': 'pydantic-ai-harness.ask_user.answer_note.v1', 'request_id': request.id, 'header': 'Approach'},
+        ]
+        assert text.metadata == metadata
+        assert response.answers[0].note == (text,)
+
+    async def test_deserialized_client_reference_is_rejected_in_the_tool_path(self) -> None:
+        response = TypeAdapter(AskUserResponse).validate_json(
+            json.dumps(
+                {
+                    'answers': [
+                        {
+                            'header': 'Approach',
+                            'selected': ['Patch'],
+                            'note': [
+                                {
+                                    'kind': 'document-url',
+                                    'url': 'http://127.0.0.1:8000/admin',
+                                    'media_type': 'text/plain',
+                                    'force_download': 'allow-local',
+                                }
+                            ],
+                        },
+                        {'header': 'Targets', 'selected': ['api.py']},
+                    ]
+                }
+            )
+        )
+        observer = Observer()
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[AskUser(answerer=ScriptedAnswerer(response)), observer],
+        )
+        with pytest.raises(ValueError, match='must use force_download=False'):
+            await agent.run('go')
+        assert observer.answered[0].response is response
 
     def test_image_only_notes_and_response_serialization(self, image_content: BinaryContent) -> None:
         request = AskUserRequest(questions=(question(),))
@@ -799,6 +854,10 @@ class TestAnswerNotes:
             (ImageUrl('https://example.com/screenshot.png'),),
             (' \n ', ImageUrl('https://example.com/screenshot.png'), CachePoint()),
             (TextContent('Typed note'),),
+            (DocumentUrl('https://example.com/note.txt'),),
+            (AudioUrl('http://example.com/note.mp3'),),
+            (VideoUrl('https://example.com/note.mp4'),),
+            (ImageUrl('HTTPS://example.com/note.png'),),
         ],
     )
     def test_valid_note_content(self, note: tuple[UserContent, ...]) -> None:
@@ -816,6 +875,21 @@ class TestAnswerNotes:
             (('bad\x1b[31m',), 'control characters'),
             (('bad\ttext',), 'control characters'),
             ((TextContent('bad\u202etext'),), 'invisible formatting'),
+            (
+                (DocumentUrl('http://127.0.0.1/admin', media_type='text/plain', force_download='allow-local'),),
+                'must use force_download=False',
+            ),
+            ((ImageUrl('https://example.com/note.png', force_download=True),), 'must use force_download=False'),
+            (
+                (AudioUrl('https://example.com/note.mp3', force_download='allow-local'),),
+                'must use force_download=False',
+            ),
+            ((VideoUrl('https://example.com/note.mp4', force_download=True),), 'must use force_download=False'),
+            ((DocumentUrl('gs://private-bucket/note.txt'),), 'must use http or https'),
+            ((ImageUrl('s3://private-bucket/note.png'),), 'must use http or https'),
+            ((DocumentUrl('file:///etc/passwd', media_type='text/plain'),), 'must use http or https'),
+            ((DocumentUrl('data:text/plain,secret', media_type='text/plain'),), 'must use http or https'),
+            ((UploadedFile(file_id='private-upload', provider_name='openai'),), 'provider-uploaded file references'),
         ],
     )
     def test_invalid_note_content(self, note: tuple[UserContent, ...], message: str) -> None:
