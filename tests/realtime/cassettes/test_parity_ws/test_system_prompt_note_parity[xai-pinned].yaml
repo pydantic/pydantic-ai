@@ -1,0 +1,455 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    event_id: bf030883-af8c-4b2b-8b8a-32e431d2f1e6
+    session:
+      id: 8049db8a9b3e4bb381f573f01704f2fb
+      object: realtime.session
+      instructions: ''
+      voice: xai_ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+      model: grok-voice-3.0
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      instructions: You are Sam, a phone support agent for Acme Telecom. Answer in
+        one short sentence.
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: conversation.created
+    event_id: 3bcfcbbf-eae2-4e6e-829a-3fdda477923f
+    conversation:
+      id: 70d9fb9c-aa7d-4f56-b903-131282147e59
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.001
+  data:
+    type: ping
+    event_id: 83ed6fbf-1bdb-43c4-a9a5-13aed4bf92fd
+    timestamp: 1793039989825
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.635
+  data:
+    session:
+      instructions: You are Sam, a phone support agent for Acme Telecom. Answer in
+        one short sentence.
+      enable_noise_suppression: false
+      turn_detection:
+        type: server_vad
+        create_response: true
+      model: grok-voice-3.0
+      keep_context: false
+      enable_phonetic_spelling: false
+      input_audio_transcription:
+        model: grok-transcribe
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+    type: session.updated
+    event_id: b0f31b9d-cf39-48a2-aab2-0b35a278d91e
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 0.636
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: <system>The caller has been verified as the account holder, Jamie. Address
+          them by name.</system>
+- kind: message
+  direction: sent
+  at: 0.636
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.1
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Hi, can you tell me whose account this is?
+- kind: message
+  direction: sent
+  at: 0.636
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.1
+    response:
+      metadata:
+        pydantic_ai_inputs: '1'
+- kind: message
+  direction: received
+  at: 0.701
+  data:
+    type: conversation.item.added
+    event_id: ef368158-39f5-4806-8280-2d0dbf4e3cf0
+    item:
+      id: pydantic_ai_item_0
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: <system>The caller has been verified as the account holder, Jamie. Address
+          them by name.</system>
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.706
+  data:
+    type: conversation.item.added
+    event_id: b6bccb17-19e0-4b59-b704-bf51753d0d7d
+    item:
+      id: pydantic_ai_item_1
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Hi, can you tell me whose account this is?
+      replayed: false
+    previous_item_id: pydantic_ai_item_0
+- kind: message
+  direction: received
+  at: 0.706
+  data:
+    type: response.created
+    event_id: c85447be-ca26-480f-b484-77ed9e60f2e0
+    response:
+      id: a73c3e27-59b5-4121-a260-b058ffc53711
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '1'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.824
+  data:
+    type: response.output_item.added
+    event_id: 6e50bc7b-c5f4-41e3-8f27-1f79e61b13e0
+    item:
+      id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.824
+  data:
+    type: conversation.item.added
+    event_id: 8df92b9e-74f5-4596-b9ef-5974575d43fe
+    item:
+      id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: pydantic_ai_item_1
+- kind: message
+  direction: received
+  at: 0.825
+  data:
+    type: response.content_part.added
+    event_id: 28121de9-b1f8-4e5f-9b2b-ea8a359d94c0
+    item_id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  at: 1.041
+  data:
+    type: response.output_audio.delta
+    event_id: 2ba2a1f1-a5b6-484d-9a95-ab4825e0b659
+    item_id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    delta: DQASABQADwAHAAAA/P/8////BgAPABMAFAAVABQAEgAQ
+    content_index: 0
+    output_index: 0
+    rid: 92636ca6-e169-498b-8f89-bb63b51392e3
+    latency: '0.28'
+    audio_duration_ms: 489
+    ts: 1793039990818
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.041
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 92636ca6-e169-498b-8f89-bb63b51392e3
+    item_id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    delta: Hi Jamie, this account is under your
+    content_index: 0
+    output_index: 0
+    rid: 92636ca6-e169-498b-8f89-bb63b51392e3
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.104
+  data:
+    type: response.output_audio.delta
+    event_id: de38b93e-ba7c-4ca4-adc4-d6021f6439ed
+    item_id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    delta: NPyW+1D8Iv32+xn8vfs2/KL8Nf1+AKgFcArpCXkFXwTt
+    content_index: 0
+    output_index: 0
+    rid: 92636ca6-e169-498b-8f89-bb63b51392e3
+    audio_duration_ms: 918
+    ts: 1793039990879
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.284
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 933394dc-2ad8-4841-9f2f-c3822e637cec
+    item_id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    delta: ' name.'
+    content_index: 0
+    output_index: 0
+    rid: 933394dc-2ad8-4841-9f2f-c3822e637cec
+    start_time: 2.24
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.452
+  data:
+    type: response.output_audio.delta
+    event_id: 32416c85-d0fc-420a-a84e-73e4d4069d62
+    item_id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    delta: wP6Q/goAvv/q/Ub+xv+fANP/lv5s/jX/QgBCAMP/VgAh
+    content_index: 0
+    output_index: 0
+    rid: 92636ca6-e169-498b-8f89-bb63b51392e3
+    audio_duration_ms: 673
+    ts: 1793039991283
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.529
+  data:
+    type: response.output_audio.delta
+    event_id: 50c7f2dd-9785-4a54-a7c1-a0d9df4ae14d
+    item_id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    delta: 2v0R/iT+Lf5N/mT+nf68/sr+8v4U/3b/qv/S/+3/+P9P
+    content_index: 0
+    output_index: 0
+    rid: 92636ca6-e169-498b-8f89-bb63b51392e3
+    audio_duration_ms: 92
+    ts: 1793039991362
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.54
+  data:
+    type: response.output_audio.delta
+    event_id: 81f5a0db-071c-4e09-97b7-858016220c8c
+    item_id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    delta: iBQQFfMUyRRUFM4TNBN9EgASZhE4EawQSRDmD4cPQg+g
+    content_index: 0
+    output_index: 0
+    rid: 933394dc-2ad8-4841-9f2f-c3822e637cec
+    audio_duration_ms: 550
+    ts: 1793039991371
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.542
+  data:
+    type: response.output_audio.delta
+    event_id: eb76799a-78a3-417a-aa4a-7f3e8e584fbd
+    item_id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    delta: 7v/v//D/7//w//D/8f/x//H/8v/x//H/8f/w//D/8P/w
+    content_index: 0
+    output_index: 0
+    rid: 933394dc-2ad8-4841-9f2f-c3822e637cec
+    audio_duration_ms: 61
+    ts: 1793039991375
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.547
+  data:
+    type: response.output_audio.delta
+    event_id: 7bb9c9ae-c31a-49c4-bf34-4eaf5fc8bcb8
+    item_id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    delta: /v/+//7//f/9//z/+//6//r/+f/5//n/+v/7//z//f/+
+    content_index: 0
+    output_index: 0
+    rid: 933394dc-2ad8-4841-9f2f-c3822e637cec
+    audio_duration_ms: 87
+    ts: 1793039991379
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.548
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 0f26fdfe-0624-4df9-940b-d173564679da
+    item_id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+    transcript: Hi Jamie, this account is under your name.
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.548
+  data:
+    type: response.content_part.done
+    event_id: a6812bc6-8e21-4b93-b8fe-a31c3e19cb5c
+    item_id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.548
+  data:
+    type: response.output_audio.done
+    event_id: f1c7cfce-9990-486e-bfec-be1c550af20c
+    item_id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.548
+  data:
+    type: response.output_item.done
+    event_id: 9c43645e-e9ee-4b05-abf9-77f43717c6c5
+    item:
+      id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.548
+  data:
+    type: response.done
+    event_id: ef2b3701-526c-4061-96b0-e06c552b3403
+    response:
+      id: a73c3e27-59b5-4121-a260-b058ffc53711
+      object: realtime.response
+      output:
+      - id: 93fe7df6-d0a6-4ee1-8af7-0ce7ff6e33fe
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: Hi Jamie, this account is under your name.
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '1'
+      status_details: unimplemented
+      usage: {}
+    response_id: a73c3e27-59b5-4121-a260-b058ffc53711
+    usage:
+      input_tokens: 11
+      input_token_details:
+        text_tokens: 11
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 154
+      output_token_details:
+        text_tokens: 10
+        audio_tokens: 144
+        grok_tokens: 0
+      total_tokens: 165
+      output_audio_seconds: 2.88
+      billable_audio_seconds: 1
+    previous_item_id: null
