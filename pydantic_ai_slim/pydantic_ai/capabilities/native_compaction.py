@@ -23,8 +23,8 @@ class NativeCompaction(AbstractCapability[Any]):
     """Compacts the message history with the compaction API of the model that serves the request, when it has one.
 
     When compaction is requested, for example with
-    [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction] or
-    [`Agent.compact`][pydantic_ai.agent.AbstractAgent.compact], it calls
+    [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction] or `compact=` on a run
+    method, it calls
     [`compact_messages`][pydantic_ai.models.Model.compact_messages] on the
     [model the request is for][pydantic_ai.capabilities.CompactionRequest.model], if its profile has
     [`supports_compaction_on_demand`][pydantic_ai.profiles.ModelProfile.supports_compaction_on_demand]: the OpenAI

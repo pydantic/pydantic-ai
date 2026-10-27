@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from pydantic_ai.messages import CompactionPart, CompactionReason, CompactionRecord, ModelMessage
+from pydantic_ai.messages import CompactionPart, CompactionReason, ModelMessage
 from pydantic_ai.usage import RequestUsage
 
 if TYPE_CHECKING:
@@ -112,12 +112,4 @@ class CompactionResult:
 
     For example what a later request needs to know about the compaction, like the provider-side state it relies on.
     It's serialized with the run result, so keep it to JSON-compatible values.
-    """
-
-    record: CompactionRecord | None = None
-    """What a run keeps about the compaction, on the result [`Agent.compact`][pydantic_ai.agent.AbstractAgent.compact] returns.
-
-    It's the [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] a run lists on
-    [`AgentRunResult.compactions`][pydantic_ai.agent.AgentRunResult.compactions], so a compaction made outside a
-    run is stored like one made in it. A `compact_history` hook leaves it unset: core records the compaction.
     """

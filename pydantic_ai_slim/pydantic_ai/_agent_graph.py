@@ -2199,91 +2199,6 @@ def _record_carried_attempts(
         request_context._usage_response_ledger.attempts.extend(attempts)  # pyright: ignore[reportPrivateUsage]
 
 
-class _NotCompacted(Exception):
-    """Ends the `wrap_model_request` chain of [`Agent.compact`][pydantic_ai.agent.AbstractAgent.compact] when no capability compacted.
-
-    No model request was made, so there's no response for the handler to return.
-    """
-
-
-async def compact_outside_run(
-    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
-    *,
-    reason: _messages.CompactionReason,
-    focus: str | None,
-) -> CompactionResult | None:
-    """Compact a run's message history before its first step, for [`Agent.compact`][pydantic_ai.agent.AbstractAgent.compact].
-
-    The `compact_history` hooks are asked to compact for the request the run's first step would make, which is never
-    sent. A history that ends with a response gets an empty request to stand for the next one, which is left out of
-    the result again. Returns `None` when no capability compacted, or a listener cancelled the compaction.
-    """
-    history = ctx.state.message_history
-    history[:] = _clean_message_history(history)
-    last = history[-1]
-    if isinstance(last, _messages.ModelRequest):
-        # The request a run with this history and no new prompt would answer, as `UserPromptNode` resumes it.
-        history.pop()
-        node = ModelRequestNode[DepsT, Any](request=_resumed_request(last), is_resuming_without_prompt=True)
-        placeholder = False
-    else:
-        node = ModelRequestNode[DepsT, Any](request=_messages.ModelRequest(parts=[]))
-        placeholder = True
-
-    with ctx.deps.tracer.start_as_current_span(
-        'compact history',
-        attributes={'pydantic_ai.compaction.reason': reason, 'logfire.msg': f'compact history ({reason})'},
-    ) as span:
-        compaction = await node.compact_history(ctx, RequestedCompaction(reason=reason, focus=focus))
-        if compaction.result is None or compaction.committed is None or compaction.record is None:
-            return None
-        result, record = compaction.result, compaction.record
-        # What a run would commit: the messages it kept as they're in the history it was given, not as the request
-        # the hooks prepared shows them.
-        messages = compaction.committed
-        replaced = record.replaced
-        assert replaced is not None, 'core records the history it compacted'
-        if placeholder:
-            # The empty request is the last message of both, as the request being answered always is.
-            messages = messages[:-1]
-            replaced = replaced[:-1]
-        kept_from = min(record.kept_from, len(messages))
-        record = replace(
-            record,
-            messages_before=len(replaced),
-            messages_after=len(messages),
-            kept_from=kept_from,
-            replaced=replaced,
-        )
-        span.set_attributes(
-            {
-                'pydantic_ai.compaction.handler': record.handler,
-                'pydantic_ai.compaction.messages_before': record.messages_before,
-                'pydantic_ai.compaction.messages_after': record.messages_after,
-            }
-        )
-        return replace(result, messages=messages, kept_from=kept_from, record=record)
-
-
-async def deliver_buffered_events(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
-    """Hand the run's buffered events to the capabilities, as a node's event stream would.
-
-    For [`Agent.compact`][pydantic_ai.agent.AbstractAgent.compact], which runs no node whose stream carries them.
-    """
-    buffer = ctx.state.event_stream_buffer
-
-    async def buffered() -> AsyncIterator[_messages.AgentStreamEvent]:
-        while buffer:
-            yield buffer.pop(0)
-
-    run_context = build_run_context(ctx)
-    events = ctx.deps.root_capability.wrap_run_event_stream(
-        run_context, stream=dispatch_event_stream(run_context, buffered())
-    )
-    async for _ in events:
-        pass
-
-
 async def _outside_attempts(awaitable: Awaitable[T]) -> T:
     """Await the once-per-step model request hooks, where a `RetryModelRequest` has no attempt to retry.
 
@@ -3317,8 +3232,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         run_context: RunContext[DepsT],
         request_context: ModelRequestContext,
-        *,
-        send: bool = True,
     ) -> tuple[ModelRequestContext, models.Model, _AttemptCompaction, _PreparedAttempt]:
         """Prepare one attempt at the request for the model that is about to serve it.
 
@@ -3332,8 +3245,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         `prepare_model_request` hooks picked, without those wrappers, which a further attempt starts from, and
         what the `compact_history` hooks did for this attempt, which the caller commits or discards with it, and the
         request as the `prepare_model_request` hooks left it, which a retry after a context overflow starts from. When
-        compacting failed, the rest of the preparation is skipped: the attempt fails with that error. So it is without
-        `send`, for [`Agent.compact`][pydantic_ai.agent.AbstractAgent.compact], which only compacts.
+        compacting failed, the rest of the preparation is skipped: the attempt fails with that error.
         """
         root_capability = ctx.deps.root_capability
         processed_context = await root_capability.prepare_model_request(run_context, request_context)
@@ -3350,7 +3262,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # or pinned redirect and as durability left it, and before the batch wrapper and token counting.
         compaction = _AttemptCompaction()
         await self._compact_attempt(ctx, run_context, request_context, prepared, compaction)
-        if send and compaction.error is None:
+        if compaction.error is None:
             await self._finish_attempt(ctx, run_context, request_context, prepared, compaction)
         return request_context, attempt_model, compaction, prepared
 
@@ -3639,60 +3551,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         compaction.take(retry)
         await self._finish_attempt(ctx, run_context, request_context, prepared, compaction)
         return True
-
-    async def compact_history(
-        self,
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        requested: RequestedCompaction,
-    ) -> _AttemptCompaction:
-        """Compact the history for the request this node would make, without making it, for `Agent.compact()`.
-
-        The step is prepared as it would be for the request: through `wrap_model_request`, `before_model_request`
-        and the `prepare_model_request` hooks, so the compaction is for the model, settings and tools the request
-        would be sent with, and under durable execution with the model durability wrapped. A `prepare_model_request`
-        hook that asks for another model with `RetryModelRequest` gets it, as for the request. The compaction's
-        response is what the `wrap_model_request` handler returns.
-        """
-        request_context, run_context = await self._prepare_request(ctx, streaming=False)
-        compaction = _AttemptCompaction()
-
-        async def handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
-            req_ctx = await self._apply_before_model_request(
-                ctx, run_context, req_ctx, original_request_context=request_context
-            )
-            baseline = _AttemptBaseline.capture(
-                req_ctx,
-                self._step_model_settings,
-                copy_tool_definitions=ctx.deps.root_capability._has_prepare_model_request,  # pyright: ignore[reportPrivateUsage]
-            )
-            while True:
-                baseline.restore(req_ctx)
-                # After the before-chain, so it's this request, whatever a `before_model_request` hook asked for.
-                ctx.state.compaction_requests.request(requested)
-                try:
-                    _, _, attempt, _ = await self._prepare_attempt(ctx, run_context, req_ctx, send=False)
-                except exceptions.RetryModelRequest as retry:
-                    await self._start_next_attempt(ctx, req_ctx, retry)
-                    continue
-                break
-            compaction.take(attempt)
-            if attempt.error is not None:
-                raise attempt.error
-            if attempt.result is None or attempt.billed is None:
-                raise _NotCompacted
-            return attempt.billed
-
-        root_capability = ctx.deps.root_capability
-        try:
-            if root_capability._has_wrap_model_request:  # pyright: ignore[reportPrivateUsage]
-                await _outside_attempts(
-                    root_capability.wrap_model_request(run_context, request_context=request_context, handler=handler)
-                )
-            else:
-                await handler(request_context)
-        except _NotCompacted:
-            pass
-        return compaction
 
     async def _open_stream(
         self,

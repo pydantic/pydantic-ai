@@ -28,6 +28,7 @@ from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
 from ._run_context import (
     CustomEventT,
+    RequestedCompaction,
     no_workspace,
 )
 from .capabilities._pending_messages import drain_pending_messages_at_end
@@ -785,6 +786,27 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             return None
         self._graph_run.state.pending_messages.append(pending)
         return pending.enqueue_id
+
+    def request_compaction(self, *, reason: _messages.CompactionReason = 'manual', focus: str | None = None) -> None:
+        """Ask for the message history to be compacted before the run's next model request attempt.
+
+        Like [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction], from outside the run:
+        between steps of an [`iter()`][pydantic_ai.agent.AbstractAgent.iter] loop, or from a key handler. The
+        capabilities' [`compact_history`](../capabilities/compaction.md#the-compaction-hook) hooks compact for the
+        model that serves the next attempt, and the run records it on
+        [`compactions`][pydantic_ai.agent.AgentRunResult.compactions]. A later call replaces a pending request. To
+        compact before the run's first request, pass `compact=` to the run method instead.
+
+        Args:
+            reason: Why compaction is needed, passed on to the hooks and the compaction events.
+            focus: What the compaction should keep, like the argument to a `/compact` command.
+
+        Raises:
+            UserError: If the run has ended, since there's no next request to compact for.
+        """
+        if self._result_override is not None or self._graph_run.output is not None:
+            raise exceptions.UserError('The run has ended, so there is no next request to compact for.')
+        self._graph_run.state.compaction_requests.request(RequestedCompaction(reason=reason, focus=focus))
 
     def cancel(self) -> None:
         """Cancel the whole agent run.

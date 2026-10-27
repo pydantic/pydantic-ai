@@ -1,6 +1,6 @@
-"""`NativeCompaction` and `Agent.compact()` against the providers' own compaction APIs.
+"""`NativeCompaction` against the providers' own compaction APIs.
 
-Each test has a two-turn conversation compacted, once during a run and once with `Agent.compact()`, then asks a
+Each test has a two-turn conversation compacted, from a capability or with `compact=` on the run, then asks a
 question only the compacted history can answer. The `FunctionModel` tests in
 `tests/test_capability_native_compaction.py` cover the mapping in detail.
 """
@@ -86,35 +86,25 @@ async def test_native_compaction_in_a_run(allow_model_requests: None, compacting
     assert len(messages) == 3
 
 
-async def test_agent_compact(allow_model_requests: None, compacting_model: Model):
+async def test_run_compact(allow_model_requests: None, compacting_model: Model):
+    """`compact=True` compacts the history before the run's first request, which is answered from it."""
     agent = Agent(compacting_model, instructions='Answer in one short sentence.', capabilities=[NativeCompaction()])
     first = await agent.run('My name is Bob and my favorite color is teal.')
 
-    compaction = await agent.compact(first.all_messages())
+    second = await agent.run('What is my favorite color?', message_history=first.all_messages(), compact=True)
 
-    assert compaction is not None
-    assert compaction.part == compaction_part(compaction.messages)
-    assert compaction.usage.output_tokens > 0
-    assert compaction.record is not None
-    assert (
-        compaction.record.handler,
-        compaction.record.reason,
-        compaction.record.model_name,
-        compaction.record.messages_before,
-        compaction.record.messages_after,
-        compaction.record.kept_from,
-    ) == (
+    assert 'teal' in second.output.lower()
+    assert compaction_part(second.all_messages()).provider_name == compacting_model.system
+    [record] = second.compactions
+    assert (record.handler, record.reason, record.model_name, record.messages_before, record.kept_from) == (
         'native',
         'manual',
         compacting_model.model_name,
-        2,
-        1,
+        3,
         1,
     )
-    assert compaction.record.summarized == first.all_messages()
-
-    second = await agent.run('What is my favorite color?', message_history=compaction.messages)
-    assert 'teal' in second.output.lower()
+    assert record.summarized == first.all_messages()
+    assert record.part == compaction_part(second.all_messages())
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
@@ -140,7 +130,7 @@ async def test_stateless_openai_compaction_without_the_profile_flag(allow_model_
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_agent_compact_sends_the_conversations_own_request(
+async def test_run_compact_sends_the_conversations_own_request(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """The compaction request has the conversation's system prompt and tools, so it can read its cache.
@@ -159,10 +149,14 @@ async def test_agent_compact_sends_the_conversations_own_request(
         return 'teal'  # pragma: no cover
 
     first = await agent.run('My name is Bob and my favorite color is teal.')
-    compaction = await agent.compact(first.all_messages(), focus='the favorite color')
+    second = await agent.run(
+        'What is my favorite color?',
+        message_history=first.all_messages(),
+        compact={'focus': 'the favorite color'},
+    )
 
-    assert compaction is not None
-    conversation_body, compaction_body = request_capture.bodies('/v1/messages')
+    assert 'teal' in second.output.lower()
+    conversation_body, compaction_body, _ = request_capture.bodies('/v1/messages')
     assert 'compaction' not in conversation_body
     assert compaction_body['system'] == conversation_body['system']
     assert compaction_body['tools'] == conversation_body['tools']

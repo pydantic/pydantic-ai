@@ -785,7 +785,7 @@ result = agent.run_sync(
 
 ### Compacting on demand
 
-To compact on demand from an agent, add the [`NativeCompaction`](../capabilities/compaction.md#compacting-on-demand) capability and request compaction during a run, or call [`Agent.compact()`](../capabilities/compaction.md#compacting-outside-a-run) outside one. It uses the API below for the model that serves the request, with the conversation's own settings and tools, and sends a focus as the instructions.
+To compact on demand from an agent, add the [`NativeCompaction`](../capabilities/compaction.md#compacting-on-demand) capability and [request compaction](../capabilities/compaction.md#requesting-compaction), from the run or with `compact=` on the run method. It uses the API below for the model that serves the request, with the conversation's own settings and tools, and sends a focus as the instructions.
 
 To decide yourself when to compact without either, call [`compact_messages`][pydantic_ai.models.anthropic.AnthropicModel.compact_messages] on the model. It sends the conversation with Anthropic's [on-demand compaction](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand) parameter, which summarizes it instead of replying, and returns a [`ModelResponse`][pydantic_ai.messages.ModelResponse] holding one [`CompactionPart`][pydantic_ai.messages.CompactionPart]: a readable summary, with its signature in `provider_details`. Add it to the message history, and later requests send it in place of the messages before it:
 

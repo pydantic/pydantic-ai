@@ -6145,31 +6145,45 @@ async def test_dbos_durability_compaction_runs_model_calls_as_steps(dbos: DBOS) 
     )
 
 
-async def test_dbos_agent_compact_runs_the_compaction_as_a_step(dbos: DBOS) -> None:
-    """`Agent.compact()` in a workflow compacts through the durable model, so the provider call is a DBOS step."""
+async def test_dbos_run_compact_runs_the_compaction_as_a_step(dbos: DBOS) -> None:
+    """`run(compact=...)` in a workflow compacts through the durable model, so the provider call is a DBOS step."""
 
     class CompactingModel(FunctionModel):
         async def compact_messages(
             self, request_context: ModelRequestContext, *, instructions: str | None = None
         ) -> ModelResponse:
-            return ModelResponse(parts=[CompactionPart(content=f'a summary of {len(request_context.messages)}')])
+            return ModelResponse(
+                parts=[CompactionPart(content=f'a summary of {len(request_context.messages)}, about {instructions}')]
+            )
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        [summary] = messages[0].parts
+        assert isinstance(summary, CompactionPart)
+        return ModelResponse(parts=[TextPart(f'answered from {summary.content}')])
 
     model = CompactingModel(
-        lambda messages, info: ModelResponse(parts=[TextPart('not called')]),
-        profile=ModelProfile(supports_compaction_on_demand=True),
+        answer, profile=ModelProfile(supports_compaction_on_demand=True, compaction_instructions='replaces_prompt')
     )
-    agent = Agent(model, name='durability_agent_compact', capabilities=[NativeCompaction(), DBOSDurability()])
+    agent = Agent(model, name='durability_run_compact', capabilities=[NativeCompaction(), DBOSDurability()])
 
     @DBOS.workflow()
-    async def compact_durably() -> str | None:
-        compaction = await agent.compact(
-            [ModelRequest(parts=[UserPromptPart('Hello DBOS')]), ModelResponse(parts=[TextPart('Hello!')])]
+    async def compact_durably() -> tuple[str, list[str]]:
+        result = await agent.run(
+            'What did I say?',
+            message_history=[
+                ModelRequest(parts=[UserPromptPart('Hello DBOS')]),
+                ModelResponse(parts=[TextPart('Hello!')]),
+            ],
+            compact={'focus': 'the greeting'},
         )
-        return compaction.part.content if compaction is not None else None
+        return result.output, [record.handler for record in result.compactions]
 
     wfid = str(uuid.uuid4())
     with SetWorkflowID(wfid):
-        summary = await compact_durably()
-    assert summary == 'a summary of 2'
+        output, handlers = await compact_durably()
+    assert output == 'answered from a summary of 2, about the greeting'
+    assert handlers == ['native']
     steps = await dbos.list_workflow_steps_async(wfid)
-    assert [step['function_name'] for step in steps] == snapshot(['durability_agent_compact__model.compact_messages'])
+    assert [step['function_name'] for step in steps] == snapshot(
+        ['durability_run_compact__model.compact_messages', 'durability_run_compact__model.request']
+    )

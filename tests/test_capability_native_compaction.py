@@ -1,14 +1,14 @@
-"""`NativeCompaction`, `Agent.compact()` and the generic compaction profile flags.
+"""`NativeCompaction`, requesting compaction from a run, and the generic compaction profile flags.
 
 These run `Agent`s on `FunctionModel`s that compact with a stand-in for a provider's `compact_messages`: what's under
-test is how `NativeCompaction` maps a `CompactionRequest` onto the model and back, and how `Agent.compact()` runs the
-hooks outside a run. The provider calls themselves are recorded in `tests/models/test_native_compaction.py`.
+test is how `NativeCompaction` maps a `CompactionRequest` onto the model and back, and how a run's handles and
+`compact=` request compaction. The provider calls themselves are recorded in `tests/models/test_native_compaction.py`.
 """
 
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass, field, replace
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,9 +16,11 @@ import pytest
 
 from pydantic_ai import (
     Agent,
+    AgentRunResultEvent,
     CompactionEndEvent,
     CompactionPart,
     CompactionStartEvent,
+    FunctionToolCallEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -28,21 +30,20 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.agent import AgentRunResult, WrapperAgent
+from pydantic_ai.agent import AgentRunResult, CompactionOptions, WrapperAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CompactionRequest,
     CompactionResult,
     ModelFallback,
     NativeCompaction,
-    WrapModelRequestHandler,
     WrapRunHandler,
     on_event,
 )
-from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import CompactionInstructionsMode, ModelProfile
 from pydantic_ai.usage import RequestUsage
@@ -71,6 +72,7 @@ class CompactingModel(FunctionModel):
     ) -> None:
         super().__init__(
             self._respond,
+            stream_function=self._stream,
             model_name=model_name,
             profile=ModelProfile(supports_compaction_on_demand=supports, compaction_instructions=instructions),
         )
@@ -82,6 +84,10 @@ class CompactingModel(FunctionModel):
     def _respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         self.seen.append(messages)
         return ModelResponse(parts=[TextPart(f'answered by {self.model_name}')])
+
+    async def _stream(self, messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        self.seen.append(messages)
+        yield f'answered by {self.model_name}'
 
     async def compact_messages(
         self, request_context: ModelRequestContext, *, instructions: str | None = None
@@ -332,64 +338,82 @@ async def test_native_compaction_without_a_compaction_part():
         await agent.run('hi', message_history=history())
 
 
-async def test_agent_compact_runs_the_hooks_and_events_outside_a_run():
+def tool_then_text(model: CompactingModel) -> None:
+    """Make `model` call a tool on its first request and answer on its second."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        model.seen.append(messages)
+        if len(model.seen) == 1:
+            return ModelResponse(parts=[ToolCallPart('look_up', {}, tool_call_id='call')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        model.seen.append(messages)
+        if len(model.seen) == 1:
+            yield {0: DeltaToolCall(name='look_up', json_args='{}', tool_call_id='call')}
+        else:
+            yield 'done'
+
+    model.function = respond
+    model.stream_function = stream
+
+
+def look_up() -> str:
+    return 'Bob'
+
+
+async def test_run_compact_with_a_focus_reaches_the_handler():
+    """`compact=` compacts before the run's first request, with the focus the options carry."""
     model = CompactingModel('primary')
     events = RecordEvents()
-    agent = Agent(model, instructions='Be brief.', capabilities=[events, NativeCompaction()])
+    agent = Agent(model, capabilities=[events, NativeCompaction()])
 
-    result = await agent.compact(history(), focus='the name')
+    result = await agent.run('What is my name?', message_history=history(), compact={'focus': 'the name'})
 
-    assert result is not None
-    assert result.messages == snapshot(
-        [
-            ModelResponse(
-                parts=[CompactionPart(content='summary by primary')],
-                usage=RequestUsage(input_tokens=1000, output_tokens=50),
-                model_name='primary',
-                timestamp=IsDatetime(),
-                metadata={'__pydantic_ai__': {'context_input_tokens': 0}},
-            )
-        ]
-    )
-    assert (result.handler, result.kept_from, result.usage) == ('native', 1, COMPACTION_USAGE)
-    assert result.record is not None
-    assert result.record.replaced == history()
-    assert result.record.summarized == history()
-    assert (
-        result.record.reason,
-        result.record.model_name,
-        result.record.messages_before,
-        result.record.messages_after,
-        result.record.kept_from,
-    ) == ('manual', 'primary', 2, 1, 1)
     assert model.compacted == [(history(), 'the name')]
-    # Nothing but the compaction was sent.
-    assert model.seen == []
-    assert [type(event).__name__ for event in events.events] == ['CompactionStartEvent', 'CompactionEndEvent']
+    [record] = result.compactions
+    assert (record.reason, record.handler, record.messages_before, record.kept_from) == ('manual', 'native', 3, 1)
+    assert record.summarized == history()
     start, end = events.events
     assert isinstance(start, CompactionStartEvent) and isinstance(end, CompactionEndEvent)
-    assert (start.reason, start.focus, start.model_name, start.messages_before) == ('manual', 'the name', 'primary', 3)
-    assert (end.handler, end.usage) == ('native', COMPACTION_USAGE)
-
-    # The conversation continues from the compacted history.
-    continued = await Agent(model).run('What is my name?', message_history=result.messages)
-    assert isinstance(model.seen[0][0], ModelResponse)
-    assert continued.output == 'answered by primary'
-
-
-async def test_agent_compact_through_a_wrapper_agent():
-    """`compact()` is on every agent: a `WrapperAgent` compacts through the agent it wraps."""
-    model = CompactingModel('primary')
-    agent = WrapperAgent(Agent(model, capabilities=[NativeCompaction()]))
-
-    result = await agent.compact(history())
-
-    assert result is not None
-    assert model.compacted == [(history(), None)]
+    assert (start.reason, start.focus) == ('manual', 'the name')
+    # The first request was answered from the compacted history.
+    [first_request] = model.seen
+    assert isinstance(first_request[0], ModelResponse)
+    assert isinstance(first_request[0].parts[0], CompactionPart)
+    assert result.output == 'answered by primary'
 
 
-async def test_agent_compact_run_lifecycle():
-    """`before_run` and `wrap_run` fire, and the run ends without a result: `after_run` doesn't fire."""
+@pytest.mark.parametrize(
+    ('compact', 'reason'),
+    [
+        pytest.param(True, 'manual', id='true'),
+        pytest.param({'reason': 'threshold'}, 'threshold', id='reason'),
+    ],
+)
+async def test_run_compact_with_a_function_handler(compact: bool | CompactionOptions, reason: str):
+    summarize = Summarize()
+    agent = Agent(CompactingModel('primary', supports=False), capabilities=[summarize])
+
+    result = await agent.run('hi', message_history=history(), compact=compact)
+
+    [request] = summarize.calls
+    assert (request.reason, request.focus) == (reason, None)
+    assert [record.reason for record in result.compactions] == [reason]
+
+
+async def test_run_without_compact_does_not_compact():
+    summarize = Summarize()
+    agent = Agent(CompactingModel('primary', supports=False), capabilities=[summarize])
+
+    result = await agent.run('hi', message_history=history(), compact=False)
+
+    assert summarize.calls == []
+    assert result.compactions == []
+
+
+async def test_run_compact_runs_the_full_lifecycle():
+    """The compacting run is a run like any other: `after_run` gets its result, with the compaction on it."""
     calls: list[str] = []
 
     @dataclass
@@ -399,168 +423,105 @@ async def test_agent_compact_run_lifecycle():
 
         async def wrap_run(self, ctx: RunContext[Any], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
             calls.append('wrap_run')
-            try:
-                return await handler()
-            except asyncio.CancelledError:
-                calls.append('wrap_run cancelled')
-                raise
+            return await handler()
 
         async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
-            calls.append('after_run')  # pragma: no cover
-            return result  # pragma: no cover
+            calls.append(f'after_run with {[record.handler for record in result.compactions]}')
+            return result
 
     agent = Agent(CompactingModel('primary'), capabilities=[Lifecycle(), NativeCompaction()])
-    assert await agent.compact(history()) is not None
-    assert calls == ['wrap_run', 'before_run', 'wrap_run cancelled']
+    result = await agent.run('hi', message_history=history(), compact=True)
+
+    assert calls == ['wrap_run', 'before_run', "after_run with ['native']"]
+    assert len(result.compactions) == 1
 
 
-async def test_agent_compact_keeps_a_trailing_request():
-    """A history that ends with a request compacts for answering it, and keeps it."""
+def test_run_sync_compact():
     model = CompactingModel('primary')
     agent = Agent(model, capabilities=[NativeCompaction()])
-    messages = [*history(), ModelRequest(parts=[UserPromptPart('What is my name?')])]
 
-    result = await agent.compact(messages, reason='threshold')
+    result = agent.run_sync('hi', message_history=history(), compact={'focus': 'the name'})
 
-    assert result is not None
-    assert model.compacted == [(history(), None)]
-    assert len(result.messages) == 2
-    assert result.messages[1].parts == messages[2].parts
-    assert result.record is not None
-    assert (result.record.reason, result.record.messages_before, result.record.kept_from) == ('threshold', 3, 1)
-    assert result.record.summarized == history()
+    assert model.compacted == [(history(), 'the name')]
+    assert len(result.compactions) == 1
 
 
-async def test_agent_compact_keeps_the_given_messages_as_they_were():
-    """Like a run, it compacts the history as the request shows it, and returns the given originals of what it kept.
-
-    A `prepare_model_request` hook's substitution is what's compacted, and its insertion only for this request isn't
-    compacted or returned.
-    """
+async def test_run_stream_compact():
     model = CompactingModel('primary')
+    agent = Agent(model, capabilities=[NativeCompaction()])
 
-    @dataclass
-    class RequestOnly(AbstractCapability[Any]):
-        async def prepare_model_request(
-            self, ctx: RunContext[Any], request_context: ModelRequestContext
-        ) -> ModelRequestContext:
-            first, *middle, last = request_context.messages
-            substituted = replace(first, parts=[UserPromptPart('My name is [redacted].', timestamp=TIMESTAMP)])
-            reminder = ModelRequest(parts=[UserPromptPart('A reminder for this request only.')])
-            request_context.messages = [substituted, *middle, reminder, last]
-            return request_context
+    async with agent.run_stream('hi', message_history=history(), compact=True) as stream:
+        assert await stream.get_output() == 'answered by primary'
 
-    agent = Agent(model, capabilities=[RequestOnly(), NativeCompaction()])
-    question = ModelRequest(parts=[UserPromptPart('What is my name?', timestamp=TIMESTAMP)], timestamp=TIMESTAMP)
-
-    result = await agent.compact([*history(), question])
-
-    assert result is not None
-    [(compacted, _)] = model.compacted
-    assert [part.content for part in compacted[0].parts if isinstance(part, UserPromptPart)] == [
-        'My name is [redacted].'
-    ]
-    assert compacted[1:] == history()[1:]
-    assert len(result.messages) == 2
-    assert result.messages[-1].parts == question.parts
+    assert len(model.compacted) == 1
+    assert [record.handler for record in stream.compactions] == ['native']
 
 
-async def test_agent_compact_with_a_capability_for_the_call():
+async def test_run_stream_events_compact():
     model = CompactingModel('primary')
-    agent = Agent(model)
+    agent = Agent(model, capabilities=[NativeCompaction()])
 
-    assert await agent.compact(history()) is None
-    result = await agent.compact(history(), capabilities=[NativeCompaction()])
-    assert result is not None
-    assert result.handler == 'native'
+    async with agent.run_stream_events('hi', message_history=history(), compact=True) as stream:
+        events = [event async for event in stream]
+
+    assert len(model.compacted) == 1
+    assert isinstance(final := events[-1], AgentRunResultEvent)
+    assert len(final.result.compactions) == 1
 
 
-async def test_agent_compact_returns_none_when_nothing_compacts():
-    """Neither a model that can't compact nor a cancelled compaction leaves a result, and nothing is sent."""
-    unsupported = CompactingModel('primary', supports=False)
-    agent = Agent(unsupported, capabilities=[NativeCompaction()])
-    assert await agent.compact(history()) is None
-
+async def test_wrapper_agent_run_compact():
     model = CompactingModel('primary')
-    events = RecordEvents(cancel=True)
-    agent = Agent(model, capabilities=[events, NativeCompaction()])
-    assert await agent.compact(history()) is None
-    assert model.compacted == []
-    assert model.seen == unsupported.seen == []
+    agent = WrapperAgent(Agent(model, capabilities=[NativeCompaction()]))
+
+    result = await agent.run('hi', message_history=history(), compact=True)
+
+    assert len(model.compacted) == 1
+    assert len(result.compactions) == 1
 
 
-async def test_agent_compact_through_wrap_model_request():
-    """`wrap_model_request` wraps the compaction like a model request, and sees its response."""
+async def test_agent_run_request_compaction_mid_run():
+    """`AgentRun.request_compaction()` between steps of an `iter()` loop compacts before the next request."""
     model = CompactingModel('primary')
-    wrapped: list[ModelResponse] = []
+    tool_then_text(model)
+    agent = Agent(model, capabilities=[NativeCompaction()], tools=[look_up])
 
-    @dataclass
-    class Wrap(AbstractCapability[Any]):
-        async def wrap_model_request(
-            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
-        ) -> ModelResponse:
-            response = await handler(request_context)
-            wrapped.append(response)
-            return response
+    async with agent.iter('What is my name?', message_history=history()) as agent_run:
+        async for node in agent_run:
+            if Agent.is_call_tools_node(node):
+                agent_run.request_compaction(reason='threshold', focus='the name')
 
-    agent = Agent(model, capabilities=[Wrap(), NativeCompaction()])
-    result = await agent.compact(history())
-    assert result is not None
-    assert [response.parts for response in wrapped] == [[result.part]]
+    # The tool call's response and its result are kept; everything before them is compacted.
+    [(compacted, focus)] = model.compacted
+    assert focus == 'the name'
+    assert compacted[:2] == history()
+    assert [part.content for part in compacted[2].parts if isinstance(part, UserPromptPart)] == ['What is my name?']
+    assert agent_run.result is not None
+    [record] = agent_run.result.compactions
+    assert (record.reason, record.handler) == ('threshold', 'native')
+    second_request = model.seen[1]
+    assert isinstance(second_request[0].parts[0], CompactionPart)
+    assert second_request[1].parts == [ToolCallPart('look_up', {}, tool_call_id='call')]
 
-    unsupported = Agent(CompactingModel('primary', supports=False), capabilities=[Wrap(), NativeCompaction()])
-    assert await unsupported.compact(history()) is None
-    assert len(wrapped) == 1
-
-
-async def test_agent_compact_moves_on_to_the_model_a_hook_asks_for():
-    """A `prepare_model_request` hook's `RetryModelRequest`, like `ModelFallback`'s sticky one, picks the model."""
-    primary = CompactingModel('primary')
-    other = CompactingModel('other')
-
-    @dataclass
-    class Redirect(AbstractCapability[Any]):
-        async def prepare_model_request(
-            self, ctx: RunContext[Any], request_context: ModelRequestContext
-        ) -> ModelRequestContext:
-            if request_context.model is primary:
-                raise RetryModelRequest(model=other)
-            return request_context
-
-    agent = Agent(primary, capabilities=[Redirect(), NativeCompaction()])
-    result = await agent.compact(history())
-
-    assert result is not None
-    assert result.record is not None
-    assert result.record.model_name == 'other'
-    assert primary.compacted == []
-    assert len(other.compacted) == 1
+    with pytest.raises(UserError, match='The run has ended'):
+        agent_run.request_compaction()
 
 
-async def test_agent_compact_raises_a_compaction_error():
-    agent = Agent(CompactingModel('primary', fails=True), capabilities=[NativeCompaction()])
-    with pytest.raises(ModelAPIError, match='compaction rate limited'):
-        await agent.compact(history())
+async def test_run_stream_events_request_compaction():
+    """The `run_stream_events()` iterator requests compaction once started, like `AgentRun`."""
+    model = CompactingModel('primary')
+    tool_then_text(model)
+    agent = Agent(model, capabilities=[NativeCompaction()], tools=[look_up])
 
+    async with agent.run_stream_events('What is my name?', message_history=history()) as events:
+        with pytest.raises(UserError):
+            events.request_compaction()
+        async for event in events:
+            if isinstance(event, FunctionToolCallEvent):
+                events.request_compaction(focus='the name')
 
-@pytest.mark.parametrize(
-    'messages',
-    [
-        pytest.param([], id='empty'),
-        pytest.param(
-            [ModelRequest(parts=[UserPromptPart('hi')]), ModelResponse(parts=[ToolCallPart('tool', {})])],
-            id='tool-calls',
-        ),
-        pytest.param(
-            [ModelRequest(parts=[UserPromptPart('hi')]), ModelResponse(parts=[TextPart('hm')], state='suspended')],
-            id='suspended',
-        ),
-    ],
-)
-async def test_agent_compact_rejects_a_history_it_cannot_compact(messages: list[ModelMessage]):
-    agent = Agent(CompactingModel('primary'), capabilities=[NativeCompaction()])
-    with pytest.raises(UserError):
-        await agent.compact(messages)
+    assert [focus for _, focus in model.compacted] == ['the name']
+    assert events.result is not None
+    assert len(events.result.compactions) == 1
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
