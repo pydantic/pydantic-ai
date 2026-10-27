@@ -14,13 +14,19 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, AgentRunResultEvent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
+    BinaryContent,
     CachePoint,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryFeedbackPart,
+    RetryInfo,
+    SystemPromptPart,
+    TextContent,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -1183,6 +1189,27 @@ class TestReminder:
         reminder = cast(UserPromptPart, seen[-1].parts[-1])
         assert reminder.content[0] == CachePoint(ttl='5m')
 
+    async def test_breakpoint_follows_retry_feedback(self) -> None:
+        """Feedback that answers no call still reaches Anthropic and Bedrock as content a breakpoint can mark."""
+        store = InMemoryPlanStore()
+        await store.add_item(PlanItem(content='Do X'))
+        feedback = RetryFeedbackPart('try again', retry=RetryInfo(cause='model_retry'))
+        seen, _ = await self._run_hook(Planning[None](store=store), [ModelRequest(parts=[feedback])])
+        reminder = cast(UserPromptPart, seen[-1].parts[-1])
+        assert reminder.content[0] == CachePoint(ttl='5m')
+
+    @pytest.mark.parametrize(
+        'content',
+        [[TextContent('goal')], [BinaryContent(data=b'\x00', media_type='image/png')]],
+        ids=['text-content', 'binary-content'],
+    )
+    async def test_breakpoint_follows_non_string_user_content(self, content: list[UserContent]) -> None:
+        store = InMemoryPlanStore()
+        await store.add_item(PlanItem(content='Do X'))
+        seen, _ = await self._run_hook(Planning[None](store=store), [ModelRequest(parts=[UserPromptPart(content)])])
+        reminder = cast(UserPromptPart, seen[-1].parts[-1])
+        assert reminder.content[0] == CachePoint(ttl='5m')
+
     async def test_last_not_model_request_passthrough(self) -> None:
         store = InMemoryPlanStore()
         cap = Planning[None](store=store)
@@ -1200,6 +1227,8 @@ class TestReminder:
             [UserPromptPart('')],
             [UserPromptPart(content=[''])],
             [UserPromptPart(content=[CachePoint(ttl='5m')])],
+            [UserPromptPart(content=[TextContent('')])],
+            [SystemPromptPart('be terse')],
         ]:
             seen, _ = await self._run_hook(cap, [ModelRequest(parts=parts)])
             reminder = cast(UserPromptPart, seen[-1].parts[-1])

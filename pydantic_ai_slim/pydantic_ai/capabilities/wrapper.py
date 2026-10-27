@@ -275,6 +275,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
 
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        return self.wrapped.get_wrapper_model(model)
+
     async def _process_seeded_history(
         self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage]
     ) -> list[ModelMessage]:
