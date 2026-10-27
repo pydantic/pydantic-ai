@@ -1711,8 +1711,12 @@ class TestEndToEnd:
             and message.metadata.get('pydantic-ai-harness.compaction.kept-user-message.v1')
             for part in message.parts
         ]
-        assert [type(part).__name__ for part in kept] == ['UserPromptPart']
-        assert _sent_texts([ModelRequest(parts=kept)]) == ['go']
+        assert kept == [
+            UserPromptPart(
+                [TextContent('go', metadata='pydantic-ai-harness.compaction.kept-user-message.v1')],
+                timestamp=IsDatetime(),
+            )
+        ]
 
     async def test_lasting_reminder_is_never_taken_for_a_previous_summary(self) -> None:
         """A lasting reminder that opens like an earlier release's summary is recognized as a reminder by its origin."""

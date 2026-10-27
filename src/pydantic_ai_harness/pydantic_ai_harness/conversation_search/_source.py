@@ -26,7 +26,6 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Protocol, runtime_checkable
 
-from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -36,6 +35,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     SystemPromptPart,
 )
+from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness.compaction._summary import without_summaries
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord
 
@@ -167,10 +167,6 @@ def without_summary_artifacts(messages: Sequence[ModelMessage]) -> list[ModelMes
     return out
 
 
-_HARNESS_ORIGIN_PREFIX = 'pydantic-ai-harness.'
-"""The prefix of the `origin` metadata harness capabilities set on what they add, such as a lasting reminder."""
-
-
 def _is_legacy_summary(part: ModelRequestPart) -> bool:
     """Whether *part* is the summary system prompt an earlier `SummarizingCompaction` wrote.
 
@@ -180,11 +176,7 @@ def _is_legacy_summary(part: ModelRequestPart) -> bool:
     return (
         isinstance(part, SystemPromptPart)
         and part.content.startswith(SUMMARY_PREFIX)
-        and not (
-            is_str_dict(part.metadata)
-            and isinstance(origin := part.metadata.get('origin'), str)
-            and origin.startswith(_HARNESS_ORIGIN_PREFIX)
-        )
+        and harness_origin(part.metadata) is None
     )
 
 

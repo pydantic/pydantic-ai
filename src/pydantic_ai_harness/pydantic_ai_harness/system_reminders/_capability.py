@@ -9,7 +9,7 @@ import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field
-from typing import TYPE_CHECKING, Generic, Literal, TypeGuard
+from typing import TYPE_CHECKING, Generic, Literal, TypeAlias, TypeGuard
 
 from pydantic_ai import Agent
 from pydantic_ai._framing import neutralize_tags
@@ -64,10 +64,13 @@ else:
 _REMINDER_ORIGIN = 'pydantic-ai-harness.system_reminders.reminder.v1'
 """The `origin` in the `metadata` of the parts a `SystemReminders` firing enqueues.
 
-The request-scoped `SystemPromptPart` holds the reminders in system voice, and each `TextContent` on
+The `SystemPromptPart` holds the reminders in system voice, and each `TextContent` on
 the user channel holds text a reminder quotes but didn't write. Identify reminders by this metadata,
 never by their model-visible text.
 """
+
+_Scope: TypeAlias = Literal['conversation', 'request']
+"""A reminder firing's `SystemPromptPart.scope`; `Reminder.scope` spells it out so the API docs show the values."""
 
 
 @dataclass(frozen=True)
@@ -582,7 +585,7 @@ class _StaticText:
     """A static reminder's rendered text and the scope it fires with."""
 
     text: str
-    scope: Literal['conversation', 'request']
+    scope: _Scope
 
     def __str__(self) -> str:
         return self.text
@@ -600,7 +603,7 @@ def _reminder_parts(texts: Sequence[str | _StaticText | GeneratedReminder]) -> l
     """
     parts: list[SystemPromptPart | TextContent] = []
     plain: list[str] = []
-    plain_scope: Literal['conversation', 'request'] = 'request'
+    plain_scope: _Scope = 'request'
 
     def flush_plain() -> None:
         if plain:
