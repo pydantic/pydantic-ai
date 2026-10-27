@@ -1011,21 +1011,22 @@ async def _get_instructions(
 async def _get_loaded_instructions(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     run_context: RunContext[DepsT],
-) -> list[_messages.InstructionPart]:
-    """Resolve the instructions of the deferred capabilities the model has loaded, in the order it loaded them.
+    capability_ids: Iterable[str],
+) -> dict[str, list[_messages.InstructionPart]]:
+    """Resolve the instructions of the deferred capabilities in `capability_ids`, the ones the model has loaded.
 
     They reach the model through history, stated after the `load_capability` return, rather than in the
     prefix: they go into `instruction_parts` so `before_model_request` hooks see them, marked `'via_history'`
     in `instruction_visibility`, and `update_loaded_instruction_history` records their changes.
     """
-    parts: list[_messages.InstructionPart] = []
-    for capability_id in LoadedInstructionValues.of(ctx.state.message_history).values:
+    resolved: dict[str, list[_messages.InstructionPart]] = {}
+    for capability_id in capability_ids:
         capability = run_context.capabilities.get(capability_id)
         if capability is not None and capability.defer_loading is True:
-            parts.extend(
-                await resolve_loaded_capability_instructions(capability_id, ctx.deps.tool_manager.toolset, run_context)
+            resolved[capability_id] = await resolve_loaded_capability_instructions(
+                capability_id, ctx.deps.tool_manager.toolset, run_context
             )
-    return parts
+    return resolved
 
 
 def _split_loaded_instruction_parts(
@@ -1627,10 +1628,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     )
     _did_stream: bool = field(repr=False, init=False, default=False)
     last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
-    _resolved_loaded_parts: list[_messages.InstructionPart] = field(
-        repr=False, init=False, default_factory=list[_messages.InstructionPart]
+    _resolved_loaded_parts: dict[str, list[_messages.InstructionPart]] = field(
+        repr=False, init=False, default_factory=dict[str, list[_messages.InstructionPart]]
     )
-    """The loaded capabilities' instruction parts this request resolved, before the hooks ran."""
+    """The loaded capabilities' instruction parts this request resolved, before the hooks ran, by capability id."""
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -2137,9 +2138,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
-        loaded_instruction_parts = await _get_loaded_instructions(ctx, run_context)
-        self._resolved_loaded_parts = loaded_instruction_parts
-        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts, loaded_instruction_parts)
+        self._resolved_loaded_parts = await _get_loaded_instructions(
+            ctx, run_context, LoadedInstructionValues.of(ctx.state.message_history).values
+        )
+        model_request_parameters = await _prepare_request_parameters(
+            ctx, instruction_parts, [part for parts in self._resolved_loaded_parts.values() for part in parts]
+        )
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
         run_context.model_settings = model_settings
 
@@ -2316,8 +2320,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # anchor the prefix.
             # Loaded capabilities' instructions reach the model through history: changes to them are appended
             # after the prefix's, and they leave the parts the model is sent.
+            loaded_capability_ids = LoadedInstructionValues.of(messages).values
+            # A hook that added a `load_capability` exchange loaded a capability after the instructions were
+            # resolved. Its instructions are resolved now, so they're stated on the request that reveals its tools.
+            self._resolved_loaded_parts |= await _get_loaded_instructions(
+                ctx,
+                run_context,
+                [
+                    capability_id
+                    for capability_id in loaded_capability_ids
+                    if capability_id not in self._resolved_loaded_parts
+                ],
+            )
             prefix_parts, loaded_parts = _split_loaded_instruction_parts(
-                model_request_parameters, self._resolved_loaded_parts, LoadedInstructionValues.of(messages).values
+                model_request_parameters,
+                [part for parts in self._resolved_loaded_parts.values() for part in parts],
+                loaded_capability_ids,
             )
             recording_targets = _history_recording_targets(ctx, messages)
             model_request_parameters = replace(
