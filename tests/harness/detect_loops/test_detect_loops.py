@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from itertools import count, pairwise
 
 import pytest
@@ -582,7 +583,8 @@ class TestDetectLoops:
             async def wrap_model_request(
                 self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
             ) -> ModelResponse:
-                return replace(await handler(request_context), provider_response_id='annotated')
+                # A new timestamp means no response in history is the one `DetectLoops` recorded.
+                return replace(await handler(request_context), timestamp=datetime.now(UTC))
 
         agent = Agent(_scripted(*[[_call()]] * 3), capabilities=[AnnotateResponses(), detector])
 
@@ -622,5 +624,43 @@ class TestDetectLoops:
 
         await agent.run('Read it')
 
-        # No response in history has the calls `DetectLoops` recorded, so the results after the last one are read.
+        # The rewritten response keeps its timestamp and tool call ids, so it is still found.
         assert [(loop.pattern, loop.count) for loop in loops] == [('repeated_result', 3)]
+
+    async def test_an_earlier_call_with_a_reused_id_is_not_mistaken_for_the_latest(self):
+        loops, detector = _collect()
+        statuses = iter(['busy', 'busy', 'idle'])
+
+        @dataclass
+        class TagThirdResponse(AbstractCapability[object]):
+            requests: int = 0
+
+            def get_ordering(self) -> CapabilityOrdering:
+                return CapabilityOrdering(position='outermost')
+
+            async def wrap_model_request(
+                self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+            ) -> ModelResponse:
+                self.requests += 1
+                response = await handler(request_context)
+                if self.requests != 3:
+                    return response
+                parts = [
+                    replace(part, args={**part.args_as_dict(), 'tagged': True})
+                    if isinstance(part, ToolCallPart)
+                    else part
+                    for part in response.parts
+                ]
+                return replace(response, parts=parts)
+
+        call = ToolCallPart('status', {'job': 'build'}, tool_call_id='call_0')
+        agent = Agent(_scripted(*[[call]] * 3), capabilities=[TagThirdResponse(), detector])
+
+        @agent.tool_plain
+        def status(job: str, tagged: bool = False) -> str:
+            return next(statuses)
+
+        await agent.run('Wait for the build')
+
+        # The second response matches the third's recorded calls exactly, but its `busy` is not the third's result.
+        assert loops == []

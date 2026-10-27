@@ -8,6 +8,7 @@ import re
 from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from hashlib import sha256
 from itertools import takewhile
 from typing import TYPE_CHECKING, Literal, TypeAlias
@@ -106,6 +107,9 @@ class _Call:
 @dataclass(frozen=True)
 class _Step:
     """What one model response in the run did."""
+
+    timestamp: datetime
+    """The response's timestamp, which finds it in history even after a capability replaced its parts."""
 
     calls: tuple[_Call, ...]
     text: str | None
@@ -219,7 +223,7 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
             for tool_name, tool_call_id, fingerprint in _call_keys(response)
         )
         text = None if calls else ' '.join((response.text or '').split()).lower() or None
-        self._steps.append(_Step(calls=calls, text=text))
+        self._steps.append(_Step(timestamp=response.timestamp, calls=calls, text=text))
         self._results_pending = True
         return response
 
@@ -375,18 +379,18 @@ def _call_keys(response: ModelResponse) -> list[tuple[str, str, str]]:
 def _record_results(step: _Step, messages: Sequence[ModelMessage]) -> None:
     """Fill in the results of `step`'s calls from the requests that follow its response in `messages`.
 
-    The response is the last one with the same tool calls, because a capability that short-circuits a
-    model request can put a response DetectLoops never recorded after it. If none matches, because an outer
-    capability rewrote the calls, the last response is used. Only the requests up to the next response are
-    read, because some models reuse tool call ids across responses.
+    The response is the last one with the step's timestamp and tool call ids, because a capability that
+    short-circuits a model request can put a response DetectLoops never recorded after it, and some models
+    reuse tool call ids across responses. If none matches, the last response is used. Only the requests up
+    to the next response are read.
     """
     ids = [(call.tool_name, call.tool_call_id) for call in step.calls]
-    keys = [(call.tool_name, call.tool_call_id, call.fingerprint) for call in step.calls]
     responses = [(index, message) for index, message in enumerate(messages) if isinstance(message, ModelResponse)]
     matching = (
         index
         for index, response in reversed(responses)
-        if [(part.tool_name, part.tool_call_id) for part in response.tool_calls] == ids and _call_keys(response) == keys
+        if response.timestamp == step.timestamp
+        and [(part.tool_name, part.tool_call_id) for part in response.tool_calls] == ids
     )
     start = next(matching, responses[-1][0] if responses else len(messages)) + 1
     digests: dict[str, list[str]] = {}
