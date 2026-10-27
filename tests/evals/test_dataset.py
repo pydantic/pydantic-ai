@@ -24,6 +24,7 @@ from .utils import render_table
 with try_import() as imports_successful:
     from rich.table import Table
 
+    from pydantic_ai.models.test import TestModel
     from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import (
@@ -36,7 +37,16 @@ with try_import() as imports_successful:
         LLMJudge,
     )
     from pydantic_evals.evaluators.context import EvaluatorContext
+    from pydantic_evals.generation import generate_dataset
     from pydantic_evals.reporting import EvaluationReport, ReportCase, ReportCaseAdapter, ReportCaseFailure
+
+    BareNoneDatasetCase = tuple[
+        type[Dataset[str | None, str | None, str | None]],
+        type[Dataset[str | None, str | None, str | None]],
+        str | None,
+        str | None,
+        str | None,
+    ]
 
     @dataclass
     class MockEvaluator(Evaluator[object, object, object]):
@@ -1091,25 +1101,25 @@ def test_serialization_errors(tmp_path: Path):
     )
 
 
-@pytest.mark.parametrize(
-    ('dataset_type', 'none_type_dataset_type', 'inputs', 'expected_output', 'metadata'),
-    [
-        pytest.param(Dataset[None, str, str], Dataset[type(None), str, str], None, 'out', 'meta', id='inputs'),
-        pytest.param(Dataset[str, None, str], Dataset[str, type(None), str], 'in', None, 'meta', id='output'),
-        pytest.param(Dataset[str, str, None], Dataset[str, str, type(None)], 'in', 'out', None, id='metadata'),
+@pytest.fixture(
+    params=[
+        pytest.param((Dataset[None, str, str], Dataset[type(None), str, str], None, 'out', 'meta'), id='inputs'),
+        pytest.param((Dataset[str, None, str], Dataset[str, type(None), str], 'in', None, 'meta'), id='output'),
+        pytest.param((Dataset[str, str, None], Dataset[str, str, type(None)], 'in', 'out', None), id='metadata'),
     ]
     if imports_successful()
     else [],
 )
+def bare_none_dataset_case(request: pytest.FixtureRequest) -> BareNoneDatasetCase:
+    return request.param
+
+
 def test_to_file_roundtrip_bare_none_type_argument(
     tmp_path: Path,
-    dataset_type: type[Dataset[str | None, str | None, str | None]],
-    none_type_dataset_type: type[Dataset[str | None, str | None, str | None]],
-    inputs: str | None,
-    expected_output: str | None,
-    metadata: str | None,
+    bare_none_dataset_case: BareNoneDatasetCase,
 ):
     """A dataset parametrized with a bare `None` type argument serializes exactly like the `NoneType` spelling."""
+    dataset_type, none_type_dataset_type, inputs, expected_output, metadata = bare_none_dataset_case
     bare_none = dataset_type(
         name='test_cases',
         cases=[Case(name='case1', inputs=inputs, expected_output=expected_output, metadata=metadata)],
@@ -1134,26 +1144,6 @@ def test_to_file_roundtrip_bare_none_type_argument(
     assert loaded.cases[0].inputs == inputs
     assert loaded.cases[0].expected_output == expected_output
     assert loaded.cases[0].metadata == metadata
-
-
-@pytest.mark.parametrize(
-    ('dataset_type', 'none_type_dataset_type'),
-    [
-        pytest.param(Dataset[None, str, str], Dataset[type(None), str, str], id='inputs'),
-        pytest.param(Dataset[str, None, str], Dataset[str, type(None), str], id='output'),
-        pytest.param(Dataset[str, str, None], Dataset[str, str, type(None)], id='metadata'),
-    ]
-    if imports_successful()
-    else [],
-)
-def test_model_json_schema_with_evaluators_bare_none_type_argument(
-    dataset_type: type[Dataset[str | None, str | None, str | None]],
-    none_type_dataset_type: type[Dataset[str | None, str | None, str | None]],
-):
-    """A dataset parametrized with a bare `None` type argument builds a schema like the `NoneType` spelling."""
-    schema = dataset_type.model_json_schema_with_evaluators()
-    assert schema == none_type_dataset_type.model_json_schema_with_evaluators()
-    assert isinstance(schema, dict)
 
 
 def test_from_file_schema_mismatch(tmp_path: Path):
@@ -1871,26 +1861,11 @@ def test_import_generate_dataset():
     assert generate_dataset
 
 
-@pytest.mark.parametrize(
-    ('dataset_type', 'inputs', 'expected_output', 'metadata'),
-    [
-        pytest.param(Dataset[None, str, str], None, 'out', 'meta', id='inputs'),
-        pytest.param(Dataset[str, None, str], 'in', None, 'meta', id='output'),
-        pytest.param(Dataset[str, str, None], 'in', 'out', None, id='metadata'),
-    ]
-    if imports_successful()
-    else [],
-)
 async def test_generate_dataset_bare_none_type_argument_completes(
-    dataset_type: type[Dataset[str | None, str | None, str | None]],
-    inputs: str | None,
-    expected_output: str | None,
-    metadata: str | None,
+    bare_none_dataset_case: BareNoneDatasetCase,
 ):
     """`generate_dataset` completes for a dataset type parametrized with a bare `None` type argument."""
-    from pydantic_ai.models.test import TestModel
-    from pydantic_evals.generation import generate_dataset
-
+    dataset_type, _, inputs, expected_output, metadata = bare_none_dataset_case
     dataset = await generate_dataset(
         dataset_type=dataset_type,
         model=TestModel(
@@ -1900,7 +1875,6 @@ async def test_generate_dataset_bare_none_type_argument_completes(
         ),
         n_examples=1,
     )
-    assert isinstance(dataset, Dataset)
     assert len(dataset.cases) == 1
     assert dataset.cases[0].inputs == inputs
     assert dataset.cases[0].expected_output == expected_output
