@@ -57,14 +57,14 @@ from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    InstallProgress,
     QueuedInput,
     Renderer,
     SessionEndReason,
     SessionStart,
-    TaskEvent,
+    TaskProgress,
     TurnEnd,
     TurnStart,
-    UpdateProgress,
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, SessionPlugins
@@ -463,7 +463,7 @@ def create_shell(
         inputs=lambda: shell,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
-    updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
+    updates.report = lambda: loader.fire if loader.handles(InstallProgress) else None
     # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
     updates.capture = lambda: web_serving(loader) is not None
     updates.serving = lambda: web_serving(loader)
@@ -822,7 +822,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             conversation_id=lambda: self.session.summary.id,
             router=self.process.tasks,
             fire=self.loader.fire,
-            listening=lambda: self.loader.handles(TaskEvent),
+            listening=lambda: self.loader.handles(TaskProgress),
             send_input=self.send_input,
             prompt_task=self.prompt_task,
         )
