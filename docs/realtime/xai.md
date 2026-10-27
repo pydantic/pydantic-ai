@@ -57,7 +57,8 @@ back but still responds when the user stops speaking, so use `turn_detection=Fal
 [push-to-talk](turns.md#push-to-talk) instead.
 
 xAI accepts the shared `max_tokens` and `parallel_tool_calls` settings but ignores them: replies
-aren't capped, and the model can still call several tools at once.
+aren't capped, and the model can still call several tools at once, so `parallel_tool_calls=False` warns
+with an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning].
 
 [Input transcription](audio.md#input-transcription) defaults to `'auto'`. Unlike the incremental
 deltas described in [live captions](audio.md#live-captions), xAI sends cumulative transcript

@@ -10,7 +10,7 @@ def openai_codex_model_profile(model_name: str) -> ModelProfile:
     The Codex backend speaks the Responses API with a narrower dialect than the standard OpenAI
     endpoint: it serves streaming responses only, requires `store=false`, rejects sampling/tuning
     request fields (verified live on PR [#6433](https://github.com/pydantic/pydantic-ai/pull/6433)),
-    rejects the explicit prompt caching fields, and does not expose server-side input-token counting.
+    rejects the explicit prompt caching fields, and does not expose server-side input-token counting or the Batch API.
     """
     return merge_profile(
         openai_model_profile(model_name),
@@ -27,6 +27,7 @@ def openai_codex_model_profile(model_name: str) -> ModelProfile:
             openai_supports_input_token_counting=False,
             # Unverified on the Codex backend, so the `computer` tool stays a function tool.
             openai_supports_computer_tool=False,
+            openai_supports_batch_api=False,
             # The backend rejects `prompt_cache_options` and `prompt_cache_breakpoint` with a 400 on every
             # model it serves, and caches prompts implicitly instead, so the unified `cache` setting has
             # nothing to turn on.

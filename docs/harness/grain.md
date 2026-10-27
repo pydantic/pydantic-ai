@@ -80,7 +80,19 @@ With durable execution such as Temporal, read the token from the run's deps, not
 
 Grain connects when the run starts, even with `defer_loading=True`. If the token is invalid or expired, the run raises an `httpx.HTTPStatusError` with status 401, so return `None` from the function when you know the token is no longer valid.
 
-The capability's `id` defaults to `grain`, so `defer_loading=True` works without one. To use two Grain accounts in one agent, give each `Grain` its own `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same. Two that share an `id` but differ raise an error.
+The capability's `id` defaults to `grain`, so `defer_loading=True` works without one. To use two Grain accounts in one agent, give each `Grain` its own `id` and `tool_prefix`. Two that share an `id` but differ raise an error.
+
+## Tool names
+
+The agent sees each of the server's tools under the `grain_` prefix, as in `grain_<tool>`, so they don't collide with other tools on the agent. Set `tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names the server gives them.
+
+`read_only` selects tools by what the server marks as read-only, not by name, so the prefix does not change what it keeps. A [toolset wrapper](../toolsets.md) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
+
+## Upgrading
+
+`Grain` used to give the agent the server's tool names unprefixed. They now reach the agent as `grain_<tool>`. Code that refers to them by name, such as a `filtered()` wrapper, an approval rule, or a `ToolGuardrail(tools=[...])`, needs the new names. A rule that no longer matches stops applying, so an approval rule or guardrail that named an old tool lets its calls through without approval or checks until you update it. Pass `tool_prefix=None` to keep the old names. If you wrapped `Grain` in [PrefixTools](../capabilities/prefix-tools.md) to avoid collisions, you can drop the wrapper and set `tool_prefix` instead; keeping it adds both prefixes.
+
+- **Durable runs in flight.** A Temporal or DBOS run replays the model responses it recorded, and their tool calls use the old names, so a run started before the change that calls a `Grain` tool after it no longer replays. Activity and step names come from the capability's `id`, which is unchanged. Let those runs finish, keep `tool_prefix=None` until they have, or deploy the change with [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) or a new DBOS application version.
 
 ## Tool selection and approval
 

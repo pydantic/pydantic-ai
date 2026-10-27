@@ -27,6 +27,7 @@ from websockets.typing import Origin
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.app import HEADER, Answer, Answers, DialogAnswer, Entered, Input, Interrupted
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    PROTOCOL,
     Dialog,
     DialogClosed,
     DialogOpened,
@@ -141,7 +142,7 @@ class WebClient:
     @asynccontextmanager
     async def messages(self) -> AsyncGenerator[AsyncIterator[ServerMessage]]:
         """The WebSocket's messages, a `Snapshot` first; iteration ends when the connection closes."""
-        address = f'ws://{self._netloc}/ws?token={self._token}'
+        address = f'ws://{self._netloc}/ws?token={self._token}&protocol={PROTOCOL}'
         async with connect(address, origin=Origin(f'http://{self._netloc}'), max_size=None, proxy=None) as socket:
 
             async def received() -> AsyncIterator[ServerMessage]:

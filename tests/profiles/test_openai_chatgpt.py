@@ -26,6 +26,7 @@ DIALECT = {
     'openai_responses_requires_store_false': True,
     'openai_supports_input_token_counting': False,
     'openai_supports_computer_tool': False,
+    'openai_supports_batch_api': False,
     'openai_supports_prompt_cache_breakpoints': False,
     'openai_responses_supports_prompt_cache_diagnostics': False,
     'openai_responses_supports_max_reasoning_effort': False,
