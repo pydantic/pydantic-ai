@@ -262,14 +262,15 @@ is the new build. It exits with status 1 when the check, uv, or finding uv faile
 Windows, `clai2 --update` exits with status 1 without installing: use `/update now` in
 an interactive session, which installs after CLAI exits. The flag cannot be combined with
 `config`, `plugins`, `--prompt`, `--web`, `--resume`, `--continue`,
-`--session-id`, `--agent`, or `--worktree`.
+`--session-id`, `--agent`, `--worktree`, `--model`, `--request-limit`, or
+`--fork-session`.
 
-`/update` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
+`/update now` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
 typed in the page or in the terminal: the page shows uv's progress and the result. After
 an install, CLAI restarts with the web UI on the same port and token, so the page
 reconnects by itself and names the new version. `clai2 --web` keeps `--web`, `--port`,
 and `--token-file`; a terminal session that ran `/web` comes back with the web UI running.
-Like any command, `/update` entered while a turn runs waits for the turn to end.
+Like any command, `/update now` entered while a turn runs waits for the turn to end.
 
 Windows does not let a program replace files it is running from, so there
 an install exits CLAI first and installs in a new PowerShell window; start `clai2`
@@ -2388,7 +2389,7 @@ uncommitted or untracked files, or a different commit checked out than at launch
 Ignored files do not count. If nothing changed in a worktree this launch created,
 CLAI removes it without asking, and deletes its `clai-NAME` branch too when this
 launch created that branch and Git agrees it is merged (`git branch -d`). This
-still applies after `/update` restarts CLAI in the worktree. An
+still applies after `/update now` restarts CLAI in the worktree. An
 unchanged worktree that CLAI reopened, or one you launched inside, is kept without
 asking.
 
@@ -2466,7 +2467,7 @@ many sessions run at once.
   shown in the terminal. With `/web` from a terminal, CLAI restarts in the folder
   it started in, so they refuse in a shown session that works in another folder.
   `/reload` keeps the terminal's conversation but closes the other live sessions and
-  stops the web UI; run `/web` again to reopen it. `/update` brings the web UI back.
+  stops the web UI; run `/web` again to reopen it. `/update now` brings the web UI back.
 - **Terminal menus and prompts.** A command that opens one, such as `/model add`,
   `/resume claude`, or `/set api_key`, opens it in the terminal that runs CLAI. When
   there is none, as for `clai2 --web` started from a script or service, the command

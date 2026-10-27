@@ -1537,7 +1537,7 @@ as `/plugins` shows. Settings, as `/plugins add web pydantic_clai2.builtin_plugi
 Security: the browser can make the agent run commands as you. The server binds `127.0.0.1` by
 default and checks every request. The `Host` header must name the server's own address, which
 stops DNS rebinding. Every request must carry a random token, new each launch but kept across
-`/update`'s restart (see below): API calls in a
+an install's restart (see below): API calls in a
 header that another site's page cannot set, the page and its files in the address, as the
 printed link does, and the WebSocket as a query parameter, from the server's own origin. No
 cookie holds it, since browsers send a host's cookies to all of its ports. `/web` opens the
@@ -2433,7 +2433,7 @@ export EXA_API_KEY=...
 ```
 
 With `uv tool`, extra packages installed using `--with` must be added again after
-`/update`. See [Updating](docs/reference.md#updating) for how CLAI installs updates.
+`/update now`. See [Updating](docs/reference.md#updating) for how CLAI installs updates.
 
 ```text
 /plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
@@ -2532,7 +2532,7 @@ Ten `async` methods fire outside the agent run, in the shell:
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
 | `on_task_progress` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
 | `on_fork_end` | a background `/fork` finished, failed, or was cancelled | `fork`, `output`, `error` | no |
-| `on_install_progress` | `/update` started installing a newer CLAI, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
+| `on_install_progress` | `/update now` started installing a newer CLAI, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
 name and original exception. Every successfully loaded plugin receives it, regardless
@@ -2580,7 +2580,7 @@ in, once saved), `output` its answer once `done` (`str` of a structured output),
 it `failed`. It fires when the fork ends, while the terminal holds the answer until no turn or
 command runs. A failure is printed and CLAI goes on.
 
-`on_install_progress` receives an `InstallProgress` event while `/update` installs a newer CLAI with
+`on_install_progress` receives an `InstallProgress` event while `/update now` installs a newer CLAI with
 uv: `target` is the version, or on the `main` channel the short commit, being installed, and
 `stage` says how far it got: `installing` first, then `output` for each line uv prints, with the
 line in `text`, then `failed` when uv failed, `installed` when CLAI must be started again by hand,

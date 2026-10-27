@@ -445,10 +445,12 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         or args.session_id is not None
         or args.agent is not None
         or args.worktree is not None
+        or args.model is not None
+        or args.request_limit is not None
     ):
         parser.error(
             '--update cannot be combined with config, plugins, --prompt, --web, --resume, --continue, '
-            '--session-id, --agent, or --worktree'
+            '--session-id, --agent, --worktree, --model, or --request-limit'
         )
     # `--continue` resumes the session it finds at startup, so it is checked as a `--resume` would be.
     resume = '' if args.continue_session else args.resume

@@ -14,7 +14,7 @@ from importlib.machinery import ModuleSpec
 from io import StringIO
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -1064,6 +1064,28 @@ def test_update_flag_reports_a_failed_check(
         cli_module.run()
     assert exited.value.code == 1
     assert capsys.readouterr().err == 'Could not check for a newer CLAI: offline\n'
+
+
+@pytest.mark.parametrize(
+    ('argv', 'error'),
+    [
+        (['--model', 'test'], '--update cannot be combined'),
+        (['-m', 'test'], '--update cannot be combined'),
+        (['--request-limit', '7'], '--update cannot be combined'),
+        (['--fork-session'], '`fork_session` (`--fork-session`) requires `resume` (`--resume`)'),
+    ],
+)
+def test_update_flag_rejects_session_options_before_installing(
+    argv: list[str], error: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    install = AsyncMock(return_value=0)
+    monkeypatch.setattr(cli_module, '_update', install)
+    monkeypatch.setattr('sys.argv', ['clai2', '--update', '--database', str(tmp_path / 'c.db'), *argv])
+    with pytest.raises(SystemExit) as exited:
+        cli_module.run()
+    assert exited.value.code == 2
+    assert error in capsys.readouterr().err
+    install.assert_not_called()
 
 
 @pytest.mark.parametrize(
