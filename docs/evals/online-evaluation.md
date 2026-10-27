@@ -210,7 +210,7 @@ Each event has `event.name = 'gen_ai.evaluation.result'` and a short human-reada
 - `gen_ai.evaluation.target` — `@evaluate(target=...)` or agent `name`. See [Target](#target).
 - `gen_ai.evaluation.evaluator.version` — `Evaluator.evaluator_version` class attribute; omitted when the class doesn't set it. See [Evaluator Versioning](#evaluator-versioning).
 - `gen_ai.evaluation.evaluator.source` — JSON-serialized [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec] identifying the evaluator class and its constructor arguments, so downstream queries can group by evaluator identity without relying on `name` alone (two different `LLMJudge(rubric=...)` instances share a name but have different sources).
-- `gen_ai.evaluation.id` — a fresh UUID per event, so consumers can deduplicate records that are delivered more than once.
+- `log.record.uid` — the OTel log record ID: a fresh UUID per event, so consumers can deduplicate records that are delivered more than once.
 
 Two `logfire.scorer.*` attributes make the record lossless and groupable. They use the same names and values as the result events of Logfire's hosted scorers, so one query reads results from both:
 
@@ -226,13 +226,13 @@ For example, the `OutputNotEmpty` evaluator above, decorated as `@evaluate(Outpu
 - `gen_ai.evaluation.score.label = 'pass'`
 - `gen_ai.evaluation.target = 'customer_support'`
 - `gen_ai.evaluation.evaluator.source = '{"name":"OutputNotEmpty","arguments":null}'`
-- `gen_ai.evaluation.id = '<uuid>'`
+- `log.record.uid = '<uuid>'`
 - `logfire.scorer.score_type = 'pass_fail'`
 - `logfire.scorer.run_id = '<uuid>'`
 
 An evaluator with constructor arguments gets those rendered into `source` — e.g. [`LLMJudge(rubric='Is the response helpful?')`][pydantic_evals.evaluators.LLMJudge] emits `gen_ai.evaluation.evaluator.source = '{"name":"LLMJudge","arguments":["Is the response helpful?"]}'`, so two `LLMJudge` instances with different rubrics remain distinguishable downstream.
 
-`gen_ai.evaluation.id` and the attributes under `gen_ai.evaluation.evaluator.*` are pydantic-evals extensions — they aren't in the current OTel GenAI semconv, and their names may change to align with future semconv additions.
+`gen_ai.evaluation.target` and the attributes under `gen_ai.evaluation.evaluator.*` are pydantic-evals extensions — they aren't in the current OTel GenAI semconv, and their names may change to align with future semconv additions.
 
 To disable the default emission (e.g. in a test harness that only wants to assert on a custom sink), set `emit_otel_events=False` on the config:
 

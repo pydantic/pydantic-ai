@@ -100,7 +100,7 @@ def test_record_attributes_per_result_kind(capfire: CaptureLogfire):
     assert records == snapshot(
         [
             {
-                'gen_ai.evaluation.id': IsStr(),
+                'log.record.uid': IsStr(),
                 'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
                 'gen_ai.evaluation.target': 'f',
                 'gen_ai.evaluation.name': 'Passed',
@@ -110,7 +110,7 @@ def test_record_attributes_per_result_kind(capfire: CaptureLogfire):
                 'logfire.scorer.score_type': 'pass_fail',
             },
             {
-                'gen_ai.evaluation.id': IsStr(),
+                'log.record.uid': IsStr(),
                 'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
                 'gen_ai.evaluation.target': 'f',
                 'gen_ai.evaluation.name': 'Accuracy',
@@ -119,7 +119,7 @@ def test_record_attributes_per_result_kind(capfire: CaptureLogfire):
                 'logfire.scorer.score_type': 'numeric',
             },
             {
-                'gen_ai.evaluation.id': IsStr(),
+                'log.record.uid': IsStr(),
                 'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
                 'gen_ai.evaluation.target': 'f',
                 'gen_ai.evaluation.name': 'Tone',
@@ -128,7 +128,7 @@ def test_record_attributes_per_result_kind(capfire: CaptureLogfire):
                 'logfire.scorer.score_type': 'categorical',
             },
             {
-                'gen_ai.evaluation.id': IsStr(),
+                'log.record.uid': IsStr(),
                 'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
                 'gen_ai.evaluation.target': 'f',
                 'gen_ai.evaluation.name': 'Judge',
@@ -138,7 +138,7 @@ def test_record_attributes_per_result_kind(capfire: CaptureLogfire):
             },
         ]
     )
-    assert len({str(r['gen_ai.evaluation.id']) for r in records}) == len(records)
+    assert len({str(r['log.record.uid']) for r in records}) == len(records)
 
 
 def test_bool_false_emits_fail_label(capfire: CaptureLogfire):

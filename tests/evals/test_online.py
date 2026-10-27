@@ -689,7 +689,7 @@ async def test_scoring_run_id_shared_within_one_call(capfire: CaptureLogfire):
     assert len({str(r['logfire.scorer.run_id']) for r in first_call}) == 1
     assert len({str(r['logfire.scorer.run_id']) for r in second_call}) == 1
     assert first_call[0]['logfire.scorer.run_id'] != second_call[0]['logfire.scorer.run_id']
-    assert len({str(r['gen_ai.evaluation.id']) for r in records}) == 4
+    assert len({str(r['log.record.uid']) for r in records}) == 4
 
 
 @needs_logfire

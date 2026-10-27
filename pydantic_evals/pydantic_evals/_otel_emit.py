@@ -36,23 +36,20 @@ __all__ = ('build_parent_context', 'emit_otel_events')
 
 
 # --- Attribute name constants -------------------------------------------------
-# Standard OTel semconv names. Stable.
+# OTel GenAI semconv names. They are at `development` stability, so they can still change upstream.
 _ATTR_EVAL_NAME = 'gen_ai.evaluation.name'
 _ATTR_SCORE_VALUE = 'gen_ai.evaluation.score.value'
 _ATTR_SCORE_LABEL = 'gen_ai.evaluation.score.label'
 _ATTR_EXPLANATION = 'gen_ai.evaluation.explanation'
 _ATTR_ERROR_TYPE = 'error.type'
 
-# Extensions beyond the current OTel semconv, placed in the `gen_ai.*` namespace
-# on the assumption that this is where analogous attributes will land upstream.
-# If upstream adopts different names, update these constants together with
-# downstream queries/materialized views.
+# Pydantic Evals extensions in the `gen_ai.*` namespace, which the semconv does not define. If it later
+# defines different names, change these constants together with the queries and materialized views that read them.
 _ATTR_TARGET = 'gen_ai.evaluation.target'
 _ATTR_EVALUATOR_SOURCE = 'gen_ai.evaluation.evaluator.source'
 _ATTR_EVALUATOR_VERSION = 'gen_ai.evaluation.evaluator.version'
-# Unique per emitted event, so consumers can dedupe re-delivered records. Matches
-# the attribute Logfire's hosted scorers already emit.
-_ATTR_EVAL_ID = 'gen_ai.evaluation.id'
+# The OTel log record ID, unique per emitted event, so consumers can dedupe re-delivered records.
+_ATTR_RECORD_UID = 'log.record.uid'
 
 # Extensions with no semconv analogue. They use the names and values that Logfire's
 # hosted scorers write, so one query reads results from both.
@@ -178,7 +175,7 @@ def _base_attrs(
     evaluator_version: str | None,
 ) -> dict[str, Any]:
     attrs = dict(shared_attrs)
-    attrs[_ATTR_EVAL_ID] = str(uuid.uuid4())
+    attrs[_ATTR_RECORD_UID] = str(uuid.uuid4())
     attrs[_ATTR_EVAL_NAME] = name
     attrs[_ATTR_EVALUATOR_SOURCE] = _serialize_evaluator_source(source)
     if evaluator_version is not None:
