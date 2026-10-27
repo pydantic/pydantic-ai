@@ -761,6 +761,123 @@ async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI
     await expect(composer).to_be_focused()
 
 
+async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    state = await page.request.get(f'{web_ui.url}/api/sessions/{web_ui.lines}/state', headers={HEADER: TOKEN})
+    folder = Path((await state.json())['session']['workspace'])
+    for name in ('README.md', 'docs/README.md', 'src/package/module.py'):
+        (folder / name).parent.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_text(name)
+    await page.locator('.sidebar').get_by_text('Browser Lines', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Lines')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    options = page.get_by_role('listbox').get_by_role('option')
+    names = options.locator('.suggestion-name')
+
+    # `@` at the start of the box offers the folder's files, best first, and Enter takes the one selected.
+    await composer.fill('@READ')
+    await expect(names).to_have_text(['README.md', 'README.md'])
+    await expect(options.nth(1).locator('.suggestion-meta')).to_have_text('docs')
+    await expect(options.first).to_have_attribute('aria-selected', 'true')
+    await composer.press('Enter')
+    await expect(composer).to_have_value('@README.md ')
+    await expect(options).to_have_count(0)
+
+    # Mid-text too: a folder stays open, offering its own files next, with the folder shown beside each.
+    await composer.fill('foo @src/pa')
+    await expect(names).to_have_text(['package/', 'module.py'])
+    await expect(options.nth(1).locator('.suggestion-meta')).to_have_text('src/package')
+    await composer.press('ArrowDown')
+    await expect(options.nth(1)).to_have_attribute('aria-selected', 'true')
+    await composer.press('ArrowUp')
+    await composer.press('Enter')
+    await expect(composer).to_have_value('foo @src/package/')
+    await expect(names).to_have_text(['module.py'])
+    await composer.press('Tab')
+    await expect(composer).to_have_value('foo @src/package/module.py ')
+    await expect(options).to_have_count(0)
+
+    # A mention typed before more text replaces only itself, the caret stays after it, and the list stays closed.
+    await composer.fill('see  and more')
+    await composer.evaluate('area => area.setSelectionRange(4, 4)')
+    await page.keyboard.type('@REA')
+    await expect(names.first).to_have_text('README.md')
+    await composer.press('Tab')
+    await expect(composer).to_have_value('see @README.md and more')
+    assert await composer.evaluate('area => area.selectionStart') == len('see @README.md')
+    await expect(options).to_have_count(0)
+
+    # With the caret moved into a mention, the part before it is completed and the rest of the word replaced.
+    async with page.expect_response('**/files?*'):
+        await composer.fill('@src/pazzz')
+    await expect(options).to_have_count(0)
+    for _ in 'zzz':
+        await composer.press('ArrowLeft')
+    await expect(names.first).to_have_text('package/')
+    await composer.press('Tab')
+    await expect(composer).to_have_value('@src/package/')
+
+    # Moving the caret off the mention closes its list.
+    await composer.fill('see @REA')
+    await expect(names.first).to_have_text('README.md')
+    await composer.press('Home')
+    await expect(options).to_have_count(0)
+    await composer.press('End')
+    await expect(names.first).to_have_text('README.md')
+
+    # Keys pressed before the list catches up with the draft wait for it, instead of taking a stale suggestion.
+    await composer.fill('@src/')
+    await expect(names).to_have_text(['package/', 'module.py'])
+    held = asyncio.Event()
+
+    async def hold(route: Route) -> None:
+        await held.wait()
+        await route.continue_()
+
+    await page.route('**/files?*', hold)
+    await composer.press('m')
+    await composer.press('Tab')
+    await options.first.click()
+    await expect(composer).to_have_value('@src/m')
+    held.set()
+    await expect(names).to_have_text(['module.py'])
+    await page.unroute('**/files?*', hold)
+    await composer.press('Tab')
+    await expect(composer).to_have_value('@src/package/module.py ')
+
+    # Esc while newer files are on their way keeps the list closed when they arrive.
+    await composer.fill('@READ')
+    await expect(names.first).to_have_text('README.md')
+    late = asyncio.Event()
+
+    async def hold_late(route: Route) -> None:
+        await late.wait()
+        await route.continue_()
+
+    await page.route('**/files?*', hold_late)
+    async with page.expect_response('**/files?*') as arrived:
+        await composer.press('M')
+        await composer.press('Escape')
+        await expect(options).to_have_count(0)
+        late.set()
+    await (await arrived.value).body()
+    await page.unroute('**/files?*', hold_late)
+    await composer.press('ArrowLeft')
+    await expect(composer).to_have_value('@READM')
+    await expect(options).to_have_count(0)
+
+    # Esc closes the list, and Enter then sends the mention as typed, for the agent to read with its tools.
+    await composer.fill('read @READ')
+    await expect(names.first).to_have_text('README.md')
+    await composer.press('Escape')
+    await expect(options).to_have_count(0)
+    async with page.expect_request(f'**/api/sessions/{web_ui.lines}/input') as sent:
+        await composer.press('Enter')
+    assert (await sent.value).post_data_json == {'text': 'read @READ'}
+
+
 async def test_a_session_another_clai_runs_shows_until_forked(page: Page, web_ui: WebUI) -> None:
     """Clicking it shows it read-only and saves nothing; only the banner's button continues it, in a fork."""
     await page.goto(f'{web_ui.url}/?token={TOKEN}')

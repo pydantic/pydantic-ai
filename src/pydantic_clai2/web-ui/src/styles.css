@@ -671,6 +671,130 @@ pre {
   color: var(--text-soft);
 }
 
+/* The git chip: the session's branch and its uncommitted and unpushed counts, opening the git dialog. */
+.git-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.git-chip:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.git-branch {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-soft);
+}
+
+.git-counts {
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.git-dialog .dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.git-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.git-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.git-view[hidden] {
+  display: none;
+}
+
+.git-section + .git-section {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.git-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.git-file,
+.git-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-soft);
+  font-size: 12.5px;
+}
+
+.git-file-status {
+  width: 14px;
+  color: var(--muted);
+  font-weight: 600;
+  text-align: center;
+}
+
+.git-file-status.status-new,
+.git-file-status.status-A {
+  color: var(--green);
+}
+
+.git-file-status.status-D {
+  color: var(--red);
+}
+
+.git-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-message-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.git-message {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.git-problem {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.git-done {
+  margin: 0;
+  color: var(--green);
+  font-size: 12.5px;
+}
+
+.git-remote-actions {
+  justify-content: flex-start;
+}
+
 /* Shown only when opening a session takes long enough to notice; a quick switch never flashes it. */
 .spinner {
   flex: none;
