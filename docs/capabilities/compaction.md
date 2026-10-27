@@ -129,6 +129,10 @@ class HoldCompaction(AbstractCapability[Any]):
 
     planning: bool = False
 
+    async def for_run(self, ctx: RunContext[Any]) -> 'HoldCompaction':
+        # A fresh instance per run, so one run's plan doesn't hold off another's compaction.
+        return HoldCompaction()
+
     def get_toolset(self) -> FunctionToolset[Any]:
         toolset = FunctionToolset[Any]()
 

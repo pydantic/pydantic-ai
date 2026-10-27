@@ -20,7 +20,11 @@ class CompactionRequest:
     """What a [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hook is asked to compact, and for which model."""
 
     reason: CompactionReason
-    """Why compaction was requested, as passed to [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction]."""
+    """Why compaction was requested.
+
+    The reason passed to [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction], or
+    `'context_overflow'` when the model rejected the attempt for exceeding its context window.
+    """
 
     model: Model
     """The model that will serve the request the compacted history is sent with.
