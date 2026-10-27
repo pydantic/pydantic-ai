@@ -136,6 +136,7 @@ class FakeExecStream:
                 await chunks.put(OutputChunk(data, is_stderr))
 
         readers = [asyncio.create_task(read(process.stdout, False)), asyncio.create_task(read(process.stderr, True))]
+        self._owner.readers.extend(readers)
         exited = asyncio.create_task(_exited(process))
         try:
             while not exited.done():
@@ -339,6 +340,8 @@ class FakeBoxd:
         self.listed_orgs: list[str | None] = []
         self.lines: list[str] = []
         self.exec_commands: list[str] = []
+        # Every command stream's pipe readers, which `reap` finishes before it reads the pipes itself.
+        self.readers: list[asyncio.Task[None]] = []
         self.closed_streams = 0
         self.boot_polls = 0
         self.delete_lag = 0
@@ -390,16 +393,28 @@ class FakeBoxd:
         return machine
 
     async def reap(self) -> None:
-        """Kill what the test left running and wait for it, so no process outlives the test's event loop.
+        """Kill what the test left running and close its pipes, so nothing outlives the test's event loop.
 
-        `close()` only signals a command, as production does, so one can still be ending when the test returns.
+        `close()` only signals a command, as production does, so one can still be ending when the test
+        returns. One that has ended can still have output in its pipes, and asyncio keeps a pipe open
+        until it is read to the end, so each one is read here.
         """
-        for machine in self.machines.values():
-            for process in machine.processes:
-                if process.returncode is None:  # pragma: lax no cover - depends on how fast the process dies
-                    with suppress(ProcessLookupError):
-                        os.killpg(process.pid, signal.SIGKILL)
-                    await _exited(process)
+        processes = [process for machine in self.machines.values() for process in machine.processes]
+        if not processes:
+            return  # Nothing to close, and a test under Trio has no asyncio loop to close it on.
+        for task in self.readers:
+            task.cancel()
+        await asyncio.gather(*self.readers, return_exceptions=True)
+        for process in processes:
+            assert process.stdout is not None and process.stderr is not None
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            with anyio.fail_after(10):
+                await process.stdout.read()
+                await process.stderr.read()
+                await _exited(process)
+        # asyncio closes a finished process's transport in callbacks on the loop's next turns.
+        await asyncio.sleep(_EXIT_POLL)
 
     def find(self, machine_id: str) -> FakeMachine:
         for machine in self.machines.values():
