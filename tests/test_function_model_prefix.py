@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
@@ -9,9 +11,19 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import ToolDefinition
 
-from .function_model_prefix import RequestRecorder, fail_on_prefix_violations, function_model_prefix_violations
+from .conftest import try_import
+from .function_model_prefix import (
+    RequestRecorder,
+    check_function_model_prefix_stability,
+    fail_on_prefix_violations,
+    function_model_prefix_violations,
+)
 
-pytest.importorskip('anthropic', reason='the check renders requests with `anthropic`')
+with try_import() as imports_successful:
+    # The check renders each request with `AnthropicModel`.
+    from pydantic_ai.models.anthropic import AnthropicModel as AnthropicModel
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='anthropic not installed')
 
 
 def _respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -132,3 +144,16 @@ def test_a_cache_control_key_in_a_tool_schema_still_counts() -> None:
     recorder.record(model, [first, _response('hello'), _request('more')], None, tool('x'))
 
     assert _levels(recorder) == [(1, 'tools')]
+
+
+@pytest.mark.moves_cache_prefix
+def test_a_marker_without_a_reason_fails(request: pytest.FixtureRequest) -> None:
+    model = FunctionModel(_respond)
+    recorder = RequestRecorder()
+    first = _request('hi')
+    recorder.record(model, [first], None, _tools())
+    recorder.record(model, [first, _response('hello'), _request('more')], None, _tools())
+
+    node = cast(pytest.Item, request.node)  # pyright: ignore[reportUnknownMemberType]
+    with pytest.raises(pytest.fail.Exception, match='requires reason='):
+        check_function_model_prefix_stability(node, recorder.requests)

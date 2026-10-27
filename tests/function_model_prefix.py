@@ -31,6 +31,7 @@ from .cassette_utils import (
     anthropic_deferred_tool_blocks,
     canonical_prefix_blocks,
     classify_prefix_pair,
+    moves_cache_prefix,
 )
 
 _ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages'
@@ -312,8 +313,7 @@ def function_model_prefix_violations(requests: list[RecordedRequest]) -> list[Ca
 
 def check_function_model_prefix_stability(node: pytest.Item, requests: list[RecordedRequest]) -> None:
     """Fail when a `FunctionModel` or `TestModel` conversation moves its prompt-cache prefix without an exemption."""
-    if len(requests) < 2 or node.get_closest_marker('moves_cache_prefix') is not None:
-        # `check_cache_prefix_stability` already insists the marker gives a reason.
+    if len(requests) < 2 or moves_cache_prefix(node):
         return
     fail_on_prefix_violations(function_model_prefix_violations(requests))
 
