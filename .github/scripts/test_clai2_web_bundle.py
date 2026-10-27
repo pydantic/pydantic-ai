@@ -198,6 +198,9 @@ def test_the_build_is_handed_over_as_an_artifact(workflow: str, job: str):
     assert options['name'] == ARTIFACT
     assert options['path'] in (STATIC, '${{ env.STATIC }}')
     assert options['overwrite'] == 'true'
+    if workflow == 'clai2-web.yml':
+        # `release-build` downloads it, also on a rerun of a failed release days later.
+        assert options['retention-days'] == "${{ github.ref_type == 'tag' && 30 || 1 }}"
 
 
 def test_no_job_that_runs_npm_holds_credentials():

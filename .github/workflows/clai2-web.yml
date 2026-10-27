@@ -67,7 +67,8 @@ jobs:
           name: clai2-web-static
           path: src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
           if-no-files-found: error
-          retention-days: 1
+          # A release rerun ("Re-run failed jobs") downloads it again, maybe days later.
+          retention-days: ${{ github.ref_type == 'tag' && 30 || 1 }}
           # A rerun of the job uploads the same name again.
           overwrite: true
 
