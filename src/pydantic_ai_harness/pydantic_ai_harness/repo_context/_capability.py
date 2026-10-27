@@ -15,7 +15,6 @@ from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
     ModelRequest,
-    ModelResponse,
     SystemPromptPart,
     TextContent,
     ToolCallPart,
@@ -413,10 +412,9 @@ def _stamp(parts: Sequence[str | SystemPromptPart], directory: str) -> Iterator[
 
 def _latest_compaction(messages: Sequence[ModelMessage]) -> CompactionPart | None:
     for message in reversed(messages):
-        if isinstance(message, ModelRequest | ModelResponse):
-            for part in reversed(message.parts):
-                if isinstance(part, CompactionPart):
-                    return part
+        for part in reversed(message.parts):
+            if isinstance(part, CompactionPart):
+                return part
     return None
 
 
