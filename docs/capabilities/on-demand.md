@@ -614,7 +614,10 @@ db.executemany(
         ),
     ],
 )
-runbooks = [runbook(id, description) for id, description in db.execute('SELECT id, description FROM runbooks')]
+runbooks = [
+    runbook(runbook_id, description)
+    for runbook_id, description in db.execute('SELECT id, description FROM runbooks')
+]
 
 
 def scripted_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
