@@ -2091,6 +2091,33 @@ async def test_azure_responses_prompt_cache_e2e(
     _assert_azure_breakpoint_cached(first, second)
 
 
+@pytest.mark.vcr
+async def test_azure_responses_cache_instructions_e2e(
+    allow_model_requests: None, gateway_api_key: str | None, vcr: Cassette
+):
+    """Azure OpenAI Responses honors an instruction breakpoint with the implicit-mode options, the settings
+    `cache=True` maps to on the OpenAI API, and the second request reads the cache the first wrote."""
+    model = OpenAIResponsesModel('gpt-5.6-luna', provider=_azure_gateway_provider(gateway_api_key))
+    settings = OpenAIResponsesModelSettings(
+        openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}, openai_cache_instructions=True
+    )
+    # Change the instructions' last line to re-record within the 30-minute TTL.
+    agent = Agent(model, instructions=_STABLE_PREFIX + '\n(Azure instruction breakpoint)', model_settings=settings)
+
+    first = await agent.run('Reply with exactly: OK')
+    second = await agent.run('Reply with exactly: OK')
+
+    for request in vcr.requests:
+        body = cast('dict[str, Any]', request_json(request))
+        assert body['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
+        assert body['input'][0]['role'] in ('system', 'developer')
+        assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    assert first.usage.cache_read_tokens == 0
+    assert first.usage.cache_write_tokens >= 1024
+    assert second.usage.cache_write_tokens == 0
+    assert second.usage.cache_read_tokens == first.usage.cache_write_tokens
+
+
 def _assert_instruction_prefix_shared(first: RunUsage, second: RunUsage) -> None:
     """The second conversation reads the cached instructions written (or read) by the first.
 
