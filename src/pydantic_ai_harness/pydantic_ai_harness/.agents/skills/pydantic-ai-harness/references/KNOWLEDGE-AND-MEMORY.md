@@ -285,9 +285,14 @@ command; the model still sees it. Either field with a value other than `true` or
 
 Gotchas:
 - Without PyYAML (the `skills` extra) importing the loader raises `ImportError`.
-- Reads from the run's workspace; no workspace fails the run at start unless every library has a
-  `workspace=` backend. Use `workspace=LocalWorkspaceBackend('/app')` to read skills shipped with
-  the app while the agent works in a sandbox.
+- Skills shipped with the app: keep `Skills` and pass
+  `workspace=LocalWorkspaceBackend(Path(__file__).parent)` (a path on disk, not an
+  `importlib.resources` `Traversable`); relative library paths resolve against it, and the run needs
+  no workspace of its own (or its workspace can be a sandbox). Only `SKILL.md` bodies load: the
+  loaded instructions leave out the skill directory and `Skills` adds no file tools, so bundled
+  `references/` or `scripts/` are usable only from a library in the run's workspace with
+  `FileSystem`/`Shell` there. Otherwise `Skills` reads from the run's workspace, and a run without
+  one fails at start.
 - No auto-discovery of `.agents`, `.claude`, or `~`: pass every library explicitly, and spell out
   a home path (workspace paths never expand `~`). Only immediate child directories with a
   `SKILL.md` count. A skill found twice (symlink or byte-identical `SKILL.md`; bundled files are
@@ -304,10 +309,10 @@ Gotchas:
   `hooks` are accepted but not implemented (one aggregated `UserWarning`).
 - Skill bodies become model instructions: load only trusted libraries. `include`/`exclude` are
   catalog selection, not access control.
-- Instructions that don't need `Skills` or a workspace go in a core deferred
+- Instructions that are not `SKILL.md` packages in a directory go in a core deferred
   `Capability(id=..., description=..., instructions=..., defer_loading=True)` instead: ones defined
-  in Python; app-shipped skills without bundled files, one per skill with its name as `id`
-  (https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-skills-from-markdown-files); and
+  in Python, files in a custom format
+  (https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-skills-from-markdown-files), and
   ones kept in a database, read in an `@capability.instructions` function
   (https://pydantic.dev/docs/ai/capabilities/on-demand/#loading-runbooks-from-a-database).
 - In agent specs: `Skills: {directories: .agents/skills, include: [...]}` with
