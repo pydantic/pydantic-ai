@@ -1019,6 +1019,49 @@ The capability supports all the same features as the [`@evaluate()`][pydantic_ev
 !!! note
     [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] wraps [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent.iter()`][pydantic_ai.agent.Agent.iter] when the run reaches a final result. For streaming runs, evaluators are dispatched only after the final result is available and the surrounding context manager exits. The same delayed-dispatch behavior applies when driving an [`agent.iter()`][pydantic_ai.agent.Agent.iter] run to completion, which is generally the preferred streaming API.
 
+### Durable Execution
+
+Under [durable execution](../durable_execution/overview.md), the agent run is workflow code that the engine replays, so the capability doesn't sample or dispatch evaluators there. Instead it runs sampling and dispatch as one [durable operation](../capabilities/custom.md#durable-capability-operations) (a Temporal activity, DBOS step or Prefect task) after the run. The engine records that operation, so a replay returns the recorded result rather than evaluating the run again, and sampling callables and evaluators run outside workflow code.
+
+Durable operations are identified by their capability's [`id`][pydantic_ai.capabilities.AbstractCapability.id], so give the capability one when the agent has a durability capability. Agent construction raises a `UserError` without it:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.online_capability import OnlineEvaluation
+
+
+@dataclass
+class OutputNotEmpty(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> bool:
+        return bool(ctx.output)
+
+
+agent = Agent(
+    '{{ openai:medium }}',
+    name='assistant',
+    capabilities=[
+        TemporalDurability(),
+        OnlineEvaluation(id='online_evaluation', evaluators=[OutputNotEmpty()]),
+    ],
+)
+```
+
+Keep the `id` stable once workflows that use it are deployed, as it names the recorded operation.
+
+Each run adds one durable operation unless every evaluator's sample rate is `0`, including runs where no evaluator ends up sampled.
+
+What the evaluators see depends on whether the engine serializes the operation's arguments:
+
+- DBOS and Prefect run the operation in the run's own process, so evaluators see the same [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] values as without durable execution.
+- Temporal serializes the arguments to send them to an activity, so `inputs`, `output` and `metadata` arrive in their JSON form, such as a dict for a Pydantic model output, and sampling callables see `inputs` the same way. The span tree doesn't cross, so [`span_tree`][pydantic_evals.evaluators.EvaluatorContext.span_tree] raises a [`SpanTreeRecordingError`][pydantic_evals.otel.SpanTreeRecordingError]. An evaluator with `run_on_errors=True` receives an `Exception` whose message starts with the original exception's type name, such as `'UsageLimitExceeded: ...'`.
+
+!!! note "Prefect flow retries"
+    Prefect identifies a recorded task by its arguments, and the run's duration measured in flow code differs on a flow retry, so a retry evaluates the run again. [#11575](https://github.com/pydantic/pydantic-ai/issues/11575) tracks letting the operation choose what identifies it.
+
 ## API Reference
 
 The complete API for the `pydantic_evals.online` module is documented in the [API reference](../api/pydantic_evals/online.md).

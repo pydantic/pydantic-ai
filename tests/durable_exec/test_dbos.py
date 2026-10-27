@@ -90,7 +90,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 
-from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging
+from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging, try_import
 from ..realtime_connections import InferredConnection
 
 try:
@@ -140,6 +140,16 @@ from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
+
+with try_import() as evals_available:
+    from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+    from pydantic_evals.online import OnlineEvaluator, wait_for_evaluations
+    from pydantic_evals.online_capability import OnlineEvaluation
+
+
+class OnlineEvaluationAnswer(BaseModel):
+    text: str
+
 
 # `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -6025,3 +6035,95 @@ async def test_dbos_timeout_outside_workflow(dbos: DBOS) -> None:
     """Outside a workflow the capability is transparent: the run's own clock starts the deadline."""
     with pytest.raises(RunTimedOut):
         await timed_out_agent.run('Hello', timeout=0)
+
+
+@pytest.mark.skipif(not evals_available(), reason='pydantic_evals not installed')
+async def test_dbos_online_evaluation_dispatches_once_on_replay(dbos: DBOS) -> None:
+    """Replaying the workflow returns the recorded dispatch step, so the run's evaluators don't run again.
+
+    Forking from past the last step re-executes the workflow function against every recorded step,
+    the way recovery does. Before the dispatch was a step, each replay ran the evaluators again.
+    """
+    evaluated: list[tuple[str | None, object]] = []
+
+    @dataclass
+    class RecordRun(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            evaluated.append((ctx.name, ctx.output))
+            return True
+
+    agent = Agent(
+        TestModel(),
+        name='dbos_online_evaluation',
+        output_type=OnlineEvaluationAnswer,
+        capabilities=[
+            DBOSDurability[object](),
+            OnlineEvaluation(id='online_evaluation', evaluators=[RecordRun()]),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('run')).run_id
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        run_id = await run_workflow()
+    await wait_for_evaluations()
+    # DBOS steps run in the workflow's process, so evaluators see the live output.
+    assert evaluated == [(run_id, OnlineEvaluationAnswer(text='a'))]
+
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    fork = await dbos.fork_workflow_async(workflow_id, max(step['function_id'] for step in steps) + 1)
+    await fork.get_result()
+    await wait_for_evaluations()
+    assert evaluated == [(run_id, OnlineEvaluationAnswer(text='a'))]
+
+
+@pytest.mark.skipif(not evals_available(), reason='pydantic_evals not installed')
+async def test_dbos_online_evaluation_dispatch_step_only_when_an_evaluator_may_be_sampled(dbos: DBOS) -> None:
+    """Sampling happens inside the dispatch step, which a run skips only when no evaluator can ever be sampled."""
+    evaluated: list[str | None] = []
+
+    @dataclass
+    class RecordRun(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            evaluated.append(ctx.name)  # pragma: no cover
+            return True  # pragma: no cover
+
+    never_sampled = Agent(
+        TestModel(),
+        name='dbos_online_evaluation_never_sampled',
+        capabilities=[
+            DBOSDurability[object](),
+            OnlineEvaluation(
+                id='online_evaluation', evaluators=[OnlineEvaluator(evaluator=RecordRun(), sample_rate=0)]
+            ),
+        ],
+    )
+    not_sampled = Agent(
+        TestModel(),
+        name='dbos_online_evaluation_not_sampled',
+        capabilities=[
+            DBOSDurability[object](),
+            OnlineEvaluation(
+                id='online_evaluation',
+                evaluators=[OnlineEvaluator(evaluator=RecordRun(), sample_rate=lambda _: False)],
+            ),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await never_sampled.run('run')
+        await not_sampled.run('run')
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        await run_workflow()
+    await wait_for_evaluations()
+    assert evaluated == []
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    assert [step['function_name'] for step in steps if step['function_name'].endswith('.dispatch')] == [
+        'dbos_online_evaluation_not_sampled__capability__online_evaluation.dispatch'
+    ]
