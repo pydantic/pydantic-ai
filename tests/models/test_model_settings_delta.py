@@ -10,6 +10,7 @@ request-level effort, as before.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from typing import Any, cast
 
@@ -443,6 +444,41 @@ async def test_anthropic_effort_change_keeps_the_cache(allow_model_requests: Non
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_anthropic_bedrock_messages_api_takes_an_effort_change(
+    allow_model_requests: None, request_capture: RequestCapture
+):
+    """The Bedrock Messages API takes the change as an effort-only `system` entry under its beta.
+
+    Without the beta it rejects the entry with "Extra inputs are not permitted", so the header is what this pins.
+    https://github.com/pydantic/pydantic-ai/issues/11481
+    """
+    client = AsyncAnthropicBedrockMantle(
+        api_key=os.environ.get('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token'),
+        aws_region=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
+        http_client=request_capture.client,
+    )
+    model = AnthropicModel('anthropic.claude-opus-5-5', provider=AnthropicProvider(anthropic_client=client))
+    agent = Agent(model, instructions='Answer in one short sentence.')
+    first = await agent.run('Name a primary color.', model_settings={'thinking': 'low'})
+    second = await agent.run(
+        'Name another.', message_history=first.all_messages(), model_settings={'thinking': 'medium'}
+    )
+
+    assert second.output
+    body = request_capture.bodies('/v1/messages')[-1]
+    assert body['output_config'] == {'effort': 'low'}
+    assert body['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Name a primary color.', 'type': 'text'}]},
+            {'role': 'assistant', 'content': [{'text': 'Red is a primary color.', 'type': 'text'}]},
+            {'role': 'user', 'content': [{'text': 'Name another.', 'type': 'text'}]},
+            {'role': 'system', 'content': [], 'output_config': {'effort': 'medium'}},
+        ]
+    )
+    assert 'mid-conversation-output-config-2026-07-01' in request_capture.headers[-1]['anthropic-beta']
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_anthropic_effort_change_is_a_system_entry(allow_model_requests: None):
     mock_client = MockAnthropic.create_mock(_anthropic_text('Shelf 40, bin 7.'))
     model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -552,8 +588,14 @@ def test_anthropic_falls_back_to_the_request_level_effort(settings: AnthropicMod
         pytest.param(
             'anthropic.claude-opus-5-5',
             lambda: AsyncAnthropicBedrockMantle(aws_region='us-east-1', aws_access_key='x', aws_secret_key='y'),
-            False,
+            True,
             id='bedrock-messages-api',
+        ),
+        pytest.param(
+            'anthropic.claude-opus-5',
+            lambda: AsyncAnthropicBedrockMantle(aws_region='us-east-1', aws_access_key='x', aws_secret_key='y'),
+            False,
+            id='bedrock-messages-api-unlisted',
         ),
         pytest.param(
             'claude-opus-5-5',
