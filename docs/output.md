@@ -845,6 +845,8 @@ agent = Agent(
 
 @agent.output_validator
 def check_quotes(ctx: RunContext[str], output: Extraction) -> Extraction:
+    if ctx.partial_output:  # when streaming, check only the complete output
+        return output
     source = normalize(ctx.deps)
     unsupported = [fact.quote for fact in output.facts if normalize(fact.quote) not in source]
     if unsupported:
@@ -864,7 +866,7 @@ for fact in result.output.facts:
     print(fact.quote)
     #> Invoices are payable within 30 days of receipt.
     #> Late payments accrue interest at 1.5% per month.
-print(result.usage.requests)  # the first output paraphrased the second quote
+print(result.usage.requests)  # here the first output paraphrased the second quote, and the validator asked for a retry
 #> 2
 ```
 
@@ -881,9 +883,9 @@ Gate on what your code can check instead:
 - **Verifiable outputs and arguments**: a quote that appears in the source, as [above](#grounding-validators), an id that exists in your database, an amount under a policy limit. Check outputs in an output validator and tool arguments in an [`args_validator`](tools-advanced.md#args-validator) or the tool itself.
 - **Policy on the action**: which tool is called, with which arguments, in which context. Mark a tool `requires_approval=True` or raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] when the arguments cross your policy, as in the [tool approval example](deferred-tools.md#human-in-the-loop-tool-approval).
 
-If you keep a score, for instance to order work in a review queue, measure what it means before acting on it: build a dataset of cases with known answers using [Pydantic Evals](evals.md), check how often outputs at each score are right for the model and prompt you run, and measure again when either changes.
+If you keep a score, for instance to order work in a review queue, measure what it means before acting on it: build a dataset of cases with known answers using [Pydantic Evals](evals.md), check how often outputs at each score are right for the model and prompt you run, and measure again when either changes. The same goes for the confidence a [decision model](models/decision.md) reports in `provider_details`: [tune any threshold on your own labelled data](models/decision.md#tuning-a-threshold-on-your-own-data).
 
-The Pydantic AI Harness [`ApprovalReviewer`](harness/approval-reviewer.md#risk-tiers) follows the same rule: it asks the reviewing model one yes-or-no question about a tool call instead of thresholding a risk score.
+The Pydantic AI Harness [`ApprovalReviewer`](harness/approval-reviewer.md#risk-tiers) follows the same rule: it asks the reviewing model one question about a tool call, answered `yes`, `no`, or `unsure`, instead of grading risk on a scale against a threshold.
 
 ## Image output
 
