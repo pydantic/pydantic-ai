@@ -19,7 +19,9 @@ As with all capability cache breakpoints, provider mapping applies: OpenAI model
 
 A capability listed before `Planning` that also appends a tail part each request puts its content between the durable history and the plan reminder. The `Planning` breakpoint then covers that content too, so its cache entry is only read back while that content stays the same. The earlier capability's own breakpoint still marks the durable history.
 
-So the plan stays current in the model's view while the conversation before the reminder is read from cache, up to where the provider puts the breakpoint; the only added cost is re-reading the reminder each turn.
+So the plan stays current in the model's view while the conversation before the reminder is read from cache, up to where the provider puts the breakpoint; for the prompt cache, the only added cost is re-reading the reminder each turn.
+
+> **Models that tie their reasoning to the exact conversation.** The plan reminder is a request-only change, not a [request-scoped system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#request-scoped-system-prompts): the next request leaves the previous reminder out but keeps the model's response to it. On models with preserved thinking, that counts as editing the conversation, so the model's earlier thinking is discarded. Pydantic AI's guidance for [capabilities that remind the model](https://pydantic.dev/docs/ai/capabilities/custom/#steering-messages-and-reminders) is to enqueue reminders rather than add them as per-request copies, which is what [System Reminders](../system_reminders/) does. Moving `Planning` to request-scoped reminders is tracked in [#11520](https://github.com/pydantic/pydantic-ai/issues/11520).
 
 ```python
 from pydantic_ai import Agent
