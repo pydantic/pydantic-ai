@@ -561,7 +561,7 @@ class ConversationStoreContract:
         assert source.usage == conversation.usage
         assert source.usage.details == {'reasoning_tokens': 7}
 
-    async def test_a_fork_of_a_fork_points_at_the_entry_it_branched_off(self, backend: Backend) -> None:
+    async def test_a_fork_of_a_fork_records_the_conversation_and_entry_it_branched_off(self, backend: Backend) -> None:
         store = backend.store
         original = Conversation(messages=[_prompt('one'), ModelResponse(parts=[TextPart('two')]), _prompt('three')])
         await store.save(original)
@@ -576,13 +576,15 @@ class ConversationStoreContract:
         empty = await store.fork(original.conversation_id, at=0)
 
         history = await store.read_history(original_record.head_id)
-        # `forked_from` names the entry, not the conversation, and survives later saves of the fork.
-        assert child_record.forked_from == history[1].id
+        # `forked_from` names the conversation and `forked_at` the entry, and both survive later saves of the fork.
+        assert (child_record.forked_from, child_record.forked_at) == (original.conversation_id, history[1].id)
         grandchild_record = await store.read_record(grandchild.conversation_id)
-        assert grandchild_record is not None and grandchild_record.forked_from == history[0].id
-        # A fork that keeps nothing records no entry, so it looks like a conversation never forked.
+        assert grandchild_record is not None
+        assert (grandchild_record.forked_from, grandchild_record.forked_at) == (child.conversation_id, history[0].id)
+        # A fork that keeps nothing records no entry, but still says what it was copied from.
         empty_record = await store.read_record(empty.conversation_id)
-        assert empty_record is not None and empty_record.forked_from is None
+        assert empty_record is not None
+        assert (empty_record.forked_from, empty_record.forked_at) == (original.conversation_id, None)
         assert await backend.count_entries() == 4
 
     async def test_deleting_the_conversation_a_longer_fork_continues_keeps_the_fork_whole(
