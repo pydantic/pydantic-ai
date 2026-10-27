@@ -2340,11 +2340,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     conversation_id=ctx.state.conversation_id,
                 )
 
-            # Emitted after the hooks, like the deltas recorded below, so content a hook delivers next to a tool's
-            # return, ahead of these records in history, comes first in the event stream too.
-            ctx.state.event_stream_buffer.extend(
-                _messages.ToolAvailabilityDeltaEvent(part=part) for part in self._capability_load_records
-            )
+            self._emit_capability_load_records(ctx)
             # Diff the tools this request will actually carry — after the hooks, which may have changed them —
             # and record newcomers where both this request and the persisted history will carry them.
             model_request_parameters = _record_tool_population_changes(
@@ -2561,6 +2557,19 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         return request_context
 
+    def _emit_capability_load_records(
+        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
+    ) -> None:
+        """Emit the records of the capability loads delivered on `request` as `ToolAvailabilityDeltaEvent`s, once.
+
+        Emitted after the `before_model_request` hooks, like the deltas the request records itself, so content a hook
+        delivers next to a tool's return, ahead of these records in history, comes first in the event stream too. A
+        step that never reaches that point, because `wrap_model_request` answered or retried without calling its
+        handler, emits them as it finishes, since the records are in history either way.
+        """
+        records, self._capability_load_records = self._capability_load_records, []
+        ctx.state.event_stream_buffer.extend(_messages.ToolAvailabilityDeltaEvent(part=part) for part in records)
+
     async def _finish_handling_pending(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
@@ -2596,6 +2605,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         record_usage: bool,
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
+        self._emit_capability_load_records(ctx)
         if record_usage:
             self._record_response_usage(ctx, response)
             accounted_responses = [*accounted_responses, response]
@@ -2715,6 +2725,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         Increments the retry counter and creates a new request with a `RetryFeedbackPart`.
         """
+        self._emit_capability_load_records(ctx)
         m = _messages.RetryFeedbackPart(content=error.message, retry=_messages.RetryInfo(cause='model_retry'))
         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error, feedback=m)
         # A retry without a response gives up on this step, so its request-scoped parts go with it. When the

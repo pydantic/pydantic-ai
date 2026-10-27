@@ -105,17 +105,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             raise ModelRetry(LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE.format(capability_id=capability_id))
         if capability.defer_loading is not True:
             # Inactive without being deferred itself, so it sits inside a deferred capability that isn't loaded yet.
-            groups = [
-                group_id
-                for group_id, group in ctx.capabilities.items()
-                if group.defer_loading is True
-                and group_id not in ctx.loaded_capability_ids
-                and any(inner is capability for inner in _beneath(group))
-            ]
-            names = ' or '.join(repr(group_id) for group_id in groups)
-            raise ModelRetry(
-                f'Capability {capability_id!r} is part of deferred capability {names} and loads with it. Load {names} instead.'
-            )
+            raise ModelRetry(_part_of_unloaded_group_message(ctx, capability_id))
         if _is_duplicate_load_in_response(ctx, capability_id):
             raise ModelRetry(LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE.format(capability_id=capability_id))
 
@@ -207,6 +197,9 @@ async def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx:
 
     if _is_active_or_loading(ctx, pending_messages, capability_id):
         return False
+    if ctx.capabilities[capability_id].defer_loading is not True:
+        # Inactive without being deferred itself, so it sits inside a deferred capability that isn't loaded yet.
+        raise UserError(_part_of_unloaded_group_message(ctx, capability_id))
 
     # Recorded without a `load_capability` call, which the request may have no tool for: the same
     # `ToolAvailabilityDeltaPart` a model's load leaves after its return, naming the capability and revealing
@@ -219,6 +212,22 @@ async def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx:
     # approval or is deferred, or output is produced), the load is dropped rather than forcing one.
     pending_messages.append_capability_load(record)
     return True
+
+
+def _part_of_unloaded_group_message(ctx: RunContext[Any], capability_id: str) -> str:
+    """Say which unloaded deferred capability the inactive, non-deferred `capability_id` loads with."""
+    capability = ctx.capabilities[capability_id]
+    groups = [
+        group_id
+        for group_id, group in ctx.capabilities.items()
+        if group.defer_loading is True
+        and group_id not in ctx.loaded_capability_ids
+        and any(inner is capability for inner in _beneath(group))
+    ]
+    names = ' or '.join(repr(group_id) for group_id in groups)
+    return (
+        f'Capability {capability_id!r} is part of deferred capability {names} and loads with it. Load {names} instead.'
+    )
 
 
 def _is_active_or_loading(ctx: RunContext[Any], queue: PendingMessageQueue, capability_id: str) -> bool:

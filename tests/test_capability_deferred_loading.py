@@ -28,6 +28,7 @@ from pydantic_ai.capabilities import (
     ProcessHistory,
     ToolSearch,
     Toolset,
+    WrapModelRequestHandler,
     WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, CapabilityPosition
@@ -3603,6 +3604,64 @@ async def test_load_capability_records_the_loading_tool_call() -> None:
     result = await agent.run('Was I refunded?')
 
     assert _load_records(result.all_messages()) == [('refunds', 'open')]
+
+
+async def test_load_capability_of_a_deferred_group_member_raises() -> None:
+    """A member of an unloaded deferred group loads with the group, so loading it on its own from code is refused."""
+    members = [Capability[object](id='editing_tools', instructions='Edit carefully.')]
+    group = CombinedCapability[object](members, id='editing', description='Editing.', defer_loading=True)
+    agent = Agent(FunctionModel(_open_case_then_check_refund), capabilities=[group])
+
+    @agent.tool
+    async def open_case(ctx: RunContext[object]) -> str:
+        await ctx.load_capability('editing_tools')
+        return 'Case opened.'  # pragma: no cover
+
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('Edit d1.')
+    assert str(exc_info.value) == snapshot(
+        "Capability 'editing_tools' is part of deferred capability 'editing' and loads with it. Load 'editing' instead."
+    )
+
+
+async def test_load_capability_record_is_emitted_when_the_next_request_is_short_circuited() -> None:
+    """A load's record is in history before the next request's hooks run, so it's emitted even if no model is called.
+
+    A `wrap_model_request` that answers without calling its handler skips the point where the record is normally
+    emitted, so it's emitted as the step finishes instead, for UI clients that rebuild history from events.
+    """
+
+    @dataclass
+    class AnswerAfterTheLoad(AbstractCapability[object]):
+        async def wrap_model_request(
+            self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            if ctx.loaded_capability_ids:
+                return make_text_response('Answered without the model.')
+            return await handler(request_context)
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='open_case', json_args='{}', tool_call_id='open')}
+
+    agent = Agent(FunctionModel(stream_function=stream_fn), capabilities=[_refunds(), AnswerAfterTheLoad()])
+
+    @agent.tool
+    async def open_case(ctx: RunContext[object]) -> str:
+        await ctx.load_capability('refunds')
+        return 'Case opened.'
+
+    events: list[AgentStreamEvent] = []
+
+    async def event_stream_handler(_: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    result = await agent.run('Was I refunded?', event_stream_handler=event_stream_handler)
+
+    assert result.output == 'Answered without the model.'
+    assert [event.part for event in events if isinstance(event, ToolAvailabilityDeltaEvent)] == [
+        ToolAvailabilityDeltaPart(tools_added=['refund_status'], capabilities_added=['refunds'], tool_call_id='open')
+    ]
 
 
 async def test_load_capability_after_the_run_ended_raises() -> None:
