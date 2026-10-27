@@ -2154,6 +2154,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         repr=False, init=False, default_factory=list[_NativeToolFactoryResult[DepsT]]
     )
     """The native tool factories this request step resolved for its model, and what each resolved to."""
+    _serving_model: models.Model | None = field(default=None, init=False, repr=False)
+    """The model the latest attempt was sent to, with the capabilities' model wrappers."""
     _resolved_loaded_parts: dict[str, list[_messages.InstructionPart]] = field(
         repr=False, init=False, default_factory=dict[str, list[_messages.InstructionPart]]
     )
@@ -3116,6 +3118,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return wrapper
 
         request_context.model = attempt_model._with_serving_wrapper(wrap)  # pyright: ignore[reportPrivateUsage]
+        self._serving_model = request_context.model
         # The wrapper is entered around each call it serves for this attempt, like a model passed to the agent is
         # around a run. One applied on this side of a durable unit only answers questions like `continuation_delay`,
         # and the unit enters the one that sends the request.
@@ -3436,6 +3439,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
         self._result = CallToolsNode(response)
+        self._result._serving_model = self._serving_model  # pyright: ignore[reportPrivateUsage]
 
         return self._result
 
@@ -3592,6 +3596,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         default=None, init=False, repr=False
     )
     _stream_error: BaseException | None = field(default=None, init=False, repr=False)
+    _serving_model: models.Model | None = field(default=None, init=False, repr=False)
+    """The model the attempt that produced `model_response` was sent to, when this run made that attempt."""
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -3875,7 +3881,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         evidence_window = _messages._post_compaction_window_for_response(  # pyright: ignore[reportPrivateUsage]
             ctx.state.message_history,
             self.model_response,
-            ctx.deps.model._compaction_window_predicate(self.model_response),  # pyright: ignore[reportPrivateUsage]
+            # The model that served the response, which may not be the step's, as when `ModelFallback` moved on.
+            (self._serving_model or ctx.deps.model)._compaction_window_predicate(self.model_response),  # pyright: ignore[reportPrivateUsage]
         )
         # Held in a local because it lands in two places below.
         anchored_evidence = AnchoredEvidence(
