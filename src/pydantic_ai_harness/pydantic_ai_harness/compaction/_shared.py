@@ -52,6 +52,7 @@ from pydantic_ai_harness.compaction._receipts import (
     drain_receipts,
     is_receipt_part,
     open_receipt_scope,
+    record_receipt,
     reset_receipt_scope,
 )
 from pydantic_ai_harness.filesystem import READ_FILE_KIND
@@ -654,6 +655,48 @@ async def compact_with_span(
                 if receipt.handle is not None:
                     attributes['compaction.receipt.handle'] = receipt.handle
                 span.add_event(RECEIPT_EVENT_NAME, attributes)
+    return compacted
+
+
+async def compact_if_smaller(
+    ctx: RunContext[AgentDepsT],
+    *,
+    strategy: str,
+    messages: list[ModelMessage],
+    compact: Callable[[], Awaitable[list[ModelMessage]]],
+    tokenizer: Callable[[str], int] | None = None,
+) -> list[ModelMessage] | None:
+    """Run *compact*, and return `None` when its result is not estimated smaller than *messages*.
+
+    Automatic compaction runs to make the request smaller, so a result that isn't is rejected: the
+    receipts the attempt recorded are discarded with it, and a `compact_messages` span with
+    `compaction.skipped='not_smaller'` records the attempt's estimated size. A result that is smaller,
+    or the unchanged history, is returned, and its receipts reach the enclosing `compact_with_span`.
+    """
+    token = open_receipt_scope()
+    try:
+        compacted = await compact()
+        receipts = drain_receipts()
+    finally:
+        reset_receipt_scope(token)
+    if _history_changed(messages, compacted):
+        tokens_before = estimate_token_count(messages, tokenizer)
+        tokens_after = estimate_token_count(compacted, tokenizer)
+        if tokens_after >= tokens_before:
+            with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
+                span.set_attributes(
+                    {
+                        'compaction.strategy': strategy,
+                        'compaction.skipped': 'not_smaller',
+                        'compaction.messages_before': len(messages),
+                        'compaction.messages_after': len(compacted),
+                        'compaction.tokens_before': tokens_before,
+                        'compaction.tokens_after': tokens_after,
+                    }
+                )
+            return None
+    for receipt in receipts:
+        record_receipt(receipt)
     return compacted
 
 

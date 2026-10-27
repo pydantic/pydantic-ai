@@ -97,8 +97,18 @@ unaffected: the generator's docstring lists the dependency forms and the modules
 record.
 
 An entry whose only kind is `annotation_only` is a definition the engines name only in annotations,
-such as a type in a mirrored signature. It stays in the manifest, and `gates` leaves it out of the
-review routing that [#11174](https://github.com/pydantic/pydantic-ai/issues/11174) tracks.
+such as a type in a mirrored signature. It stays in the manifest, and `gates` leaves it out of review
+routing.
+
+CI labels a pull request `needs-durable-exec-review` while its changed lines touch an entry for which
+`gates` holds, and removes the label once a push no longer does. A changed line counts for the
+innermost definition around it, a comment, docstring or blank line for none, and a removed or renamed
+core file for all of its entries; `touched_entries` in the generator has the rules. For such a pull
+request, CI Review gets this file and the touched entries with their engine sites, and checks each
+site. The label job (`durable-exec-label` in `.github/workflows/bots.yml`) and CI Review run the
+generator and the manifest from the base branch, never the pull request's copies, so an edit to
+either takes effect only once merged. To list the touched entries yourself, run
+`uv run python scripts/durable_exec_contract.py --touched <owner/repo> <pr> <base sha> <head sha>`.
 
 `tests/durable_exec/test_durable_exec_contract_manifest.py` fails when the manifest is stale.
 Regenerate it with `uv run python scripts/durable_exec_contract.py --write` and commit the diff.

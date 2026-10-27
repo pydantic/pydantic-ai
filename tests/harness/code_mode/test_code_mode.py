@@ -86,6 +86,7 @@ from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning, ToolOutputLimits
+from pydantic_ai_harness._code_tools import sanitize_tool_name
 from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeReturnSchemaWarning, CodeModeToolset
 from pydantic_ai_harness.code_mode._capability import (
@@ -93,7 +94,6 @@ from pydantic_ai_harness.code_mode._capability import (
 )
 from pydantic_ai_harness.code_mode._toolset import (
     _SEARCH_TOOLS_MODIFIER,  # pyright: ignore[reportPrivateUsage]
-    _sanitize_tool_name,  # pyright: ignore[reportPrivateUsage]
     _tool_search_addendum,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.tool_output_limits import LocalFileStore
@@ -2602,7 +2602,7 @@ class TestCodeMode:
         ],
     )
     def test_sanitize_tool_name(self, original: str, expected: str) -> None:
-        assert _sanitize_tool_name(original) == expected
+        assert sanitize_tool_name(original) == expected
 
     async def test_hyphenated_tool_name_is_sanitized_and_callable(self) -> None:
         """A tool with hyphens in the name is automatically renamed and callable from the sandbox."""

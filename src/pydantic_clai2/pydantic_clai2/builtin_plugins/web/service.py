@@ -22,6 +22,7 @@ from pydantic_ai_harness.ask_user import Answerer
 from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.builtin_plugins.web.channel import SessionChannel
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
+from pydantic_clai2.builtin_plugins.web.files import WorkspaceFiles
 from pydantic_clai2.builtin_plugins.web.framing import FrameCheck
 from pydantic_clai2.builtin_plugins.web.host_session import HostSessions
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Client, Hub
@@ -53,7 +54,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     dump,
     history_items,
 )
-from pydantic_clai2.builtin_plugins.web.sidebar import busy_elsewhere, session_entry, worktrees
+from pydantic_clai2.builtin_plugins.web.sidebar import session_entry, worktrees
 from pydantic_clai2.builtin_plugins.web.workers import task_entry
 from pydantic_clai2.builtin_plugins.web.workspaces import checkouts
 from pydantic_clai2.cli.self_update import installed
@@ -84,6 +85,7 @@ from pydantic_clai2.runtime.project_identity import (
     project_identity,
     worktree_roots,
 )
+from pydantic_clai2.runtime.session import busy_elsewhere
 from pydantic_clai2.runtime.session_workspace import workspace_directory
 from pydantic_clai2.runtime.task_prompts import is_task_prompt
 
@@ -117,6 +119,8 @@ class WebService:
         """The orchestrator chat, a separate agent with its own conversation, beside the sessions."""
         self.workspace_locks: defaultdict[str, Lock] = defaultdict(Lock)
         """One per workspace, so the page and the orchestrator opening its session at once start one, not two."""
+        self.files = WorkspaceFiles()
+        """Each session folder's files, for the composer's `@` picker."""
         self.frames = FrameCheck()
         """Which side panel pages this page can frame; each page's headers are read once."""
         self.version = installed().label
@@ -714,15 +718,18 @@ class WebService:
         return sorted(projects, key=lambda project: (not project.current, project.key == MISSING))
 
     async def transcript(self, conversation_id: str) -> Transcript:
+        """A saved session to show; one another CLAI runs is only shown, so opening it is the user's choice to fork it."""
         saved = await self.catalog.saved(conversation_id)
-        openable = self._continuable(saved.summary.workspace)
+        continuable = self._continuable(saved.summary.workspace)
+        busy = continuable and await to_thread.run_sync(busy_elsewhere, saved.summary)
         return Transcript(
             id=saved.summary.id,
             title=saved.summary.title,
             workspace=saved.summary.workspace,
             items=history_items(saved.messages),
-            openable=openable,
-            missing=self.catalog.follows_workspace and not openable,
+            openable=continuable and not busy,
+            missing=self.catalog.follows_workspace and not continuable,
+            owner_pid=saved.summary.owner_pid if busy else None,
         )
 
     def _continuable(self, workspace: str) -> bool:
