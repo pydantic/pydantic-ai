@@ -28,7 +28,7 @@ RunPytest: TypeAlias = Callable[..., pytest.RunResult]
 SPAWN = 'subprocess.run([sys.executable, "-I", "-S", "-c", "pass"], check=True)'
 
 
-@dataclass
+@dataclass(eq=False)  # Registered as a plugin, which pytest needs to hash.
 class FakeClock:
     """A clock that only moves when a test in the inner session calls `clock.sleep`.
 
