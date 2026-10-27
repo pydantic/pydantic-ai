@@ -7,6 +7,12 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10683"
     },
     {
+      "against": "v2.62.0",
+      "fingerprint": "8cb8cd8599117122d06cdb06c3f0113ddd97f018c56417a2dd65310dd85c2439",
+      "reason": "clai2 0.x: adds the built-in `hooks` declaration to `DEFAULT_PLUGINS`; every existing declaration is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11423"
+    },
+    {
       "against": "v2.61.0",
       "fingerprint": "6829b0f1c3cd0ca2dfb82010a1df520f263f796ce7429e6a60f3dee5e143e115",
       "reason": "`clai2` imports Codex's responses under the `openai-codex` provider, which round-trips their encrypted reasoning and compaction summaries; the constant only names the provider imported histories use.",
