@@ -432,8 +432,8 @@ class WebService:
         run = {'enable': catalog.enable, 'disable': catalog.disable, 'reload': catalog.reload}[action]
         try:
             await run(name)
-        except PluginError as error:
-            raise ValueError(str(error)) from error
+        except PluginError as exc:
+            raise ValueError(str(exc)) from exc
         finally:
             self.hub.publish(PluginsChanged())
 
@@ -456,11 +456,11 @@ class WebService:
         settings = info.settings_model.model_validate({**values, **changes})
         try:
             await self.plugin_catalog.save_settings(name, settings)
-        except PluginError as error:
-            raise ValueError(str(error)) from error
-        except TypeError as error:
+        except PluginError as exc:
+            raise ValueError(str(exc)) from exc
+        except TypeError as exc:
             # Its model changed since the listing above, as a reload that re-imports it does.
-            raise ValueError(f'{name} changed; reload the panel and try again.') from error
+            raise ValueError(f'{name} changed; reload the panel and try again.') from exc
         finally:
             self.hub.publish(PluginsChanged())
 
@@ -496,8 +496,8 @@ class WebService:
         catalog = self.plugin_catalog
         try:
             messages = await catalog.edit_settings(name, edit)
-        except PluginError as error:
-            raise ValueError(str(error)) from error
+        except PluginError as exc:
+            raise ValueError(str(exc)) from exc
         finally:
             self.hub.publish(PluginsChanged())
         menu = catalog.settings_menu(name)
@@ -747,6 +747,21 @@ class WebService:
         await (catalog.archive(conversation_id) if archived else catalog.unarchive(conversation_id))
         self.hub.publish(SessionsChanged())
 
+    async def archive_all(self, ids: Sequence[str]) -> None:
+        """Archive several sessions, such as a worktree's; any refused are named once the others are archived."""
+        catalog = self.catalog
+        unique = list(dict.fromkeys(ids))
+        refused: list[str] = []
+        for conversation_id in unique:
+            try:
+                await catalog.archive(conversation_id)
+            except (LookupError, ValueError) as exc:
+                refused.append(f'{conversation_id!r}: {exc}')
+        if len(refused) < len(unique):
+            self.hub.publish(SessionsChanged())
+        if refused:
+            raise ValueError(f'Archived {len(unique) - len(refused)} of {len(unique)} sessions. ' + ' '.join(refused))
+
 
 async def _view(panel: SidePanel) -> PanelView:
     """What `panel` shows now; a failing view, or a page that is not on the web, shows why instead."""
@@ -756,8 +771,8 @@ async def _view(panel: SidePanel) -> PanelView:
     except TimeoutError:
         return PanelView(note=f'{panel.title} did not answer in time.')
     # Any plugin's bug: one broken panel must not take the others, or the page, down.
-    except Exception as error:  # noqa: BLE001
-        return PanelView(note=f'{panel.title} failed: {str(error) or type(error).__name__}')
+    except Exception as exc:  # noqa: BLE001
+        return PanelView(note=f'{panel.title} failed: {str(exc) or type(exc).__name__}')
     if view.url is not None and not _web_page(view.url):
         return PanelView(note=f'{panel.title} offered a page that is not on the web; only http and https open here.')
     return view
@@ -805,8 +820,8 @@ class Observer(AbstractCapability[None]):
         except get_cancelled_exc_class():
             channel.run_ended('cancelled')
             raise
-        except Exception as error:
-            channel.run_ended('failed', error=error)
+        except Exception as exc:
+            channel.run_ended('failed', error=exc)
             raise
         channel.run_ended('completed', usage=result.usage)
         return result

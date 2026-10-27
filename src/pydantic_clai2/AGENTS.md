@@ -68,7 +68,7 @@ they agree in the same PR.
   capability function might return a sandbox, so `local_workspace()` attaches the
   launch directory only after every `for_run`, and harness `Skills` (which reads its
   libraries in `for_run`) fails the turn. Wrap a function that never returns a
-  workspace in `runtime/_session.py`'s `WorkspacelessCapability`.
+  workspace in `runtime/session.py`'s `WorkspacelessCapability`.
 - **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.
@@ -92,7 +92,7 @@ they agree in the same PR.
   background task outlives that run, so no hook of the parent sees them; `Tasks.observe`,
   the harness owner's one observer, fires `TaskProgress`. A `/fork` runs a separate session in the
   background, so its run's hooks belong to that session and nothing of the parent sees it end;
-  `Forks._run` fires `ForkEnd`. `/update` is a command, so no core
+  `Forks._run` fires `ForkEnd`. `/update now` is a command, so no core
   hook sees its install either, and `CommandEnd` comes only once uv has finished; `Updates.command`
   fires `InstallProgress` as it goes. Additional moments need the same
   justification: say which core hook you checked and why it does not fit.
@@ -142,7 +142,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   already holding a conversation, and `Session.resume` refuses one another session
   holds or is resuming (`LiveRuntimes.claim`). Sessions `open` and `new` start run as tasks of
   `serving`, in their own directory, with `Interrupts(signals=False)`, refuse
-  `/reload` and `/update` unless the terminal shows them (only that session, or the one
+  `/reload` and `/update now` unless the terminal shows them (only that session, or the one
   CLAI started with, restarts it, never from another folder or while another session runs a
   turn, and a failed `/reload` continues the shown session's conversation), and close
   after `IDLE_AFTER` (an hour) with no turn, command, queued input, fork, task,
@@ -199,10 +199,10 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `for_run` function returns, never on the `DynamicCapability`), so each costs one
   catalog line until the model calls `load_capability`. A new integration does the same.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
-  `config/builtins.py` lists the library's built-ins (re-exported by `_app.py`,
+  `config/builtins.py` lists the library's built-ins (re-exported by `app.py`,
   kept apart so `clai2 plugins` can toggle one without importing the shell); `STOCK_PLUGINS` opts the CLI-owned
   agent into delegation without changing supplied-agent defaults. CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
-  `compaction`, `persistence`, `observability`). The loader treats them like drop-ins with the lowest
+  `compaction`, `persistence`, `observability`, `hooks`). The loader treats them like drop-ins with the lowest
   precedence: a store declaration with the same id replaces one, `disable`
   persists an override, `remove` resets it. Do not special-case `Coder`
   anywhere else; the agent from `create_agent()` has no coding tools of its
@@ -221,6 +221,11 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   must not run code as the user on launch. `/plugins enable` is the approval
   and persists the approved declaration in the store. Precedence is store,
   drop-in folder, project, built-in. CLAI never writes the project file.
+  The exception is a factory in `APPROVED_AS_WRITTEN` (`plugins/process_plugins.py`),
+  such as the `hooks` table's `project_hooks`: its declaration is what runs, so
+  a stored approval with the same id and factory that differs from the
+  project's is stale and the project's, off, replaces it. A drop-in or a user's
+  own plugin under that id is never replaced.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
   approval. [Environment variables](docs/reference.md#environment-variables) documents the
@@ -261,8 +266,10 @@ chain's `take_background_compaction` (without a focus) or `discard_background_co
 row's window does not depend on it: `Session.on_context_window` reports each
 streamed request model's window, and the shell fills it in when no gauge has.
 Until a turn on the selected model runs in the conversation, `show_model` sets
-`Status.model_window` from its profile (`infer_model_profile`), which the row and
-web UI show while `context_window` is `None`; after one, an unresolved window stays `?`.
+`Status.model_window` from its profile (`infer_model_profile`; a plugin model's from
+its `settings_from` provider's), which the row and web UI show while `context_window`
+is `None`; after one, an unresolved window stays `?`. A conversation without a figure
+yet, such as a resumed one, reads its last response's `context_tokens`.
 
 ## Adding or changing a CLAI moment or contribution
 
@@ -368,7 +375,7 @@ from the palette.
 
 ## Source layout
 
-The package root composes the shell (`_app.py`, `__main__.py`) and keeps the
+The package root composes the shell (`app.py`, `__main__.py`) and keeps the
 plugin-author imports `pydantic_clai2.plugins` and `pydantic_clai2.commands`
 stable. Other code is grouped by responsibility:
 
@@ -395,6 +402,15 @@ is kept out of this file because this file is sent with every request.
 
 Keep files concise - we don't need any 10,000 line files. Single responsibility.
 
+## Windows-only CLI operations
+
+Check whether an existing interactive command already completes the operation on Windows.
+If a new non-interactive path cannot observe completion because CLAI must exit first,
+fail early with a non-zero status and name the working command. Do not report success
+for a detached operation or add a process trampoline just to make the new path work.
+Add Windows-specific orchestration only when a concrete requirement cannot use the
+existing path. For updates, `/update now` is the working interactive path.
+
 ## Testing
 
 - When adding or modifying a CLAI2 CLI UX feature, test every affected UX feature
@@ -415,6 +431,9 @@ Before adding, removing, or renaming a setting, changing its type, meaning, or
 default, or changing the SQL schema, consider upgrades, downgrades, and branch
 switches. Different versions can share the same settings database.
 
+- Adding a setting needs no API compatibility waiver: `SETTING_FIELDS` and
+  `STRING_SETTINGS` are `growing_collections` in `.github/api-compatibility-allowlist.json`.
+  Removing or renaming one still needs a deprecation and a waiver.
 - Add regression cases to `tests/test_settings_compatibility.py` and affected CLI
   tests using the previous stored format. Keep historical fixtures unchanged;
   do not regenerate them with current models or rewrite them to make a change pass.

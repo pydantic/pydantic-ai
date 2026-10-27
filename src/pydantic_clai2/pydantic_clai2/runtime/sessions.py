@@ -27,7 +27,6 @@ from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import Plugin
-from pydantic_clai2.runtime._session import Session, fork_summary, interrupted_history
 from pydantic_clai2.runtime.imported_sessions import (
     IMPORT_SOURCES,
     ImportCatalog,
@@ -38,6 +37,7 @@ from pydantic_clai2.runtime.imported_sessions import (
     save_import,
 )
 from pydantic_clai2.runtime.launch import launch_session_id
+from pydantic_clai2.runtime.session import Session, fork_summary, interrupted_history
 from pydantic_clai2.runtime.session_naming import NamingClient, NamingResult, SessionNamer, generate_name
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser

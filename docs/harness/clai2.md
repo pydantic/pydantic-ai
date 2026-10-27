@@ -142,8 +142,8 @@ created, without forcing deletion. If cleanup or the ignore edit fails, the erro
 names the retained branch or checkout for recovery. The worktree and branch
 remain after exit, including startup
 errors after creation, so CLAI does not delete your work. Enter that directory
-and run `clai2 --resume` to continue a saved session. `--worktree` cannot be
-combined with `--resume`, `config`, or `plugins`.
+and run `clai2 --continue` or `clai2 --resume` to continue a saved session. `--worktree`
+cannot be combined with `--resume`, `--continue`, `config`, or `plugins`.
 
 When you no longer need the checkout, use Git's own cleanup commands from your
 original repository root. Without `--force`, Git refuses to remove a dirty worktree:

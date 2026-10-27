@@ -207,7 +207,10 @@ request of the run, with `focus` forwarded through `with_focus` when the strateg
 Below `min_tokens`, after `max_per_run` accepted requests, or with one already scheduled, the tool
 return says why nothing happens. It orders itself after the automatic compaction capabilities and
 stands down when one already compacted that request. The span gets `compaction.model_requested`.
-The strategy's own trigger is required but bypassed.
+The strategy's own trigger is required but bypassed. Under durable execution the strategy runs as
+the `compact` durable operation; the stable default `id='compact_on_request'` makes recovery work
+without configuration, and `id=None` breaks it. Under Temporal that operation is an activity
+without `tracer` or `capabilities`, so `RelevanceCompaction` or a `receipts=True` strategy fails.
 
 ```python
 from pydantic_ai import Agent
@@ -355,10 +358,12 @@ Stores:
 
 Gotchas: both `ToolReturn.return_value` and text `content` are reduced; `ModelRetry` and tool errors
 are never reduced, nor are core `load_capability` / `search_tools` returns. Keep
-`Shell(max_output_chars=...)` above your thresholds. `Summarize` usage counts toward the run; under
-durable execution prefer `Spill` for payloads near the engine's size limit. Distinct from
-`ClampOversizedMessages`, which clamps model responses, not tool returns. With `CodeMode`, the limits
-apply to the `run_code` return, not to each tool call inside the script.
+`Shell(max_output_chars=...)` above your thresholds. `Summarize` usage counts toward the run. Under
+durable execution spill writes and built-in summaries are journaled, so a replay reuses the recorded
+handle or summary; the payload is part of the operation input, and a custom `OverflowStore` should
+treat a repeated `write` of a key as an overwrite. Distinct from `ClampOversizedMessages`, which
+clamps model responses, not tool returns. With `CodeMode`, the limits apply to the `run_code` return,
+not to each tool call inside the script.
 
 ## WarnOnCacheBusts
 

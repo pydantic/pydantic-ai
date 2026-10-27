@@ -17,7 +17,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import StreamRenderer
+from pydantic_clai2.ui.rendering.rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 RESUMED_TURNS = 10

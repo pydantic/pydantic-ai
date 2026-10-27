@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from pydantic_clai2.cli.self_update import WebHandoff
-    from pydantic_clai2.config import Settings
+    from pydantic_clai2.config import Settings, UpdateChannel
     from pydantic_clai2.config.project_settings import ProjectSettings
     from pydantic_clai2.config.settings_store import SettingsStore
     from pydantic_clai2.runtime.worktrees import Worktree
@@ -43,7 +43,9 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument(
         '--fork-session',
         action='store_true',
-        help='With --resume, continue in a copy of the session under a new ID, leaving the original as it was',
+        help=(
+            'With --resume or --continue, continue in a copy of the session under a new ID, leaving the original as it was'
+        ),
     )
     parser.add_argument(
         '--worktree',
@@ -86,6 +88,11 @@ def run(*, splash: Splash | None = None) -> None:
             'the address printed leaves it out and no browser opens'
         ),
     )
+    parser.add_argument(
+        '--update',
+        action='store_true',
+        help='Install the newest CLAI from the updates.channel setting with uv, then exit',
+    )
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
     parser.add_argument('command', nargs='?', choices=('config', 'plugins'))
@@ -100,7 +107,7 @@ def run(*, splash: Splash | None = None) -> None:
         args.token_file = args.token_file.resolve()  # Also before `--worktree` changes directory.
     try:
         from pydantic_ai.usage import UsageLimits
-        from pydantic_clai2._app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
+        from pydantic_clai2.app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
         from pydantic_clai2.cli.agent_import import import_agent
         from pydantic_clai2.cli.self_update import Relaunch
         from pydantic_clai2.commands import config_command, plugins_command
@@ -120,10 +127,14 @@ def run(*, splash: Splash | None = None) -> None:
             handler = config_command if args.command == 'config' else plugins_command
             print(handler(store, args.arguments))
             return
+        if args.update:
+            settings = _settings_for(store, model=None, request_limit=None)(load_project_settings(Path.cwd()))
+            raise SystemExit(asyncio.run(_update(settings.update_channel)))
         agent = import_agent(args.agent) if args.agent is not None else None
         if args.worktree is not None:
             worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web)
         project = load_project_settings(Path.cwd())
+        _continue_session(args, store)
         model = args.model or os.getenv('CLAI_MODEL')
         settings_for = _settings_for(
             store,
@@ -215,8 +226,36 @@ def run(*, splash: Splash | None = None) -> None:
             print(f'Worktree kept at {worktree.path} (branch: {worktree.branch}).', file=sys.stderr)
         parser.error(str(exc))
     except KeyboardInterrupt:
-        if args.prompt is not None or args.web:
+        if args.prompt is not None or args.web or args.update:
             raise SystemExit(130) from None
+
+
+async def _update(channel: 'UpdateChannel') -> int:
+    """`clai2 --update`: install the newest CLAI on `channel` as `/update now` does, print how it went, and exit.
+
+    No shell runs, so nothing restarts: the next `clai2` is the new build. Exits 1 when uv failed or is missing.
+    On Windows, installing requires this process to exit first; refuse rather than report success before uv runs.
+    """
+    import httpx
+
+    from pydantic_clai2.cli.self_update import Updates
+
+    async def no_relaunch(uv: str) -> None:
+        return None
+
+    updates = Updates(channel=lambda: channel, locate=no_relaunch)
+    if updates.windows:
+        print(
+            '`clai2 --update` cannot install on Windows. Use `/update now` in an interactive clai2 session.',
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        print(await updates.command([]))
+    except (httpx.HTTPError, ValueError) as exc:  # Offline, rate-limited, or an unexpected release listing.
+        print(f'Could not check for a newer CLAI: {exc}', file=sys.stderr)
+        return 1
+    return 1 if updates.failed else 0
 
 
 def _settings_for(
@@ -328,11 +367,43 @@ def read_token(path: Path) -> str:
     return token
 
 
+def _continue_session(args: argparse.Namespace, store: 'SettingsStore') -> None:
+    """With `--continue`, resume this directory's latest session, or start a new one when there is none."""
+    if not args.continue_session:
+        return
+    args.resume = asyncio.run(_latest_session(store))
+    if args.resume is None:
+        print(f'No saved session in {Path.cwd()}; starting a new one.', file=sys.stderr)
+        args.fork_session = False  # Nothing to copy: the new session takes any `--session-id`.
+
+
+async def _latest_session(store: 'SettingsStore') -> str | None:
+    """The ID of the newest unarchived conversation saved in this directory, for `--continue`; `None` when there is none."""
+    from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+
+    conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
+    workspace = str(Path.cwd().resolve())  # As `Session.workspace` saves it.
+    offset = 0
+    # The listing spans every directory, newest first, so page through it until one was saved here.
+    while page := await conversations.listing(limit=200, offset=offset, archived=False):
+        if (found := next((entry.id for entry in page if entry.workspace == workspace), None)) is not None:
+            return found
+        offset += len(page)
+    return None
+
+
 def _add_resume_flags(parser: argparse.ArgumentParser) -> None:
-    """`--resume` and its Claude Code and Codex counterparts, of which one may be given."""
+    """`--resume`, `--continue`, and the Claude Code and Codex counterparts of `--resume`, of which one may be given."""
     flags = parser.add_mutually_exclusive_group()
     flags.add_argument(
         '--resume', nargs='?', const='', metavar='SESSION-ID', help='Restore a saved session; no ID opens the browser'
+    )
+    flags.add_argument(
+        '-c',
+        '--continue',
+        dest='continue_session',
+        action='store_true',
+        help="Restore this directory's most recent saved session, or start a new one when there is none",
     )
     for flag, name in (('--resume-claude', 'Claude Code'), ('--resume-codex', 'Codex')):
         flags.add_argument(
@@ -355,20 +426,44 @@ def _resume_source(args: argparse.Namespace) -> None:
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     if args.command and (
         args.resume is not None
+        or args.continue_session
         or args.worktree is not None
         or args.agent is not None
         or args.session_id is not None
         or args.fork_session
     ):
         parser.error(
-            '--resume, --session-id, --fork-session, --worktree, and --agent cannot be combined with config or plugins'
+            '--resume, --continue, --session-id, --fork-session, --worktree, and --agent cannot be combined with'
+            ' config or plugins'
         )
+    if args.update and (
+        args.command
+        or args.prompt is not None
+        or args.web
+        or args.resume is not None
+        or args.continue_session
+        or args.session_id is not None
+        or args.agent is not None
+        or args.worktree is not None
+        or args.model is not None
+        or args.request_limit is not None
+    ):
+        parser.error(
+            '--update cannot be combined with config, plugins, --prompt, --web, --resume, --continue, '
+            '--session-id, --agent, --worktree, --model, or --request-limit'
+        )
+    # `--continue` resumes the session it finds at startup, so it is checked as a `--resume` would be.
+    resume = '' if args.continue_session else args.resume
+    if args.continue_session and args.session_id is not None and not args.fork_session:
+        parser.error('--session-id can only be combined with --continue when --fork-session is given')
     try:
-        args.session_id = launch_session_id(resume=args.resume, session_id=args.session_id, fork=args.fork_session)
+        args.session_id = launch_session_id(resume=resume, session_id=args.session_id, fork=args.fork_session)
     except ValueError as exc:
         parser.error(str(exc))
-    if args.worktree is not None and args.resume is not None:
-        parser.error('--worktree cannot be combined with --resume; resume from an existing worktree directory')
+    if args.worktree is not None and resume is not None:
+        parser.error(
+            '--worktree cannot be combined with --resume or --continue; resume from an existing worktree directory'
+        )
     if args.web:
         if args.command or args.prompt is not None or args.agent is not None:
             parser.error('--web cannot be combined with config, plugins, --prompt, or --agent')

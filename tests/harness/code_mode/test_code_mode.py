@@ -10,6 +10,7 @@ import asyncio
 import contextvars
 import functools
 import re
+import sys
 import threading
 import warnings as _warnings
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -325,9 +326,9 @@ class TestCodeMode:
     # ---------------------------------------------------------------------------
 
     async def test_default_wraps_all_tools_behind_run_code(self) -> None:
-        """`CodeMode()` exposes only `run_code` and renders every tool as an `async def`."""
+        """`CodeMode(dynamic_catalog=False)` exposes only `run_code` and renders every tool as an `async def`."""
         toolset = _build_function_toolset(add, greet)
-        wrapper = CodeMode[object]().get_wrapper_toolset(toolset)
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(toolset)
         assert isinstance(wrapper, CodeModeToolset)
 
         tools = await wrapper.get_tools(build_run_context(None))
@@ -376,7 +377,7 @@ class TestCodeMode:
         ]
 
         for toolset, expected_examples, has_async in cases:
-            wrapper = CodeMode[object]().get_wrapper_toolset(toolset)
+            wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(toolset)
             assert isinstance(wrapper, CodeModeToolset)
 
             description = (await wrapper.get_tools(build_run_context(None)))['run_code'].tool_def.description
@@ -576,7 +577,7 @@ class TestCodeMode:
             """Return a fake fixed timestamp."""
             return '2026-04-08T12:00:00Z'
 
-        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(now_iso))
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(_build_function_toolset(now_iso))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
@@ -658,15 +659,40 @@ class TestCodeMode:
             ),
         ]
         assert advertised is not None
-        modules = re.findall(r'`(\w+)`', advertised.group(1))
+        modules = re.findall(r'`([\w.]+)`', advertised.group(1))
         assert 'collections' in modules
         for path, pattern in doc_lists:
             documented = re.search(pattern, path.read_text(), re.DOTALL)
             assert documented is not None, path
-            assert re.findall(r'`(\w+)`', documented.group(1)) == modules, path
+            assert re.findall(r'`([\w.]+)`', documented.group(1)) == modules, path
         code = '\n'.join(f'import {module}' for module in modules) + '\n"ok"'
         result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
         assert result.return_value == 'ok'
+
+    async def test_advertised_modules_cover_every_importable_module(self) -> None:
+        """The closed module list is exactly the top-level stdlib modules, plus listed submodules, the sandbox imports.
+
+        Submodules cannot be enumerated, so only those the description already lists are probed.
+        """
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        description = tools['run_code'].tool_def.description or ''
+        advertised = re.search(r'Importable standard library modules\*\*: (.*?)\. ', description)
+        assert advertised is not None
+        submodules = [module for module in re.findall(r'`([\w.]+)`', advertised.group(1)) if '.' in module]
+        candidates = sorted(sys.stdlib_module_names) + submodules
+        # A first call leaves the REPL non-fresh, so the probe skips the type check that rejects unknown imports.
+        await wrapper.call_tool('run_code', {'code': 'ok = []'}, ctx, tools['run_code'])
+        probe = ''.join(
+            f'try:\n    import {module}\n    ok.append({module!r})\nexcept Exception:\n    pass\n'
+            for module in candidates
+        )
+        result = await wrapper.call_tool('run_code', {'code': f'{probe}ok'}, ctx, tools['run_code'])
+        # `posixpath` is the module behind `os.path`, which the description lists instead.
+        importable = sorted(set(result.return_value) - {'posixpath'})
+        assert importable == sorted(re.findall(r'`([\w.]+)`', advertised.group(1)))
 
     async def test_run_code_returns_last_expression_value(self) -> None:
         """When the last statement is an expression, its value is returned in `result`."""
@@ -1707,7 +1733,7 @@ class TestCodeMode:
 
     async def test_filter_keeps_rejected_tools_native(self) -> None:
         """A callable filter sandboxes accepted tools and leaves the rest visible to the model."""
-        capability = CodeMode[object](tools=lambda ctx, td: td.name == 'add')
+        capability = CodeMode[object](dynamic_catalog=False, tools=lambda ctx, td: td.name == 'add')
         wrapper = capability.get_wrapper_toolset(_build_function_toolset(add, greet))
         assert isinstance(wrapper, CodeModeToolset)
 
@@ -1790,7 +1816,7 @@ class TestCodeMode:
 
     async def test_typed_dict_arguments_render_as_prelude(self) -> None:
         """Tools with structured (TypedDict) parameters render their types in the prelude."""
-        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(lookup_person))
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(_build_function_toolset(lookup_person))
         assert isinstance(wrapper, CodeModeToolset)
 
         description = (await wrapper.get_tools(build_run_context(None)))['run_code'].tool_def.description
@@ -1833,7 +1859,7 @@ class TestCodeMode:
             results={'get_user': 'user-result', 'get_company': 'company-result'},
         )
 
-        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
         ctx = await build_ctx(None, wrapper)
@@ -1873,7 +1899,7 @@ class TestCodeMode:
             return str(x)  # pragma: no cover - tool body is not invoked in this test
 
         toolset = FunctionToolset[object](tools=[Tool(add), Tool(later, defer_loading=True)])
-        wrapper = CodeMode[object]().get_wrapper_toolset(toolset)
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(toolset)
         assert isinstance(wrapper, CodeModeToolset)
 
         ctx = build_run_context(None)
@@ -1899,7 +1925,7 @@ class TestCodeMode:
 
         # `defer_loading=False` mimics the post-discovery state ToolSearchToolset hands back.
         toolset = FunctionToolset[object](tools=[Tool(add), Tool(later, defer_loading=False)])
-        wrapper = CodeMode[object]().get_wrapper_toolset(toolset)
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(toolset)
         assert isinstance(wrapper, CodeModeToolset)
 
         ctx = build_run_context(None)
@@ -1925,7 +1951,7 @@ class TestCodeMode:
             tool_kind='capability-load',
         )
         static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_loader])
-        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
         tools = await wrapper.get_tools(build_run_context(None))
@@ -1954,7 +1980,7 @@ class TestCodeMode:
             metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
         )
         static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_run_workflow])
-        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
         tools = await wrapper.get_tools(build_run_context(None))
@@ -1977,7 +2003,7 @@ class TestCodeMode:
             unless_native='web_search',
         )
         static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_fallback])
-        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
         ctx = build_run_context(None)
@@ -2020,7 +2046,7 @@ class TestCodeMode:
             return_schema={'type': 'string'},
         )
         static = _StaticToolset([td_plain])
-        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
         ctx = build_run_context(None)
@@ -2042,7 +2068,7 @@ class TestCodeMode:
             kind='external',
         )
         static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_external])
-        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
         ctx = build_run_context(None)
@@ -2064,7 +2090,7 @@ class TestCodeMode:
             # No return_schema -- simulates an MCP tool without outputSchema.
         )
         static = _StaticToolset([td], results={'search': 'found it'})
-        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
         ctx = build_run_context(None)
@@ -2394,7 +2420,7 @@ class TestCodeMode:
 
         agent: Agent[object, str] = Agent(
             FunctionModel(model_fn),
-            capabilities=[capability, CodeMode[object](tools='all')],
+            capabilities=[capability, CodeMode[object](dynamic_catalog=False, tools='all')],
         )
         result = await agent.run('inspect tools')
 
@@ -2417,7 +2443,9 @@ class TestCodeMode:
                 return ModelResponse(parts=[TextPart('done')])
             return ModelResponse(parts=[ToolCallPart('run_code', {'code': code}) for code in codes])
 
-        agent: Agent[object, str] = Agent(FunctionModel(model_fn), capabilities=[CodeMode[object]()])
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model_fn), capabilities=[CodeMode[object](dynamic_catalog=False)]
+        )
 
         @agent.tool_plain
         async def ping(n: int) -> int:
@@ -2586,7 +2614,7 @@ class TestCodeMode:
             return_schema={'type': 'string'},
         )
         static = _StaticToolset([td], results={'get-weather': 'sunny'})
-        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
         ctx = await build_ctx(None, wrapper)
@@ -2648,7 +2676,7 @@ class TestCodeMode:
             return_schema={'type': 'string'},
         )
         static = _StaticToolset([td1, td2], results={'get-weather': 'rain'})
-        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
         ctx = build_run_context(None)
@@ -2676,7 +2704,7 @@ class TestCodeMode:
             return_schema={'type': 'string'},
         )
         static = _StaticToolset([td_native, td_hyphen], results={'get_weather': 'ok'})
-        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
         ctx = build_run_context(None)
@@ -3466,7 +3494,7 @@ class TestCodeMode:
         """When the parallel execution mode is `sequential`, tool calls inside the
         sandbox are resolved sequentially via FutureSnapshot. Signatures stay `async def`."""
 
-        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(_build_function_toolset(add))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
 
@@ -3858,7 +3886,7 @@ class TestDynamicCatalog:
         assert fresh._in_flight_announcements == set()  # pyright: ignore[reportPrivateUsage]
 
     async def test_for_run_returns_self_when_disabled(self) -> None:
-        cap = CodeMode[object]()
+        cap = CodeMode[object](dynamic_catalog=False)
         assert await cap.for_run(build_run_context(None)) is cap
 
     # -- discovery announcement: local search path ------------------------

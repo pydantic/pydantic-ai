@@ -151,6 +151,12 @@ class Rename(BaseModel):
     title: str = Field(max_length=200)
 
 
+class Archive(BaseModel):
+    """The sessions to archive at once, such as every one of a worktree."""
+
+    ids: list[str] = Field(max_length=1000)
+
+
 class ModelChoice(BaseModel):
     """A saved model or chain to select, as `/model NAME` does."""
 
@@ -493,6 +499,10 @@ def _sessions(app: FastAPI, service: WebService) -> None:
     async def fork(conversation_id: str) -> Forked:
         return Forked(id=await _wait(service.fork(conversation_id)))
 
+    @app.post('/api/sessions/archive', status_code=204)
+    async def archive_all(body: Archive) -> None:
+        await _wait(service.archive_all(body.ids))
+
     @app.post('/api/sessions/{conversation_id}/archive', status_code=204)
     async def archive(conversation_id: str) -> None:
         await _wait(service.archive(conversation_id, archived=True))
@@ -703,15 +713,15 @@ def _run(action: Callable[[], ResultT]) -> ResultT:
     """Run an action, turning the errors it raises for the user into HTTP errors carrying their message."""
     try:
         return action()
-    except (ValueError, LookupError, RuntimeError) as error:
-        raise _http(error) from error
+    except (ValueError, LookupError, RuntimeError) as exc:
+        raise _http(exc) from exc
 
 
 async def _wait(action: Awaitable[ResultT]) -> ResultT:
     try:
         return await action
-    except (ValueError, LookupError, RuntimeError) as error:
-        raise _http(error) from error
+    except (ValueError, LookupError, RuntimeError) as exc:
+        raise _http(exc) from exc
 
 
 def _http(error: ValueError | LookupError | RuntimeError) -> HTTPException:

@@ -541,6 +541,13 @@ def test_openai_gpt_6_1_sol(model_name: str):
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openai_gpt_6_1_terra():
+    """Terra retains GPT-6 Luna's capabilities, including disabling reasoning and Responses-only max effort."""
+    profile = OpenAIProvider.model_profile('gpt-6.1-terra')
+    assert _normalize(profile) == _normalize(OpenAIProvider.model_profile('gpt-6-luna'))
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['openai/gpt-6.1-sol', 'openai/gpt-6.1-sol-pro', 'openai/gpt-6.1-sol-20260929'])
 def test_openrouter_gpt_6_1_sol(model_name: str):
     """OpenRouter's published GPT-6.1 Sol routes retain the OpenAI reasoning capabilities."""

@@ -44,7 +44,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequestPart
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -1090,15 +1090,19 @@ def test_anthropic_bedrock_lookback_breakpoint_skips_the_request_scoped_entry():
     ] == [(0, 0), (3, 11)]
 
 
-def duplicate_text_history() -> list[ModelMessage]:
-    """A tool round whose lasting user text is the same as the request-scoped reminder after it, as rendered."""
+def duplicate_text_history(lasting: ModelRequestPart | None = None) -> list[ModelMessage]:
+    """A tool round whose lasting text is the same as the request-scoped reminder after it, as rendered.
+
+    By default the lasting text is user text. On a model without mid-conversation system messages, user text can't
+    carry a `<system>` tag, so `lasting` there is a lasting `SystemPromptPart` with the reminder's text.
+    """
     return [
         ModelRequest(parts=[UserPromptPart('Weather in Paris?')]),
         ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1')]),
         ModelRequest(
             parts=[
                 ToolReturnPart('get_weather', 'Paris: 18C', tool_call_id='call_1'),
-                UserPromptPart('<system>Reminder.</system>'),
+                lasting or UserPromptPart('<system>Reminder.</system>'),
             ]
         ),
         ModelRequest(parts=[SystemPromptPart('Reminder.', scope='request')]),
@@ -1136,7 +1140,7 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_point_bedrock(
     settings: BedrockModelSettings = {'bedrock_cache_messages': True}
 
     with converse_request_bodies(model) as bodies:
-        await send(model, duplicate_text_history(), settings)
+        await send(model, duplicate_text_history(SystemPromptPart('Reminder.')), settings)
 
     assert bodies[0]['messages'][-1]['content'][-3:] == [
         {'text': '<system>Reminder.</system>'},
