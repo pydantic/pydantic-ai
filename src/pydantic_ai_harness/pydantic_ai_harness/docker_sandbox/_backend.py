@@ -44,7 +44,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import lifecycle_span, stop_span
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
 
 __all__ = ('DockerSandboxBackend', 'remove_container')
@@ -433,4 +433,5 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         # Killing the local `docker exec` client leaves the command running in the container, so a second
         # exec stops it. Best effort: a daemon that stalls now has nothing to report.
         argv = [self._executable, 'exec', '--workdir', '/', self._name, 'sh', '-c', _STOP, 'sh', tag]
-        await stop_shielded(lambda: self._runner.run(argv), grace=_STOP_TIMEOUT)
+        with stop_span():
+            await stop_shielded(lambda: self._runner.run(argv), grace=_STOP_TIMEOUT)

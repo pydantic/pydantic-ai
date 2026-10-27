@@ -153,6 +153,9 @@ async def test_a_timeout_is_an_error(tmp_path: Path) -> None:
 
     await agent.run('go')
 
+    assert [span['name'] for span in workspace_spans(exporter, tmp_path)] == snapshot(
+        ['workspace run', '  workspace stop']
+    )
     [span] = [span for span in exporter.get_finished_spans() if span.name == 'workspace run']
     assert span.status.status_code.name == 'ERROR'
     assert [event.attributes for event in span.events] == snapshot(

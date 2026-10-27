@@ -85,7 +85,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import lifecycle_span, stop_span
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
@@ -704,11 +704,12 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         except BaseException as error:
             # On a timeout or a cancellation, closing the socket is what ends the command in the Sprite.
             if not interrupted:
-                started = exec_command.ws is not None
-                await _close_command(exec_command)
-                if capture_stderr and started:
-                    # Removes the capture file, as far as the shielded grace allows.
-                    await stop_shielded(lambda: self._read_capture(capture))
+                with stop_span():
+                    started = exec_command.ws is not None
+                    await _close_command(exec_command)
+                    if capture_stderr and started:
+                        # Removes the capture file, as far as the shielded grace allows.
+                        await stop_shielded(lambda: self._read_capture(capture))
             if isinstance(error, Exception) and (mapped := _map_error(error, sandbox.name)) is not None:
                 raise mapped from error
             raise

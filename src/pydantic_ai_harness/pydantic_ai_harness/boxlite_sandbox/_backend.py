@@ -52,7 +52,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import lifecycle_span, stop_span
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -610,7 +610,8 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         except BaseException as error:
             if execution is not None:
                 # Timed out, cancelled, over the output cap, or the SDK failed during the command.
-                await _finish(_stop(execution), f'stopping a command in box {_key(box)!r}')
+                with stop_span():
+                    await _finish(_stop(execution), f'stopping a command in box {_key(box)!r}')
             if isinstance(error, boxlite.BoxliteError) and (unavailable := await self._unavailable(box)) is not None:
                 raise unavailable from error
             raise

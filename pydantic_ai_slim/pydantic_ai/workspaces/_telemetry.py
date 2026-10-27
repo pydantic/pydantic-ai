@@ -32,11 +32,22 @@ __all__ = (
     'publish_workspace_telemetry',
     'set_command',
     'set_content',
+    'stop_span',
 )
 
 
 Operation: TypeAlias = Literal[
-    'working_dir', 'run', 'read_bytes', 'write_bytes', 'stat', 'list_dir', 'make_dir', 'remove', 'exists', 'realpath'
+    'working_dir',
+    'run',
+    'stop',
+    'read_bytes',
+    'write_bytes',
+    'stat',
+    'list_dir',
+    'make_dir',
+    'remove',
+    'exists',
+    'realpath',
 ]
 Lifecycle: TypeAlias = Literal['create', 'attach', 'destroy']
 Step: TypeAlias = Literal[
@@ -123,6 +134,16 @@ def command_span(step: Step) -> Generator[Span]:
     """
     with _span('run') as span:
         span.set_attribute('pydantic_ai.workspace.command.step', step)
+        yield span
+
+
+@contextmanager
+def stop_span() -> Generator[Span]:
+    """Open a `workspace stop` span while a backend stops a command that timed out, was cancelled or failed.
+
+    It opens inside the command's `workspace run` span, which names the workspace and records why.
+    """
+    with _span('stop') as span:
         yield span
 
 

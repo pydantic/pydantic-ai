@@ -33,7 +33,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import lifecycle_span, stop_span
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_timeout,
@@ -304,7 +304,8 @@ class _DaytonaProcess:
                     )
         except BaseException as error:
             # Daytona may have accepted the command without acknowledging it; the session ID is the cleanup token.
-            await stop_shielded(lambda: _delete_session(self._sandbox, self._session_id))
+            with stop_span():
+                await stop_shielded(lambda: _delete_session(self._sandbox, self._session_id))
             if isinstance(error, TimeoutError):
                 raise TimeoutError(
                     f'Daytona command session setup did not complete within {_REQUEST_TIMEOUT}s.'

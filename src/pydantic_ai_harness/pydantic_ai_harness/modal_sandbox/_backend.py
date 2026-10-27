@@ -45,7 +45,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces._telemetry import lifecycle_span
+from pydantic_ai.workspaces._telemetry import lifecycle_span, stop_span
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_timeout,
@@ -761,7 +761,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         if errors:
             # The process may still be running when its output or exit status cannot be read,
             # or when it passed the output limit.
-            await stop_shielded(stop)
+            with stop_span():
+                await stop_shielded(stop)
             if isinstance(errors[0], WorkspaceOutputLimitError):
                 raise errors[0]
             mapped = await _failure(sandbox, errors[0], 'Could not read the command result')
