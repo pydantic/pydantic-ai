@@ -1502,7 +1502,7 @@ multi-line dialog (`Dialogs.text(multiline=True)`), a paragraph to append, and t
 prompt the model last received in a read-only one (`Dialogs.view`). **About** is `/update`'s
 menu, the one bare `/update` opens in the terminal: the running version with a note saying whether
 a newer CLAI is out, whose **Update…** asks before it enters `/update now`, and the
-`updates.channel` setting. `/usage` and `/cost`
+`updates.channel` setting. A refused **Update…** fails with an error and saves nothing. `/usage` and `/cost`
 results carry their figures (`Notice.usage`, from the `session_usage` the commands report), which
 the page shows as a card; the terminal prints them as before. The command palette (⌘⇧P, or bare
 `/help` in the composer) lists every command `host.complete('/')` offers, plugin and skill
@@ -1581,7 +1581,10 @@ The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment va
 you can read and CLAI removes before anything else runs, never on its command line, which `ps`
 shows every user. Like any command, `/update now` entered while a turn runs waits for the turn to end.
 In a terminal, `/update now` and `/reload` are refused while other live sessions run turns, which
-the restart would end; bare `/update` can still open its menu in the shown session.
+the restart would end; bare `/update` can still open its menu in the shown session, whose
+**Update…** then shows why and stays in the menu. In `host.command_menu('update')`, the menu the
+page's Settings > About shows, a refused **Update…** action raises `ValueError` with the reason
+instead, which the page shows as an error.
 Installing from another folder shown in the terminal is refused, as CLAI
 restarts in the folder it started in.
 
