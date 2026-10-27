@@ -3,12 +3,12 @@ from __future__ import annotations as _annotations
 import base64
 import re
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Generator, Mapping, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, assert_never, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, Literal, assert_never, cast, get_args, overload
 from uuid import UUID, uuid4
 
 import httpx2
@@ -66,7 +66,7 @@ from ..native_tools import (
     WebSearchTool,
 )
 from ..output import OutputObjectDefinition
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.google import (
     GOOGLE_THINKING_LEVEL_SCALE,
     GOOGLE_THINKING_LEVELS,
@@ -151,6 +151,9 @@ except ImportError as _import_error:
         'Please install `google-genai` to use the Google model, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
+
+if TYPE_CHECKING:
+    from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, EncodedBatchRequest
 
 
 _FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1)[^\\])*)\1\)')
@@ -438,32 +441,56 @@ def _map_api_error(
         return _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout)
     if (status_code := e.code) >= 400:
         headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        details = e.details  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        suggested_model_id = None
-        if _utils.is_str_dict(details) and _utils.is_str_dict(error := details.get('error')):
-            message = error.get('message')
-            if (
-                error.get('status') == 'NOT_FOUND'
-                and isinstance(message, str)
-                and message.startswith(f'models/{model_name} is not found ')
-            ):
-                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-        status = e.status if isinstance(e.status, str) else None
-        reason = _model_errors.google_error_reason(details)  # pyright: ignore[reportUnknownArgumentType]
-        category = _model_errors.google_status_category(status, e.message, reason)
         # An error chunk inside a stream comes with the stream's own 200 response; its `code` is the error's status.
         response_status = getattr(e.response, 'status_code', None)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        return ModelHTTPError.for_category(
-            category or _model_errors.http_status_category(status_code, e.message),
+        return _http_error(
+            model_name,
+            model_id_namespace,
             status_code=status_code,
-            model_name=model_name,
+            status=e.status if isinstance(e.status, str) else None,
+            message=e.message,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
             headers=headers,
-            suggested_model_id=suggested_model_id,
-            provider_error_code=status,
             in_stream=isinstance(response_status, int) and response_status < 400,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
+
+
+def _http_error(
+    model_name: str,
+    model_id_namespace: str,
+    *,
+    status_code: int,
+    status: str | None,
+    message: str | None,
+    body: object,
+    headers: dict[str, str] | None = None,
+    in_stream: bool = False,
+) -> ModelHTTPError:
+    """The error for a Gemini API error response with `body`, which a batch also reports for a failed request."""
+    suggested_model_id = None
+    if status == 'NOT_FOUND' and isinstance(message, str) and message.startswith(f'models/{model_name} is not found '):
+        suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+    reason = _model_errors.google_error_reason(body)
+    category = _model_errors.google_status_category(status, message, reason)
+    return ModelHTTPError.for_category(
+        category or _model_errors.http_status_category(status_code, message),
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        suggested_model_id=suggested_model_id,
+        provider_error_code=status,
+        in_stream=in_stream,
+    )
+
+
+@contextmanager
+def _map_api_errors(model_name: str, model_id_namespace: str) -> Generator[None]:
+    try:
+        yield
+    except (errors.APIError, httpx2.TransportError) as e:
+        raise _map_api_error(e, model_name, model_id_namespace) from e
 
 
 def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> dict[str, str]:
@@ -557,6 +584,17 @@ def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleMode
     return _snap_thinking_level(_thinking_effort_to_level(thinking), levels)
 
 
+def _batch_module():
+    """The batch module, imported on first use.
+
+    It relies on private `google-genai` converters, so an SDK release that moves one breaks only batch calls, not
+    `GoogleModel` as a whole.
+    """
+    from . import _google_batch
+
+    return _google_batch
+
+
 @dataclass(init=False)
 class GoogleModel(Model[Client]):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
@@ -644,6 +682,13 @@ class GoogleModel(Model[Client]):
             return names | {self.system}
         # A provider outside both families has no pre-v2 alias to accept, so it only matches itself.
         return frozenset({self.system})
+
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Set `google_supports_batch_api` by the client's transport, before the user's `profile=` applies.
+
+        Batch Mode is the Gemini API's: Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery instead.
+        """
+        return merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
@@ -751,6 +796,53 @@ class GoogleModel(Model[Client]):
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, False, model_settings, model_request_parameters)
         return self._process_response(response, model_request_parameters)
+
+    @property
+    def batch_max_requests(self) -> int | None:
+        return _batch_module().MAX_BATCH_REQUESTS if self.profile.get('google_supports_batch_api', False) else None
+
+    @property
+    def batch_max_bytes(self) -> int | None:
+        return None if self.batch_max_requests is None else _batch_module().MAX_BATCH_BYTES
+
+    def _no_batch_api_message(self) -> str:
+        if not self._is_google_cloud:
+            return super()._no_batch_api_message()
+        return (
+            f'`GoogleModel` {self.model_name!r} has no batch API on Google Cloud, whose batch prediction jobs read '
+            'from Cloud Storage or BigQuery: batch it through the Gemini API, with the `google:` provider.'
+        )
+
+    def batch_request_size(self, request: EncodedBatchRequest) -> int:
+        return _batch_module().request_size(request)
+
+    def _batch_credential(self) -> str:
+        return _batch_module().batch_credential(self)
+
+    def _batch_unlisted_status(self, batch: Batch) -> BatchResultStatus | None:
+        return _batch_module().unlisted_status(batch)
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        return await _batch_module().batch_encode(self, request)
+
+    async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_create(self, requests)
+
+    async def batch_status(self, batch: Batch) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_status(self, batch)
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_results(self, batch)
+
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            return await _batch_module().batch_cancel(self, batch)
+
+    def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
+        return _batch_module().batch_decode(self, result, request)
 
     async def count_tokens(
         self,

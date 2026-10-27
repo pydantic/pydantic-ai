@@ -42,7 +42,12 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace
-from pydantic_ai_harness._sub_agent_output import resumable_output_reason, unresumable_output_message
+from pydantic_ai_harness._sub_agent_output import (
+    ServingModelRecorder,
+    cancel_pending_output,
+    resumable_output_reason,
+    unresumable_output_message,
+)
 from pydantic_ai_harness.subagents._control import (
     DynamicAgents,
     DynamicAgentSpec,
@@ -216,7 +221,7 @@ class SubAgent(Generic[AgentDepsT]):
 
     on_failure: str | None = None
     """Steering message returned to the parent for any soft degradation of this
-    delegate (timeout, child failure, a child run ending with `DeferredToolRequests`,
+    delegate (timeout, child failure, a child run ending with `DeferredToolRequests` or `PendingModelResponse`,
     usage budget reached, call budget exhausted), in place of the built-in default. Setting it also makes child
     failures soft: a child error returns this message as a normal tool result
     instead of raising a parent `ModelRetry`."""
@@ -1036,6 +1041,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if owner is not None and record is not None:
             capabilities.append(DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id))
             capabilities.extend(owner.persistence_capabilities())
+        serving_model = ServingModelRecorder()
+        capabilities.append(serving_model)
         capabilities.extend(extra_capabilities)
         usage_limits: UsageLimits | None
         if sub_agent.usage_limits is not None:
@@ -1094,7 +1101,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         )
         token = _depth.set(_depth.get() + 1)
         try:
-            ended = await self._settle(agent_name, sub_agent, run, own_budget=own_budget)
+            ended = await self._settle(agent_name, sub_agent, run, own_budget=own_budget, serving_model=serving_model)
         except BaseException as exc:
             outcome: DelegationOutcome = (
                 'cancelled' if isinstance(exc, (asyncio.CancelledError, RunCancelled)) else 'error'
@@ -1168,11 +1175,12 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         run: Coroutine[Any, Any, AgentRunResult[Any]],
         *,
         own_budget: bool,
+        serving_model: ServingModelRecorder,
     ) -> _Ended:
         """Await the child and turn what happened into what the parent receives.
 
         Soft outcomes (timeout, own usage budget, a child run that ended with
-        `DeferredToolRequests`) become a steering message the parent reads as a normal
+        `DeferredToolRequests` or `PendingModelResponse`) become a steering message the parent reads as a normal
         tool result; a child's soft failure or contained crash becomes a `ModelRetry`
         the caller raises. Everything else propagates and aborts the delegation.
         """
@@ -1216,7 +1224,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             return self._crash_outcome(agent_name, sub_agent, exc)
         if (reason := resumable_output_reason(result.output)) is not None:
             # The parent cannot resume the child run, and delegating the same task again would most
-            # likely stop the same way, so this is a soft outcome rather than a retry.
+            # likely stop the same way, so this is a soft outcome rather than a retry. Nobody will check
+            # on a request the child left pending, so it's cancelled.
+            await cancel_pending_output(result.output, serving_model)
             return _Ended(
                 outcome='failed',
                 output=self._steer(

@@ -132,6 +132,10 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 # OpenAI-compatible Responses endpoints that share it don't necessarily implement the item.
                 # https://developers.openai.com/api/docs/guides/reasoning
                 supports_mid_conversation_effort=model_name.startswith(_GPT_6_MODEL_PREFIXES),
+                # The Batch API is OpenAI's own: set here rather than in `openai_model_profile`, which OpenAI-compatible
+                # providers share without necessarily serving `/v1/batches`. `OpenAIResponsesModel` turns it off for an
+                # Azure OpenAI client.
+                openai_supports_batch_api=True,
             ),
         )
 

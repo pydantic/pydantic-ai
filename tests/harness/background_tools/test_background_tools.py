@@ -110,6 +110,29 @@ def _model_calling(
     return FunctionModel(model_fn)
 
 
+def _model_recalling(tool_name: str, release: asyncio.Event, *, calls: int) -> FunctionModel:
+    """A model that calls `tool_name` again after each follow-up, up to `calls` times, and then answers `done`.
+
+    It idles on each started message and only then sets `release`, so a tool that waits for it finishes after the
+    step that issued its call has ended.
+    """
+    made = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal made
+        last = messages[-1]
+        assert isinstance(last, ModelRequest)
+        if any(isinstance(part, ToolReturnPart) for part in last.parts):
+            release.set()
+            return ModelResponse(parts=[TextPart(content='waiting')])
+        if made == calls:
+            return ModelResponse(parts=[TextPart(content='done')])
+        made += 1
+        return ModelResponse(parts=[ToolCallPart(tool_name=tool_name, args='{}', tool_call_id=f'call_{made}')])
+
+    return FunctionModel(model_fn)
+
+
 @dataclass
 class _ExecuteHookGuard(AbstractCapability[AgentDepsT]):
     """Raises from `before_tool_execute` or `after_tool_execute`, like a policy guard rejecting a call."""
@@ -477,6 +500,43 @@ class TestBackgroundTools:
         message = "Tool 'guarded' exceeded max retries count of 0. Consider raising the retry limit, or see the docs"
         with pytest.raises(UnexpectedModelBehavior, match=re.escape(message)):
             await agent.run('go')
+
+    async def test_late_retry_counts_toward_max_retries(self) -> None:
+        """A retry that arrives after the issuing step ended is charged; the started message is not a success."""
+        release = asyncio.Event()
+        attempts: list[tuple[int, bool]] = []
+        agent = Agent(_model_recalling('flaky', release, calls=5), capabilities=[BackgroundTools()])
+
+        @agent.tool(metadata={'background': True}, retries=2)
+        async def flaky(ctx: RunContext[object]) -> str:
+            attempts.append((ctx.retry, ctx.last_attempt))
+            await release.wait()
+            release.clear()
+            raise ModelRetry('try again')
+
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'flaky' exceeded max retries count of 2"):
+            await agent.run('go')
+
+        assert attempts == [(0, False), (1, False), (2, True)]
+
+    async def test_late_success_resets_retry_count(self) -> None:
+        release = asyncio.Event()
+        retries: list[int] = []
+        agent = Agent(_model_recalling('research', release, calls=3), capabilities=[BackgroundTools()])
+
+        @agent.tool(metadata={'background': True}, retries=1)
+        async def research(ctx: RunContext[object]) -> str:
+            retries.append(ctx.retry)
+            await release.wait()
+            release.clear()
+            if len(retries) == 2:
+                return 'found'
+            raise ModelRetry('try again')
+
+        result = await agent.run('go')
+
+        assert result.output == 'done'
+        assert retries == [0, 1, 0]
 
     async def test_completed_background_call_is_counted_once(self) -> None:
         agent = Agent(_model_calling('slow'), capabilities=[BackgroundTools()])

@@ -116,4 +116,5 @@ When running a Pydantic AI agent as a durable Airflow task:
 * On a retry, a cached model request or tool call is replayed when its stored fingerprint matches the current request, and re-runs live when it diverges. Requests that can't be serialized to a fingerprint fall back to unverified positional replay, so keep runs deterministic across retries.
 * `durable=True` and `enable_hitl_review=True` are mutually exclusive.
 * Streaming is not supported under `durable=True`.
+* [Batched model requests](../batch.md#durable-execution) aren't cached, so a retry submits a request that was waiting on its batch again, in a new batch that's billed too.
 * The step cache is scoped to a single task instance and is deleted when the task succeeds. On Airflow 3.3 and above it lives in the task state store, and entries left by a run that ultimately fails are removed when the DAG run is deleted.

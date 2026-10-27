@@ -9,6 +9,7 @@ import re
 import warnings
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
+    BatchModelRequests,
     Caching,
     Capability,
     Citations,
@@ -95,6 +97,7 @@ def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
             'NativeTool': NativeTool,
+            'BatchModelRequests': BatchModelRequests,
             'Caching': Caching,
             'Citations': Citations,
             'RaiseContentFilterError': RaiseContentFilterError,
@@ -336,6 +339,55 @@ def test_agent_from_spec_web_fetch():
     cap = next(c for c in children if isinstance(c, WebFetch))
     assert cap.allowed_domains == ['example.com']
     assert cap.max_uses == 5
+
+
+def test_agent_from_spec_batch_model_requests(tmp_path: Path):
+    """A spec gives durations as seconds or ISO 8601 durations, and each agent built from it has its own pool."""
+    spec_path = tmp_path / 'agent.yaml'
+    spec_path.write_text(
+        'model: test\n'
+        'capabilities:\n'
+        '  - BatchModelRequests:\n'
+        '      max_requests: 5000\n'
+        '      max_wait: PT5M\n'
+        '      max_resubmissions: 0\n'
+        '      poll_interval: 1.5\n'
+        '      max_poll_interval: "00:20:00"\n',
+        encoding='utf-8',
+    )
+    spec = AgentSpec.from_file(spec_path)
+
+    def batching(agent: Agent[Any, Any]) -> BatchModelRequests:
+        children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+        return next(c for c in children if isinstance(c, BatchModelRequests))
+
+    first = batching(Agent.from_spec(spec))
+    assert first == BatchModelRequests(
+        max_requests=5000,
+        max_wait=timedelta(minutes=5),
+        max_resubmissions=0,
+        poll_interval=timedelta(seconds=1.5),
+        max_poll_interval=timedelta(minutes=20),
+    )
+    second = batching(Agent.from_spec(spec))
+    assert second is not first
+    assert second._pool is not first._pool  # pyright: ignore[reportPrivateUsage]
+
+    defaults = batching(Agent.from_spec({'model': 'test', 'capabilities': ['BatchModelRequests']}))
+    assert defaults == BatchModelRequests()
+    no_wait = batching(Agent.from_spec({'model': 'test', 'capabilities': [{'BatchModelRequests': {'max_wait': None}}]}))
+    assert no_wait.max_wait is None
+
+
+async def test_agent_from_spec_batch_model_requests_runs_in_a_batch():
+    agent = Agent.from_spec(
+        {'model': 'test', 'capabilities': [{'BatchModelRequests': {'max_wait': 0.001, 'poll_interval': 0.001}}]}
+    )
+    result = await agent.run('Hello')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert result.output == 'success (no tool calls)'
+    assert 'batch' in (response.provider_details or {})
 
 
 def test_agent_from_spec_mcp():
@@ -1998,6 +2050,13 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_IncludeToolReturnSchemas',
                     'type': 'object',
                 },
+                'spec_BatchModelRequests': {
+                    'additionalProperties': False,
+                    'properties': {'BatchModelRequests': {'$ref': '#/$defs/spec_params_BatchModelRequests'}},
+                    'required': ['BatchModelRequests'],
+                    'title': 'spec_BatchModelRequests',
+                    'type': 'object',
+                },
                 'spec_FileUnderstanding': {
                     'additionalProperties': False,
                     'properties': {'FileUnderstanding': {'$ref': '#/$defs/spec_params_FileUnderstanding'}},
@@ -2127,6 +2186,27 @@ def test_model_json_schema_with_capabilities():
                     'properties': {'WebSearch': {'$ref': '#/$defs/spec_params_WebSearch'}},
                     'required': ['WebSearch'],
                     'title': 'spec_WebSearch',
+                    'type': 'object',
+                },
+                'spec_params_BatchModelRequests': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'max_requests': {'title': 'Max Requests', 'type': 'integer'},
+                        'max_wait': {
+                            'anyOf': [{'format': 'duration', 'type': 'string'}, {'type': 'number'}, {'type': 'null'}],
+                            'title': 'Max Wait',
+                        },
+                        'max_resubmissions': {'title': 'Max Resubmissions', 'type': 'integer'},
+                        'poll_interval': {
+                            'anyOf': [{'format': 'duration', 'type': 'string'}, {'type': 'number'}],
+                            'title': 'Poll Interval',
+                        },
+                        'max_poll_interval': {
+                            'anyOf': [{'format': 'duration', 'type': 'string'}, {'type': 'number'}],
+                            'title': 'Max Poll Interval',
+                        },
+                    },
+                    'title': 'spec_params_BatchModelRequests',
                     'type': 'object',
                 },
                 'spec_params_FileUnderstanding': {
@@ -2419,6 +2499,8 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [
                                 {'const': 'NativeTool', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_NativeTool'},
+                                {'const': 'BatchModelRequests', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_BatchModelRequests'},
                                 {'const': 'Caching', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_Caching'},
                                 {'const': 'Citations', 'type': 'string'},
@@ -2652,6 +2734,8 @@ def test_model_json_schema_with_capabilities():
                         'anyOf': [
                             {'const': 'NativeTool', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_NativeTool'},
+                            {'const': 'BatchModelRequests', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_BatchModelRequests'},
                             {'const': 'Caching', 'type': 'string'},
                             {'$ref': '#/$defs/spec_Caching'},
                             {'const': 'Citations', 'type': 'string'},

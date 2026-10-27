@@ -251,7 +251,13 @@ when harness `estimate_message_tokens` (provider-reported usage) says it shrank,
 and passes `runtime/agent_instrumentation.tracer()` so it is traced. Only `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` select truncation after a
 summary failure; other exceptions propagate. Its `configure` is a `FieldMenu`
-over `CompactionSettings`; the loader's reload builds the new chain. The status
+over `CompactionSettings`; the loader's reload builds the new chain. Background
+compaction is harness `FallbackCompaction(background_start=...)`, not CLAI code: the plugin
+only passes the setting, closes the chain in `on_session_end`, discards the summaries of
+conversations other than the shown one and its running tasks at each turn end and conversation
+change (not per task event, which would build one for every streamed event), and has `/compact` try the
+chain's `take_background_compaction` (without a focus) or `discard_background_compaction`
+(with one) before the capped chain. The status
 row's window does not depend on it: `Session.on_context_window` reports each
 streamed request model's window, and the shell fills it in when no gauge has.
 Until a turn on the selected model runs in the conversation, `show_model` sets
@@ -476,9 +482,12 @@ Wheel and drag reports arrive in bursts, so they paint once after the input
 callback (`PromptSurface._paint_soon`), never once per report.
 An idle session must cost next to no CPU, since users keep dozens open. The
 editor's timed repaint (`LivePrompt.tick`) runs ten times a second only while a
-turn runs or the panel animates, and once a second (`IDLE_REPAINT`) otherwise;
+turn runs or the panel animates, and once a second (`IDLE_REPAINT`) otherwise,
+sleeping in between; a read wakes it, since the work it starts animates.
 `PromptSurface.paint` skips a frame identical to the last one. Input, output,
-and resizes paint at once. Do not add a timer that repaints unconditionally.
+and resizes paint at once; output inside a frame interval paints when it ends
+(`PromptSurface.changed`), without waiting for a tick. Do not add a timer that
+repaints unconditionally, or one that wakes an idle editor more than once a second.
 Mouse reporting stops most terminals from selecting text, so a left-button drag
 selects painted cells in `PromptSurface` and its release copies them through
 `text_clipboard.copy_text`. Do not drop the drag modes (`?1002h`) or copy-out breaks.
