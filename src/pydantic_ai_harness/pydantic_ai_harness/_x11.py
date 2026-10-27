@@ -151,7 +151,7 @@ _SCROLL_TICK_DELAY_MS = '20'
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
 
-_CAPTURE = 'd=$(mktemp -d) && scrot "$@" "$d/s.png" && base64 "$d/s.png"; status=$?; rm -rf "$d"; exit $status'
+_CAPTURE = 'd=$(mktemp -d) && scrot "$@" "$d/s.png" && base64 < "$d/s.png"; status=$?; rm -rf "$d"; exit $status'
 """Captures into a fresh directory (scrot picks the format from the `.png` name) and prints it as base64; arguments
 go to scrot, such as `-a x,y,width,height` for a region."""
 
@@ -217,7 +217,7 @@ def _move(x: int | None, y: int | None) -> list[str]:
 DISPLAY = ':1'
 """The X display the desktop runs on, as `DISPLAY` names it."""
 
-_ENV = {'DISPLAY': DISPLAY, 'LC_ALL': 'C.UTF-8'}
+_LOCALE = {'LC_ALL': 'C.UTF-8'}
 """`xdotool type` reads its text in the locale's encoding, and stops at the first character outside ASCII under a
 POSIX locale, which is what an environment without one set, such as E2B's, has."""
 
@@ -230,7 +230,7 @@ def start_x_server(log: str, *, then: str = '') -> str:
     """
     return (
         'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
-        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{log} & xvfb=$!; i=0; '
+        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -noreset >/dev/null 2>{log} & xvfb=$!; i=0; '
         'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
         'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
         f"echo 'the X server did not start:' >&2; tail -n 5 {log} >&2; exit 1; fi; "
@@ -280,18 +280,21 @@ class X11Display:
 class X11Computer:
     """Controls an X display with `xdotool` and captures it with `scrot`, through a backend's commands.
 
-    The X server must already be running on `DISPLAY`. Needs `xdotool`, `xmodmap`, `scrot`, `base64`, and `mktemp` in the
+    The X server must already be running on `display`. Needs `xdotool`, `xmodmap`, `scrot`, `base64`, and `mktemp` in the
     environment.
     """
 
-    def __init__(self, backend: SupportsCommands):
+    def __init__(self, backend: SupportsCommands, display: str = DISPLAY):
         self._backend = backend
+        self._display = display
 
     async def _run(self, command: list[str] | str) -> CommandResult:
-        result = await self._backend.run(command, shell=isinstance(command, str), env=_ENV, timeout=_COMMAND_TIMEOUT)
+        result = await self._backend.run(
+            command, shell=isinstance(command, str), env={'DISPLAY': self._display, **_LOCALE}, timeout=_COMMAND_TIMEOUT
+        )
         if result.exit_code != 0:
             raise WorkspaceError(
-                f'Display command failed with exit code {result.exit_code} on display {DISPLAY}: '
+                f'Display command failed with exit code {result.exit_code} on display {self._display}: '
                 f'{(result.stderr or result.stdout).strip()}'
             )
         return result

@@ -18,6 +18,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | Isolation on this machine with Docker or Podman | `DockerSandbox(image='python:3.13-slim')`: a local container |
 | A desktop the agent sees and controls | `DockerSandbox(desktop=True)` + `ComputerUse()`: a local container with a display |
+| A desktop on this Linux machine, without Docker | `LocalDesktop('.')` + `ComputerUse()`: a private virtual screen; `real_screen=True` drives yours (X11 only) |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
 

@@ -50,6 +50,7 @@ if TYPE_CHECKING:
         OutputGuardrailFunc,
         ToolGuardrail,
     )
+    from .local_desktop import LocalDesktop, LocalDesktopBackend
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -124,6 +125,8 @@ __all__ = [
     'InputGuardrail',
     'InputGuardrailFunc',
     'LLM_API_KEY_ENV_PATTERNS',
+    'LocalDesktop',
+    'LocalDesktopBackend',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
     'Macroscope',
@@ -203,6 +206,7 @@ _CAPABILITY_EXPORTS = {
     'FallbackCompaction': 'compaction',
     'FileSystem': 'filesystem',
     'Grain': 'grain',
+    'LocalDesktop': 'local_desktop',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
     'ManagedPrompt': 'logfire',
@@ -253,6 +257,7 @@ _CONSTANT_EXPORTS = {
     'DockerSandboxBackend': 'docker_sandbox',
     'E2BSandboxBackend': 'e2b_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
+    'LocalDesktopBackend': 'local_desktop',
     'ModalSandboxBackend': 'modal_sandbox',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
     'SmolSandboxBackend': 'smol_sandbox',

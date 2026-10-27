@@ -41,6 +41,7 @@ usage limit, returns no ref to clean up with: remove its desktop in an `on_run_e
 [E2B](e2b-sandbox.md#clean-up).
 
 For a desktop in a cloud sandbox instead, use [`DaytonaSandbox(desktop=True)`](daytona-sandbox.md#give-the-agent-a-desktop) or [`E2BSandbox(desktop=True)`](e2b-sandbox.md#give-the-agent-a-desktop).
+For a screen on this Linux machine, use [`LocalDesktop`](local-desktop.md).
 
 To give your own sandbox a display, implement [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]; see
 [Controlling a display](../workspace.md#controlling-a-display). On a [read-only](../workspace.md#read-only-access)

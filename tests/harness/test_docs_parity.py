@@ -161,6 +161,7 @@ _CAPABILITY_PAGE_META = {
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
     'docker-sandbox.md': ('docker_sandbox', 'Docker Sandbox'),
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
+    'local-desktop.md': ('local_desktop', 'Local Desktop'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
     'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
