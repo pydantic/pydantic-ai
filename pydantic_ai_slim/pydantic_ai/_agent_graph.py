@@ -836,6 +836,14 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     adopted_response: _messages.ModelResponse | None = None
     """The trailing history response a no-prompt run continues from, which records this run's ref like its own."""
 
+    accepted_pending: tuple[ModelRequestContext, _messages.ModelResponse] | None = dataclasses.field(
+        default=None, repr=False
+    )
+    """The pending response a model request returned and its hooks accepted, settled once the run ends.
+
+    Runtime-only: `settle_accepted_pending` leaves it for a later run only if the run ends with it as its output.
+    """
+
     @property
     def workspace_ref(self) -> WorkspaceRef | None:
         """The `workspace_ref` this run records on its responses."""
@@ -1494,32 +1502,51 @@ def _pending_snapshot(
     return request_context, replace(response, provider_details=deepcopy(response.provider_details))
 
 
-async def _settle_pending(
-    pending: tuple[ModelRequestContext, _messages.ModelResponse] | None, accepted: _messages.ModelResponse | None
-) -> None:
-    """Leave the pending response a request returned for a later run if the run ends with it, or withdraw it if not.
-
-    The run only ends with a [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] once every model request
-    hook has passed the response on, so that's when its request is left for a later run to collect. One a hook
-    rejected, by raising or by replacing it, is cancelled if the model says nothing else would collect it.
-    """
-    if pending is None:
-        return
+def _is_kept(
+    pending: tuple[ModelRequestContext, _messages.ModelResponse], accepted: _messages.ModelResponse | None
+) -> bool:
+    """Whether `accepted` is still the pending response a request returned, as a later run would continue it."""
     request_context, response = pending
-    if (
+    return (
         accepted is not None
         and accepted.state == 'suspended'
         and accepted.provider_response_id == response.provider_response_id
         # Still the job a later run continues: a hook may have kept the response but dropped what resumes it.
         and request_context.model.continuation_delay(accepted) is not None
-    ):
+    )
+
+
+async def _settle_pending(
+    pending: tuple[ModelRequestContext, _messages.ModelResponse] | None, accepted: _messages.ModelResponse | None
+) -> None:
+    """Leave the pending response a request returned for a later run if the run ends with it, or withdraw it if not.
+
+    One the run doesn't end with, because a hook rejected it by raising or by replacing it, or the run ended another
+    way, is cancelled if the model says nothing else would collect it.
+    """
+    if pending is None:
+        return
+    request_context, response = pending
+    if _is_kept(pending, accepted):
         request_context.model._release_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
     elif request_context.model._withdraws_rejected_suspended_response(response):  # pyright: ignore[reportPrivateUsage]
         await _cancel_interrupted_job(request_context, response)
 
 
+async def settle_accepted_pending(deps: GraphAgentDeps[Any, Any], output: object, *, failed: bool) -> None:
+    """Settle the pending response the run's last model request returned, now that the run has ended.
+
+    Only a run that ends with it as its [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] output
+    leaves it for a later run: one that fails or is cancelled after the request, or ends with another output (e.g.
+    from `after_run`), withdraws it, as does an `iter` run its caller stopped before it ended.
+    """
+    pending, deps.accepted_pending = deps.accepted_pending, None
+    accepted = output.response if not failed and isinstance(output, PendingModelResponse) else None
+    await _settle_pending(pending, accepted)
+
+
 async def _cancel_interrupted_job(request_context: ModelRequestContext, response: _messages.ModelResponse) -> None:
-    """Cancel the job of a suspended response a stream was interrupted on or a hook rejected, through its model.
+    """Cancel the job of a suspended response a stream was interrupted on or the run didn't end with, through its model.
 
     A capability's wrapper around that model was exited with the stream, so it's entered again for the cancellation,
     as for each call it serves, shielded as graph teardown may be under cancellation. Like the cancellation itself,
@@ -3280,7 +3307,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         record_usage: bool,
         described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
-        """`_finish_handling`, then settle the pending response the request returned, if any, with `response`."""
+        """`_finish_handling`, then settle the pending response the request returned, if any, with `response`.
+
+        A pending response the hooks accepted is only settled once the run ends, as the run may still end another way.
+        """
         try:
             next_node = await self._finish_handling(
                 ctx, response, accounted_responses, record_usage=record_usage, described=described
@@ -3289,7 +3319,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # A usage limit the response crossed stops the run, so nothing will collect it.
             await _settle_pending(pending, None)
             raise
-        await _settle_pending(pending, response)
+        if pending is not None and _is_kept(pending, response):
+            # A hook that sent the run back to the model, rather than letting it end, superseded the one it accepted.
+            await _settle_pending(ctx.deps.accepted_pending, None)
+            ctx.deps.accepted_pending = pending
+        else:
+            await _settle_pending(pending, response)
         return next_node
 
     async def _finish_handling(
