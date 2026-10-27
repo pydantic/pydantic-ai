@@ -1178,7 +1178,8 @@ instead of failing to load `coder`.
 `delegate_task(model='review-light', ...)`. Models, accounts, saved chains, and saved settings
 resolve through the session's model services. An empty mapping preserves inheritance and the
 existing delegate schema. With `sub_agents` enabled, a configured menu also enables the isolated, one-shot `Review` specialist;
-only that specialist accepts `working_directory`, with a local parent workspace. Its read-only
+only that specialist accepts `working_directory`, with a plain local parent workspace (optionally
+wrapped in `ReadOnlyWorkspace`). Sandbox and custom policy wrappers are rejected. Its read-only
 file tools and repository context use the selected directory. It inherits no plugin tools or
 parent history. The setting is tagged `coder-delegate-models`, so older builds ignore it without
 deleting it. The [reference](docs/reference.md#delegate-models-and-review-directory) covers bundle

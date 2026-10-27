@@ -16,6 +16,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapWorkspace
 from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks
 from pydantic_clai2.builtin_plugins.coder import CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.config import Settings
@@ -150,6 +151,21 @@ async def test_review_rejects_missing_parent_workspace_and_keeps_read_only(tmp_p
         await review_workspace(ctx, 'Review', str(tmp_path))
     ctx.workspace = ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
     assert await (await review_workspace(ctx, 'Review', '.')).working_dir() == str(tmp_path)
+
+
+@pytest.mark.parametrize('read_only', [False, True])
+async def test_review_rejects_sandbox_wrappers_over_local_backends(tmp_path: Path, read_only: bool) -> None:
+    project, hidden = tmp_path / 'project', tmp_path / 'hidden'
+    project.mkdir()
+    hidden.mkdir()
+    parent: Workspace = BubblewrapWorkspace(
+        Workspace(LocalWorkspaceBackend(project)), bwrap_args=['--tmpfs', str(hidden)]
+    )
+    if read_only:
+        parent = ReadOnlyWorkspace(parent)
+    ctx = RunContext(deps=object(), model=TestModel(), usage=RunUsage(), workspace=parent)
+    with pytest.raises(ModelRetry, match='policy wrappers'):
+        await review_workspace(ctx, 'Review', str(hidden))
 
 
 def test_delegate_menu_settings_validate_save_and_reset() -> None:

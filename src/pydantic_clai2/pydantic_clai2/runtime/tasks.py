@@ -29,7 +29,8 @@ from pydantic_ai._context_size import context_tokens
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import FunctionToolCallEvent, ModelMessage, ModelResponse, ToolReturnPart
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, WorkspaceError
+from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceError
+from pydantic_ai.workspaces.workspace import workspace_layers
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.subagents import (
@@ -76,8 +77,11 @@ async def review_workspace(ctx: RunContext[object], name: str, directory: str) -
     """Only the isolated Review specialist may leave a local session's directory."""
     if name != 'Review':
         raise ModelRetry('Only Review accepts `working_directory`; omit it for other delegates.')
-    if not isinstance(ctx.workspace.backend, LocalWorkspaceBackend):
-        raise ModelRetry('Review directory selection requires a local parent workspace.')
+    # `backend` unwraps policy layers; replacing it must not discard a sandbox.
+    if any(layer not in (LocalWorkspaceBackend, ReadOnlyWorkspace) for layer in workspace_layers(ctx.workspace)):
+        raise ModelRetry(
+            'Review directory selection requires a local parent workspace without sandbox or custom policy wrappers.'
+        )
     if not directory.strip() or '\x00' in directory:
         raise ModelRetry('Choose an existing directory for Review.')
     path = Path(directory).expanduser()

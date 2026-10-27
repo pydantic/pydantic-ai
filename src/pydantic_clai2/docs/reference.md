@@ -1912,7 +1912,9 @@ keeps the delegate's existing default; configuring the menu does not change the 
 The menu also enables `Review`, a fresh, one-shot specialist with read-only file tools and
 repository instructions from its own workspace. It receives no parent conversation, plugin tools,
 shell, code execution, or delegation tools. Only `Review` accepts `working_directory`; `self`,
-`Explore`, `Plan`, and disk agents reject it. Directory selection requires a local parent workspace.
+`Explore`, `Plan`, and disk agents reject it. Directory selection requires a plain local parent workspace;
+the standard read-only wrapper is also accepted. Sandbox and custom policy wrappers are rejected because
+rebinding the directory would discard their restrictions.
 Relative paths resolve from the session directory; absolute paths and `~/` paths are accepted.
 The selected directory must exist. The parent stays in its original directory.
 
