@@ -299,9 +299,9 @@ async def _run_lifecycle_hooks(  # noqa: C901
                 var.set(body_context[var])
         if _run_error is not None:
             error = extract_error(_run_error) if extract_error is not None else _run_error
-            # The `finally` below cancels this task on these, so it only gets here when `before_run`
-            # absorbed the cancellation of an interrupted setup.
-            if isinstance(error, _SHUTDOWN_EXCEPTIONS):  # pragma: no cover
+            # The `finally` below cancels this task before it resumes on these, so this only fires
+            # when `wrap_run` calls `handler()` again after that cancellation.
+            if isinstance(error, _SHUTDOWN_EXCEPTIONS):
                 raise error
             try:
                 result = await run_capability.on_run_error(run_ctx, error=error)

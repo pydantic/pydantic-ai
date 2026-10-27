@@ -2401,6 +2401,39 @@ async def test_generator_exit_raised_in_iter_body_propagates_unchanged():
     assert runs[0].result is None
 
 
+async def test_handler_called_again_after_shutdown_cancel_skips_on_run_error():
+    """A `wrap_run` that calls `handler()` again after the shutdown cancellation gets the `GeneratorExit` back,
+    and `on_run_error` never sees it."""
+    events: list[str] = []
+
+    class CallHandlerAgain(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+            try:
+                return await handler()
+            except asyncio.CancelledError:
+                try:
+                    return await handler()
+                except GeneratorExit:
+                    events.append('handler: GeneratorExit')
+                    raise
+
+        async def on_run_error(  # pragma: no cover
+            self, ctx: RunContext[None], *, error: BaseException
+        ) -> AgentRunResult[Any]:
+            events.append('on_run_error')
+            raise error
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[CallHandlerAgain()])
+    generator_exit = GeneratorExit('closing')
+
+    with pytest.raises(GeneratorExit) as exc_info:
+        async with agent.iter('Hello'):
+            raise generator_exit
+
+    assert exc_info.value is generator_exit
+    assert events == ['handler: GeneratorExit']
+
+
 def test_keyboard_interrupt_raised_in_iter_body_propagates_from_the_caller():
     """A `KeyboardInterrupt` raised inside `agent.iter()` propagates from the task driving the run.
 
