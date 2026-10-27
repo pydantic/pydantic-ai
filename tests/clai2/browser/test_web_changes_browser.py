@@ -94,7 +94,7 @@ async def test_changes_panel_lists_the_files_of_two_turns(page: Page, changes_ui
     await page.goto(f'{changes_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Changes', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Changes')
-    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
     for number, prompt in enumerate(TURNS, start=1):
         await expect(composer).to_be_enabled()

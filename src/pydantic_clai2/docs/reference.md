@@ -2145,7 +2145,7 @@ keep the original saved path; resuming does not change directories or migrate
 saved data.
 
 In the browser, <kbd>a</kbd> archives the selected session: it leaves the list and
-the web UI's sidebar, and nothing is deleted. <kbd>h</kbd> lists archived sessions too,
+the web UI's sidebar, except its **Archived** view, and nothing is deleted. <kbd>h</kbd> lists archived sessions too,
 marked `(archived)`, and searches them; <kbd>a</kbd> on one unarchives it. The current
 session and one running in another CLAI cannot be archived. Resuming an archived
 session, or a new turn in it, unarchives it; `--fork-session` leaves it archived
@@ -2494,6 +2494,9 @@ many sessions run at once.
   turn here, a hollow ring while another CLAI runs it, **Needs input** while it asks
   you a question, and a bold title while it has changes you have not seen.
   **Attention** (Cmd/Ctrl+Alt+U) lists only those sessions.
+- **Archiving.** A session's menu archives it, or every session of its branch, and a
+  project's menu archives all its chats. The sidebar's **Archived** view lists them
+  with **Unarchive**.
 - **Esc** and the stop button interrupt the session you are looking at, and only it.
 - **Steering and the queue.** As at the terminal's prompt, Enter queues a message
   while a turn runs and Alt+Enter (Option+Enter), or the bolt button, steers the turn

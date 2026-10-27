@@ -163,15 +163,28 @@ export function isUnread(row: Row, seen: Seen): boolean {
   return row.messages > 0 && Date.parse(row.updated_at) > Date.parse(seen.sessions[row.id] ?? seen.since)
 }
 
-/** A small JSON value kept in `localStorage`, falling back when it is missing or unreadable. */
-export function stored<T>(key: string, fallback: T): T {
+/**
+ * A small JSON value kept in `localStorage`, falling back when it is missing, unreadable, or not what `valid` accepts:
+ * a value of another shape, written by another version or app, must not break the page on every load.
+ */
+export function stored<T>(key: string, fallback: T, valid: (value: unknown) => value is T): T {
   try {
     const saved = localStorage.getItem(key)
-    return saved === null ? fallback : (JSON.parse(saved) as T)
+    const value: unknown = saved === null ? fallback : JSON.parse(saved)
+    return valid(value) ? value : fallback
   } catch {
     return fallback
   }
 }
+
+const VIEW_NAMES: readonly View[] = ['projects', 'recent', 'attention', 'archived']
+
+export const isView = (value: unknown): value is View => VIEW_NAMES.includes(value as View)
+
+export const isList = (value: unknown): value is Project[] => Array.isArray(value)
+
+export const isFlags = (value: unknown): value is Record<string, boolean> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 /** Save a small JSON value in `localStorage`; a full or disabled store only loses it. */
 export function keep(key: string, value: unknown): void {
