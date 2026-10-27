@@ -265,7 +265,7 @@ class TestPostgresSpendStore:
     @pytest.mark.parametrize('retain', [timedelta(0), timedelta(seconds=-1)])
     def test_a_dedup_horizon_that_holds_nothing_is_refused(self, pool: _RecordingPool, retain: timedelta):
         """A marker written already expired would let the same response count twice in one call."""
-        with pytest.raises(UserError, match='dedup_retain must be positive'):
+        with pytest.raises(UserError, match='dedup_retain` must be positive'):
             PostgresSpendStore(pool, dedup_retain=retain)
 
     async def test_an_entry_horizon_that_holds_nothing_is_refused_before_any_write(self, pool: _RecordingPool):

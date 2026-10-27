@@ -54,7 +54,8 @@ class PostgresSpendStore:
 
     One row per window in `{table}_counters`, holding the four counters as integers, and one
     row per applied `SpendEntry.token` and window in `{table}_dedup`, both keyed by a SHA-256
-    digest so a key or token of any length fits the index. Both tables are created on first use. Takes a caller-owned asyncpg-compatible pool; the store never closes it.
+    digest so a key or token of any length fits the index. Both tables are created on first
+    use. Takes a caller-owned asyncpg-compatible pool; the store never closes it.
 
     Horizons are measured on the server's clock, the way Redis measures expiry on its
     own, so every worker agrees on when a window rolls over and a worker whose clock runs ahead
@@ -94,12 +95,12 @@ class PostgresSpendStore:
         """
         if not _TABLE_RE.fullmatch(table):
             raise UserError(
-                f'PostgresSpendStore.table must be lowercase letters, digits and underscores, start with a letter '
+                f'`PostgresSpendStore.table` must be lowercase letters, digits and underscores, start with a letter '
                 f'or underscore, and be at most 47 characters; got {table!r}.'
             )
         if dedup_retain is not None and dedup_retain <= timedelta(0):
             raise UserError(
-                f'PostgresSpendStore.dedup_retain must be positive, or `None` to apply every entry; '
+                f'`PostgresSpendStore.dedup_retain` must be positive, or `None` to apply every entry; '
                 f'got {dedup_retain!r}.'
             )
         self._pool = pool
@@ -258,7 +259,7 @@ class PostgresSpendStore:
                 f'(SELECT marker_sha256 FROM {self._dedup} WHERE expires_at <= now() FOR UPDATE SKIP LOCKED)'
             )
         except Exception:
-            _logger.warning('PostgresSpendStore could not delete expired rows from %r', self._counters, exc_info=True)
+            _logger.warning('`PostgresSpendStore` could not delete expired rows from %r', self._counters, exc_info=True)
 
     async def _ensure_schema(self) -> None:
         """Create the tables once, serialised in-process and across processes.
