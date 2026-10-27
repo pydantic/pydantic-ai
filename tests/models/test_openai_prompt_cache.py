@@ -2125,7 +2125,7 @@ async def test_azure_responses_cache_instructions_e2e(
     assert len(bodies) == 2
     for body in bodies:
         assert body['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
-        assert body['input'][0]['role'] in ('system', 'developer')
+        assert body['input'][0]['role'] == 'system'
         assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
     assert first.usage.cache_read_tokens == 0
     assert first.usage.cache_write_tokens >= 1024
