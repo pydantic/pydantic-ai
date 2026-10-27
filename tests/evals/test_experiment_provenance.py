@@ -20,7 +20,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_evals import Case, Dataset
+    from pydantic_evals import Case, Dataset, dataset as dataset_module
 
 with try_import() as logfire_import_successful:
     from logfire.testing import CaptureLogfire
@@ -373,7 +373,7 @@ async def test_opt_out(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch,
             **_GITHUB_ENV,
             'GITHUB_SHA': 'abc123',
             'PYDANTIC_EVALS_GIT_BRANCH': 'main',
-            'PYDANTIC_EVALS_CI_METADATA': value,
+            'PYDANTIC_EVALS_CI_PROVENANCE': value,
         },
     )
     assert await _provenance(capfire) == {}
@@ -411,8 +411,6 @@ async def test_overrides_win_over_github(capfire: CaptureLogfire, monkeypatch: p
 
 async def test_not_detected_when_span_is_not_recording(monkeypatch: pytest.MonkeyPatch):
     """Without a recording span, detection doesn't run, so nothing reads files or runs `git`."""
-    from pydantic_evals import dataset as dataset_module
-
     real_logfire_span = dataset_module.logfire_span
 
     @contextmanager
@@ -421,13 +419,8 @@ async def test_not_detected_when_span_is_not_recording(monkeypatch: pytest.Monke
             monkeypatch.setattr(span, 'is_recording', lambda: False)
             yield span
 
-    calls: list[None] = []
-
-    def fake_attributes() -> dict[str, str]:
-        calls.append(None)  # pragma: no cover
-        return {}  # pragma: no cover
-
     monkeypatch.setattr(dataset_module, 'logfire_span', non_recording_span)
-    monkeypatch.setattr(dataset_module, 'ci_provenance_attributes', fake_attributes)
+    monkeypatch.setattr(
+        dataset_module, 'ci_provenance_attributes', lambda: pytest.fail('detection ran on a non-recording span')
+    )
     await Dataset[Any, Any, Any](name='provenance', cases=[Case(inputs='x')]).evaluate(_task, progress=False)
-    assert calls == []

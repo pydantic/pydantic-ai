@@ -12,7 +12,7 @@ def _no_ci_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
     Detection is turned off, so no test runs `git` or depends on GitHub Actions variables.
     `test_experiment_provenance.py` turns it back on for the tests that exercise it.
     """
-    monkeypatch.setenv('PYDANTIC_EVALS_CI_METADATA', 'false')
+    monkeypatch.setenv('PYDANTIC_EVALS_CI_PROVENANCE', 'false')
 
 
 @pytest.fixture(autouse=True)

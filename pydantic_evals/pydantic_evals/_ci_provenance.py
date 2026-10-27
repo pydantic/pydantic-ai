@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 __all__ = ('ci_provenance_attributes',)
 
-_DISABLE_ENV_VAR = 'PYDANTIC_EVALS_CI_METADATA'
+_DISABLE_ENV_VAR = 'PYDANTIC_EVALS_CI_PROVENANCE'
 _COMMIT_SHA_ENV_VAR = 'PYDANTIC_EVALS_GIT_COMMIT_SHA'
 _BRANCH_ENV_VAR = 'PYDANTIC_EVALS_GIT_BRANCH'
 
@@ -57,7 +57,7 @@ def ci_provenance_attributes() -> dict[str, str]:
     """Return the `vcs.*` and `cicd.*` span attributes for the current run.
 
     `PYDANTIC_EVALS_GIT_COMMIT_SHA` and `PYDANTIC_EVALS_GIT_BRANCH` override the detected commit SHA and branch.
-    Setting `PYDANTIC_EVALS_CI_METADATA=false` disables all of it.
+    Setting `PYDANTIC_EVALS_CI_PROVENANCE=false` disables all of it.
     """
     env = os.environ
     if env.get(_DISABLE_ENV_VAR, '').strip().lower() in ('0', 'false'):
