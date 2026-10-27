@@ -58,6 +58,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     SpeechPart,
     SpeechPartDelta,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -443,6 +444,49 @@ async def test_process_history_transforms_seeded_history() -> None:
     assert 'secret' not in str(model.messages)
     assert session.all_messages()[:2] == redacted
     assert session.new_messages() == session.all_messages()[2:]
+
+
+async def test_process_history_sees_reevaluated_dynamic_system_prompts() -> None:
+    """Seeded dynamic system prompts are re-evaluated before the processors run, as in a standard run.
+
+    So a processor that redacts what a dynamic system prompt injects also redacts its current content, and a
+    processor that empties the history doesn't make the session add the agent's fresh system prompts.
+    """
+    agent = Agent(deps_type=type(None))
+
+    @agent.system_prompt(dynamic=True)
+    def account() -> str:
+        return 'Account secret-99.'
+
+    @agent.system_prompt
+    def fresh() -> str:
+        return 'Fresh system prompt.'  # pragma: no cover
+
+    seeded: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Account secret-00.', dynamic_ref=account.__qualname__)]),
+        ModelResponse(parts=[TextPart('Noted.')]),
+    ]
+    seen: list[str] = []
+
+    def mask(messages: list[ModelMessage]) -> list[ModelMessage]:
+        seen.append(str(messages[0].parts))
+        return [
+            ModelRequest(parts=[replace(part, content='Account [masked].') for part in message.parts])
+            if isinstance(message, ModelRequest)
+            else message
+            for message in messages
+        ]
+
+    model = _RecordingModel()
+    await _drain(agent, model, capabilities=[ProcessHistory(mask)], message_history=seeded)
+    assert 'secret-99' in seen[0]
+    assert model.messages is not None
+    assert 'secret' not in str(model.messages)
+
+    model = _RecordingModel()
+    await _drain(agent, model, capabilities=[ProcessHistory(lambda messages: [])], message_history=seeded)
+    assert model.messages is not None
+    assert 'Fresh system prompt.' not in str(model.messages)
 
 
 async def test_process_history_skipped_without_seeded_history() -> None:

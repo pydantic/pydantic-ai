@@ -4210,18 +4210,30 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     finally:
                         yielded = True
                     return
-            if seeded_history:
-                # As in a standard run, history processors transform what the model sees, after `before_run`. They
-                # run once, before anything below reads the history (the dynamic system prompts and the instructions
-                # of capabilities it loaded), so those reflect the history the session is actually seeded with.
-                seeded_history = await run_capability._process_seeded_history(  # pyright: ignore[reportPrivateUsage]
-                    run_context, seeded_history
-                )
             await session_stack.enter_async_context(toolset)
             tool_manager = await ToolManager[AgentDepsT](
                 toolset, root_capability=run_capability, default_max_retries=max_tool_retries
             ).for_run_step(run_context)
             tool_defs = tool_manager.tool_defs
+
+            # As in a standard run (`UserPromptNode`), the agent's system prompts open a fresh conversation,
+            # while seeded history is taken to carry its own, with its dynamic system prompts re-evaluated.
+            # The model sends this standing prompt as instructions, and the session records it.
+            system_prompt_parts: list[_messages.SystemPromptPart] = []
+            if seeded_history:
+                await _system_prompt.reevaluate_dynamic_system_prompts(
+                    seeded_history, self._system_prompt_dynamic_functions, run_context
+                )
+                # Then, as in a standard run (`ModelRequestNode`), the history processors transform what the model
+                # sees, after `before_run` and the re-evaluated system prompts. They run once, before the instructions
+                # of capabilities the history loaded are read from it, so those follow what the session is seeded with.
+                seeded_history = await run_capability._process_seeded_history(  # pyright: ignore[reportPrivateUsage]
+                    run_context, seeded_history
+                )
+            else:
+                system_prompt_parts = await _system_prompt.resolve_system_prompts(
+                    self._system_prompts, self._system_prompt_functions, run_context
+                )
 
             # Resolve authored instructions, then fold in toolset-contributed
             # instructions, mirroring the run/iter graph. Capability-contributed instructions come from
@@ -4261,18 +4273,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     )
                     instruction_parts.extend(part for part in loaded_parts if part.content)
             resolved_instructions = _messages.InstructionPart.join(instruction_parts)
-            # As in a standard run (`UserPromptNode`), the agent's system prompts open a fresh conversation,
-            # while seeded history is taken to carry its own, with its dynamic system prompts re-evaluated.
-            # The model sends this standing prompt as instructions, and the session records it.
-            system_prompt_parts: list[_messages.SystemPromptPart] = []
-            if seeded_history:
-                await _system_prompt.reevaluate_dynamic_system_prompts(
-                    seeded_history, self._system_prompt_dynamic_functions, run_context
-                )
-            else:
-                system_prompt_parts = await _system_prompt.resolve_system_prompts(
-                    self._system_prompts, self._system_prompt_functions, run_context
-                )
             request_messages: list[_messages.ModelMessage] = [
                 *seeded_history,
                 _messages.ModelRequest(parts=[*system_prompt_parts], instructions=resolved_instructions or None),
