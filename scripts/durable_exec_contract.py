@@ -52,9 +52,10 @@ class only in a signature does not depend on it at runtime, so an entry whose on
 
 `--touched` prints the gating entries a pull request touches, in the manifest's shape, reading the
 pull request through `gh api` and only parsing what it reads (`touched_entries` has the rules).
-`.github/workflows/bots.yml` labels a pull request that touches any `needs-durable-exec-review`, and
-`scripts/gather-pydantic-ai-review-context.sh` hands the entries to CI Review. Both run this file and
-the manifest as the base branch has them, never the pull request's copies.
+`.github/workflows/bots.yml` labels a pull request that touches any of them
+`needs-durable-exec-review`, and `scripts/gather-pydantic-ai-review-context.sh` hands them to CI
+Review. Both run this file and the manifest as the base branch has them, never the pull request's
+copies.
 
 Usage:
     uv run python scripts/durable_exec_contract.py          # exit 1 if the manifest is stale
@@ -113,6 +114,7 @@ _CORE_FILE = re.compile(r'(?:[A-Za-z0-9_]+/)+[A-Za-z0-9_]+\.py')
 _HUNK_HEADER = re.compile(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
 
 Kind = Literal['import', 'annotation_only', 'override', 'attribute_read', 'projected_field']
+FileStatus = Literal['added', 'removed', 'modified', 'renamed', 'copied', 'changed', 'unchanged']
 Manifest = dict[str, dict[str, dict[str, list[str]]]]
 _EntrySets = dict[str, dict[str, dict[str, set[str]]]]
 FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
@@ -883,8 +885,7 @@ class ChangedFile:
     """A file a pull request changes, as GitHub's `pulls/{number}/files` endpoint lists it."""
 
     filename: str
-    status: str
-    """`added`, `removed`, `modified`, `renamed`, `copied`, `changed` or `unchanged`."""
+    status: FileStatus
     previous_filename: str | None = None
     """The path a `renamed` or `copied` file had before."""
     patch: str | None = None
@@ -1042,7 +1043,8 @@ class _Spans:
         }
 
 
-def _gh(*arguments: str) -> str:  # pragma: no cover - runs `gh`; the tests pass a fake
+# Runs `gh`; the tests pass a fake.
+def _gh(*arguments: str) -> str:  # pragma: no cover
     """What `gh api` prints for `arguments`."""
     return subprocess.run(['gh', 'api', *arguments], stdout=subprocess.PIPE, check=True, encoding='utf-8').stdout
 
