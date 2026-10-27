@@ -1064,6 +1064,7 @@ class TestBridgeFailureModes:
                 raise Suspend('retry scheduled')
 
         unwinding = threading.Event()
+        cancel_held = threading.Event()
         cleanup_finished = threading.Event()
 
         agent = build_agent(act)
@@ -1089,15 +1090,18 @@ class TestBridgeFailureModes:
             # handler thread that lags the loop on a busy runner does, so it always finds the run
             # still unwinding instead of interrupting it before the cleanup starts.
             if callback.__name__ == 'cancel_and_notify':
-                assert unwinding.wait(timeout=5)
+                assert unwinding.wait(timeout=_READINESS_WAIT_TIMEOUT)
+                cancel_held.set()
             return schedule(callback, *args)
 
         monkeypatch.setattr(warm, 'call_soon_threadsafe', cancel_once_unwinding)
 
         with pytest.raises(Suspend):
-            run_durable(run_with_quick_cleanup, context=SuspendingContext(), cancel_timeout=5)
+            run_durable(run_with_quick_cleanup, context=SuspendingContext(), cancel_timeout=_READINESS_WAIT_TIMEOUT)
 
-        assert cleanup_finished.wait(timeout=5)
+        # A renamed cancel callback would slip past the hold and bring the race back.
+        assert cancel_held.is_set()
+        assert cleanup_finished.wait(timeout=_READINESS_WAIT_TIMEOUT)
         # The unwind beat the budget, so the loop is still the one the next invocation gets.
         assert loops.get() is warm
         assert not warm.is_closed()
