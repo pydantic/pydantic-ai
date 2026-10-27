@@ -1,6 +1,6 @@
 ---
 title: Enterprise support for Pydantic AI
-description: "Commercial support for Pydantic AI with an SLA: 24/7 priority help from Pydantic AI engineers on production incidents, architecture, upgrades and security."
+description: "Pydantic AI is open source, with commercial enterprise support from Pydantic: an SLA and 24/7 priority help from Pydantic AI engineers on production incidents, architecture, upgrades and security."
 ---
 
 # Enterprise support for Pydantic AI
