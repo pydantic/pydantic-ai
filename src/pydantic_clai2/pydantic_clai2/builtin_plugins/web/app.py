@@ -49,6 +49,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     legacy_tags,
 )
 from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
+from pydantic_clai2.builtin_plugins.web.sidebar import completions
 from pydantic_clai2.builtin_plugins.web.workspaces import open_workspace
 from pydantic_clai2.runtime.image_codec import decode_images
 
@@ -149,6 +150,12 @@ class Rename(BaseModel):
     """A session's new title."""
 
     title: str = Field(max_length=200)
+
+
+class Archive(BaseModel):
+    """The sessions to archive at once, such as every one of a worktree."""
+
+    ids: list[str] = Field(max_length=1000)
 
 
 class ModelChoice(BaseModel):
@@ -473,6 +480,11 @@ def _sessions(app: FastAPI, service: WebService) -> None:
     async def sessions(q: str = '', include_archived: bool = False, include_worktrees: bool = False) -> list[Project]:
         return await _wait(service.projects(q, include_archived=include_archived, include_worktrees=include_worktrees))
 
+    @app.get('/api/directories')
+    async def directories(path: str = '') -> list[Project]:
+        """New session's completions of a typed path, so it reaches repositories and worktrees without sessions."""
+        return await to_thread.run_sync(completions, path)
+
     @app.post('/api/sessions/new')
     async def new(body: NewSession | None = None) -> Opened:
         return Opened(id=await _wait(service.new(None if body is None else body.workspace)))
@@ -492,6 +504,10 @@ def _sessions(app: FastAPI, service: WebService) -> None:
     @app.post('/api/sessions/{conversation_id}/fork')
     async def fork(conversation_id: str) -> Forked:
         return Forked(id=await _wait(service.fork(conversation_id)))
+
+    @app.post('/api/sessions/archive', status_code=204)
+    async def archive_all(body: Archive) -> None:
+        await _wait(service.archive_all(body.ids))
 
     @app.post('/api/sessions/{conversation_id}/archive', status_code=204)
     async def archive(conversation_id: str) -> None:
