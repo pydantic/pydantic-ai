@@ -29,10 +29,11 @@ developer's model subscription. It is independent of any hosted review.
 
 ## Select the reviewer tier
 
-- In Claude Code, use an Opus reviewer.
-- In Codex, use the Terra-pinned `reviewer` agent.
-- Never use Fable or Sol for this review.
-- In other harnesses, use the normal reviewer selection.
+Follow [Model tiers](../pushing-commits-to-the-repo/SKILL.md#model-tiers), using the session's family rather than its harness.
+Use the light tier before round 3 and the strong tier from round 3.
+Round 3 means hosted review has commented on two earlier pushes.
+Pass the model explicitly when the dispatch accepts one.
+The driver sets the light model's effort from the PR's complexity.
 
 ## Decide whether to decompose the diff
 
