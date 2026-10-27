@@ -195,9 +195,9 @@ _ACCEPTED: dict[tuple[str, str, str], tuple[int, str]] = {
         'the default of the `set_agent_graph_sleep` indirection, used only when no engine registered a sleep',
     ),
     (f'{CORE}/_agent_graph.py', 'ModelRequestNode._prepare_request', 'pydantic_ai._utils.now_utc'): (1, _TIMESTAMP),
-    (f'{CORE}/_agent_graph.py', 'ModelRequestNode._stream._streaming_handler', 'time.perf_counter'): (
+    (f'{CORE}/_agent_graph.py', 'ModelRequestNode._open_stream', 'time.perf_counter'): (
         1,
-        'time-to-first-chunk telemetry; nothing in the run reads it',
+        'time-to-first-chunk telemetry, stamped when each attempt issues its request; nothing in the run reads it',
     ),
     (f'{CORE}/_agent_graph.py', 'CallToolsNode._handle_tool_calls', 'pydantic_ai._utils.now_utc'): (1, _TIMESTAMP),
     (f'{CORE}/_agent_graph.py', 'CallToolsNode._handle_final_result', 'pydantic_ai._utils.now_utc'): (1, _TIMESTAMP),
@@ -209,7 +209,7 @@ _ACCEPTED: dict[tuple[str, str, str], tuple[int, str]] = {
         1,
         'the heartbeat loop of a running activity, which is not workflow code',
     ),
-    (f'{CORE}/_agent_graph.py', 'ModelRequestNode._stream', 'asyncio.wait'): (1, _WAIT_ORDER),
+    (f'{CORE}/_agent_graph.py', '_serve_stream_offers', 'asyncio.wait'): (1, _WAIT_ORDER),
     (f'{CORE}/_tool_execution.py', '_iter_completed_or_buffered', 'asyncio.wait'): (2, _WAIT_ORDER),
     (f'{CORE}/agent/__init__.py', '_run_lifecycle_hooks', 'asyncio.wait'): (1, _WAIT_ORDER),
     (f'{CORE}/durable_exec/temporal/_activity_execution.py', '_await_with_single_cancel', 'asyncio.wait'): (
