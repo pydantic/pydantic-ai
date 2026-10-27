@@ -1,0 +1,349 @@
+"""Test LogfireMCP's connection settings and tool selection through an agent."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from collections.abc import Callable
+from datetime import UTC, datetime
+
+import httpx
+import pytest
+from fastmcp.client.auth import OAuth
+from fastmcp.client.transports import StreamableHttpTransport
+from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL, LogfireMCP
+from tests.harness._hosted_mcp import mcp_connection, only_leaf
+
+from ...conftest import try_import
+
+with try_import() as anthropic_available:
+    from anthropic.types.beta import BetaTextBlock, BetaUsage
+
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from ...models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
+
+# MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
+pytestmark = [
+    pytest.mark.filterwarnings(
+        "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
+    ),
+]
+
+
+@pytest.fixture
+def server() -> FastMCP:
+    server = FastMCP('provider', instructions='Provider instructions.')
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    def read_resource() -> str:
+        return 'read'
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False))
+    def write_resource() -> str:
+        return 'written'
+
+    @server.tool()
+    def unmarked_resource() -> str:
+        return 'unmarked'
+
+    return server
+
+
+def transport(capability: LogfireMCP[None]) -> StreamableHttpTransport:
+    toolset = mcp_connection(capability.get_toolset())
+    result = toolset.client.transport
+    assert isinstance(result, StreamableHttpTransport)
+    return result
+
+
+async def connections_for(capability: LogfireMCP[str | None], deps: str | None) -> list[MCPToolset[str | None]]:
+    """The MCP connections a run with `deps` would open."""
+    ctx = RunContext[str | None](deps=deps, model=TestModel(), usage=RunUsage())
+    toolset = await capability.get_toolset().for_run(ctx)
+    connections: list[MCPToolset[str | None]] = []
+
+    def collect(leaf: AbstractToolset[str | None]) -> None:
+        if isinstance(leaf, MCPToolset):
+            connections.append(leaf)
+
+    toolset.apply(collect)
+    return connections
+
+
+def per_user_token(ctx: RunContext[str | None]) -> str | None:
+    """Read the run's token from its deps, as an app serving many users would."""
+    return ctx.deps
+
+
+def bearer(capability: LogfireMCP[None]) -> str:
+    auth = transport(capability).auth
+    assert isinstance(auth, httpx.Auth)
+    request = next(auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
+    return request.headers['Authorization']
+
+
+class TestLogfireMCP:
+    @pytest.mark.parametrize(
+        ('read_only', 'expected'),
+        [
+            (
+                False,
+                '{"logfire_read_resource":"read","logfire_write_resource":"written",'
+                '"logfire_unmarked_resource":"unmarked"}',
+            ),
+            (True, '{"logfire_read_resource":"read"}'),
+        ],
+    )
+    async def test_agent_executes_selected_tools(self, server: FastMCP, read_only: bool, expected: str) -> None:
+        agent = Agent(TestModel(), capabilities=[LogfireMCP(client=server, read_only=read_only)])
+        result = await agent.run('Use the tools')
+        assert result.output == expected
+
+    @pytest.mark.parametrize('include', [True, False])
+    async def test_server_instructions(self, server: FastMCP, include: bool) -> None:
+        agent = Agent(TestModel(call_tools=[]), capabilities=[LogfireMCP(client=server, include_instructions=include)])
+        result = await agent.run('Hello')
+        request = result.all_messages()[0]
+        assert isinstance(request, ModelRequest)
+        assert ('Provider instructions.' in (request.instructions or '')) is include
+
+    @pytest.mark.parametrize(
+        ('tool_prefix', 'note'),
+        [
+            ('logfire', '`query_run` is `logfire_query_run`.'),
+            ('work', '`query_run` is `work_query_run`.'),
+            (None, None),
+        ],
+    )
+    async def test_instructions_name_the_tool_prefix(
+        self, server: FastMCP, tool_prefix: str | None, note: str | None
+    ) -> None:
+        agent = Agent(TestModel(call_tools=[]), capabilities=[LogfireMCP(client=server, tool_prefix=tool_prefix)])
+        request = (await agent.run('Hello')).all_messages()[0]
+        assert isinstance(request, ModelRequest)
+        instructions = request.instructions or ''
+        assert ("which the server's own text leaves out" in instructions) is (note is not None)
+        if note is not None:
+            assert note in instructions
+
+    @pytest.mark.parametrize(
+        ('auth', 'url'),
+        [('key', LOGFIRE_US_MCP_URL), (per_user_token, LOGFIRE_US_MCP_URL), (None, LOGFIRE_EU_MCP_URL)],
+    )
+    def test_client_cannot_be_combined_with_connection_settings(
+        self, auth: str | Callable[[RunContext[str | None]], str | None] | None, url: str
+    ) -> None:
+        with pytest.raises(UserError, match='`client` owns the connection'):
+            LogfireMCP(client='https://example.com/mcp', auth=auth, url=url)
+
+    def test_client_rejects_a_falsy_auth_function(self) -> None:
+        # Only `None` and `''` are unset: a function is a credential source however it converts to `bool`.
+        class FalsyToken:
+            def __call__(self, ctx: RunContext[None]) -> str | None:
+                # Rejected before any run.
+                return 'token'  # pragma: no cover
+
+            def __bool__(self) -> bool:
+                return False
+
+        token = FalsyToken()
+        assert not token
+        with pytest.raises(UserError, match='`client` owns the connection'):
+            LogfireMCP[None](client='https://example.com/mcp', auth=token)
+
+    def test_client_accepts_empty_auth(self) -> None:
+        # The `auth` table documents `''` as unset, so it does not conflict with `client`.
+        capability = LogfireMCP[None](client='https://example.com/mcp', auth='')
+        assert capability.auth is None
+        assert transport(capability).url == 'https://example.com/mcp'
+
+    def test_empty_and_omitted_auth_combine(self, server: FastMCP) -> None:
+        # Both mean unset, so the two describe one connection rather than disagreeing on `auth`.
+        Agent(TestModel(), capabilities=[LogfireMCP(client=server), LogfireMCP(client=server, auth='')])
+
+    def test_defer_loading_needs_no_id(self, server: FastMCP) -> None:
+        Agent(TestModel(), capabilities=[LogfireMCP(client=server, defer_loading=True)])
+
+    @pytest.mark.parametrize('id', [None, ''])
+    def test_unset_id_means_the_default(self, server: FastMCP, id: str | None) -> None:
+        capability = LogfireMCP[None](id=id, client=server, defer_loading=True)
+        assert (capability.id, only_leaf(capability.get_toolset()).id) == ('logfire-mcp', 'logfire-mcp')
+        Agent(TestModel(), deps_type=type(None), capabilities=[capability])
+
+    def test_unset_ids_that_differ_raise_when_the_agent_is_built(self) -> None:
+        with pytest.raises(
+            UserError,
+            match="Capability id 'logfire-mcp' is used by multiple LogfireMCP capabilities that disagree on 'auth'",
+        ):
+            Agent(TestModel(), capabilities=[LogfireMCP(id=None, auth='a'), LogfireMCP(id=None, auth='b')])
+
+    def test_two_that_differ_raise_when_the_agent_is_built(self) -> None:
+        with pytest.raises(
+            UserError,
+            match="Capability id 'logfire-mcp' is used by multiple LogfireMCP capabilities that disagree on 'auth', 'url'",
+        ):
+            Agent(TestModel(), capabilities=[LogfireMCP(auth='a'), LogfireMCP(auth='b', url=LOGFIRE_EU_MCP_URL)])
+
+    @pytest.mark.parametrize(
+        'capability',
+        [
+            LogfireMCP[str | None](id='tenant-logfire', auth='token'),
+            LogfireMCP[str | None](id='tenant-logfire', auth=per_user_token),
+            LogfireMCP[str | None](id='tenant-logfire', client='https://example.com/mcp'),
+        ],
+        ids=['token', 'function', 'client'],
+    )
+    def test_custom_id_is_forwarded(self, capability: LogfireMCP[str | None]) -> None:
+        assert only_leaf(capability.get_toolset()).id == 'tenant-logfire'
+
+    @pytest.mark.parametrize(
+        ('capability', 'include'),
+        [
+            (LogfireMCP[str | None](auth='token'), True),
+            (LogfireMCP[str | None](auth='token', include_instructions=False), False),
+        ],
+        ids=['default', 'disabled'],
+    )
+    def test_hosted_connection_forwards_include_instructions(
+        self, capability: LogfireMCP[str | None], include: bool
+    ) -> None:
+        # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
+        toolset = mcp_connection(capability.get_toolset())
+        assert toolset.include_instructions is include
+
+    def test_credential_is_not_in_repr(self) -> None:
+        assert 'secret-token' not in repr(LogfireMCP(auth='secret-token'))
+
+    def test_environment_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv('LOGFIRE_API_KEY', 'environment-token')
+        assert bearer(LogfireMCP()) == 'Bearer environment-token'
+
+    @pytest.mark.parametrize(
+        ('capability', 'expected'),
+        [
+            (LogfireMCP[None](auth='key'), 'https://logfire-us.pydantic.dev/mcp'),
+            (LogfireMCP[None](auth='key', url=LOGFIRE_EU_MCP_URL), 'https://logfire-eu.pydantic.dev/mcp'),
+            (LogfireMCP[None](auth='key', url='https://logfire.example/mcp'), 'https://logfire.example/mcp'),
+        ],
+        ids=['us', 'eu', 'self-hosted'],
+    )
+    def test_endpoint(self, capability: LogfireMCP[None], expected: str) -> None:
+        assert transport(capability).url == expected
+
+    def test_missing_key_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv('LOGFIRE_API_KEY', raising=False)
+        with pytest.raises(UserError, match='Set `LOGFIRE_API_KEY`'):
+            LogfireMCP().get_toolset()
+
+    @pytest.mark.parametrize('year', [2020, 2100])
+    async def test_current_time_ignores_message_history(self, server: FastMCP, year: int) -> None:
+        stamp = datetime(year, 1, 1, tzinfo=UTC)
+        history = [
+            ModelRequest(parts=[UserPromptPart('Recent errors', timestamp=stamp)], timestamp=stamp),
+            ModelResponse(parts=[TextPart('None.')], timestamp=stamp),
+        ]
+        before = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+        result = await Agent(TestModel(call_tools=[]), capabilities=[LogfireMCP(client=server)]).run(
+            message_history=history
+        )
+        request = next(message for message in reversed(result.all_messages()) if isinstance(message, ModelRequest))
+        instructions = request.instructions or ''
+        timestamp = instructions.split('within the hour starting `')[1].split('`')[0]
+        assert before <= datetime.fromisoformat(timestamp) <= datetime.now(UTC)
+
+    def test_current_time_is_stable_within_the_hour(self) -> None:
+        """Instructions precede the history, so they must not change from one request to the next."""
+
+        def current_utc(minute: int, second: int) -> str | None:
+            stamp = datetime(2026, 9, 29, 14, minute, second, 123456, tzinfo=UTC)
+            ctx = RunContext[None](
+                deps=None, model=TestModel(), usage=RunUsage(), messages=[ModelRequest(parts=[], timestamp=stamp)]
+            )
+            return LogfireMCP[None]()._current_utc(ctx)  # pyright: ignore[reportPrivateUsage]
+
+        assert (
+            current_utc(0, 0)
+            == current_utc(59, 59)
+            == ('The current UTC time is within the hour starting `2026-09-29T14:00+00:00`.')
+        )
+
+    @pytest.mark.parametrize('messages', [[], [ModelResponse(parts=[TextPart('Hello')])]])
+    def test_no_current_time_without_a_request(self, messages: list[ModelMessage]) -> None:
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), messages=messages)
+        assert LogfireMCP[None]()._current_utc(ctx) is None  # pyright: ignore[reportPrivateUsage]
+
+
+class TestPerRunAuth:
+    @pytest.mark.subprocess(reason='uses the `whoami_url` MCP server, which runs in its own process')
+    async def test_concurrent_runs_use_their_own_credentials(self, whoami_url: str) -> None:
+        agent = Agent(TestModel(), deps_type=str, capabilities=[LogfireMCP[str](url=whoami_url, auth=per_user_token)])
+        alice, bob = await asyncio.gather(
+            agent.run('Who am I?', deps='alice-token'), agent.run('Who am I?', deps='bob-token')
+        )
+        assert (alice.output, bob.output) == (
+            '{"logfire_whoami":"Bearer alice-token"}',
+            '{"logfire_whoami":"Bearer bob-token"}',
+        )
+
+    @pytest.mark.parametrize(('token', 'connections'), [('alice-token', 1), (None, 0), ('', 0)])
+    async def test_connects_only_with_a_credential(
+        self, token: str | None, connections: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The environment key is set to show a function never falls back to it.
+        monkeypatch.setenv('LOGFIRE_API_KEY', 'deployment-token')
+        capability = LogfireMCP[str | None](auth=per_user_token)
+        assert len(await connections_for(capability, token)) == connections
+
+    async def test_provider_returning_oauth_raises(self) -> None:
+        capability = LogfireMCP[str | None](auth=per_user_token)
+        with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):
+            await connections_for(capability, 'oauth')
+
+    @pytest.mark.filterwarnings('ignore:Using in-memory token storage')
+    def test_fixed_oauth_uses_browser_login(self) -> None:
+        assert isinstance(transport(LogfireMCP(auth='oauth')).auth, OAuth)
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+class TestPromptCache:
+    async def test_next_hour_keeps_the_cached_prefix(
+        self, server: FastMCP, monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
+    ) -> None:
+        """A request in the next hour resends the earlier request byte for byte, then appends the new hour."""
+        reply = completion_message(
+            [BetaTextBlock(text='No errors.', type='text')], BetaUsage(input_tokens=1, output_tokens=1)
+        )
+        client = MockAnthropic.create_mock([reply, reply])
+        model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(model, capabilities=[LogfireMCP(client=server)])
+
+        # The run stamps each request with this clock, and the capability reads the hour from that stamp.
+        monkeypatch.setattr('pydantic_ai._agent_graph.now_utc', lambda: datetime(2026, 10, 16, 14, 50, tzinfo=UTC))
+        first = await agent.run('Any errors in the last hour?')
+        monkeypatch.setattr('pydantic_ai._agent_graph.now_utc', lambda: datetime(2026, 10, 16, 15, 10, tzinfo=UTC))
+        await agent.run('And now?', message_history=first.all_messages())
+
+        def wire(value: object) -> str:
+            return json.dumps(value, sort_keys=True)
+
+        earlier, later = get_mock_chat_completion_kwargs(client)
+        assert '`2026-10-16T14:00+00:00`' in wire(earlier['system'])
+        for section in ('system', 'tools'):
+            assert earlier[section]
+            assert wire(later[section]) == wire(earlier[section])
+        sent = len(earlier['messages'])
+        assert wire(later['messages'][:sent]) == wire(earlier['messages'])
+        assert '`2026-10-16T15:00+00:00`' in wire(later['messages'][sent:])

@@ -3,10 +3,11 @@ from __future__ import annotations as _annotations
 import argparse
 import functools
 import json
+import shutil
 import sys
 from collections.abc import Sequence
 from contextlib import AsyncExitStack, ExitStack
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ from .. import __version__, _display, models, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
-from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse, ToolReturnPart
+from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse
 from ..models import infer_model, known_model_names
 from ..native_tools import NATIVE_TOOLS_REQUIRING_CONFIG, SUPPORTED_NATIVE_TOOLS
 from ..output import OutputDataT
@@ -125,7 +126,7 @@ def load_agent(agent_path: str) -> Agent[Any, Any] | None:
 
 @cli_agent.system_prompt
 def cli_system_prompt() -> str:
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     tzinfo = now_utc.astimezone().tzinfo
     tzname = tzinfo.tzname(now_utc) if tzinfo else ''
     return f"""\
@@ -176,6 +177,7 @@ def _print_intro(
             tools=details.tools,
             capabilities=details.capabilities,
             observability=not details.instrumented,
+            logfire_cli_available=shutil.which('uvx') is not None,
             # The console already knows how wide the terminal is, `COLUMNS` and all, and re-asks it
             # every time. Without one it answers 80 whether it read that off `COLUMNS` or had nothing
             # to go on, so the width comes from the stream instead, which tells those two apart.
@@ -606,13 +608,14 @@ async def ask_agent(
                         async with node.stream(agent_run.ctx) as handle_stream:
                             async for event in handle_stream:
                                 if isinstance(event, FunctionToolCallEvent):
-                                    pending_calls[event.tool_call_id] = event.part.tool_name
+                                    # `args_valid is None`: the call won't run, e.g. it was skipped
+                                    # because a final result was already processed.
+                                    if event.args_valid is not None:
+                                        pending_calls[event.tool_call_id] = event.part.tool_name
                                 elif isinstance(event, FunctionToolResultEvent):
-                                    # Pop on any result, not just a `ToolReturnPart`: a call that
-                                    # comes back as a `RetryPromptPart` would otherwise stay pending
-                                    # and pin its indicator for the rest of the run.
-                                    pending_calls.pop(event.tool_call_id, None)
-                                    if isinstance(event.part, ToolReturnPart):
+                                    # Pop on any result, a retried one included: it would otherwise stay
+                                    # pending and pin its indicator for the rest of the run.
+                                    if pending_calls.pop(event.tool_call_id, None) is not None:
                                         content_pieces.append(f'> Called tool `{event.part.tool_name}`.')
                                 calling = [f'> _Calling tool `{name}`…_' for name in pending_calls.values()]
                                 live.update(Markdown('\n\n'.join([*content_pieces, *calling]), code_theme=code_theme))

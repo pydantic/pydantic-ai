@@ -2,11 +2,13 @@
 
 ## Testing philosophy
 
-The async backend defaults to asyncio. Use `uv run pytest <test-path> --anyio-backend=trio --record-mode=none`
-to run selected portable tests on Trio without duplicating the default suite. During the Trio migration,
+Every `async def` test runs via the anyio pytest plugin automatically (`anyio_mode = "auto"` in
+`pyproject.toml`); don't add `@pytest.mark.anyio`. The async backend defaults to asyncio. Use
+`uv run pytest <test-path> --anyio-backend=trio --record-mode=none` to run selected portable tests on Trio without duplicating the default suite. During the Trio migration,
 run affected concurrency tests once per backend. Keep broad Trio runs manual or periodic; do not add a
 second backend to every ordinary CI matrix. The selector does not imply that every test or integration
-already supports Trio.
+already supports Trio. `tests/harness` and `tests/clai2` pin `anyio_backend` to asyncio in their `conftest.py`;
+don't re-override it per file.
 
 VCR + public-API tests are the default. We test through the public API the way a user would (`Agent(...)`, `agent.run(...)`) against real provider responses recorded as cassettes — provider APIs are the ultimate judge of whether the code is correct when run as intended, and that user-facing correctness is what we care about, not behavior in isolated units.
 
@@ -15,6 +17,10 @@ Unit tests still earn their place — for internal behavior that is definitory a
 Recording cassettes needs provider API keys and isn't trivial, so contributors routinely under-test the real behavior — writing the VCR test a contributor couldn't is core maintainer work.
 
 Recorded cassettes also double as a suite-wide prompt-cache prefix regression net. The cache-prefix invariant checks that consecutive requests extend the same serialized provider-cache prefix; tests that deliberately move it through compaction, dynamic tool disclosure, or history rewriting must use `@pytest.mark.moves_cache_prefix(reason=...)` on the test.
+
+`tests/test_history_append_only.py` (core) and `tests/harness/test_history_append_only.py` (Harness) check the same invariant without cassettes, over every capability the packages ship. A new capability is picked up automatically; if it can't be built with its defaults, give it a `FIXTURES` entry (or an `EXEMPT` entry saying why it can't run offline), and, in the Harness file, a `SCENARIOS` entry if it keeps state the conversation should change. A prefix move that is a bug goes in `KNOWN`, linked to the issue or PR that fixes it; a move that is documented behavior (compaction, a request-only tail) goes in `ALLOWED`, which pins how far it may move.
+
+Tests without a cassette get the same check from `fail_function_model_prefix_violations` in `tests/conftest.py`: every request a `FunctionModel` or `TestModel` receives is rendered offline as the body `AnthropicModel` would send, and compared with the previous request of its run, or, for a run's first request, with the latest shorter request that starts with the same message. A test whose conversation moves the prefix on purpose (it changes the tools or instructions between steps, compacts or rewrites history, drops a request-scoped prompt, rewinds a fallback continuation) uses `@pytest.mark.moves_cache_prefix(reason=...)`, preferably with one of the shared reasons in `tests/function_model_prefix.py`. A move the framework shouldn't make is a bug, the counterpart of a `KNOWN` entry above: fix it rather than mark the test, or, when the fix belongs in its own PR, mark it with a reason that links the issue tracking the fix.
 
 ## Test File Structure
 
@@ -28,7 +34,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 # ... other imports
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = pytest.mark.vcr
 
 
 # fixtures/helpers immediately before their test
@@ -48,7 +54,7 @@ async def test_feature(model: Model, stream: bool):
 For cartesian product tests, use a dict to map parameter combinations to expected results:
 
 ```python
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai.models import Model
 
@@ -143,18 +149,18 @@ For detailed workflows see `.claude/skills/testing-skill/SKILL.md`.
 
 Realtime cassettes live in `tests/realtime/cassettes/<module>/<test>.yaml`. Record them with
 `uv run --env-file .env pytest --record-mode=rewrite <test>`; normal test runs replay them offline.
-Unlike HTTP VCR cassettes, they contain raw WebSocket frames, with secrets scrubbed and audio payloads
+Unlike HTTP cassettes, they contain raw WebSocket frames, with secrets scrubbed and audio payloads
 truncated. The testing skill's `parse_cassette.py` is HTTP-only and does not apply to these cassettes.
 
 ### Asserting what goes out on the wire
 
 Four mechanisms, and they are not interchangeable — pick by what the test's claim is about.
 
-**An httpx request hook — the boundary tap, and the first reach.** Request the `request_capture` fixture from `tests/conftest.py`, route the provider through `request_capture.client`, and assert on `request_capture.body(path_suffix)`; see `test_anthropic_code_execution_tool_container_reuse` in `tests/models/test_anthropic.py`. For an Anthropic model the `anthropic_model` factory does the routing, so `anthropic_model('claude-sonnet-4-5', capture=True)` is the whole setup. The fixture's client is an `httpx2.AsyncClient` carrying an `event_hooks={'request': [...]}` recorder, and event hooks run inside `AsyncClient.send`, above the transport VCR patches, so the hook fires on replay too and observes the request the live code actually built — a field the code stops sending fails the assertion instead of hiding behind a frozen recording. It costs the cassette nothing: matching is untouched, so fields that legitimately vary stay free to vary, and it sees what a cassette will not, headers included (the cassette serializer strips `anthropic-*`, so the wire is the only place a test can assert beta gating). Snapshot a projection of the body rather than the body itself — `content_blocks`, `message_shape` and `cache_breakpoints`, in `tests/models/conftest.py`, pin the fields a claim rests on without churning on unrelated conversation-shape changes. The fixture is reachable from anywhere under `tests/`; those three projections are not. A test outside `tests/models/` imports them explicitly (`from tests.models.conftest import message_shape`) rather than re-implementing the comprehension inline. The shared fixture works only when the provider accepts `httpx2.AsyncClient` as its injected client. Check the provider signature before using it. `GroqProvider` requires legacy `httpx.AsyncClient`, and `HuggingFaceProvider` rejects `http_client` in favor of `hf_client`; capture those SDK boundaries with provider-specific clients. A provider on another transport taps its own send-time event for the same reason — see `_capture_bedrock_request_headers` in `tests/models/test_bedrock.py`, a botocore `before-send` handler.
+**An httpx request hook — the boundary tap, and the first reach.** Request the `request_capture` fixture from `tests/conftest.py`, route the provider through `request_capture.client`, and assert on `request_capture.body(path_suffix)`; see `test_anthropic_code_execution_tool_container_reuse` in `tests/models/test_anthropic.py`. For an Anthropic model the `anthropic_model` factory does the routing, so `anthropic_model('claude-sonnet-4-5', capture=True)` is the whole setup. The fixture's client is an `httpx2.AsyncClient` carrying an `event_hooks={'request': [...]}` recorder, and event hooks run inside `AsyncClient.send`, above cassetter's transport patches, so the hook fires on replay too and observes the request the live code actually built — a field the code stops sending fails the assertion instead of hiding behind a frozen recording. It costs the cassette nothing: matching is untouched, so fields that legitimately vary stay free to vary, and it sees what a cassette will not, headers included (the recording hooks in `tests/cassette_hooks.py` strip `anthropic-*`, so the wire is the only place a test can assert beta gating). Snapshot a projection of the body rather than the body itself — `content_blocks`, `message_shape` and `cache_breakpoints`, in `tests/models/conftest.py`, pin the fields a claim rests on without churning on unrelated conversation-shape changes. The fixture is reachable from anywhere under `tests/`; those three projections are not. A test outside `tests/models/` imports them explicitly (`from tests.models.conftest import message_shape`) rather than re-implementing the comprehension inline. The shared fixture works only when the provider accepts `httpx2.AsyncClient` as its injected client. Check the provider signature before using it. `GroqProvider` requires legacy `httpx.AsyncClient`, and `HuggingFaceProvider` rejects `http_client` in favor of `hf_client`; capture those SDK boundaries with provider-specific clients. A provider on another transport taps its own send-time event for the same reason — see `_capture_bedrock_request_headers` in `tests/models/test_bedrock.py`, a botocore `before-send` handler.
 
 **Snapshot the request body — the review surface.** `single_request_body` in `tests/cassette_utils.py` decodes the request the *cassette* holds, so `assert single_request_body(vcr) == snapshot({...})` puts the whole outbound payload in the test body instead of leaving it buried in a long YAML. What it does not do is catch drift: the recording is frozen, so it keeps passing after the live code stops sending a field, and a recording can already disagree with what the code sends today. Its second job is at re-record time, where a changed payload surfaces as a snapshot diff. Where a hook is attached, snapshot what the hook captured instead — same review surface, and it is the request that is actually going out.
 
-**A per-test matcher — the gate for when you cannot tap the boundary.** Making a field part of the cassette match also fails when the live code drifts: a request that no longer carries the recorded value cannot match its recording, so replay errors instead of quietly passing. Reach for it when the test doesn't build its own model (a shared or `indirect` fixture supplies it), when one guard should cover a whole family of tests, or when the provider isn't on httpx. Register the matcher via the `pytest_recording_configure(config, vcr)` hook and opt the test in with `@pytest.mark.vcr(additional_matchers=['<name>'])`, which adds to the defaults rather than replacing them; see `function_calling_mode` in `tests/models/google/conftest.py`. Match on the fields the test's claim rests on, not on every field you snapshot — matching a field that legitimately varies makes the cassette brittle and buys no information, which is the cost a hook doesn't have.
+**A per-test matcher — the gate for when you cannot tap the boundary.** Making a field part of the cassette match also fails when the live code drifts: a request that no longer carries the recorded value cannot match its recording, so replay errors instead of quietly passing. Reach for it when the test doesn't build its own model (a shared or `indirect` fixture supplies it), when one guard should cover a whole family of tests, or when the provider isn't on httpx. Opt the test in with `@pytest.mark.vcr(additional_matchers=['body'])`, which adds to the default `method` + `uri` match rather than replacing it; cassetter's matchers are `method`, `uri`, `headers`, `body` and `json_body`, and a module `vcr_config` override can set `match_on` for a whole directory (see `tests/harness/media/conftest.py`) or `ignore_json_paths` for fields that legitimately vary. Match on the fields the test's claim rests on, not on every field you snapshot — matching a field that legitimately varies makes the cassette brittle and buys no information, which is the cost a hook doesn't have.
 
 **Capture the render — for claims no single exchange holds.** When the SDK client is mocked outright so nothing goes over the wire, or the claim is that two renderings are byte-identical rather than that one recorded request looked a certain way, capture what the adapter produces and assert against that; see `test_tool_availability_delta_and_the_tools_cache_section` in `tests/test_tool_availability_portability.py`, and `rendered_requests` in `tests/models/test_anthropic_mid_conversation_system.py` for the per-request form. Where the requests do go out over httpx, the boundary tap gets the same evidence without reaching into adapter internals.
 
@@ -213,7 +219,6 @@ async def test_something(model: Model):
 
 #### SSRF protection for URL downloads
 - `disable_ssrf_protection_for_vcr` - required for VCR tests that download URL content (`ImageUrl`, `AudioUrl`, `DocumentUrl`, `VideoUrl` with `force_download=True`)
-- An autouse guard raises a `RuntimeError` if a VCR test triggers SSRF validation without this fixture
 
 #### Asserting the outbound request
 - `request_capture` - a `RequestCapture` whose `client` records every outbound request; read bodies with `.body(path_suffix)` / `.bodies(path_suffix)` and headers off `.headers`. See "Asserting what goes out on the wire" for when to reach for it
@@ -272,15 +277,43 @@ Available to every test under `tests/models/`. See "Asserting what goes out on t
 - When testing prompt caching, assert prefix stability, not just a cache hit — `cache_read_tokens > 0` only proves that some prefix was reused, not that the prefix you intended stayed stable as history grows; pin it by asserting the cacheable region (serialized leading blocks up to the breakpoint) is byte-identical across consecutive requests and/or that the cache read covers the full prior prefix, since a per-request injection or serialization that moves with history length silently busts the cache with no error
 - When you deprecate a public symbol (add `@deprecated`), add a test asserting the warning fires — a `pytest.warns(PydanticAIDeprecationWarning, match=...)` block whose `match` pins both the symbol name and the migration guidance — so the deprecation is protected against accidental removal or a message rewrite, and any executable docstring/doc example that constructs the symbol is marked `{test="skip"}` (it would otherwise fail under `filterwarnings=["error"]`)
 - Don't blanket-suppress `reportDeprecated` at file scope — no whole-file `# pyright: ignore` (or `# pyright: basic`) at the top of a file to kill every deprecation static-warning at once, since that also silences the next *unintended* use of a deprecated symbol in the file. Put `# pyright: ignore[reportDeprecated]` on each intentional call instead. (The runtime side is different and conventional: a module-level `warnings.filterwarnings('ignore', message=...)` scoped to one deprecation message, in a file that pervasively constructs the deprecated symbol it tests — see `tests/durable_exec/temporal/test_agent.py` / `tests/durable_exec/test_prefect.py` — is fine, as long as a dedicated `pytest.warns` test still proves the deprecation fires.)
-- Gate on a missing optional dependency with `try_import()`, the default. It has two halves and they live in different files: each **test module** wraps its optional imports in `with try_import() as imports_successful:` and applies `pytestmark = pytest.mark.skipif(not imports_successful(), reason='<dep> not installed')` (see `tests/models/anthropic/test_native_tool_filtering.py`); a **`conftest.py`** wraps its own optional imports the same way but carries no skip of its own (see `tests/models/anthropic/conftest.py`) — a conftest's `pytestmark` is not inherited by the modules it serves, so the mark there would gate nothing while `try_import` still keeps the file importable. Reach for `pytest.skip(..., allow_module_level=True)` only when the module cannot import `tests/conftest.py` at all — the Temporal suite can't, because that would pull `vcr` into a module the workflow sandbox re-imports. In that case the gate goes in the test modules **and any non-test helper they import** (`tests/durable_exec/temporal/_shared.py`), never in the `conftest.py`, which instead stays importable without the dependency by deferring its fixtures' imports into the fixture bodies. Reason: pytest loads the conftest of every command-line argument's directory before collection, and `_importconftest` catches only `Exception` while `Skipped` is a `BaseException`, so a gate there escapes as a traceback with exit 1 the moment someone names that directory (or a node id inside it) instead of a parent. See `tests/durable_exec/temporal/conftest.py` and the guard in `tests/durable_exec/test_temporal_skip_gating.py`
-- Do not use subprocesses to test logic that can run in-process. Starting another interpreter and importing the project again makes the full suite materially slower. Reserve subprocesses for behavior that depends on the process boundary, such as CLI invocation, interpreter startup, or import isolation. Scrub `COVERAGE_*` from a required subprocess environment so `[tool.coverage.run] patch = ["subprocess"]` does not instrument the child.
+- Gate on a missing optional dependency with `try_import()`, the default. It has two halves and they live in different files: each **test module** wraps its optional imports in `with try_import() as imports_successful:` and applies `pytestmark = pytest.mark.skipif(not imports_successful(), reason='<dep> not installed')` (see `tests/models/anthropic/test_native_tool_filtering.py`); a **`conftest.py`** wraps its own optional imports the same way but carries no skip of its own (see `tests/models/anthropic/conftest.py`) — a conftest's `pytestmark` is not inherited by the modules it serves, so the mark there would gate nothing while `try_import` still keeps the file importable. Reach for `pytest.skip(..., allow_module_level=True)` only when the module cannot import `tests/conftest.py` at all — the Temporal suite can't, because that would pull `cassetter` into a module the workflow sandbox re-imports. In that case the gate goes in the test modules **and any non-test helper they import** (`tests/durable_exec/temporal/_shared.py`), never in the `conftest.py`, which instead stays importable without the dependency by deferring its fixtures' imports into the fixture bodies. Reason: pytest loads the conftest of every command-line argument's directory before collection, and `_importconftest` catches only `Exception` while `Skipped` is a `BaseException`, so a gate there escapes as a traceback with exit 1 the moment someone names that directory (or a node id inside it) instead of a parent. See `tests/durable_exec/temporal/conftest.py` and the guard in `tests/durable_exec/test_temporal_skip_gating.py`
+- Keep each test cheap, following "Test cost" below
+
+## Test cost
+
+The suite runs on every push across a matrix of Python versions and install shapes, so a second added to one test is paid thousands of times a day. Coding agents copy the nearest helper, so one expensive pattern in a file soon spreads to every test in it. "Favor integration tests" means real in-process code paths with recorded requests, never process spawns, real waits or huge inputs.
+
+- Call CLI and entry points in-process: invoke the `main()`/`cli()` function or the app object with arguments, `capsys`/`capfd` and `monkeypatch`, instead of `subprocess.run([sys.executable, '-m', ...])`. An interpreter re-imports the project and costs about a second per test
+- Inject timeouts, poll intervals, retry delays and chunk sizes through a parameter, setting or `monkeypatch`, and order steps with `anyio.Event`s, so a test never waits out a real timer
+- Prove complexity bounds (a regex that must not backtrack, a parser that must stay linear) at small sizes, not by feeding one huge input: patch the limit the code enforces down and shrink the input with it, or assert on operation counts or output size at two or three sizes. Avoid asserting on wall-clock ratios, which flake on shared runners
+- Start an expensive server or engine once in a `session`- or `module`-scoped fixture and share it; under `pytest-xdist`, `@pytest.mark.xdist_group` keeps the tests that use it on one worker
+- Import heavy optional dependencies (`torch`, `transformers`, `sentence_transformers`, `prefect`, `temporalio`, ...) inside the test or fixture that needs them unless the whole module is about that dependency: collection imports every test module once per worker. Ruff's `TID253` bans the heaviest at module level under `tests/`, and the end-of-run summary names the slowest modules to collect
+- Scrub `COVERAGE_*` from a required subprocess environment so `[tool.coverage.run] patch = ["subprocess"]` does not instrument the child
+
+`tests/cost_guards.py` enforces this, with two escape hatches that each need a `reason=` a reviewer can check:
+
+- A test that launches a Python interpreter (`sys.executable`, `python*`, a console script, `uv run python`, `multiprocessing` with `spawn`/`forkserver`) fails unless it is marked `@pytest.mark.subprocess(reason='...')`. The marker is right only when the claim depends on the process boundary: what a fresh interpreter imports, behavior without an installed dependency, signals and process trees, a real stdio peer. Launching one while setting up a fixture shared beyond one test needs no marker, and other programs are not guarded. A marker on a module, class or function that no longer covers any launch fails the session with "remove the stale marker"; it is only judged on runs that select every test it covers, and `conditional=True` opts out a test that launches Python only on some platforms or installs
+- When `PYTEST_TEST_BUDGET_SECONDS` is set (one CI leg sets it; it is off locally), a test whose setup and call together take longer fails unless it is marked `@pytest.mark.slow(reason='...')`. Setup of `module`, `class`, `package` and `session`-scoped fixtures is not counted, so sharing an expensive fixture is never penalized. Reach for the marker only when the duration is inherent to what the test proves; otherwise make the test cheaper with the patterns above
+
+When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module that takes longer to collect fails the session, with no escape hatch: check whether a heavy dependency is installed with `importlib.util.find_spec` for the skip condition, and import it in the tests that use it, after a `module`-scoped fixture has imported it once outside the per-test budget.
+
+## Property tests
+
+`tests/history_strategies.py` draws message histories with Hypothesis. `tests/history_invariants.py` holds the checkers: plain functions that return a stable code for each violation. `tests/test_history_properties.py` runs the properties, and `tests/test_history_invariants.py` holds the falsifiers.
+
+- Commit a falsifier with every checker code: a hand-built input that triggers exactly that code. A property that no committed input fails checks nothing.
+- When a property fails on main for an input in the drawn domain, record it as a known finding: add a `KNOWN_FINDINGS` entry in `tests/test_history_properties.py` that names the `Damage` drawing the input, a hand-built reproducer for each provider it fails on, and, in `tracked_by`, the URL of the GitHub issue tracking it. Open the issue first. The entry leaves the damage out of that property on those providers and pins each reproducer as a strict expected failure. If no `Damage` draws the input alone, add one that does.
+- Never mark a property test as an expected failure: it would then stop checking every other input.
+- Narrow the strategy only to leave out an input that providers and users never produce, or one whose shape needs its own strategy. List each narrowing with its reason in the `tests/history_strategies.py` module docstring.
+- Hypothesis settings are module-local; there is no suite-wide profile. `tests/test_history_properties.py` gives each property its `PROPERTY_SETTINGS`, a derandomized batch of 50 examples, so a run is reproducible and fits the per-test budget. Hunt for new failures with `HISTORY_PROPERTY_EXAMPLES=1000 uv run pytest tests/test_history_properties.py`, which draws 1000 randomized examples per test.
 
 ## Directory Structure
 
 ```
 tests/
 ├── conftest.py              # shared fixtures
-├── json_body_serializer.py  # custom VCR serializer
+├── cassette_hooks.py        # scrubbing and header filtering applied while recording
 ├── assets/                  # binary test files
 ├── cassettes/               # VCR recordings for root tests
 ├── models/
@@ -292,5 +325,6 @@ tests/
 │   └── test_*.py
 ├── providers/
 │   └── test_*.py            # provider initialization tests (unit)
+├── ui_roundtrip/            # UI adapter round trips through the real JS clients (needs `npm ci --ignore-scripts`)
 └── test_*.py                # feature tests (prefer VCR + parametrize)
 ```

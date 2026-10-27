@@ -1,3 +1,7 @@
+---
+description: "Score LLM outputs with G-Eval in Pydantic Evals, plus LLM judge rubrics for RAG faithfulness, answer relevance, context precision and recall, and translation."
+---
+
 # Standard Quality Metrics
 
 This page shows how to express widely-used LLM evaluation methods with Pydantic Evals primitives:

@@ -1,15 +1,38 @@
 from __future__ import annotations as _annotations
 
-import re
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Literal, TypeAlias
+from typing import Any, ClassVar, Literal, TypeAlias, cast
+
+from pydantic import JsonValue
 
 from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
+
+
+def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
+    """The schema object a local JSON-pointer `$ref` (RFC 6901) like `#/properties/from` points at, if any.
+
+    Not every producer collects shared subschemas into `$defs`: `zod-to-json-schema`, which the MCP
+    TypeScript SDK uses, points a reused subschema at its first occurrence instead.
+    """
+    if ref != '#' and not ref.startswith('#/'):
+        return None
+    node: JsonValue = schema
+    for token in ref.split('/')[1:]:
+        token = token.replace('~1', '/').replace('~0', '~')
+        if isinstance(node, dict):
+            node = node.get(token)
+        elif isinstance(node, list) and token in map(str, range(len(node))):
+            # An RFC 6901 array index is written in canonical decimal: ASCII digits, no leading zero.
+            node = node[int(token)]
+        else:
+            node = None
+    return node if isinstance(node, dict) else None
 
 
 class UseEnumMemberDocstrings:
@@ -65,7 +88,7 @@ class JsonSchemaTransformer(ABC):
         self.prefer_inlined_defs = prefer_inlined_defs
         self.simplify_nullable_unions = simplify_nullable_unions
 
-        self.defs: dict[str, JsonSchema] = deepcopy(self.schema.get('$defs', {}))
+        self.defs: dict[str, _JsonSchemaNode] = deepcopy(self.schema.get('$defs', {}))
         self.refs_stack: list[str] = []
         self.recursive_refs = set[str]()
         self._walked_defs: dict[str, JsonSchema] = {}
@@ -95,7 +118,9 @@ class JsonSchemaTransformer(ABC):
             # we modify it to avoid collisions.
             defs = {key: deepcopy(self._walked_def(key)) for key in self.recursive_refs}
             root_ref = self.schema.get('$ref')
-            root_key = None if root_ref is None else re.sub(r'^#/\$defs/', '', root_ref)
+            root_key = (
+                None if root_ref is None else root_ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~')
+            )
             if root_key is None:
                 root_key = self.schema.get('title', 'root')
                 while root_key in defs:
@@ -103,7 +128,7 @@ class JsonSchemaTransformer(ABC):
                     root_key = f'{root_key}_root'
 
             defs[root_key] = handled
-            return {'$defs': defs, '$ref': f'#/$defs/{root_key}'}
+            return {'$defs': defs, '$ref': root_ref or f'#/$defs/{root_key}'}
 
         return handled
 
@@ -112,8 +137,16 @@ class JsonSchemaTransformer(ABC):
             return schema
 
         if self.prefer_inlined_defs and (ref := schema.get('$ref')):
-            key = re.sub(r'^#/\$defs/', '', ref)
+            # Decode only a definition name; other pointers are decoded by `resolve_json_pointer()`.
+            key = (
+                ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~')
+                if ref.startswith('#/$defs/')
+                else ref
+            )
             if key in self.refs_stack:
+                if key not in self.defs:
+                    # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.
+                    raise UserError(f'Recursive JSON pointer `$ref` {key!r} is not supported when inlining definitions')
                 # A recursive ref can't be unpacked; `walk()` emits the definition and the `$ref` stays put.
                 self.recursive_refs.add(key)
             elif key not in self.recursive_refs:
@@ -126,7 +159,11 @@ class JsonSchemaTransformer(ABC):
                     return self._walk_def(key, siblings)
                 return deepcopy(self._walked_def(key))
 
-        # Handle the schema based on its type / structure
+        # Handle the schema based on its type / structure. Object and array keywords are only walked when `type` is
+        # exactly `'object'` or `'array'` respectively, not when it's absent or a list like `['object', 'null']`:
+        # walking them there would reshape subtrees that otherwise pass through unchanged, collapsing their
+        # single-member unions and running `transform()` on them, and an inlining transformer would raise `UserError`
+        # on a `$ref` it can't resolve.
         type_ = schema.get('type')
         if type_ == 'object':
             schema = self._handle_object(schema)
@@ -157,13 +194,25 @@ class JsonSchemaTransformer(ABC):
         return walked
 
     def _walk_def(self, key: str, siblings: JsonSchema) -> JsonSchema:
-        """Walk the definition `key` refers to, with `$ref` sibling keywords merged over it."""
+        """Walk the definition `key` refers to, with `$ref` sibling keywords merged over it.
+
+        `key` is a `$defs` name, or else a local JSON pointer (RFC 6901) into the original schema.
+        """
         def_schema = self.defs.get(key)
-        if def_schema is None:  # pragma: no cover
+        if def_schema is None:
+            def_schema = resolve_json_pointer(self.schema, key)
+        if def_schema is None:
             raise UserError(f'Could not find $ref definition for {key}')
 
         self.refs_stack.append(key)
-        walked = self._handle({**deepcopy(def_schema), **siblings})
+        if isinstance(def_schema, bool):
+            # A false definition must reject even when a sibling supplies its own `not`.
+            schema = deepcopy(siblings)
+            if not def_schema:
+                schema['not'] = {}
+        else:
+            schema = {**deepcopy(def_schema), **siblings}
+        walked = self._handle(schema)
         self.refs_stack.pop()
 
         assert not isinstance(walked, bool)
@@ -194,7 +243,11 @@ class JsonSchemaTransformer(ABC):
         if prefix_items := schema.get('prefixItems'):
             schema['prefixItems'] = [self._handle(item) for item in prefix_items]
 
-        if items := schema.get('items'):
+        items: _JsonSchemaNode | list[_JsonSchemaNode] | None = schema.get('items')
+        if isinstance(items, list):
+            # Drafts before 2020-12 spell a tuple as an `items` list; 2020-12 replaced it with `prefixItems`.
+            schema['items'] = [self._handle(item) for item in items]
+        elif items:
             schema['items'] = self._handle(items)
 
         return schema
@@ -210,10 +263,9 @@ class JsonSchemaTransformer(ABC):
         if self.simplify_nullable_unions:
             handled = self._simplify_nullable_union(handled)
         if len(handled) == 1:
-            # In this case, no need to retain the union
-            if isinstance(handled[0], dict):
+            # Keep a rejecting member wrapped so a sibling `not` cannot overwrite its constraint.
+            if isinstance(handled[0], dict) and handled[0].get('not') != {}:
                 return handled[0] | schema
-            # Non-dict schema node (e.g. boolean): fall through to wrap in union key
 
         # If we have keys besides the union kind (such as title or discriminator), keep them without modifications
         schema = schema.copy()
@@ -242,11 +294,72 @@ class JsonSchemaTransformer(ABC):
         return cases
 
 
+class JsonSchemaTransformerWithOutputOverride(JsonSchemaTransformer):
+    """A tool-schema transformer that selects a different transformer for output objects."""
+
+    output_object_transformer: ClassVar[type[JsonSchemaTransformer]]
+
+
 class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
-    """Transforms the JSON Schema to inline $defs."""
+    """Transforms the JSON Schema to inline `$defs`, and `$ref`s that point elsewhere in the schema like `#/properties/from`.
+
+    Object keywords (`properties`, `additionalProperties`, `patternProperties`, `propertyNames`) are only walked
+    when `type` is `'object'`, and array keywords (`items`, `prefixItems`, `contains`) only when it is `'array'`.
+    On a schema with no `type`, or with a `type` list such as `['object', 'null']`, they are left as written,
+    so a `$ref` inside them is not inlined and can point at a definition the output no longer contains.
+    If the schema is only meant to accept objects (or arrays), set `type` to `'object'` (or `'array'`) to have
+    it inlined; for a nullable one, put it in an `anyOf` with `{'type': 'null'}` instead of using a `type` list.
+    """
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict, prefer_inlined_defs=True)
 
+    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
+        schema = super()._handle_object(schema)
+        if (property_names := schema.get('propertyNames')) is not None:
+            schema['propertyNames'] = self._handle(property_names)
+        return schema
+
+    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
+        schema = super()._handle_array(schema)
+        if (contains := schema.get('contains')) is not None:
+            schema['contains'] = self._handle(contains)
+        return schema
+
     def transform(self, schema: JsonSchema) -> JsonSchema:
         return schema
+
+
+DEFINITION_KEYS = ('$defs', 'definitions')
+"""The keys a schema keeps its definitions under: `$defs`, and draft-07 `definitions`."""
+
+
+def split_definitions(schema: JsonSchema) -> tuple[JsonSchema, list[object]]:
+    """A schema without its definitions, and the definitions under `DEFINITION_KEYS`."""
+    root = {key: value for key, value in schema.items() if key not in DEFINITION_KEYS}
+    definitions: list[object] = []
+    for key in DEFINITION_KEYS:
+        group = schema.get(key)
+        if isinstance(group, dict):
+            definitions.extend(cast(dict[str, object], group).values())
+    return root, definitions
+
+
+def inline_objects(schema: object, depth: int = 1) -> Iterator[tuple[JsonSchema, int]]:
+    """Each object with `properties` reached from `schema` through properties, array items and `anyOf`, and its depth.
+
+    The depth is the number of such objects along the path, the object included. `$ref`s aren't followed and
+    definitions aren't entered: providers that limit strict schemas were observed to count this way.
+    """
+    if not isinstance(schema, dict):
+        return
+    node = cast(JsonSchema, schema)
+    properties = node.get('properties')
+    children: list[object] = [node.get('items'), *node.get('anyOf', [])]
+    child_depth = depth
+    if isinstance(properties, dict):
+        yield node, depth
+        children.extend(cast(dict[str, object], properties).values())
+        child_depth = depth + 1
+    for child in children:
+        yield from inline_objects(child, child_depth)

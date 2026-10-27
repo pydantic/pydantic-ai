@@ -51,7 +51,6 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.xai import XaiRealtimeModel, XaiRealtimeModelSettings
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='xai-sdk / websockets not installed'),
 ]
 
@@ -121,6 +120,7 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
         RunUsage(
             input_tokens=5,
             output_tokens=42,
+            audio_seconds=1,
             output_audio_tokens=39,
             details={
                 'input_text_tokens': 5,
@@ -128,7 +128,7 @@ async def test_text_in_audio_out_turn(xai_ws_cassette: tuple[XaiProvider, Realti
                 'audio_tokens': 39,
                 'billable_audio_seconds': 1,
             },
-            cost=Decimal('0.0'),
+            cost=Decimal('0.001333333333333333333333333333'),
             requests=1,
         )
     )
@@ -228,6 +228,64 @@ async def test_audio_in_server_vad_turn(
     # xAI bills Grok Voice by audio second: `billable_audio_seconds` is the authoritative cost and is
     # captured in usage `details` (it can't be reconstructed from token counts).
     assert session.usage.details.get('billable_audio_seconds') == snapshot(5)
+    # Reported under the name pricing knows it by as well, so the session has a real cost. Grok Voice
+    # has no token prices at all, so without it the token counts price to a confident zero: a
+    # `cost_limit` would never trip and no unavailable-cost warning would say why.
+    assert session.usage.audio_seconds == snapshot(5)
+    assert session.usage.cost is not None and session.usage.cost > 0
+
+
+@pytest.mark.realtime_ws_hold_open
+async def test_push_to_talk_replies_only_when_asked(
+    xai_ws_cassette: tuple[XaiProvider, RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """With turn detection off, committed audio gets a reply only when `create_response()` asks for one.
+
+    xAI answers a commit of speech by itself, so the commit is held back and sent in place of
+    `response.create`. Text sent in between reaches xAI first, and history follows that order. A second
+    `create_response()` with nothing new behind it is answered again, as on every other provider: xAI would
+    drop it without a word, so it first clears the buffer, which is empty.
+    """
+    provider, cassette = xai_ws_cassette
+    model = XaiRealtimeModel(MODEL, provider=provider, settings=XaiRealtimeModelSettings(turn_detection=False))
+    agent = Agent(instructions='Reply in a few words.')
+    pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
+
+    async with agent.realtime(model).session() as session:
+        for start in range(0, len(pcm), 4800):
+            await session.send_audio(pcm[start : start + 4800])
+        await session.commit_audio()
+        await session.send('Greet me by name.', respond=False)
+        if realtime_recording:  # pragma: no cover
+            # Long enough for a reply to the commit to have started, had the commit been sent.
+            await anyio.sleep(3)
+        await session.create_response()
+        with anyio.fail_after(30):
+            await session.wait_for_reply()
+        await session.create_response()
+        with anyio.fail_after(30):
+            await session.wait_for_reply()
+
+    interactions = [message for message in cassette.interactions if isinstance(message, CassetteMessage)]
+    commit_at = next(
+        index
+        for index, message in enumerate(interactions)
+        if message.direction == 'sent' and message.data['type'] == 'input_audio_buffer.commit'
+    )
+    # Nothing was answered before the request, and the commit went out after the text, in its place.
+    assert not any(message.data['type'] == 'response.created' for message in interactions[:commit_at])
+    sent_types = [message.data['type'] for message in interactions if message.direction == 'sent']
+    assert sent_types[sent_types.index('conversation.item.create') :] == snapshot(
+        ['conversation.item.create', 'input_audio_buffer.commit', 'input_audio_buffer.clear', 'response.create']
+    )
+    # History follows what xAI was sent: the text, then the committed speech, then one reply per request.
+    messages = session.all_messages()
+    assert [[type(part).__name__ for part in message.parts] for message in messages] == snapshot(
+        [['UserPromptPart'], ['SpeechPart'], ['SpeechPart'], ['SpeechPart']]
+    )
+    assert [type(message).__name__ for message in messages] == snapshot(
+        ['ModelRequest', 'ModelRequest', 'ModelResponse', 'ModelResponse']
+    )
 
 
 async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:
@@ -408,8 +466,12 @@ async def test_message_history_seeding(xai_ws_cassette: tuple[XaiProvider, Realt
     assert 'alice' in transcript and 'teal' in transcript
 
 
-async def test_session_resumption_after_drop(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:
-    """A forced WebSocket drop resumes the native xAI conversation without duplicating prior turns."""
+async def test_reconnect_replays_history_after_drop(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:
+    """A forced WebSocket drop reconnects into a new xAI conversation seeded with the local history.
+
+    xAI's own conversation resumption restores assistant turns but leaves the user's text out (checked
+    live), so the model would no longer know the code word. Replaying the history keeps it.
+    """
     provider, cassette = xai_ws_cassette
     model = XaiRealtimeModel(MODEL, provider=provider, settings={'reconnect': {'base_delay': 0.0, 'jitter': False}})
     agent = Agent(instructions='Answer in one short sentence.')
@@ -431,10 +493,10 @@ async def test_session_resumption_after_drop(xai_ws_cassette: tuple[XaiProvider,
                 elif sent_followup and isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
-    updates = sent_frames_containing(cassette, 'resumption')
-    assert len(updates) == 2
-    assert all(update['session']['resumption'] == {'enabled': True} for update in updates)
-    assert sum(isinstance(event, RealtimeSessionReconnectEvent) for event in events) == 1
+    assert sent_frames_containing(cassette, 'resumption') == []
+    assert [event for event in events if isinstance(event, RealtimeSessionReconnectEvent)] == [
+        RealtimeSessionReconnectEvent(state_restored=True)
+    ]
 
     conversation_ids = [
         message.data['conversation']['id']
@@ -442,26 +504,20 @@ async def test_session_resumption_after_drop(xai_ws_cassette: tuple[XaiProvider,
         if isinstance(message, CassetteMessage) and message.data.get('type') == 'conversation.created'
     ]
     assert len(conversation_ids) == 2
-    assert conversation_ids[0] == conversation_ids[1]
+    assert conversation_ids[0] != conversation_ids[1]
     close_index = next(
         i for i, interaction in enumerate(cassette.interactions) if isinstance(interaction, CassetteClose)
     )
-    followup_index = next(
-        i
-        for i, interaction in enumerate(cassette.interactions)
-        if i > close_index
-        and isinstance(interaction, CassetteMessage)
-        and interaction.direction == 'sent'
-        and 'What code word' in str(interaction.data)
-    )
     replayed_items = [
         interaction.data['item']
-        for interaction in cassette.interactions[close_index + 1 : followup_index]
+        for interaction in cassette.interactions[close_index + 1 :]
         if isinstance(interaction, CassetteMessage)
-        and interaction.data.get('type') in ('conversation.item.created', 'conversation.item.added')
+        and interaction.direction == 'sent'
+        and interaction.data.get('type') == 'conversation.item.create'
+        and 'What code word' not in str(interaction.data)
     ]
-    assert replayed_items
-    assert any('cobalt' in str(item).lower() for item in replayed_items)
+    assert [item['role'] for item in replayed_items] == snapshot(['user', 'assistant'])
+    assert 'cobalt' in str(replayed_items[0]).lower()
 
     messages = session.all_messages()
     assert [type(message).__name__ for message in messages] == [
@@ -470,25 +526,72 @@ async def test_session_resumption_after_drop(xai_ws_cassette: tuple[XaiProvider,
         'ModelRequest',
         'ModelResponse',
     ]
-    first_prompts = [
-        part.content
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, UserPromptPart)
-    ]
-    assert first_prompts == [
-        'Remember exactly: the code word is cobalt. Briefly acknowledge it.',
-        'What code word did I ask you to remember?',
-    ]
     responses = [message for message in messages if isinstance(message, ModelResponse)]
-    assert len(responses) == 2
-    first_part = responses[0].parts[0]
-    assert isinstance(first_part, SpeechPart)
-    assert 'cobalt' in (first_part.transcript or '').lower()
     final_part = responses[-1].parts[0]
     assert isinstance(final_part, SpeechPart)
     assert 'cobalt' in (final_part.transcript or '').lower()
+    # xAI's billed seconds are a running total per conversation, which the new one starts again: each
+    # conversation's seconds count once.
+    billed = [
+        message.data['usage']['billable_audio_seconds']
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage) and message.data.get('type') == 'response.done'
+    ]
+    assert session.usage.audio_seconds == sum(billed) == snapshot(2)
+
+
+async def test_reconnect_replays_a_tool_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:
+    """A tool call and its result replayed after a drop are still known to the model.
+
+    xAI's own resumption dropped the `function_call` item (checked live); replay sends both.
+    """
+    provider, cassette = xai_ws_cassette
+    model = XaiRealtimeModel(MODEL, provider=provider, settings={'reconnect': {'base_delay': 0.0, 'jitter': False}})
+    agent = Agent(instructions='Answer in one short sentence. Always use get_weather for weather questions.')
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Look up the weather for a city."""
+        return f'It is foggy and 12 degrees in {city}.'
+
+    disconnected = False
+    sent_followup = False
+    async with agent.realtime(model).session() as session:
+        await session.send('What is the weather in Paris?')
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent) and not disconnected:
+                    # The turn ends after the answer to the tool's result, so the replay has a tool round to carry.
+                    disconnected = True
+                    await cassette.disconnect()
+                elif isinstance(event, RealtimeSessionReconnectEvent):
+                    await session.send('How many degrees did the weather tool report? Answer with just the number.')
+                    sent_followup = True
+                elif sent_followup and isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    close_index = next(
+        i for i, interaction in enumerate(cassette.interactions) if isinstance(interaction, CassetteClose)
+    )
+    replayed_types = [
+        interaction.data['item']['type']
+        for interaction in cassette.interactions[close_index + 1 :]
+        if isinstance(interaction, CassetteMessage)
+        and interaction.direction == 'sent'
+        and interaction.data.get('type') == 'conversation.item.create'
+    ]
+    assert replayed_types == snapshot(
+        ['message', 'message', 'function_call', 'function_call_output', 'message', 'message']
+    )
+    # No `error` frame refused the replayed tool round.
+    assert not [
+        message
+        for message in cassette.interactions[close_index + 1 :]
+        if isinstance(message, CassetteMessage) and message.data.get('type') == 'error'
+    ]
+    final = [message for message in session.all_messages() if isinstance(message, ModelResponse)][-1].parts[0]
+    assert isinstance(final, SpeechPart)
+    assert '12' in (final.transcript or '')
 
 
 @pytest.mark.usefixtures('no_genai_prices_context_window')
@@ -502,23 +605,95 @@ def test_profile_allow_seeding() -> None:
     profile = XaiRealtimeModel(MODEL, provider=XaiProvider(api_key='xai-test-key')).profile
     assert profile == RealtimeModelProfile(
         supports_image_input=False,
+        image_input_requires_response=False,
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_output_truncation=False,
         supports_text_output=False,  # Grok Voice always speaks
         supports_session_seeding=True,
+        supports_system_messages=False,
         supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,
         supports_thinking=True,
-        supports_async_tool_calls=False,
+        # Grok Voice answers the user while a tool call is outstanding (verified live).
+        async_tool_call_mode='always',
+        supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         supports_tool_return_schema=False,
         supported_native_tools=frozenset(),
         emits_input_speech_events=True,
+        synthesizes_turn_boundary=False,
+        responses_are_requests=True,
+        response_usage_covers_context=False,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         context_window=None,
     )
+
+
+async def test_speech_resumed_before_the_commit_continues_the_turn(
+    xai_ws_cassette: tuple[XaiProvider, RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """The user pauses for 400 ms mid-turn: xAI takes back the stop its server VAD heard.
+
+    Recorded facts: xAI starts a reply at the stop, a few hundred milliseconds before it commits the turn. Speech
+    heard before the commit makes it report `speech_started` again for the *same* item, and it drops that reply
+    without ever sending a `response.done` for it. It then hears the user stop again, starts another reply, and
+    commits the turn. The session records the turn once, ends the dropped reply as cancelled (as a barge-in would),
+    and records the reply that follows.
+    """
+    provider, cassette = xai_ws_cassette
+    model = XaiRealtimeModel(MODEL, provider=provider)
+    agent = Agent(instructions='Reply in a few words.')
+    bytes_per_second = 48_000
+    question = assets_path.joinpath('amsterdam_population_question_24khz.pcm').read_bytes()
+    follow_up = assets_path.joinpath('favorite_color_question_24khz.pcm').read_bytes()
+    pcm = b''.join(
+        [
+            bytes(bytes_per_second * 3 // 10),
+            question[: bytes_per_second * 32 // 10],
+            bytes(bytes_per_second * 4 // 10),
+            follow_up[bytes_per_second * 4 // 10 : bytes_per_second * 16 // 10],
+            bytes(bytes_per_second * 3),
+        ]
+    )
+
+    async with agent.realtime(model).session() as session:
+        with anyio.fail_after(60):
+            for start in range(0, len(pcm), 4800):
+                await session.send_audio(pcm[start : start + 4800])
+                if realtime_recording:  # pragma: no cover
+                    # A live microphone's pace: a burst of audio is heard quite differently.
+                    await anyio.sleep(0.1)
+            turns_complete = 0
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    turns_complete += 1
+                    # The dropped reply's, then the one that answers the turn.
+                    if turns_complete == 2:
+                        break
+
+    received = [
+        message.data
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage) and message.direction == 'received'
+    ]
+    speech_starts = [frame['item_id'] for frame in received if frame['type'] == 'input_audio_buffer.speech_started']
+    assert len(speech_starts) == 2 and speech_starts[0] == speech_starts[1]
+    created = [frame['response']['id'] for frame in received if frame['type'] == 'response.created']
+    done = [frame['response']['id'] for frame in received if frame['type'] == 'response.done']
+    assert len(created) == 2 and done == created[1:]
+
+    # One user turn; the dropped reply, which said nothing, recorded as interrupted as a barge-in's would be; then
+    # the reply that answers the turn.
+    request, dropped, reply = session.all_messages()
+    assert isinstance(request, ModelRequest) and isinstance(request.parts[0], SpeechPart)
+    assert request.parts[0].transcript == snapshot(
+        'Can you look up on the web how many people live in Amsterdam? What is my favorite color?'
+    )
+    assert isinstance(dropped, ModelResponse) and isinstance(reply, ModelResponse)
+    assert (dropped.provider_response_id, dropped.state, dropped.parts) == (created[0], 'interrupted', [])
+    assert (reply.provider_response_id, reply.state) == (created[1], 'complete')
 
 
 async def test_handle_barge_in_over_live_speech(
@@ -531,7 +706,8 @@ async def test_handle_barge_in_over_live_speech(
     local flush that keeps stale audio out of the playback stream. In this recording the reply had
     already completed server-side by the time the user spoke over it (generation outruns playback),
     which is exactly when a client-side cancel would have been applied to the *next* response —
-    the session sent nothing, and both replies completed.
+    the session sent nothing. History still records the reply the user spoke over as interrupted where
+    playback stopped (here before the first chunk finished playing), with its transcript whole.
     """
     provider, cassette = xai_ws_cassette
     model = XaiRealtimeModel(MODEL, provider=provider)
@@ -561,4 +737,8 @@ async def test_handle_barge_in_over_live_speech(
     assert sent_frames_containing(cassette, 'conversation.item.truncate') == []
     assert sent_frames_containing(cassette, 'response.cancel') == []
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
-    assert [response.state for response in responses] == snapshot(['complete', 'complete'])
+    assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])
+    assert [
+        [(part.interrupted_at_ms, part.transcript) for part in response.parts if isinstance(part, SpeechPart)]
+        for response in responses
+    ] == snapshot([[(0, 'Hello Marcelo! Nice to meet you!')], [(None, 'Hi Marcelo!')]])

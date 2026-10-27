@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '515'
+      - '540'
       content-type:
       - application/json
       host:
@@ -17,42 +17,42 @@ interactions:
     parsed_body:
       model: jev-latest
       questions:
-        tool:
-          criteria:
-            final_result_Ticket: Triage a support ticket.
-            final_result_escalate: Hand the ticket to a person on the support team.
-          instructions: Which of these does this call for?
-          type: choice
-        urgent:
+        Ticket.urgent:
           instructions:
             field: urgent
-            goal: Triage a support ticket.
+            premise: 'If the user''s request calls for Ticket: Triage a support ticket.'
             question: Does this need a reply within the hour?
           type: noul
+        route:
+          criteria:
+            Ticket: Triage a support ticket.
+            escalate: Hand the ticket to a person on the support team.
+          instructions: Which of these does this call for?
+          type: choice
       state: I have explained this to your bot four times. I want a person to call me back today.
     uri: https://api.typesafe.ai/v1/systemone
   response:
     headers:
       content-length:
-      - '291'
+      - '259'
       content-type:
       - application/json
     parsed_body:
       answers:
-        tool:
-          choice: final_result_escalate
-          confidence: 0.99
-          probabilities:
-            final_result_Ticket: 0.0
-            final_result_escalate: 1.0
-          type: choice
-        urgent:
-          noul: 0.73
+        Ticket.urgent:
+          noul: 0.71
           type: noul
+        route:
+          choice: escalate
+          confidence: 1.0
+          probabilities:
+            Ticket: 0.0
+            escalate: 1.0
+          type: choice
       model: jev-1.13.0
       usage:
-        input_tokens: 393
-        output_tokens: 58
+        input_tokens: 398
+        output_tokens: 54
     status:
       code: 200
       message: OK

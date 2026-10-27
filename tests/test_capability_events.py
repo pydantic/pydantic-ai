@@ -11,7 +11,14 @@ import pydantic
 import pytest
 
 from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext, UnknownCapabilityEvent
-from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessEventStream, WrapperCapability
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    CombinedCapability,
+    Hooks,
+    ProcessEventStream,
+    WrapperCapability,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CAPABILITY_EVENT_TYPES,
@@ -30,8 +37,6 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from ._inline_snapshot import snapshot
-
-pytestmark = pytest.mark.anyio
 
 FILE_SYSTEM_EVENTS = 'test_file_system'
 
@@ -68,7 +73,7 @@ def test_missing_namespace_rejected():
     with pytest.raises(UserError, match='requires a namespace'):
 
         @dataclass(kw_only=True)
-        class MissingEvent(CapabilityEvent):  # pyright: ignore[reportUnusedClass]
+        class MissingEvent(CapabilityEvent):
             pass
 
 
@@ -77,7 +82,7 @@ def test_invalid_namespace_rejected(namespace: str):
     with pytest.raises(UserError, match='invalid namespace'):
 
         @dataclass(kw_only=True)
-        class InvalidNamespaceEvent(CapabilityEvent, namespace=namespace):  # pyright: ignore[reportUnusedClass]
+        class InvalidNamespaceEvent(CapabilityEvent, namespace=namespace):
             pass
 
 
@@ -92,9 +97,7 @@ def test_duplicate_kind_rejected():
     with pytest.raises(UserError, match=r"Duplicate capability event kind 'test_file_system\.file_read'"):
 
         @dataclass(kw_only=True)
-        class DuplicateEvent(  # pyright: ignore[reportUnusedClass]
-            CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file_read'
-        ):
+        class DuplicateEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file_read'):
             pass
 
 
@@ -156,7 +159,7 @@ def test_envelope_field_shadowing_rejected():
     with pytest.raises(UserError, match='reserved for the event envelope: capability_id, data'):
 
         @dataclass(kw_only=True)
-        class ShadowingEvent(CapabilityEvent, namespace='shadowing'):  # pyright: ignore[reportUnusedClass]
+        class ShadowingEvent(CapabilityEvent, namespace='shadowing'):
             data: dict[str, int]
             capability_id: str | None = None
 
@@ -225,7 +228,7 @@ def test_undecorated_capability_event_base_with_fields_rejected():
     with pytest.raises(UserError, match='declares fields but is not a dataclass'):
 
         @dataclass(kw_only=True)
-        class BareFieldsChildEvent(BareFieldsBase):  # pyright: ignore[reportUnusedClass]
+        class BareFieldsChildEvent(BareFieldsBase):
             pass
 
 
@@ -332,6 +335,20 @@ async def test_hook_emission_stamps_an_explicit_id() -> None:
     """A capability the user named is attributed by that name."""
     events = await _collect(Agent(FunctionModel(stream_function=_only_text), capabilities=[EmitCapability(id='my_id')]))
     assert [event.capability_id for event in events if isinstance(event, FileReadEvent)] == ['my_id']
+
+
+async def test_hook_emission_from_a_deferred_group_member_stamps_the_member_id() -> None:
+    """A member of a deferred group emits under its own `id` once the group is loaded, not the group's."""
+
+    async def load_then_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='load_capability', json_args='{"id": "group"}')}
+        else:
+            yield 'done'
+
+    group = CombinedCapability([EmitCapability(id='member')], id='group', description='Group.', defer_loading=True)
+    events = await _collect(Agent(FunctionModel(stream_function=load_then_text), capabilities=[group]))
+    assert [event.capability_id for event in events if isinstance(event, FileReadEvent)] == ['member']
 
 
 async def test_hook_emission_stamps_a_synthetic_id_when_unnamed() -> None:

@@ -1,3 +1,7 @@
+---
+description: "Build and deploy a Pydantic AI agent on Modal that researches new Slack community members, qualifies them as leads, and posts daily summaries to Slack."
+---
+
 # Slack Lead Qualifier with Modal
 
 In this example, we're going to build an agentic app that:

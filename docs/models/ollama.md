@@ -1,3 +1,7 @@
+---
+description: "Run local models or Ollama Cloud with Pydantic AI through Ollama's OpenAI-compatible API, with native structured output on self-hosted Ollama servers."
+---
+
 # Ollama
 
 ## Install
@@ -15,6 +19,11 @@ Pydantic AI supports both self-hosted [Ollama](https://ollama.com/) servers (run
 For servers running locally, use the `http://localhost:11434/v1` base URL. For Ollama Cloud, use `https://ollama.com/v1` and ensure an API key is set.
 
 For backward compatibility, [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel] uses Ollama's OpenAI-compatible Chat Completions API (`/v1/chat/completions`).
+
+!!! tip "Decision models"
+    Ollama v0.35.0 and later also runs [decision models](decision.md) such as Nimble and Tev1 locally, which answer
+    typed questions with probabilities instead of writing text. Use them through
+    [`SystemOneModel`](system-one.md#ollama) rather than `OllamaModel`.
 
 ## Environment variable
 

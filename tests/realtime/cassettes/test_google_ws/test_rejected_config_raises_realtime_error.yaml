@@ -1,0 +1,20 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    setup:
+      model: models/gemini-2.5-flash-native-audio-preview-09-2025
+      generationConfig:
+        responseModalities:
+        - AUDIO
+        speechConfig:
+          voice_config:
+            prebuilt_voice_config:
+              voice_name: alloy
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: close
+  code: 1007
+  reason: Requested voice api_name 'alloy' is not available for model models/gemini-2.5-flash-native-audio-preview-09-2025
+  ok: false

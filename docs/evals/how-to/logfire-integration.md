@@ -1,3 +1,7 @@
+---
+description: "Send Pydantic Evals experiments to Pydantic Logfire to view results, inspect each case and its full trace, and compare evaluation runs over time."
+---
+
 # Logfire Integration
 
 Visualize and analyze evaluation results using Pydantic Logfire.
@@ -65,6 +69,8 @@ When you run an evaluation, Logfire receives:
     1. All OpenTelemetry spans from your task function
     1. Tool calls (for Pydantic AI agents)
     1. API calls, database queries, etc.
+
+For the exact spans and attributes, see the [span reference](#span-reference).
 
 ## Viewing Results in Logfire
 
@@ -176,6 +182,99 @@ The span tree is available in both:
 - Your evaluator code (via `ctx.span_tree`)
 - Logfire UI (visual trace view)
 
+## Span Reference {#span-reference}
+
+This section lists the OpenTelemetry spans and attributes that [`Dataset.evaluate`][pydantic_evals.dataset.Dataset.evaluate] emits, for building queries, dashboards, or other tools that read or produce these spans.
+
+!!! note
+    As the [version policy](../../version-policy.md) allows, these span attributes may change in minor releases as Evals support in Logfire evolves.
+
+The spans listed here use the instrumentation scope `pydantic-evals`; spans from your task keep their own scopes. Each span's OpenTelemetry name is its message template, such as `case: {case_name}`, except the evaluator span, which is named `evaluator: {evaluator_name}` with the message template `Calling evaluator: {evaluator_name}`. The message template is in the `logfire.msg_template` attribute and the rendered message, such as `case: my_case`, in `logfire.msg`. Attribute values that are not strings, numbers, or booleans are JSON-encoded strings, and `logfire.json_schema` describes them.
+
+A run produces this span tree:
+
+```text
+evaluate {name}
+├── case: {case_name}                 (one per case, or per case and run with `repeat`)
+│   ├── execute {task}
+│   │   └── spans from your task
+│   └── evaluator: {evaluator_name}   (one per evaluator)
+└── report_evaluator: {evaluator_name} (one per report evaluator)
+```
+
+### Experiment span
+
+Name `evaluate {name}`. Set when the span starts:
+
+| Attribute | Value |
+|---|---|
+| `name` | The `name` argument, defaulting to `task_name` |
+| `task_name` | The `task_name` argument, defaulting to the task function's name |
+| `dataset_name` | The dataset's `name` |
+| `n_cases` | The number of cases in the dataset, not multiplied by `repeat` |
+| `gen_ai.operation.name` | Always `'experiment'` |
+| `metadata` | The `metadata` argument; only set when given |
+| `logfire.experiment.repeat` | The `repeat` argument; only set when greater than 1 |
+
+Set when all cases and report evaluators have finished:
+
+| Attribute | Value |
+|---|---|
+| `assertion_pass_rate` | The fraction of passing assertions across successful cases, the same value as `averages.assertions` below (with `repeat`, the mean of each case's pass rate across its runs); only set when there are assertions |
+| `logfire.experiment.metadata` | `{"n_cases": ..., "repeat": ..., "metadata": ..., "averages": ...}`, where `repeat` and `metadata` are only present when they are on the experiment span, and `averages` is a [`ReportCaseAggregate`][pydantic_evals.reporting.ReportCaseAggregate] that is only present when there is a successful case |
+| `logfire.experiment.analyses` | The list of [report evaluator](../evaluators/report-evaluators.md) analyses; only set when there are any |
+| `logfire.experiment.report_evaluator_failures` | A list of `{"name", "error_message", "error_stacktrace", "source"}` objects for report evaluators that raised; only set when there are any |
+
+### Case span
+
+Name `case: {case_name}`. Set when the span starts:
+
+| Attribute | Value |
+|---|---|
+| `task_name` | The task function's name |
+| `case_name` | The case name; with `repeat`, the run-indexed name such as `my_case [1/3]` |
+| `inputs` | The case's `inputs` |
+| `metadata` | The case's `metadata` |
+| `expected_output` | The case's `expected_output` |
+| `logfire.experiment.source_case_name` | The original case name; only set when `repeat` is greater than 1 |
+
+Set after the task succeeds:
+
+| Attribute | Value |
+|---|---|
+| `output` | The task's output |
+| `task_duration` | The task's duration in seconds |
+| `metrics` | Metrics recorded with [`increment_eval_metric`][pydantic_evals.dataset.increment_eval_metric], plus metrics extracted from the task's spans |
+| `attributes` | Attributes recorded with [`set_eval_attribute`][pydantic_evals.dataset.set_eval_attribute] |
+
+Set after all evaluators have finished:
+
+| Attribute | Value |
+|---|---|
+| `assertions` | Results with `bool` values |
+| `scores` | Results with `int` or `float` values |
+| `labels` | Results with `str` values |
+
+Each of `assertions`, `scores`, and `labels` maps a result name to an [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] object:
+
+```json
+{"accuracy": {"name": "accuracy", "value": 0.87, "reason": null, "source": {"name": "MyEvaluator", "arguments": null}, "evaluator_version": "v2"}}
+```
+
+`source` is the evaluator's [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec], and `evaluator_version` comes from [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version]. When two results in a case share a name, the later ones get the keys `name_2`, `name_3`, and so on, while the `name` field keeps the original name.
+
+If the task raises, the exception is recorded on its `execute {task}` span and on the case span, and the attributes set after the task are absent. With `retry_task`, each failed attempt's `execute {task}` span records that attempt's exception. An exception from a case lifecycle hook is also recorded on the case span.
+
+### Task and evaluator spans
+
+| Span | Message | Attribute |
+|---|---|---|
+| `execute {task}` | `execute {task}` | `task`: the task function's name. With `retry_task`, each attempt gets its own span. |
+| `evaluator: {evaluator_name}` | `Calling evaluator: {evaluator_name}` | `evaluator_name`: the evaluator's [`get_default_evaluation_name`][pydantic_evals.evaluators.Evaluator.get_default_evaluation_name]. An exception raised by the evaluator is recorded on this span, not on the case span. |
+| `report_evaluator: {evaluator_name}` | `report_evaluator: {evaluator_name}` | `evaluator_name`: the report evaluator's serialization name. |
+
+[Online evaluation](../online-evaluation.md#default-otel-event-emission) emits `gen_ai.evaluation.result` log events instead of these spans.
+
 ## Troubleshooting
 
 ### No Data Appearing in Logfire
@@ -184,10 +283,10 @@ Check:
 
 1. **Token is set**: `echo $LOGFIRE_TOKEN`
 2. **Configuration is correct**:
-   ```python
+   ```python {test="skip"}
    import logfire
 
-   logfire.configure(send_to_logfire='always')  # Force sending
+   logfire.configure(send_to_logfire=True)  # Force sending
    ```
 3. **Network connectivity**: Check firewall settings
 4. **Project exists**: Verify project name in Logfire UI

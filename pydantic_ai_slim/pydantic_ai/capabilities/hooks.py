@@ -30,6 +30,7 @@ import anyio
 from pydantic import ValidationError
 
 from pydantic_ai import _utils
+from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import AgentRunError, ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, CapabilityEvent, ModelResponse, ToolCallPart
@@ -946,6 +947,16 @@ class Hooks(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         return None
 
+    def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
+        # `Hooks` dispatches every hook, so measured against the base class this lists them all;
+        # only those with a registered function or a subclass override do anything.
+        overridden = self._realtime_uncalled_hooks_overriding(Hooks)
+        return tuple(
+            hook
+            for hook in self._realtime_uncalled_hooks_overriding(AbstractCapability)
+            if hook in overridden or self._get(hook)
+        )
+
     def __repr__(self) -> str:
         registered = {k: len(v) for k, v in self._registry.items() if v}
         return f'Hooks({registered})'
@@ -1067,7 +1078,9 @@ class Hooks(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         for entry in self._get('before_model_request'):
+            messages = request_context.messages
             request_context = await _call_entry(entry, 'before_model_request', ctx, request_context)
+            keep_mirroring(messages, request_context)
         return request_context
 
     async def after_model_request(

@@ -1,6 +1,6 @@
 ---
 title: Embeddings
-description: "Generate text embeddings in Python across OpenAI, Cohere, and more: one typed `Embedder` API for semantic search, RAG retrieval, similarity and clustering."
+description: "Generate text embeddings with Pydantic AI using OpenAI, Google, Cohere, VoyageAI, Bedrock or local Sentence Transformers, for semantic search and RAG."
 ---
 
 # Embeddings
@@ -21,7 +21,7 @@ The [`Embedder`][pydantic_ai.embeddings.Embedder] class is the high-level interf
 ```python {title="embeddings_quickstart.py"}
 from pydantic_ai import Embedder
 
-embedder = Embedder('openai:text-embedding-3-small')
+embedder = Embedder('{{ openai:embedding }}')
 
 
 async def main():
@@ -57,7 +57,7 @@ For convenience, you can access embeddings either by index (`result[0]`) or by t
 ```python {title="embedding_result.py"}
 from pydantic_ai import Embedder
 
-embedder = Embedder('openai:text-embedding-3-small')
+embedder = Embedder('{{ openai:embedding }}')
 
 
 async def main():
@@ -88,7 +88,7 @@ The best embedding model depends on your language, domain, latency, deployment, 
 
 | If you want…                         | For example                                                                                                                                                                                                                                      |
 |--------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| A managed API                        | `openai:text-embedding-3-small` (cheap default), `openai:text-embedding-3-large`, `voyageai:voyage-3.5`, or `cohere:embed-v4.0`                                                                                                                  |
+| A managed API                        | `{{ openai:embedding }}`, `google:gemini-embedding-2`, `voyageai:voyage-4`, or `cohere:embed-v4.0`                                                                                                                                            |
 | No API key, private, free            | `sentence-transformers:google/embeddinggemma-300m`, `sentence-transformers:lightonai/DenseOn`, `sentence-transformers:Qwen/Qwen3-Embedding-0.6B`, or any other [Hugging Face model](https://huggingface.co/models?library=sentence-transformers) |
 | Multilingual                         | `cohere:embed-multilingual-v3.0`, `sentence-transformers:jinaai/jina-embeddings-v5-text-small-retrieval`, or `sentence-transformers:Snowflake/snowflake-arctic-embed-l-v2.0`                                                                     |
 | Specialized domain                   | `voyageai:voyage-code-3`, `voyageai:voyage-law-2`, `voyageai:voyage-finance-2`, `sentence-transformers:nomic-ai/CodeRankEmbed`, or `sentence-transformers:TechWolf/JobBERT-v3`                                                                   |
@@ -157,7 +157,7 @@ Use [Pydantic Evals](evals.md) to track retrieval quality across a dataset of re
 
 ### OpenAI
 
-[`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] works with OpenAI's embeddings API and any [OpenAI-compatible provider](models/openai.md#openai-compatible-models).
+[`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] works with OpenAI's embeddings API and any [OpenAI-compatible provider](models/overview.md#openai-compatible-providers).
 
 #### Install
 
@@ -180,7 +180,7 @@ You can then use the model:
 ```python {title="openai_embeddings.py"}
 from pydantic_ai import Embedder
 
-embedder = Embedder('openai:text-embedding-3-small')
+embedder = Embedder('{{ openai:embedding }}')
 
 
 async def main():
@@ -202,7 +202,7 @@ from pydantic_ai import Embedder
 from pydantic_ai.embeddings import EmbeddingSettings
 
 embedder = Embedder(
-    'openai:text-embedding-3-small',
+    '{{ openai:embedding }}',
     settings=EmbeddingSettings(dimensions=256),
 )
 
@@ -217,7 +217,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 #### OpenAI-Compatible Providers {#openai-compatible}
 
-Since [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] uses the same provider system as [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], you can use it with any [OpenAI-compatible provider](models/openai.md#openai-compatible-models):
+Since [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] uses the same provider system as [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], you can use it with any [OpenAI-compatible provider](models/overview.md#openai-compatible-providers):
 
 ```python {title="openai_compatible_embeddings.py"}
 # Using Azure OpenAI
@@ -233,7 +233,7 @@ azure_client = AsyncAzureOpenAI(
     api_key='your-azure-key',
 )
 model = OpenAIEmbeddingModel(
-    'text-embedding-3-small',
+    '{{ openai:embedding.name }}',
     provider=OpenAIProvider(openai_client=azure_client),
 )
 embedder = Embedder(model)
@@ -262,7 +262,7 @@ embedder = Embedder('vllm:intfloat/e5-mistral-7b-instruct')
 
 The `vllm:` shorthand uses `VLLM_BASE_URL` and, for authenticated servers, `VLLM_API_KEY`. The server must be running an [embedding model supported by vLLM](https://docs.vllm.ai/en/stable/serving/online_serving/openai_compatible_server/#embeddings-api).
 
-See [OpenAI-compatible Models](models/openai.md#openai-compatible-models) for the full list of supported providers.
+See the [provider directory](models/overview.md#provider-directory) for setup guides, and check that your provider serves the embedding model you want to use.
 
 ### Google
 
@@ -322,7 +322,7 @@ model = GoogleEmbeddingModel(
 embedder = Embedder(model)
 ```
 
-See the [Google provider documentation](models/google.md#google-cloud-enterprise) for more details on Google Cloud authentication options, including application default credentials, service accounts, and API keys.
+See the [Google Cloud documentation](models/google-cloud.md#authentication) for more details on Google Cloud authentication options, including application default credentials, service accounts, and API keys.
 
 #### Dimension Control
 
@@ -655,7 +655,10 @@ Set [`bedrock_inference_profile`][pydantic_ai.embeddings.bedrock.BedrockEmbeddin
 
 ```python {title="bedrock_inference_profile.py"}
 from pydantic_ai import Embedder
-from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
+from pydantic_ai.embeddings.bedrock import (
+    BedrockEmbeddingModel,
+    BedrockEmbeddingSettings,
+)
 from pydantic_ai.providers.bedrock import BedrockProvider
 
 provider = BedrockProvider(region_name='us-east-1')
@@ -663,9 +666,9 @@ provider = BedrockProvider(region_name='us-east-1')
 model = BedrockEmbeddingModel(
     'amazon.titan-embed-text-v2:0',
     provider=provider,
-    settings={
-        'bedrock_inference_profile': 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-embed-profile',
-    },
+    settings=BedrockEmbeddingSettings(
+        bedrock_inference_profile='arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-embed-profile',
+    ),
 )
 embedder = Embedder(model)
 ```
@@ -784,7 +787,7 @@ from pydantic_ai.embeddings import EmbeddingSettings
 
 # Default settings for all calls
 embedder = Embedder(
-    'openai:text-embedding-3-small',
+    '{{ openai:embedding }}',
     settings=EmbeddingSettings(dimensions=512),
 )
 
@@ -808,7 +811,7 @@ You can check token counts before embedding to avoid exceeding model limits:
 ```python {title="token_counting.py"}
 from pydantic_ai import Embedder
 
-embedder = Embedder('openai:text-embedding-3-small')
+embedder = Embedder('{{ openai:embedding }}')
 
 
 async def main():
@@ -827,6 +830,15 @@ async def main():
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
+## Handling Errors
+
+When a request to an embedding provider fails, Pydantic AI raises the same errors as when a
+[model request fails](models/overview.md#handling-model-api-errors): a
+[`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] that is also an instance of an error category like
+[`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] or
+[`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] when the provider says what went wrong, so
+the same `except` clauses handle failures from agents and embedders alike.
+
 ## Testing
 
 Use [`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] for testing without making API calls:
@@ -837,7 +849,7 @@ from pydantic_ai.embeddings import TestEmbeddingModel
 
 
 async def test_my_rag_system():
-    embedder = Embedder('openai:text-embedding-3-small')
+    embedder = Embedder('{{ openai:embedding }}')
     test_model = TestEmbeddingModel()
 
     with embedder.override(model=test_model):
@@ -866,7 +878,7 @@ from pydantic_ai import Embedder
 logfire.configure()
 
 # Instrument a specific embedder
-embedder = Embedder('openai:text-embedding-3-small', instrument=True)
+embedder = Embedder('{{ openai:embedding }}', instrument=True)
 
 # Or instrument all embedders globally
 Embedder.instrument_all()
@@ -900,7 +912,7 @@ async def rerank(query: str, candidates: list[str], top_k: int = 3) -> list[str]
     ranked = await asyncio.to_thread(
         reranker.rank, query, candidates, top_k=top_k, return_documents=True
     )
-    return [item['text'] for item in ranked]
+    return [str(item['text']) for item in ranked]
 ```
 
 Call `rerank()` on the candidates returned by your vector search (for example, in the `retrieve` tool of the [RAG example](examples/rag.md)) before handing the results to the LLM.

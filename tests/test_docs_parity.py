@@ -8,17 +8,19 @@ from __future__ import annotations as _annotations
 import re
 from pathlib import Path
 
+from .docs_model_aliases import resolve_model_aliases
+
 ROOT = Path(__file__).parent.parent
 
 # Each marker identifies one example that must stay code-identical between the
 # docs index and the README (comments and annotation markers excluded).
 MIRRORED_EXAMPLE_MARKERS = [
-    "Advisor('openai:gpt-5.6-sol')",
-    'ClearToolResults(), WarnNearLimits(), ToolOutputLimits()',
+    'Advisor(',
+    'ClearToolResults(), ToolOutputLimits(), RepairToolArguments()',
     'class Sentiment(BaseModel):',
     'class ResearchWorkflow(PydanticAIWorkflow):',
-    "ImageGenerator('openai:gpt-image-2')",
-    "agent.realtime('openai:gpt-realtime-2.1')",
+    'ImageGenerator(',
+    'agent.realtime(',
     'class SupportDependencies:',
 ]
 
@@ -46,7 +48,9 @@ def _normalize(block: str) -> str:
 
 
 def test_mirrored_examples_are_code_identical():
-    index_blocks = [_normalize(b) for b in _python_blocks((ROOT / 'docs' / 'index.md').read_text())]
+    # The docs index names models by alias; the README, which GitHub renders, names the models themselves.
+    index_text = resolve_model_aliases((ROOT / 'docs' / 'index.md').read_text())
+    index_blocks = [_normalize(b) for b in _python_blocks(index_text)]
     readme_blocks = [_normalize(b) for b in _python_blocks((ROOT / 'README.md').read_text())]
     for marker in MIRRORED_EXAMPLE_MARKERS:
         index_matches = [b for b in index_blocks if marker in b]

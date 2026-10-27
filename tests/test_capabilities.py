@@ -90,6 +90,7 @@ from pydantic_ai.toolsets._deferred_capability_loader import (
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -107,9 +108,7 @@ from .conftest import IsDatetime, IsStr, iter_message_parts, message
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 
 async def test_runtime_capability_contributions_applied():
@@ -391,6 +390,7 @@ def test_stale_loaded_eager_capability_is_not_revealed() -> None:
     assert tool_defs_from_pre_definition_load_returns(ctx, [tool_def]) == {}
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_is_tool_available_definition_survives_aggregator_fold() -> None:
     """A caller-held definition stays available after an aggregator removes it from resolved tools."""
     capability_tools = FunctionToolset()
@@ -447,6 +447,9 @@ async def test_is_tool_available_definition_survives_aggregator_fold() -> None:
     assert folding_toolset.availability == [False, True, True]
 
 
+@pytest.mark.moves_cache_prefix(
+    reason="the second run is given a hand-built history that branches from the first run's"
+)
 async def test_stale_loaded_eager_capability_tool_stays_hidden() -> None:
     """Resumed loaded state does not reveal a tool owned by a capability that is now eager."""
     toolset = FunctionToolset()
@@ -1506,6 +1509,40 @@ class TestHooksCapability:
         result = await agent.run('hello')
         assert result.output == 'recovered from run error'
 
+    async def test_on_run_error_recovery_run_stream(self):
+        """A run that fails before streaming a final result yields the result `on_run_error` recovered with."""
+        hooks = Hooks()
+
+        @hooks.on.run_error
+        async def recover(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output=f'recovered from {error}')
+
+        async def failing_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            raise RuntimeError('model exploded')
+            yield  # pragma: no cover
+
+        agent = Agent(FunctionModel(stream_function=failing_stream), capabilities=[hooks])
+        async with agent.run_stream('hello') as stream:
+            assert await stream.get_output() == 'recovered from model exploded'
+            assert [output async for output in stream.stream_output()] == ['recovered from model exploded']
+
+    async def test_on_run_error_no_recovery_run_stream(self):
+        """`run_stream` still raises the run's error when `on_run_error` re-raises it."""
+        hooks = Hooks()
+
+        @hooks.on.run_error
+        async def reraise(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            raise error
+
+        async def failing_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            raise RuntimeError('model exploded')
+            yield  # pragma: no cover
+
+        agent = Agent(FunctionModel(stream_function=failing_stream), capabilities=[hooks])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            async with agent.run_stream('hello'):
+                pass  # pragma: no cover
+
     async def test_on_run_error_chaining(self):
         hooks = Hooks()
 
@@ -1881,7 +1918,7 @@ class TestHooksCapability:
         def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
                 for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
+                    if isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                         return make_text_response(f'got: {part.content}')
             if info.function_tools:
                 tool = info.function_tools[0]
@@ -1940,7 +1977,7 @@ class TestHooksCapability:
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
                 for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
+                    if isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                         return make_text_response(f'got: {part.content}')
             if info.function_tools:
                 return ModelResponse(
@@ -1974,7 +2011,7 @@ class TestHooksCapability:
             call_count += 1
             for msg in messages:
                 for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
+                    if isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                         return make_text_response(f'got: {part.content}')
             if info.function_tools:
                 tool = info.function_tools[0]
@@ -2245,6 +2282,42 @@ class TestContextVarPropagation:
         assert result.output == 'recovered'
         assert cap.seen_in_error == 'error-path'
 
+    async def test_contextvar_written_during_run_visible_in_on_run_error(self):
+        """Context vars written by run-body hooks propagate back to the run wrapper task."""
+
+        @dataclass
+        class StashAndRecover(AbstractCapability):
+            seen_in_error: str | None = None
+
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                _test_cv.set('from-run-body')
+                return result
+
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+                self.seen_in_error = _test_cv.get(None)
+                return AgentRunResult(output='recovered')
+
+        calls = 0
+
+        def failing_second_request(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return ModelResponse(parts=[ToolCallPart('tool', {}, tool_call_id='1')])
+            raise RuntimeError('model exploded')
+
+        cap = StashAndRecover()
+        agent = Agent(FunctionModel(failing_second_request), capabilities=[cap])
+
+        @agent.tool_plain
+        def tool() -> str:
+            return 'ok'
+
+        result = await agent.run('hello')
+
+        assert result.output == 'recovered'
+        assert cap.seen_in_error == 'from-run-body'
+
 
 # --- WrapperCapability and PrefixTools tests ---
 
@@ -2483,8 +2556,10 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
     assert result.output == 'done'
     # The deferred capability is surfaced in the catalog under the wrapped capability's id.
     assert first_request_instructions == [
+        '<context id="capability:deferred_capabilities">\n'
         "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:\n"
-        '- refunds: Refund policy tools.'
+        '- refunds: Refund policy tools.\n</context>\n'
+        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     ]
 
 
@@ -3267,6 +3342,13 @@ def test_ordering_mixed_positions_in_nested():
     assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, InnermostCap]
 
 
+def test_ordering_nested_combined_with_only_an_id_is_merged():
+    """A nested `CombinedCapability` with an `id` but no `defer_loading` is still splatted into the outer sort."""
+    named = CombinedCapability([PlainCapB(), OutermostCap()], id='named')
+    combined = CombinedCapability([PlainCapA(), named])
+    assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, PlainCapB]
+
+
 def test_ordering_conflicting_positions_in_custom_nested_capability():
     """A custom capability tree cannot collapse outermost and innermost leaves into one ordered group."""
 
@@ -3646,6 +3728,21 @@ async def test_resolve_model_id_alias_unusable_outside_run() -> None:
     # Inside a run, the alias resolves through the hook as usual.
     result = await agent.run('hi')
     assert result.output == 'ok'
+
+
+def test_resolve_model_id_string_override_sets_mcp_sampling_model() -> None:
+    """MCP sampling setup accepts a string model override with a resolver capability installed.
+
+    Sync because `set_mcp_sampling_model()` imports the MCP module on first use.
+    """
+    pytest.importorskip('fastmcp')
+
+    def resolver(ctx: ModelResolutionContext[object], model_id: str) -> FunctionModel | None:
+        return None  # pragma: no cover
+
+    agent = Agent('test', capabilities=[ResolveModelId(resolver)])
+    with agent.override(model='test'):
+        agent.set_mcp_sampling_model()
 
 
 # --- ResolveModelId capability tests ---

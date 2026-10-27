@@ -1,0 +1,113 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "808"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-4.1-mini
+        stream: false
+        messages:
+        - role: system
+          content: Answer in one short sentence.
+        - role: user
+          content: What's the weather in Lisbon?
+        - role: assistant
+          content: |-
+            Let me check.
+
+            This might take a moment.
+          tool_calls:
+          - id: call_1
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Lisbon\"}"
+        - role: tool
+          tool_call_id: call_1
+          content: Sunny, 24C
+        - role: assistant
+          content: It's sunny and 24 degrees in Lisbon.
+        - role: user
+          content: What temperature did the weather tool report?
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: ""
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "592"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-EbC8DRnFhfK4NiReidLtwJ4em4f6Q
+        object: chat.completion
+        created: 1792533477
+        model: gpt-4.1-mini-2025-04-14
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: The weather tool reported a temperature of 24 degrees Celsius.
+            refusal: null
+            annotations: []
+          logprobs: null
+          finish_reason: stop
+        usage:
+          prompt_tokens: 116
+          completion_tokens: 13
+          total_tokens: 129
+          prompt_tokens_details:
+            cached_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        service_tier: default
+        system_fingerprint: fp_4287b90ad9
+  recorded_at: 2026-10-20T21:57:57.577449+00:00

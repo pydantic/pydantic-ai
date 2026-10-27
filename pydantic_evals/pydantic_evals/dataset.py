@@ -10,7 +10,7 @@ a task function to produce an evaluation report.
 from __future__ import annotations as _annotations
 
 import functools
-import sys
+import math
 import time
 import traceback
 import warnings
@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, Self, Union, cast
 
 import anyio
 import logfire_api
@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_seria
 from pydantic_core import to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from rich.progress import Progress
-from typing_extensions import Self, TypeVar
+from typing_extensions import TypeVar
 
 from pydantic_ai._spec import build_registry, build_schema_types, load_from_registry
 from pydantic_ai._utils import await_maybe, is_async_callable
@@ -52,11 +52,6 @@ from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate, Report
 
 if TYPE_CHECKING:
     from pydantic_ai.retries import RetryConfig
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 __all__ = (
     'Case',
@@ -152,7 +147,10 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
         inputs: InputsT,
         metadata: MetadataT | None = None,
         expected_output: OutputT | None = None,
-        evaluators: tuple[Evaluator[InputsT, OutputT, MetadataT], ...] = (),
+        # Not `Sequence`: with it, pyright infers narrower type parameters (like a `Literal` for
+        # `inputs`) that then don't match the dataset's, so tuples and lists are spelled out instead.
+        evaluators: tuple[Evaluator[InputsT, OutputT, MetadataT], ...]
+        | list[Evaluator[InputsT, OutputT, MetadataT]] = (),
     ):
         """Initialize a new test case.
 
@@ -161,12 +159,10 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
             inputs: The inputs to the task being evaluated.
             metadata: Optional metadata for the case, which can be used by evaluators.
             expected_output: Optional expected output of the task, used for comparison in evaluators.
-            evaluators: Tuple of evaluators specific to this case. These are in addition to any
+            evaluators: Evaluators specific to this case. These are in addition to any
                 dataset-level evaluators.
 
         """
-        # Note: `evaluators` must be a tuple instead of Sequence due to misbehavior with pyright's generic parameter
-        # inference if it has type `Sequence`
         self.name = name
         self.inputs = inputs
         self.metadata = metadata
@@ -295,6 +291,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             | Callable[[Case[InputsT, OutputT, MetadataT]], CaseLifecycle[InputsT, OutputT, MetadataT]]
             | None
         ) = None,
+        task_timeout: float | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -318,6 +315,12 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 results are grouped by the original case name for aggregation. Defaults to 1.
             lifecycle: Optional lifecycle class for per-case setup, context preparation, and teardown hooks.
                 A new instance is created for each case. See [`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle].
+            task_timeout: Optional maximum number of seconds for each call of the task. A call that overruns it
+                raises `TimeoutError`, which counts as a failed attempt for `retry_task` and, once no attempt
+                succeeds, is reported as a case failure while the other cases continue. Lifecycle hooks and
+                evaluators are not bounded. A sync task runs in a worker thread that can't be interrupted, so
+                on timeout it keeps running in the background and its result is discarded.
+                If None (the default), tasks run without a time limit.
 
         Returns:
             A report containing the results of the evaluation.
@@ -326,6 +329,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             raise ValueError(f'repeat must be >= 1, got {repeat}')
         if max_concurrency is not None and max_concurrency < 1:
             raise ValueError(f'max_concurrency must be >= 1, got {max_concurrency}')
+        if task_timeout is not None and (
+            isinstance(task_timeout, bool) or not math.isfinite(task_timeout) or task_timeout <= 0
+        ):
+            raise ValueError(f'`task_timeout` must be a finite number of seconds greater than 0, got {task_timeout!r}')
 
         task_name = task_name or get_unwrapped_function_name(task)
         name = name or task_name
@@ -369,6 +376,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                         retry_evaluators,
                         source_case_name=source_case_name,
                         lifecycle=lifecycle,
+                        task_timeout=task_timeout,
                     )
                     if progress_bar and task_id is not None:  # pragma: no branch
                         progress_bar.update(task_id, advance=1)
@@ -400,6 +408,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 experiment_metadata=metadata,
                 span_id=span_id,
                 trace_id=trace_id,
+                dataset_name=self.name,
             )
 
             # Run report evaluators
@@ -431,6 +440,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             | Callable[[Case[InputsT, OutputT, MetadataT]], CaseLifecycle[InputsT, OutputT, MetadataT]]
             | None
         ) = None,
+        task_timeout: float | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -453,6 +463,12 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 results are grouped by the original case name for aggregation. Defaults to 1.
             lifecycle: Optional lifecycle class for per-case setup, context preparation, and teardown hooks.
                 A new instance is created for each case. See [`CaseLifecycle`][pydantic_evals.lifecycle.CaseLifecycle].
+            task_timeout: Optional maximum number of seconds for each call of the task. A call that overruns it
+                raises `TimeoutError`, which counts as a failed attempt for `retry_task` and, once no attempt
+                succeeds, is reported as a case failure while the other cases continue. Lifecycle hooks and
+                evaluators are not bounded. A sync task runs in a worker thread that can't be interrupted, so
+                on timeout it keeps running in the background and its result is discarded.
+                If None (the default), tasks run without a time limit.
 
         Returns:
             A report containing the results of the evaluation.
@@ -469,6 +485,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 metadata=metadata,
                 repeat=repeat,
                 lifecycle=lifecycle,
+                task_timeout=task_timeout,
             )
         )
 
@@ -479,7 +496,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         inputs: InputsT,
         metadata: MetadataT | None = None,
         expected_output: OutputT | None = None,
-        evaluators: tuple[Evaluator[InputsT, OutputT, MetadataT], ...] = (),
+        evaluators: Sequence[Evaluator[InputsT, OutputT, MetadataT]] = (),
     ) -> None:
         """Adds a case to the dataset.
 
@@ -490,7 +507,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             inputs: The inputs to the task being evaluated.
             metadata: Optional metadata for the case, which can be used by evaluators.
             expected_output: The expected output of the task, used for comparison in evaluators.
-            evaluators: Tuple of evaluators specific to this case, in addition to dataset-level evaluators.
+            evaluators: Evaluators specific to this case, in addition to dataset-level evaluators.
         """
         if name in {case.name for case in self.cases}:
             raise ValueError(f'Duplicate case name: {name!r}')
@@ -500,7 +517,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             inputs=inputs,
             metadata=metadata,
             expected_output=expected_output,
-            evaluators=evaluators,
+            evaluators=list(evaluators),
         )
         self.cases.append(case)
 
@@ -543,7 +560,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         for c in cls.__mro__:
             metadata = getattr(c, '__pydantic_generic_metadata__', {})
             if len(args := (metadata.get('args', ()) or getattr(c, '__args__', ()))) == 3:  # pragma: no branch
-                return args
+                # A bare `None` type argument arrives here as the `None` singleton; normalize it to
+                # `NoneType` so postponed annotations like `metadata: MetadataT | None` can resolve.
+                # Pyright cannot correlate the normalized arguments with the generic return types.
+                return tuple(type(None) if arg is None else arg for arg in args)  # pyright: ignore[reportReturnType]
         else:
             warnings.warn(
                 f'Could not determine the generic parameters for {cls}; using `Any` for each.'
@@ -591,7 +611,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 custom_report_evaluator_types=custom_report_evaluator_types,
                 default_name=path.stem,
             )
-        except ValidationError as e:  # pragma: no cover
+        except ValidationError as e:
             raise ValueError(f'{path} contains data that does not match the schema for {cls.__name__}:\n{e}.') from e
 
     @classmethod
@@ -947,6 +967,7 @@ async def _run_task(
     task: Callable[[InputsT], Awaitable[OutputT] | OutputT],
     case: Case[InputsT, OutputT, MetadataT],
     retry: RetryConfig | None = None,
+    timeout: float | None = None,
 ) -> EvaluatorContext[InputsT, OutputT, MetadataT]:
     """Run a task on a case and return the context for evaluators.
 
@@ -954,13 +975,29 @@ async def _run_task(
         task: The task to run.
         case: The case to run the task on.
         retry: The retry config to use.
+        timeout: The maximum number of seconds for each attempt, or None for no limit.
 
     Returns:
         An EvaluatorContext containing the inputs, actual output, expected output, and metadata.
 
     Raises:
         Exception: Any exception raised by the task.
+        TimeoutError: If an attempt takes longer than `timeout`; like any other exception, `retry` may retry it.
     """
+
+    async def _call_task() -> OutputT:
+        if is_async_callable(task):
+            return await await_maybe(task(case.inputs))
+        # A plain `def` may still return an awaitable, which `to_thread.run_sync` would leave un-awaited.
+        # Under a timeout, abandon the worker thread so the deadline is enforced instead of waiting for it.
+        return await await_maybe(await to_thread.run_sync(task, case.inputs, abandon_on_cancel=timeout is not None))
+
+    async def _call_task_with_timeout() -> OutputT:
+        if timeout is None:
+            return await _call_task()
+        with anyio.move_on_after(timeout):
+            return await _call_task()
+        raise TimeoutError(f'Task timed out after {timeout:g}s')
 
     async def _run_once():
         task_run_ = _task_run.TaskRun()
@@ -974,12 +1011,7 @@ async def _run_task(
                 context_subtree() as span_tree_,
             ):
                 t0 = time.perf_counter()
-                task_output_: OutputT
-                if is_async_callable(task):
-                    task_output_ = await await_maybe(task(case.inputs))
-                else:
-                    # A plain `def` may still return an awaitable, which `to_thread.run_sync` would leave un-awaited.
-                    task_output_ = await await_maybe(await to_thread.run_sync(task, case.inputs))
+                task_output_ = await _call_task_with_timeout()
                 fallback_duration = time.perf_counter() - t0
             duration_ = _get_span_duration(task_span, fallback_duration)
             return task_run_, task_output_, duration_, span_tree_
@@ -1094,6 +1126,7 @@ async def _run_task_and_evaluators(
         | Callable[[Case[InputsT, OutputT, MetadataT]], CaseLifecycle[InputsT, OutputT, MetadataT]]
         | None
     ) = None,
+    task_timeout: float | None = None,
 ) -> ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
@@ -1106,6 +1139,7 @@ async def _run_task_and_evaluators(
         retry_evaluators: The retry config to use for running the evaluators.
         source_case_name: The original case name before run-indexing (for multi-run experiments).
         lifecycle: Optional lifecycle class to instantiate for this case.
+        task_timeout: The maximum number of seconds for each task attempt, or None for no limit.
 
     Returns:
         A ReportCase containing the evaluation results.
@@ -1139,7 +1173,7 @@ async def _run_task_and_evaluators(
             if lc is not None:
                 await lc.setup()
 
-            scoring_context = await _run_task(task, case, retry_task)
+            scoring_context = await _run_task(task, case, retry_task, task_timeout)
 
             if lc is not None:
                 scoring_context = await lc.prepare_context(scoring_context)

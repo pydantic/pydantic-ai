@@ -1,3 +1,7 @@
+---
+description: "A Pydantic AI example of a video analyst agent that answers questions about a video by calling TwelveLabs Pegasus, a video understanding model, as a tool."
+---
+
 Example of a Pydantic AI agent that understands video using [TwelveLabs](https://twelvelabs.io) Pegasus.
 
 Demonstrates:

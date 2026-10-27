@@ -44,14 +44,14 @@ on a Pydantic model — an `Enum` has no config to carry a flag, and any assigne
 member, so a base class is the marker.
 
 ```python
-from enum import Enum
+from enum import StrEnum
 
 from pydantic_ai import Agent, UseEnumMemberDocstrings
 
 agent = Agent('openai:gpt-5.2', name='ticket_agent')
 
 
-class Urgency(UseEnumMemberDocstrings, str, Enum):
+class Urgency(UseEnumMemberDocstrings, StrEnum):
     """How urgent the ticket is."""
 
     low = 'low'
@@ -132,6 +132,10 @@ agent = Agent(
     capabilities=[MCP(local=StdioTransport(command='python', args=['mcp_server.py']))],
 )
 ```
+
+To keep an MCP server's tool names from colliding with other tools, pass `tool_prefix`: `MCP(url, tool_prefix='docs')` exposes `search` as `docs_search`, and `MCP(url, id='docs', tool_prefix=True)` uses the explicit `id=` as the prefix (`True` without `id=` raises `UserError`; the URL-derived id is never used). `allowed_tools` still names the server's own tools, and the `id` doesn't change. The prefix applies to local tools only; native MCP tools are named by the provider. Prefixing by default is planned for v3.
+
+When each user has their own credentials for the MCP server (a multi-user or multi-tenant app), pass a function of the run context as the credentials instead of a fixed value: `MCP(url, authorization_token=lambda ctx: ctx.deps.mcp_token)` on the capability, or `MCPToolset(url, auth=lambda ctx: ctx.deps.mcp_token)` (and likewise `headers=`). It's called at the start of each run, and each run connects in an MCP session of its own with what it returned. Don't share one toolset between users with a fixed `httpx.Auth` that reads the user from a `ContextVar`: one session is opened as one user, and on FastMCP 3 overlapping runs send their requests with the first run's token. A toolset with function credentials never connects outside an agent run, so `async with toolset:` is a no-op and direct calls like `list_tools()` raise `UserError`; use `await toolset.for_run(ctx)` to get a connectable copy. See [per-user authentication](https://pydantic.dev/docs/ai/mcp/client/#per-user-authentication).
 
 When you need to manage the toolset lifecycle yourself, share an MCP server across multiple agents, or use FastMCP-specific configuration that doesn't fit the capability shape, use [`MCPToolset`](https://pydantic.dev/docs/ai/mcp/client/) directly and pass it via `toolsets=[...]`. Its `tool_error_behavior` controls how a tool error from the server surfaces: `'retry'` (default) raises `ModelRetry`, `'failed'` raises `ToolFailed` (recorded as `outcome='failed'`), and `'error'` raises the raw `fastmcp` `ToolError`. For SEP-1686 tools with optional task support, set `prefer_tasks=False` to use normal calls; required tasks still use task-augmented execution.
 

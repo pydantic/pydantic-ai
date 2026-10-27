@@ -1,0 +1,222 @@
+--- expected
++++ actual
+@@ -131,0 +132,88 @@
++   "role": "assistant",
++   "content": "Noted the background result."
++  },
++  {
++   "role": "user",
++   "content": "Question 2"
++  }
++ ],
++ "tools": [
++  {
++   "type": "function",
++   "function": {
++    "name": "start_job",
++    "description": "",
++    "parameters": {
++     "additionalProperties": false,
++     "properties": {},
++     "type": "object"
++    }
++   }
++  }
++ ]
++}
++{
++ "messages": [
++  {
++   "role": "system",
++   "content": "You are terse."
++  },
++  {
++   "role": "user",
++   "content": "Question 0"
++  },
++  {
++   "role": "assistant",
++   "content": "Hello."
++  },
++  {
++   "role": "user",
++   "content": "Question 1"
++  },
++  {
++   "role": "assistant",
++   "content": null,
++   "tool_calls": [
++    {
++     "id": "job-3",
++     "type": "function",
++     "function": {
++      "name": "start_job",
++      "arguments": "{}"
++     }
++    }
++   ]
++  },
++  {
++   "role": "tool",
++   "tool_call_id": "job-3",
++   "content": "started"
++  },
++  {
++   "role": "assistant",
++   "content": "Noted the background result."
++  },
++  {
++   "role": "user",
++   "content": "Question 2"
++  },
++  {
++   "role": "assistant",
++   "content": null,
++   "tool_calls": [
++    {
++     "id": "job-7",
++     "type": "function",
++     "function": {
++      "name": "start_job",
++      "arguments": "{}"
++     }
++    }
++   ]
++  },
++  {
++   "role": "tool",
++   "tool_call_id": "job-7",
++   "content": "started"
++  },
++  {
+@@ -134,113 +222,17 @@
+-  },
+-  {
+-   "role": "assistant",
+-   "content": "Noted the background result."
+-  },
+-  {
+-   "role": "user",
+-   "content": "Question 2"
+-  }
+- ],
+- "tools": [
+-  {
+-   "type": "function",
+-   "function": {
+-    "name": "start_job",
+-    "description": "",
+-    "parameters": {
+-     "additionalProperties": false,
+-     "properties": {},
+-     "type": "object"
+-    }
+-   }
+-  }
+- ]
+-}
+-{
+- "messages": [
+-  {
+-   "role": "system",
+-   "content": "You are terse."
+-  },
+-  {
+-   "role": "user",
+-   "content": "Question 0"
+-  },
+-  {
+-   "role": "assistant",
+-   "content": "Hello."
+-  },
+-  {
+-   "role": "user",
+-   "content": "Question 1"
+-  },
+-  {
+-   "role": "assistant",
+-   "content": null,
+-   "tool_calls": [
+-    {
+-     "id": "job-3",
+-     "type": "function",
+-     "function": {
+-      "name": "start_job",
+-      "arguments": "{}"
+-     }
+-    }
+-   ]
+-  },
+-  {
+-   "role": "tool",
+-   "tool_call_id": "job-3",
+-   "content": "started"
+-  },
+-  {
+-   "role": "system",
+-   "content": "The job runs in the background."
+-  },
+-  {
+-   "role": "assistant",
+-   "content": "Noted the background result."
+-  },
+-  {
+-   "role": "user",
+-   "content": "Question 2"
+-  },
+-  {
+-   "role": "assistant",
+-   "content": null,
+-   "tool_calls": [
+-    {
+-     "id": "job-7",
+-     "type": "function",
+-     "function": {
+-      "name": "start_job",
+-      "arguments": "{}"
+-     }
+-    }
+-   ]
+-  },
+-  {
+-   "role": "tool",
+-   "tool_call_id": "job-7",
+-   "content": "started"
+-  },
+-  {
+-   "role": "system",
+-   "content": "The job runs in the background."
+-  }
+- ],
+- "tools": [
+-  {
+-   "type": "function",
+-   "function": {
+-    "name": "start_job",
+-    "description": "",
+-    "parameters": {
+-     "additionalProperties": false,
+-     "properties": {},
+-     "type": "object"
+-    }
+-   }
+-  }
+- ]
+-}
++  }
++ ],
++ "tools": [
++  {
++   "type": "function",
++   "function": {
++    "name": "start_job",
++    "description": "",
++    "parameters": {
++     "additionalProperties": false,
++     "properties": {},
++     "type": "object"
++    }
++   }
++  }
++ ]
++}

@@ -33,11 +33,11 @@ import threading
 from collections.abc import Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, LiteralString, Protocol
 
 import anyio
 from opentelemetry import trace
-from typing_extensions import LiteralString, ParamSpec, TypeVar
+from typing_extensions import ParamSpec, TypeVar
 
 from pydantic_ai._utils import is_async_callable
 
@@ -596,7 +596,7 @@ class OnlineEvalConfig:
 
     def should_evaluate(self) -> bool:
         """Whether evaluators with this config should run, based on the current settings and context."""
-        return self.enabled and not _EVALUATION_DISABLED.get() and _task_run.CURRENT_TASK_RUN.get() is None
+        return _online_internal.evaluation_allowed(self) and _task_run.CURRENT_TASK_RUN.get() is None
 
 
 @dataclass(kw_only=True, frozen=True)

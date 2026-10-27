@@ -14,9 +14,13 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
-from pydantic_ai.agent import AgentRunResult
+from pydantic_ai.agent import AbstractAgent, AgentRunResult
 from pydantic_ai.capabilities import (
+    CAPABILITY_TYPES,
     AbstractCapability,
+    BatchModelRequests,
+    CombinedCapability,
+    FileUnderstanding,
     Instrumentation,
     ProcessEventStream,
     ResolveModelId,
@@ -41,17 +45,30 @@ from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import ToolConfig
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import CapabilityEvent, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    CapabilityEvent,
+    DocumentUrl,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import (
+    Model,
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
     StreamedResponse,
 )
+from pydantic_ai.models._batch_model import BatchedModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.usage import RequestUsage, RunUsage
 
+from ..batch_utils import FAST_BATCH_SETTINGS
 from ..conftest import try_import
 from ..model_lifecycle_utils import LifecycleTrackingModel
 
@@ -104,7 +121,6 @@ else:
         ActivityDefinition = TemporalDurability = cast(Any, None)
         temporal_available = False
 
-pytestmark = pytest.mark.anyio
 
 requires_dbos = pytest.mark.skipif(not dbos_available, reason='DBOS is not installed')
 requires_prefect = pytest.mark.skipif(not prefect_available, reason='Prefect is not installed')
@@ -251,6 +267,142 @@ def _tracked_model_resolver(
         return model
 
     return resolve
+
+
+class _BindLoggingDurability(RecordingDurability):
+    """Logs each bind, which is where an engine registers its durable operations."""
+
+    def __init__(self, bound: list[str]) -> None:
+        super().__init__()
+        self._bound = bound
+
+    def _bind_for_agent(self, agent: AbstractAgent[Any, Any]) -> _BindLoggingDurability:
+        self._bound.append(self.engine_name)
+        return super()._bind_for_agent(agent)
+
+
+class _OtherEngineDurability(_BindLoggingDurability):
+    engine_spec = DurabilityEngineSpec(
+        engine_name='other',
+        durable_unit_noun='unit',
+        durable_container_noun='journal',
+        codec=JSON_CODEC,
+    )
+
+
+_SECOND_ENGINE = re.escape(
+    'An agent can have only one durable execution engine, but this one would have 2: '
+    '`_BindLoggingDurability`, `_OtherEngineDurability`.'
+)
+
+
+def test_a_second_durable_engine_is_refused_at_construction() -> None:
+    bound: list[str] = []
+    with pytest.raises(UserError, match=_SECOND_ENGINE):
+        Agent(
+            TestModel(),
+            name='two_engines',
+            capabilities=[_BindLoggingDurability(bound), _OtherEngineDurability(bound)],
+        )
+    assert bound == []
+
+
+@pytest.mark.parametrize('wrap', [False, True], ids=['bare', 'wrapped'])
+def test_a_durable_engine_inside_a_capability_group_is_refused(wrap: bool) -> None:
+    """A deferred group can't hold the engine that has to wrap every toolset the agent has."""
+    bound: list[str] = []
+    engine: AbstractCapability[Any] = _BindLoggingDurability(bound)
+    with pytest.raises(UserError) as exc_info:
+        Agent(
+            TestModel(),
+            name='grouped_engine',
+            capabilities=[
+                CombinedCapability(
+                    [WrapperCapability(engine) if wrap else engine],
+                    id='infra',
+                    description='Infra.',
+                    defer_loading=True,
+                )
+            ],
+        )
+    assert str(exc_info.value) == snapshot(
+        "`_BindLoggingDurability` is inside capability 'infra', but a durable execution engine must be passed to "
+        'the agent directly, so it can wrap every toolset the agent has.'
+    )
+    assert bound == []
+
+
+async def test_two_durable_engines_for_one_run_are_refused_before_either_binds() -> None:
+    bound: list[str] = []
+    agent = Agent(TestModel(), name='two_engines')
+    with pytest.raises(UserError, match=_SECOND_ENGINE):
+        await agent.run('hi', capabilities=[_BindLoggingDurability(bound), _OtherEngineDurability(bound)])
+    assert bound == []
+
+
+async def test_a_durable_engine_for_a_run_is_refused_beside_the_agents_own() -> None:
+    bound: list[str] = []
+    agent = Agent(TestModel(), name='two_engines', capabilities=[_BindLoggingDurability(bound)])
+    assert bound == ['recording']
+    with pytest.raises(UserError, match=_SECOND_ENGINE):
+        await agent.run('hi', capabilities=[_OtherEngineDurability(bound)])
+    assert bound == ['recording'], 'the run-level engine never bound'
+
+
+async def test_a_durable_engine_returned_by_a_capability_factory_is_refused() -> None:
+    """A factory's capability only exists once `for_run` resolves it, after the pre-bind check."""
+    bound: list[str] = []
+    agent = Agent(TestModel(), name='factory_engine', capabilities=[_BindLoggingDurability(bound)])
+    other = _OtherEngineDurability(bound)
+    with pytest.raises(UserError, match=_SECOND_ENGINE):
+        await agent.run('hi', capabilities=[lambda ctx: other])
+    assert other.calls == [], 'the factory engine never took over dispatch'
+
+
+def test_two_durable_engines_in_an_override_spec_are_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`override(spec=...)` replaces the agent's capabilities with the spec's, and binds them itself."""
+    bound: list[str] = []
+
+    class _SpecEngine(_BindLoggingDurability):
+        def __init__(self) -> None:
+            super().__init__(bound)
+
+        @classmethod
+        def get_serialization_name(cls) -> str:
+            return 'SpecEngine'
+
+    class _OtherSpecEngine(_OtherEngineDurability):
+        def __init__(self) -> None:
+            super().__init__(bound)
+
+        @classmethod
+        def get_serialization_name(cls) -> str:
+            return 'OtherSpecEngine'
+
+    monkeypatch.setitem(CAPABILITY_TYPES, 'SpecEngine', _SpecEngine)
+    monkeypatch.setitem(CAPABILITY_TYPES, 'OtherSpecEngine', _OtherSpecEngine)
+    agent = Agent(TestModel(), name='override_two_engines')
+    with pytest.raises(UserError, match='would have 2: `_SpecEngine`, `_OtherSpecEngine`'):
+        with agent.override(spec={'capabilities': ['SpecEngine', 'OtherSpecEngine']}):
+            pass  # pragma: no cover
+    assert bound == []
+
+
+async def test_one_durable_engine_listed_twice_is_refused() -> None:
+    engine = _BindLoggingDurability([])
+    agent = Agent(TestModel(), name='one_engine_twice')
+    with pytest.raises(UserError, match='would have 2: `_BindLoggingDurability`, `_BindLoggingDurability`'):
+        await agent.run('hi', capabilities=[engine, engine])
+
+
+def test_a_wrapped_durable_engine_still_counts() -> None:
+    bound: list[str] = []
+    with pytest.raises(UserError, match=_SECOND_ENGINE):
+        Agent(
+            TestModel(),
+            name='wrapped_engine',
+            capabilities=[_BindLoggingDurability(bound).prefix_tools('p'), _OtherEngineDurability(bound)],
+        )
 
 
 async def test_capability_operation_is_direct_outside_durable_context() -> None:
@@ -812,6 +964,25 @@ class UsageOperation(AbstractCapability[Any]):
         ctx.usage.cost = (ctx.usage.cost or 0) + Decimal('0.25')
 
 
+class ProviderCounterUsageOperation(AbstractCapability[Any]):
+    id = 'provider_counter_usage_operation'
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        await self.record_usage(ctx)
+
+    @durable_operation('record_usage')
+    async def record_usage(self, ctx: RunContext[Any]) -> None:
+        ctx.usage.incr(
+            RequestUsage(
+                cache_write_tokens=6,
+                cache_write_1h_tokens=4,
+                output_tokens=5,
+                output_reasoning_tokens=3,
+                web_searches=2,
+            )
+        )
+
+
 async def test_non_durable_call_is_direct_and_preserves_identity() -> None:
     capability = Operations()
     agent = Agent(TestModel(), capabilities=[capability])
@@ -1098,6 +1269,87 @@ async def test_wrapped_durability_dispatches_capability_operation() -> None:
     assert any(name == 'wrapped_durability__capability__operations.calculate' for name, _ in durability.calls)
 
 
+class ToolCallingOperation(AbstractCapability[Any]):
+    id = 'tool_calling'
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    @durable_operation('fetch')
+    async def fetch(self, ctx: RunContext[Any], query: str) -> str:
+        self.calls += 1
+        return f'fetched {query}'
+
+    def get_toolset(self) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any](id=self.id)
+
+        @toolset.tool
+        async def lookup(ctx: RunContext[Any], query: str) -> str:
+            return await self.fetch(ctx, query)
+
+        return toolset
+
+
+async def test_operation_called_from_a_wrapped_tool_runs_inside_the_tool_unit() -> None:
+    """The tool's unit already records the result, and engines like AWS Lambda can't nest units."""
+    capability = ToolCallingOperation()
+    durability = RecordingDurability()
+    agent = Agent(TestModel(), name='tool_calling', capabilities=[capability, durability])
+
+    await agent.run('test')
+
+    bound = RecordingDurability.from_agent(agent)
+    assert bound is not None
+    names = [name for name, _ in bound.calls]
+    assert 'tool_calling__function_toolset__tool_calling.call_tool:lookup' in names
+    assert not [name for name in names if '__capability__' in name]
+    assert capability.calls == 1
+
+
+class CallsAnotherCapabilitysOperation(AbstractCapability[Any]):
+    id = 'tool_owner'
+
+    def __init__(self, emitter: EmittingOperation) -> None:
+        self.emitter = emitter
+
+    def get_toolset(self) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any](id=self.id)
+
+        @toolset.tool
+        async def checkpoint(ctx: RunContext[Any]) -> str:
+            await self.emitter.checkpoint(ctx)
+            return 'done'
+
+        return toolset
+
+
+async def test_operation_run_inside_another_capabilitys_unit_emits_as_its_own_capability() -> None:
+    """Run inline in another capability's tool unit, the operation runs as its own capability, as in its own unit."""
+    observed: list[str | None] = []
+
+    async def observe(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, OperationCheckpointEvent):
+                observed.append(event.capability_id)
+
+    emitter = EmittingOperation()
+    agent = Agent(
+        TestModel(),
+        name='cross_capability_emit',
+        capabilities=[
+            emitter,
+            CallsAnotherCapabilitysOperation(emitter),
+            ProcessEventStream(observe),
+            RecordingDurability(),
+        ],
+    )
+
+    await agent.run('test')
+
+    # Once from `before_run`, outside any unit, and once from the other capability's tool unit.
+    assert observed == ['emitting_operation', 'emitting_operation']
+
+
 @requires_temporal
 def test_wrapped_temporal_durability_registers_capability_operation() -> None:
     agent = Agent(
@@ -1136,6 +1388,27 @@ async def test_capability_operation_cache_identity_includes_context_and_model() 
     assert isinstance(inputs[2], RunContext)
 
 
+async def test_unmeasured_request_delta_is_applied_once() -> None:
+    class UnmeasuredRequestOperation(AbstractCapability[None]):
+        id = 'unmeasured'
+
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            await self.mark(ctx)
+
+        @durable_operation('mark')
+        async def mark(self, ctx: RunContext[None]) -> None:
+            ctx.usage.unmeasured_requests += 1
+
+    agent = Agent(
+        TestModel(call_tools=[]),
+        name='unmeasured_usage',
+        deps_type=type(None),
+        capabilities=[UnmeasuredRequestOperation(), RecordingDurability()],
+    )
+    result = await agent.run('hi')
+    assert result.usage.unmeasured_requests == 1
+
+
 async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
     capability = UsageOperation()
     agent = Agent(TestModel(), name='replayed_usage', capabilities=[capability, ReplayingDurability()])
@@ -1152,6 +1425,27 @@ async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
             usage.details['custom_units'],
         ) == (2, 2, {'summary_tokens': 3, 'custom_units': 7}, Decimal('0.25'), 7)
     assert capability.calls == 1
+
+
+async def test_usage_delta_keeps_every_counter() -> None:
+    """A replayed durable operation's usage reaches the run total with every counter, not only the common ones.
+
+    The operation's usage is recorded as the difference from a snapshot taken before it ran, and a replay
+    applies that delta to the run. So the subtraction has to keep the one-hour cache writes and reasoning
+    tokens, and the counters genai-prices extracts without a declared field, like `web_searches`.
+    """
+    agent = Agent(
+        TestModel(), name='counter_usage', capabilities=[ProviderCounterUsageOperation(), ReplayingDurability()]
+    )
+
+    # The second run replays the operation recorded by the first.
+    results = [await agent.run('test'), await agent.run('test')]
+
+    for result in results:
+        usage = result.usage
+        assert (usage.cache_write_tokens, usage.cache_write_1h_tokens) == (6, 4)
+        assert usage.output_reasoning_tokens == 3
+        assert getattr(usage, 'web_searches', 0) == 2
 
 
 @pytest.mark.skipif(not logfire_installed(), reason='logfire not installed')
@@ -1269,6 +1563,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     [
         'get_toolset',
         'get_wrapper_toolset',
+        'get_wrapper_model',
         'wrap_run',
         'wrap_node_run',
         'wrap_model_request',
@@ -1280,7 +1575,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     ],
 )
 def test_never_durable_hooks_fail_at_bind(hook: str) -> None:
-    if hook in ('get_toolset', 'get_wrapper_toolset'):
+    if hook in ('get_toolset', 'get_wrapper_toolset', 'get_wrapper_model'):
 
         def sync_invalid(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> None:
             return None
@@ -1379,7 +1674,7 @@ def test_unannotated_parameter_is_rejected_at_bind() -> None:
         Agent(TestModel(), name='unannotated', capabilities=[Unannotated(), RecordingDurability()])
 
 
-async def test_decorated_model_request_hook_round_trips_mutation() -> None:
+async def test_decorated_model_request_hook_round_trips_request_only_mutation() -> None:
     agent = Agent(
         TestModel(call_tools=[]),
         name='before_model',
@@ -1390,13 +1685,47 @@ async def test_decorated_model_request_hook_round_trips_mutation() -> None:
 
     requests = [message for message in result.all_messages() if isinstance(message, ModelRequest)]
     assert isinstance(requests[-1].parts[0], UserPromptPart)
-    assert requests[-1].parts[0].content == 'replaced'
+    assert requests[-1].parts[0].content == 'original'
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
     assert any(name == 'before_model__capability__before_model.before_model_request' for name, _ in durability.calls)
+    model_call = next(cache_key for name, cache_key in durability.calls if name == 'before_model__model.request')
+    sent_request = cast(list[ModelMessage], model_call[1])[-1]
+    assert isinstance(sent_request, ModelRequest)
+    assert isinstance(sent_request.parts[0], UserPromptPart)
+    assert sent_request.parts[0].content == 'replaced'
 
 
-async def test_custom_model_request_operation_round_trips_projection() -> None:
+class RecordModelInBeforeModelRequest(AbstractCapability[Any]):
+    id = 'record_model'
+
+    def __init__(self) -> None:
+        self.models: list[Model] = []
+
+    @durable_operation('before_model_request')
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        self.models.append(request_context.model)
+        return request_context
+
+
+async def test_decorated_model_request_hook_sees_the_model_before_capabilities_wrap_it() -> None:
+    """Model wrappers apply after the `before_model_request` hooks, in the durable unit too."""
+    recorder = RecordModelInBeforeModelRequest()
+    batching = BatchModelRequests(**FAST_BATCH_SETTINGS)
+    agent = Agent(
+        TestModel(call_tools=[]), name='record_model', capabilities=[recorder, batching, RecordingDurability()]
+    )
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'success (no tool calls)'
+    assert recorder.models
+    assert not any(isinstance(model, BatchedModel) for model in recorder.models)
+
+
+async def test_custom_model_request_operation_round_trips_request_only_projection() -> None:
     agent = Agent(
         TestModel(call_tools=[]),
         name='custom_model_request',
@@ -1407,12 +1736,19 @@ async def test_custom_model_request_operation_round_trips_projection() -> None:
 
     requests = [message for message in result.all_messages() if isinstance(message, ModelRequest)]
     assert isinstance(requests[-1].parts[0], UserPromptPart)
-    assert requests[-1].parts[0].content == 'custom replacement'
+    assert requests[-1].parts[0].content == 'original'
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
     assert any(
         name == 'custom_model_request__capability__custom_model_request.rewrite_request' for name, _ in durability.calls
     )
+    model_call = next(
+        cache_key for name, cache_key in durability.calls if name == 'custom_model_request__model.request'
+    )
+    sent_request = cast(list[ModelMessage], model_call[1])[-1]
+    assert isinstance(sent_request, ModelRequest)
+    assert isinstance(sent_request.parts[0], UserPromptPart)
+    assert sent_request.parts[0].content == 'custom replacement'
 
 
 async def test_decorated_model_request_hook_round_trips_registered_model_replacement() -> None:
@@ -1971,33 +2307,6 @@ async def test_dbos_capability_usage_delta_is_stable_on_replay(dbos: DBOS) -> No
     assert capability.calls == 1
 
 
-@pytest.fixture(scope='module')
-def prefect_test_server() -> Generator[None, None, None]:
-    """Run the module's Prefect flow tests against an isolated test server.
-
-    The implicit ephemeral server uses the shared default PREFECT_HOME and a short
-    connect timeout that flakes on slow CI runners; the test harness gives an isolated
-    database and a 60s startup budget, mirroring tests/durable_exec/test_prefect.py.
-
-    Ordering constraint: these tests share the 'prefect' xdist group with
-    tests/durable_exec/test_prefect.py, whose harness fixture is session-scoped and
-    autouse, so once entered it stays entered for the rest of the worker. Today this
-    module collects first purely because it sorts alphabetically ahead of test_prefect.py,
-    so this module-scoped harness enters and exits before that one starts. Renaming either
-    module so this one sorts after test_prefect.py would nest two Prefect harnesses.
-    """
-    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
-    from prefect.testing.utilities import prefect_test_harness
-
-    # The task-run recorder is a background writer against the same sqlite file the flows write to.
-    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
-    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
-    # here reads what it records: task run states reach the API through the task engine.
-    with temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}):
-        with prefect_test_harness(server_startup_timeout=60):
-            yield
-
-
 @requires_prefect
 @pytest.mark.xdist_group(name='prefect')
 async def test_prefect_capability_operation_end_to_end(prefect_test_server: None) -> None:
@@ -2055,3 +2364,67 @@ async def test_prefect_capability_operation_cache_identity_includes_context_and_
         ('tenant-b', 'test'),
         ('tenant-b', 'alternative'),
     ]
+
+
+async def test_file_understanding_describes_through_the_engine() -> None:
+    """`FileUnderstanding` asks another model to describe a file, so that call is a durable operation."""
+    seen: list[list[ModelMessage]] = []
+
+    def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    def describe(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('A field guide.')])
+
+    text_only = FunctionModel(capture, profile=ModelProfile(supports_document_input=False))
+    agent = Agent(
+        text_only,
+        name='file_understanding_run',
+        capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe)), RecordingDurability()],
+    )
+
+    result = await agent.run([DocumentUrl('https://example.com/guide.pdf')])
+    # The describing request crossed the durable boundary and still counts toward the run's usage.
+    assert result.usage.requests == 2
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot(
+        ['file_understanding_run__capability__file_understanding.describe']
+    )
+    part = seen[-1][-1].parts[-1]
+    assert isinstance(part, UserPromptPart)
+    [content] = part.content
+    assert isinstance(content, str) and 'A field guide.' in content
+
+
+async def test_file_understanding_reads_a_recorded_description_instead_of_describing_again() -> None:
+    """The description is in the history, so a run that continues it schedules no `describe` operation.
+
+    This is what keeps a recovered or replayed workflow's operations in line with its recorded ones: whether a file
+    is described depends on the history the run is given, not on what other runs in the process did before.
+    """
+
+    def describe(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('A field guide.')])
+
+    def agent() -> Agent[None, str]:
+        text_only = FunctionModel(
+            lambda messages, info: ModelResponse(parts=[TextPart('ok')]),
+            profile=ModelProfile(supports_document_input=False),
+        )
+        return Agent(
+            text_only,
+            name='file_understanding_run',
+            capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe)), RecordingDurability()],
+        )
+
+    first = await agent().run([DocumentUrl('https://example.com/guide.pdf')])
+    # A fresh agent and engine, as a restarted worker would have.
+    continued = agent()
+    await continued.run('And again?', message_history=first.all_messages())
+
+    durability = RecordingDurability.from_agent(continued)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == []

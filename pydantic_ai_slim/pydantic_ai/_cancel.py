@@ -15,10 +15,6 @@ resulting `CancelledError` is translated back into
 - If `Task.cancelling()` is still positive afterwards, an *external* cancellation raced in; it
   wins, and the `CancelledError` keeps propagating as itself.
 
-On Python 3.10, `Task.cancelling()`/`Task.uncancel()` don't exist, so the race cannot be
-disambiguated: a requested first-party cancellation is translated to `RunCancelled` even if an
-external cancellation arrived at the same time (documented degraded behavior).
-
 The controller is runtime-only state: it holds a live task reference and is never serialized.
 """
 
@@ -26,17 +22,28 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-import sys
 import threading
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
+
+from . import _utils
 
 if TYPE_CHECKING:
     from .run import AgentRun
 
-__all__ = ('CancellationToken', 'RunBinding', 'RunCancellation', 'provide_run_binding', 'take_run_binding')
+__all__ = (
+    'CancellationToken',
+    'RunBinding',
+    'RunCancellation',
+    'current_run_clock',
+    'inherited_run_deadline',
+    'provide_run_binding',
+    'provide_run_deadline',
+    'take_run_binding',
+)
 
 
 class CancellationToken:
@@ -102,6 +109,7 @@ class RunCancellation:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._issued: dict[asyncio.Task[object], int] = {}
         self._requested = False
+        self._timed_out = False
         self._finished = False
         self._lock = threading.RLock()
         self._tokens: list[CancellationToken] = []
@@ -111,6 +119,12 @@ class RunCancellation:
         """Whether a first-party cancellation has been requested. Sticky for the life of the run."""
         with self._lock:
             return self._requested
+
+    @property
+    def timed_out(self) -> bool:
+        """Whether the requested cancellation came from the run's deadline expiring (see `expire()`)."""
+        with self._lock:
+            return self._timed_out
 
     @property
     def has_token(self) -> bool:
@@ -131,14 +145,14 @@ class RunCancellation:
         if task is None:
             try:
                 task = asyncio.current_task()
-            except RuntimeError:  # pragma: no cover - no running asyncio loop (e.g. a Trio-backed run)
+            except RuntimeError:  # No running asyncio loop (e.g. a Trio-backed run)
                 return
         if task is None:  # pragma: no cover — agent runs always execute inside a task
             return
         with self._lock:
             self._owner = task
             self._loop = task.get_loop()
-            if sys.version_info >= (3, 11) and task in self._issued:
+            if task in self._issued:
                 # Re-sync our issued count with what's actually pending, in case user code
                 # uncancelled some of it. Because this clamps counts rather than tracking
                 # issuance identity, a user uncancel followed by a matching external cancel can
@@ -156,10 +170,22 @@ class RunCancellation:
 
         Idempotent; a no-op once the run has finished.
         """
+        self._request(timed_out=False)
+
+    def expire(self) -> None:
+        """Request cancellation because the run's deadline passed, so the run ends with `RunTimedOut`.
+
+        A no-op if a cancellation was already requested (the earlier request decides the outcome) or
+        the run has finished.
+        """
+        self._request(timed_out=True)
+
+    def _request(self, *, timed_out: bool) -> None:
         with self._lock:
             if self._finished or self._requested:
                 return
             self._requested = True
+            self._timed_out = timed_out
             owner = self._owner
             loop = self._loop
             if owner is None or loop is None or owner.done():
@@ -224,10 +250,6 @@ class RunCancellation:
         """
         if not self._requested:
             return False
-        if sys.version_info < (3, 11):  # pragma: lax no cover
-            # No `Task.uncancel()`/`Task.cancelling()`: we can't tell whether an external
-            # cancellation raced with ours, so a requested cancellation wins (documented).
-            return True
         try:
             task = asyncio.current_task()
         except RuntimeError:  # pragma: no cover - no running asyncio loop (e.g. a Trio-backed run)
@@ -248,12 +270,11 @@ class RunCancellation:
         task. Releasing them prevents contamination of the tasks' outer cancellation bookkeeping,
         such as `asyncio.timeout()` and AnyIO cancellation scopes.
         """
-        if sys.version_info >= (3, 11):  # pragma: lax no cover
-            for task, count in self._issued.items():
-                if not task.done():
-                    for _ in range(count):
-                        if task.cancelling() > 0:
-                            task.uncancel()
+        for task, count in self._issued.items():
+            if not task.done():
+                for _ in range(count):
+                    if task.cancelling() > 0:
+                        task.uncancel()
         self._issued.clear()
 
 
@@ -291,3 +312,49 @@ def take_run_binding() -> RunBinding | None:
     if binding is not None:
         _current_run_binding.set(None)
     return binding
+
+
+@dataclasses.dataclass
+class _InheritedDeadline:
+    """A run's deadline and clock as runs started inside it inherit them, while that run is active."""
+
+    deadline: datetime
+    clock: Callable[[], datetime] | None
+    active: bool = True
+
+
+_current_run_deadline: ContextVar[_InheritedDeadline | None] = ContextVar('pydantic_ai.run_deadline', default=None)
+"""The deadline of the agent run whose context this is, inherited by agent runs started inside it.
+
+A task spawned inside the run copies this context and can outlive the run, so the run marks it
+inactive on exit: a finished run's deadline no longer applies to agent runs that task starts.
+"""
+
+
+def _active_run_deadline() -> _InheritedDeadline | None:
+    inherited = _current_run_deadline.get()
+    return inherited if inherited is not None and inherited.active else None
+
+
+def current_run_clock() -> Callable[[], datetime]:
+    """The clock that remaining run time is measured against in this context."""
+    inherited = _active_run_deadline()
+    return inherited.clock if inherited is not None and inherited.clock is not None else _utils.now_utc
+
+
+def inherited_run_deadline() -> datetime | None:
+    """The deadline a run started in this context inherits from the active run it was started inside of."""
+    inherited = _active_run_deadline()
+    return inherited.deadline if inherited is not None else None
+
+
+@contextmanager
+def provide_run_deadline(deadline: datetime, clock: Callable[[], datetime] | None = None) -> Generator[None]:
+    """Make `deadline` (and the clock it's measured against, the system clock by default) the one runs started in this context inherit."""
+    inherited = _InheritedDeadline(deadline, clock)
+    token = _current_run_deadline.set(inherited)
+    try:
+        yield
+    finally:
+        inherited.active = False
+        _current_run_deadline.reset(token)

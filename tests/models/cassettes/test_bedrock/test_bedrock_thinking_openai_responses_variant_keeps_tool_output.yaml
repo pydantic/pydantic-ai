@@ -1,0 +1,198 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.openai.gpt-5.6-luna/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 5d7863af-9b28-448e-a39f-836ce9c44e1a
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "502"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: How many positive integers below 10000 have a digit sum of exactly 20?
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: final_result
+              inputSchema:
+                json:
+                  properties:
+                    count:
+                      type: integer
+                  required:
+                  - count
+                  title: DigitCount
+                  type: object
+              description: The final response which ends this conversation
+        additionalModelRequestFields:
+          reasoning:
+            effort: low
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "2562"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 2123
+        output:
+          message:
+            content:
+            - reasoningContent:
+                redactedContent: >-
+                  cnNuX3U0ZkVtdENWRHBSQ2JkYmhQVmZMa1FJRmVJLzFGdU9BT2FKWXZTblhIY0g3bHNBcGJ3cnpTdHgxa2FudWRzUUpJTENJQUY4QUFRQVZZWGR6TFdOeWVYQjBieTF3ZFdKc2FXTXRhMlY1QUVSQmQxcHZSMnRSVTBOalNsTjFhazkyYTNkREszcGlNWE5tZEhGNFYzaElSak42VVRocGVVZEtWeXR3WVVRMVlWY3dabmRXWjJ0VVZDODRVVWxDZDBscmRYYzlQUUFCQUJGaGQzTXRhMjF6TFdocFpYSmhjbU5vZVFBS1ltVnliUzF6ZEc5eVpRQmNqbGFJVkkrKzl4U0s4dVdsbHMxZkdCU3NBcVZuTkEzV3JOd3JkSWl2UlVLdmJVTnluZFN1aE9FVDNtQWdKaTZkMTY3QnlBQXlaZ0hOSUFZWEZ0R2R6ZkVjSElmOUExTnhzdkpMZ09KMThqcTZUWUNPVjdVd21BcS9EVkFDQUFBUUFISkZXa2hvNlpHdXVtejZNdGw4VndxZGcrRjR2cmVuaEdqVDNoT1MrL1RQa2ZGMzZnMFM3TU5wZVJpRkVhck9VUC8vLy84QUFBQUJBQUFBQUFBQUFBQUFBQUFCQUFBQjdoZ2hYOUYyWVZUaEtqRHVUVmpaOExMeHFaTmNCSmFlZDUwRWE4Zmx5eXpjenJ1NDZ1enZGTUEzRW9BcVZPc2pEMG1TMWpLSk1wNWJGbjB5elBFZDF5VUZ3c1Zaa2JrUWRSdnlUOHNnZ2c1S1E3T0NYN2JpbnFwSmg1L3Y4STFyNUhxbFduSFNHaUllVWNZMzJMbzJNdXUwbmdxMk94c3UrY3ArbFJKcWlvQ1VlVzMrTnlndE5hTGw4OWUvdUdMWGJYejAzNEwwODhZcGlmVi8wSE9sSWtDVStYNDloOWNLMXd4TlR0OGg3eWx0Vi9kWWg3amliMzRyY2xhZDhKZS9tdldyeWNKeGd5NzJZakNpVUpJZlNKOEtoeWI0dkVZbkovcnhDd1c4dzhhNU94bnJ4cnJsWU1UZTNzaXJUR2l1Mk1wR1M1T1FOcWE5YmFHZUxrVG9hanE1eFp6Zi83eU81eWEzZW8rbnh1WGZXVnJNQzBiYjU5bzdKbXlQWGREcWs2blJCb3BKWEhMaXBnWWxkV2wzYk9UZFZtckFzRHVUVUlZTDdMTFpYNmVmWnk0OVpsMW1McTZXc3E4V2o3b2R6QVJoT2Rza3Z3UTQ2cTBKczlLZitlZlI0UXpXNmcrY1FtcFppM0lrSmdWcTZsMFE1VDlyM0NLc21TZk9kalRwTGhvSGxmcnRHZmdiTFR5OE44THFOU0dhZmVEVHlZcCtTU3BGc09walNrUFdReERUVnRNdUxneEhxNmlveWtTdUZMZExoYm1GNDkrcWFaUFV0M3M1YnVVTmlkY2ROUXRtaUdZcTBOUGc1MjZUbDhzZ3BHVEZJZHRPdWxkaHduSDhDOWNlU2NMVDFKdkhxRTl1bHlqT2FOdFVOckVsMCttZTFoeXZPellrd1FCbk1HVUNNUUNQRGZaaWxFVXNhTDhtQlFtemVxYmI4R1E5TnlLR2tYUHIvS0pVeUkwYkJ6cTMwRHV4OXE2V0dXSWY4ZUxYdzVVQ01EbEVFVWN1ZC8yN2o2UDBRZVp3bncyYkZ2bTNyWWRTTVRYSDdLeVNqUCtNTjJUc1FpR2tqdmxaVjFmcVNrQnlVUT09
+            - text: |-
+                Represent each number below 10,000 as a four-digit string, allowing leading zeros. We need the number of solutions to
+
+                \[
+                d_1+d_2+d_3+d_4=20,\qquad 0\le d_i\le 9.
+                \]
+
+                Without the upper bounds, there are
+
+                \[
+                \binom{23}{3}
+                \]
+
+                solutions. Subtract cases where one digit is at least 10, and add back cases where two digits are at least 10:
+
+                \[
+                \binom{23}{3}-4\binom{13}{3}+6\binom{3}{3}
+                =1771-1144+6
+                =\boxed{633}.
+                \]
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 61
+          outputTokens: 293
+          serverToolUsage: {}
+          totalTokens: 354
+  recorded_at: 2026-10-22T08:47:15.545205+00:00
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.openai.gpt-5.6-luna/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 7c3b4a33-779d-4938-892a-4d6b49c75e28
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "1135"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: How many positive integers below 10000 have a digit sum of exactly 20?
+        - role: assistant
+          content:
+          - text: |-
+              <think>
+
+              </think>
+          - text: |-
+              Represent each number below 10,000 as a four-digit string, allowing leading zeros. We need the number of solutions to
+
+              \[
+              d_1+d_2+d_3+d_4=20,\qquad 0\le d_i\le 9.
+              \]
+
+              Without the upper bounds, there are
+
+              \[
+              \binom{23}{3}
+              \]
+
+              solutions. Subtract cases where one digit is at least 10, and add back cases where two digits are at least 10:
+
+              \[
+              \binom{23}{3}-4\binom{13}{3}+6\binom{3}{3}
+              =1771-1144+6
+              =\boxed{633}.
+              \]
+        - role: user
+          content:
+          - text: <system>Please include your response in a tool call.</system>
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: final_result
+              inputSchema:
+                json:
+                  properties:
+                    count:
+                      type: integer
+                  required:
+                  - count
+                  title: DigitCount
+                  type: object
+              description: The final response which ends this conversation
+        additionalModelRequestFields:
+          reasoning:
+            effort: low
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "1813"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 634
+        output:
+          message:
+            content:
+            - reasoningContent:
+                redactedContent: >-
+                  cnNuX3U0ZkVtdENWRHBSQ2JkYmhQVmZMa1FJRmVIL25TV3NEajFWcFRua3F2dFJmOEV0aTQ2cmNNa3F3V0dtQXNQWjhldWVRQUY4QUFRQVZZWGR6TFdOeWVYQjBieTF3ZFdKc2FXTXRhMlY1QUVSQmJqQlNiMXBhYTBaTmFIUlpORFV2TUVSeVpXZHpUbWhtZG5sR04zcElSVUpUUlZkS2FISnFaMlJCVlhGVmR6WXlWVlkzVGxkS1pXZExhbFkyWVRkWlJGRTlQUUFCQUJGaGQzTXRhMjF6TFdocFpYSmhjbU5vZVFBS1ltVnliUzF6ZEc5eVpRQmNpWlBiWktxWndSWnh1MlNKcitiSnd3TGNMYVJzSXFDL3RYaWIzNGl2UlVLdmJVTnluZFN1aE9FVDNtRHo5ZndKY0lkZXcvSXlyQWJDUjB2M05ZN1ptR0JWUGdrR2s3TTcvVHZzZkh3OC81ejNubTlGRUVmcG5vdzl0YjhDQUFBUUFOVDkxaFMzMFk4aS9iNzJKMEg0ZXZHbk1Zdmd5d290eXRGallGQ0lpRUxLWnV3azJBT3NGZytaVC9LbjB2YXRWZi8vLy84QUFBQUJBQUFBQUFBQUFBQUFBQUFCQUFBQkNNbHJFRWoxS0dCUGNqaVIyNGY5WDN4NUg4U3k5VlZGNUNXRGdDazhHOXlsemRoUG00NnNaZk0wTVYzTlpxaDJCUW4reG9JWGltM3lPa2JPWEJQQVRBSVZtU2pUSnFtWUhxeE4wbjlQVVU4dWZaZ1FGckw3WFBESUF2enNCRTZidE1LSHdFNkFqZWd5RDZ5aGNIWGdQMXA2VVZLb2d2ZTAxK25wWjZpQ2l2aUE3dHBtdW5adW5YWlZzalFtRmVuRGt6WDdTS3V3b2ZFY1YyeUN1cTlxeGxBeGVDZmxNckVPVGZPQ25UR3l3QUVpTHdBZmc0Nmo2Nlhnc1YyTTNnS0RDNHlhMXN0Z01pQ25SbFlnRzQ1QmFTUytNRTV5NU1Ebm83b2JjYjdyQ2VYQ3NCWkdEYkk0eU01SXFrckY0OXEwb1ZYcGNzZGs5Y2hsZmVpWWZVaFN6d3NWb3dFK1pTZno5V1A0REhYVFQ1QzhwMGJsUWltbXhQb0FaekJsQWpBNmZHeGpFS3Rtc2FFS2c1aTI2emhZS2xieWFaMWtRTkNYT1FBbEY0WEtISG5XUk1vTVNObXlmeEZROGh3N2M3RUNNUUM2V1FwS1N2MkJhbTAxZURGR2I3UHpzYlhzL2hTSEtXdUQwOWc4NHZ2dHpvMy9Yb08wSXI0RHlJRXFwN1g4YU1VPQ==
+            - toolUse:
+                input:
+                  count: 633
+                name: final_result
+                toolUseId: call_990bed62c6fd5e8aab1f0b923bf4cd51
+            role: assistant
+        stopReason: tool_use
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 239
+          outputTokens: 33
+          serverToolUsage: {}
+          totalTokens: 272
+  recorded_at: 2026-10-22T08:47:16.435028+00:00

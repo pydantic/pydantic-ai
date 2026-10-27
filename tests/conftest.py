@@ -2,34 +2,40 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import gc
 import importlib.util
 import logging
 import os
 import re
 import secrets
 import sys
+import warnings
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from functools import cache, cached_property
+from functools import cache
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
 import httpx
 import httpx2
+import pydantic_core
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
+from cassetter import Cassette, RecordMode
+from coverage import Coverage
 from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
-from vcr import VCR, request as vcr_request
-from vcr.record_mode import RecordMode
 
 import pydantic_ai._http
 import pydantic_ai.models
-from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder, ImageGenerator
+from pydantic_ai import Agent, BinaryContent, BinaryImage, DeferredToolRequests, Embedder, ImageGenerator
+from pydantic_ai._cache_health import ConversationCacheMarkStore
+from pydantic_ai.capabilities import instrumentation as instrumentation_capability
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
@@ -39,7 +45,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -48,11 +55,15 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
+from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from . import cassette_hooks, cost_guards
 from ._inline_snapshot import Builder, Custom, customize
 from .cassette_utils import check_cache_prefix_stability
+from .function_model_prefix import RequestRecorder, check_function_model_prefix_stability, patch_models
 
 # `logfire` builds its JSON schema lookup table on first use with a lazy `import pandas`
 # (`logfire/_internal/json_schema.py`), and importing pandas reads timezone data from disk. When
@@ -65,6 +76,14 @@ with suppress(ImportError):
     import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
 
 T = TypeVar('T')
+
+# Like `try_import` for a whole directory: these suites need their workspace member installed, which
+# the `--package` matrix cells for other members do not do.
+collect_ignore = [
+    directory
+    for directory, package in (('harness', 'pydantic_ai_harness'), ('clai2', 'pydantic_clai2'))
+    if importlib.util.find_spec(package) is None
+]
 
 __all__ = (
     'IsDatetime',
@@ -85,18 +104,13 @@ __all__ = (
     'message_part',
 )
 
-# Configure VCR logger to WARNING as it is too verbose by default
-# specifically, it logs every request and response including binary
-# content in Cassette.append, which is causing log downloads from
-# GitHub action to fail.
-logging.getLogger('vcr.cassette').setLevel(logging.WARNING)
-
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    config.pluginmanager.register(cost_guards, cost_guards.PLUGIN_NAME)
     config.addinivalue_line(
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
@@ -107,10 +121,23 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    """Save an `xdist` worker's coverage before the controller starts tearing the workers down.
+
+    Coverage saves at interpreter exit, but the worker first runs pytest's unconfigure cleanup, whose
+    repeated full `gc.collect()` takes seconds on a large heap. `pytest-xdist` kills a worker still
+    alive 10 seconds after it reports finishing, so a slow cleanup lost the worker's whole coverage
+    data. This hook runs before the worker reports finishing; the exit-time save still adds whatever
+    runs after it.
+    """
+    if hasattr(session.config, 'workerinput') and (coverage := Coverage.current()) is not None:
+        coverage.save()
+
+
 if TYPE_CHECKING:
     from blockbuster import BlockBuster
     from pluggy import Result
-    from vcr.cassette import Cassette
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
@@ -350,6 +377,27 @@ class TestEnv:
 
 
 @pytest.fixture
+def transport_limits(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Limits | httpx2.Limits]:
+    """Record the `limits` every HTTPX transport (either family, sync or async) is constructed with.
+
+    HTTPX keeps the limits on its transport without a public accessor, so tests of connection pool
+    defaults record what each transport is handed instead.
+    """
+    recorded: list[httpx.Limits | httpx2.Limits] = []
+
+    for transport_class in (httpx2.HTTPTransport, httpx2.AsyncHTTPTransport, httpx.AsyncHTTPTransport):
+        original_init = transport_class.__init__
+
+        def recording_init(self: Any, *args: Any, _original_init: Any = original_init, **kwargs: Any) -> None:
+            recorded.append(kwargs['limits'])
+            _original_init(self, *args, **kwargs)
+
+        monkeypatch.setattr(transport_class, '__init__', recording_init)
+
+    return recorded
+
+
+@pytest.fixture
 def env() -> Iterator[TestEnv]:
     test_env = TestEnv()
 
@@ -369,10 +417,6 @@ def anyio_backend(pytestconfig: pytest.Config) -> str:
 # Each entry should say why the blocking call is acceptable; anything not listed here should be
 # fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
 BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
-    # coverage reads Python source files while collecting coverage data. Remove these once
-    # https://github.com/cbornet/blockbuster/pull/69 is released in a compatible version.
-    ('os.stat', 'coverage/python.py', 'get_python_source'),
-    ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source'),
     # pytest-examples locates the source line of a captured `print()` with `Path.samefile`, so an
     # example printing from inside a running event loop trips the detector on the harness's own
     # `os.stat`. Exempting the capture entry point keeps `os.stat` calls from example and library
@@ -407,6 +451,12 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.stat', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
     ('io.TextIOWrapper.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
     ('io.BufferedReader.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
+    # Decoding the first stream from an Anthropic Bedrock client loads botocore's `bedrock-runtime` service model
+    # from disk, once per process (`lru_cache`).
+    ('os.stat', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
+    ('os.listdir', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
+    ('io.TextIOWrapper.read', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
+    ('io.BufferedReader.read', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
     # pydantic extracts field docstrings from source (`inspect`/`linecache`) the first time a
     # tool schema is built, which can happen during an agent run.
     ('os.stat', 'pydantic_ai/_function_schema.py', 'function_schema'),
@@ -416,6 +466,12 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.getcwd', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
     ('io.TextIOWrapper.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
     ('io.BufferedReader.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    # A local workspace built with a relative `working_dir` resolves it against the current directory
+    # once, at construction, which may happen in async code.
+    ('os.getcwd', 'pydantic_ai/workspaces/local.py', '__init__'),
+    # Prefect's `Task` reads its function's source for display when core builds a task, which the
+    # durable workspace tests do while constructing an agent inside a running test.
+    ('os.stat', 'prefect/tasks.py', '__init__'),
     # logfire resolves the current working directory while classifying user stack frames.
     ('os.getcwd', 'logfire/_internal/stack_info.py', 'is_user_code'),
     # `Dataset.to_file`/`from_file` and schema saving are sync serialization APIs; file I/O is
@@ -436,8 +492,10 @@ def _configure_blockbuster(
     # must remain unaffected by that instrumentation.
     from blockbuster import BlockBuster
 
+    # The harness isn't installed in every CI lane (the `pydantic-evals` one, say).
+    harness = ['pydantic_ai_harness'] if importlib.util.find_spec('pydantic_ai_harness') is not None else []
     bb = BlockBuster(
-        ['pydantic_ai', 'pydantic_graph', 'pydantic_evals', 'clai'],
+        ['pydantic_ai', *harness, 'pydantic_graph', 'pydantic_evals', 'clai'],
         excluded_modules=excluded_modules or None,
     )
     for func, filename, functions in exemptions:
@@ -489,6 +547,33 @@ def blockbuster(
     bb = _configured_blockbuster(blockbuster_excluded_modules)
     with _activated_blockbuster(bb):
         yield bb
+
+
+def detach_dbos_logging() -> None:
+    """Detach the OTel `LoggingHandler` and `DBOSLogTransformer` filter `DBOS.destroy()` leaves behind.
+
+    DBOS attaches them to the root logger and every registered logger (the filter always, the handler
+    with `enable_otlp=True`) and does not detach them on destroy. Their emit path imports
+    `dbos._context`, which imports `http.server`: fatal inside the Temporal workflow sandbox when a
+    later test in the same process runs a Temporal workflow.
+    TODO(dsfaccini): Drop once DBOS cleans up its handlers on destroy.
+    https://github.com/dbos-inc/dbos-transact-py/issues/871
+    """
+    from dbos import _logger as dbos_logger_module
+    from opentelemetry.sdk._logs import LoggingHandler
+
+    handler_types: tuple[type[logging.Handler], ...] = (LoggingHandler,)
+    # DBOS 2.31+ builds this one instead of the deprecated SDK handler.
+    with suppress(ImportError):
+        from opentelemetry.instrumentation.logging.handler import LoggingHandler as InstrumentationLoggingHandler
+
+        handler_types += (InstrumentationLoggingHandler,)
+
+    for logger in [logging.root, *(logging.getLogger(name) for name in logging.root.manager.loggerDict)]:
+        for handler in [h for h in logger.handlers if isinstance(h, handler_types)]:
+            logger.removeHandler(handler)
+        for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
+            logger.removeFilter(log_filter)
 
 
 @pytest.fixture
@@ -613,11 +698,34 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
         asyncio.set_event_loop(original_loop)
 
 
+@pytest.fixture
+def young_gc() -> Iterator[None]:
+    """Limit the test's `gc.collect()` calls to the objects it creates.
+
+    A full collection walks every object the worker has accumulated, which takes seconds per call
+    late in a CI run. Freezing everything that exists before the test keeps it out of the collector's
+    reach until teardown, so collections stay cheap, and garbage leaked by an earlier test can't be
+    finalized (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
+    """
+    gc.freeze()
+    try:
+        yield
+    finally:
+        gc.unfreeze()
+
+
 @pytest.fixture(autouse=True)
 def no_instrumentation_by_default():
     Agent.instrument_all(False)
     Embedder.instrument_all(False)
     ImageGenerator.instrument_all(False)
+
+
+@pytest.fixture(autouse=True)
+def fresh_cache_mark_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prompt-cache marks are kept process-wide per conversation; tests that reuse a fixed conversation
+    id (or pin the clock) must not see each other's."""
+    monkeypatch.setattr(instrumentation_capability, '_conversation_cache_marks', ConversationCacheMarkStore())
 
 
 try:
@@ -655,69 +763,38 @@ except ImportError:
     pass
 
 
+@pytest.fixture(scope='session')
+def prefect_test_server() -> Iterator[None]:
+    """A Prefect test server with an isolated database, shared by every Prefect test in the worker.
+
+    Starting one takes 15-25s on a CI runner, so tests that run Prefect flows request this fixture
+    and share the `prefect` xdist group, starting a single server per job instead of one per module
+    or test. The implicit ephemeral server would instead use the shared default `PREFECT_HOME` and a
+    short connect timeout that flakes on slow runners.
+    """
+    pytest.importorskip('prefect')
+    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
+    from prefect.testing.utilities import prefect_test_harness
+
+    # The task-run recorder is a background writer against the same sqlite file the flows write to.
+    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
+    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
+    # here reads what it records: task run states reach the API through the task engine.
+    with (
+        temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}),
+        prefect_test_harness(server_startup_timeout=120),
+    ):
+        yield
+    # Prefect's test server leaves client sockets for GC on Python 3.14; collect them here, where the
+    # warning is expected, rather than in whichever test the collector happens to run in.
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message='unclosed.*socket', category=ResourceWarning)
+        gc.collect()
+
+
 def raise_if_exception(e: Any) -> None:
     if isinstance(e, Exception):
         raise e
-
-
-_AWS_ACCOUNT_ID_IN_ARN = re.compile(r'(arn(?:%3A|:)aws(?:%3A|:)bedrock(?:%3A|:)[^:%]*(?:%3A|:))\d{12}((?:%3A|:))')
-_SCRUBBED_AWS_ACCOUNT_ID = r'\g<1>123456789012\2'
-
-
-def pytest_recording_configure(config: Any, vcr: VCR):
-    from . import json_body_serializer
-
-    vcr.register_serializer('yaml', json_body_serializer)
-
-    def method_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
-        if r1.method.upper() != r2.method.upper():
-            raise AssertionError(f'{r1.method} != {r2.method}')
-
-    def path_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
-        """Match URL paths after scrubbing AWS account IDs from ARNs."""
-        path1 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r1.path)
-        path2 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r2.path)
-        # Normalize Vertex AI paths by replacing region and project (cassettes may be recorded
-        # against a different GCP project than the fixture default)
-        path1 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path1)
-        path2 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path2)
-        path1 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path1)
-        path2 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path2)
-        if path1 != path2:
-            raise AssertionError(f'{path1} != {path2}')
-
-    vcr.register_matcher('method', method_matcher)
-    vcr.register_matcher('path', path_matcher)
-
-    def scrub_request(request: vcr_request.Request) -> vcr_request.Request | None:
-        if (request.host, request.path) in {
-            ('oauth2.googleapis.com', '/token'),
-            ('auth.openai.com', '/oauth/token'),
-        }:
-            return None
-        request.uri = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, request.uri)
-        return request
-
-    vcr.before_record_request = scrub_request
-
-    # Normalize Bedrock hostnames to ignore region differences
-    # e.g., bedrock-runtime.us-east-1.amazonaws.com == bedrock-runtime.us-east-2.amazonaws.com
-    bedrock_host_pattern = re.compile(r'bedrock-runtime\.([a-z0-9-]+)\.amazonaws\.com')
-
-    def host_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
-        host1 = r1.host  # pyright: ignore[reportUnknownVariableType]
-        host2 = r2.host  # pyright: ignore[reportUnknownVariableType]
-        # Normalize Bedrock hosts by removing region
-        host1_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host1)
-        host2_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host2)
-        # Normalize Vertex AI hosts by removing region prefix
-        vertex_host_pattern = re.compile(r'^[a-z0-9-]+-aiplatform\.googleapis\.com$')
-        host1_normalized = vertex_host_pattern.sub('aiplatform.googleapis.com', host1_normalized)
-        host2_normalized = vertex_host_pattern.sub('aiplatform.googleapis.com', host2_normalized)
-        if host1_normalized != host2_normalized:
-            raise AssertionError(f'{host1} != {host2}')
-
-    vcr.register_matcher('host', host_matcher)
 
 
 def pytest_addoption(parser: Any) -> None:
@@ -756,30 +833,14 @@ def pytest_runtest_makereport(
     setattr(item, f'rep_{report.when}', report)
 
 
-@pytest.fixture(autouse=True)
-def mock_vcr_aiohttp_content(mocker: MockerFixture):
-    try:
-        from vcr.stubs import aiohttp_stubs
-    except ImportError:  # pragma: lax no cover
-        return
-
-    # google-genai calls `self.response_stream.content.readline()` where `self.response_stream` is a `MockClientResponse`,
-    # which creates a new `MockStream` each time instead of returning the same one, resulting in the readline cursor not being respected.
-    # So we turn `content` into a cached property to return the same one each time.
-    # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. Once that's is resolved, we can remove this patch.
-    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # pyright: ignore[reportArgumentType, reportUnknownVariableType]
-    cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
-    mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
-    mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
-
-
 @pytest.fixture(scope='module')
-def vcr_config():
+def vcr_config() -> dict[str, Any]:
+    """Module `conftest.py` overrides should extend this (`{**vcr_config, ...}`) so the hooks stay on."""
     return {
         'ignore_localhost': True,
-        # Note: additional header filtering is done inside the serializer
-        'filter_headers': ['authorization', 'x-api-key', 'cookie'],
-        'decode_compressed_response': True,
+        'before_record_request': cassette_hooks.before_record_request,
+        'before_record_response': cassette_hooks.before_record_response,
+        'uri_normalizer': cassette_hooks.normalize_uri,
     }
 
 
@@ -787,12 +848,15 @@ def check_vcr_cassette_usage(vcr: Cassette, strict_usage: bool) -> None:
     if vcr.play_count == 0 and not strict_usage:
         return
 
-    unused_indexes = [index for index in range(len(vcr)) if vcr.play_counts.get(index, 0) == 0]
-    if unused_indexes:
-        pytest.fail(
-            f'Cassette {getattr(vcr, "_path", "<unknown>")} did not play all interactions: '
-            f'played {vcr.play_count}/{len(vcr)}; unused indexes: {unused_indexes}'
-        )
+    # Each protocol numbers its interactions from 0, and `play_counts` only covers HTTP.
+    unused = {
+        'HTTP': [index for index in range(len(vcr.interactions)) if vcr.play_counts.get(index, 0) == 0],
+        'gRPC': [index for index, played in enumerate(vcr.grpc_played_indices) if not played],
+        'WebSocket': [index for index, played in enumerate(vcr.ws_played_indices) if not played],
+    }
+    if any(unused.values()):
+        details = '; '.join(f'unused {protocol} indexes: {indexes}' for protocol, indexes in unused.items() if indexes)
+        pytest.fail(f'Cassette {vcr.path} did not play all interactions: {details}')
 
 
 @pytest.fixture(autouse=True)
@@ -823,15 +887,39 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
         return
     if vcr is None or vcr.record_mode != RecordMode.NONE:
         return
+    # Playback never records, so the interactions cassetter loaded are exactly the file's contents.
+    check_cache_prefix_stability(request.node, vcr)
 
-    cassette_path_value = getattr(vcr, '_path', None)
-    if cassette_path_value is None or not (cassette_path := Path(cassette_path_value)).is_file():
+
+@pytest.fixture(autouse=True)
+def fail_function_model_prefix_violations(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    """Check the prompt-cache prefix of `FunctionModel` and `TestModel` conversations, which no cassette records."""
+    if request.node.get_closest_marker('benchmark') is not None:
+        # Recording copies every request inside the code a benchmark measures.
+        yield
         return
-    check_cache_prefix_stability(request.node, cassette_path)
+    recorder = RequestRecorder()
+    patch_models(monkeypatch, recorder)
+    yield
+    setup_report = getattr(request.node, 'rep_setup', None)
+    call_report = getattr(request.node, 'rep_call', None)
+    if any(
+        getattr(report, 'skipped', False) or getattr(report, 'failed', False) for report in (setup_report, call_report)
+    ):
+        return
+    check_function_model_prefix_stability(request.node, recorder.requests)
 
 
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
+
+
+def decode_request_body(content: bytes, headers: httpx2.Headers) -> bytes:
+    """Decode a wire request using HTTPX's content-encoding support."""
+    return httpx2.Response(200, content=content, headers=headers).content
+
 
 # What `httpx2.AsyncClient()` uses when no timeout is passed.
 _HTTPX_DEFAULT_TIMEOUT = 5.0
@@ -881,8 +969,8 @@ class RequestCapture:
     def bodies(self, path_suffix: str = '') -> list[dict[str, JsonValue]]:
         """Every captured body whose URL path ends with `path_suffix`, parsed on demand."""
         return [
-            _REQUEST_BODY_ADAPTER.validate_json(raw)
-            for path, raw in zip(self.paths, self.raw_bodies)
+            _REQUEST_BODY_ADAPTER.validate_json(decode_request_body(raw, headers))
+            for path, raw, headers in zip(self.paths, self.raw_bodies, self.headers)
             if path.endswith(path_suffix)
         ]
 
@@ -903,15 +991,14 @@ async def request_capture(anyio_backend: str) -> AsyncIterator[RequestCapture]:
 
 
 _HttpClient: TypeAlias = 'httpx.AsyncClient | httpx2.AsyncClient'
-_HttpClientCache: TypeAlias = 'dict[tuple[str, int, int], _HttpClient]'
+_HttpClientCache: TypeAlias = 'dict[tuple[str, str], _HttpClient]'
 
 
 @pytest.fixture(autouse=True)
 def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClientCache]:
     """Monkeypatch the HTTP client factories in all loaded modules and track created clients.
 
-    Within a single test, calls with the same (timeout, connect) args reuse the same
-    client. On teardown, all clients are closed — no process-global state leaks.
+    Within a single test, calls with the same arguments reuse the same client. On teardown, all clients are closed — no process-global state leaks.
 
     This is a sync fixture so it applies to both sync and async tests. For async tests, the
     companion `close_httpx_clients` fixture handles async cleanup first.
@@ -924,7 +1011,8 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
         family: str, factory: Callable[..., _HttpClient], expected: type[_HttpClient]
     ) -> Callable[..., _HttpClient]:
         def cached_per_test(**kwargs: Any) -> _HttpClient:
-            key = (family, kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
+            # `repr`, because `Timeout` and `Limits` arguments compare by value but aren't hashable.
+            key = (family, repr(sorted(kwargs.items())))
             if key not in cache or cache[key].is_closed:
                 cache[key] = factory(**kwargs)
             client = cache[key]
@@ -1093,6 +1181,11 @@ def openai_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def moonshotai_api_key() -> str:
+    return os.getenv('MOONSHOTAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def azure_api_key() -> str:
     return os.getenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
 
@@ -1198,6 +1291,11 @@ def xai_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def elevenlabs_api_key() -> str:
+    return os.getenv('ELEVENLABS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def tavily_api_key() -> str:
     return os.getenv('TAVILY_API_KEY', 'mock-api-key')
 
@@ -1210,6 +1308,16 @@ def zai_api_key() -> str:
 @pytest.fixture(scope='session')
 def crusoe_api_key() -> str:
     return os.getenv('CRUSOE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def fireworks_api_key() -> str:
+    return os.getenv('FIREWORKS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def meta_api_key() -> str:
+    return os.getenv('META_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')
@@ -1249,7 +1357,7 @@ async def xai_provider(request: pytest.FixtureRequest) -> AsyncIterator[XaiProvi
     cassette_path = Path(request.node.fspath).parent / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
     record_mode: str | None
     try:
-        # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).
+        # Provided by cassetter's pytest plugin as `--record-mode=...`.
         record_mode = cast(Any, request.config).getoption('record_mode')
     except Exception:  # pragma: no cover
         record_mode = None
@@ -1271,6 +1379,7 @@ async def xai_provider(request: pytest.FixtureRequest) -> AsyncIterator[XaiProvi
 def bedrock_provider():
     try:
         import boto3
+        from botocore.config import Config
 
         from pydantic_ai.providers.bedrock import BedrockProvider
 
@@ -1283,10 +1392,14 @@ def bedrock_provider():
             yield provider
             provider.client.close()
         else:  # pragma: lax no cover
+            # `BedrockProvider`'s default read timeout; botocore's 60s cuts off a Nova code-interpreter
+            # sandbox timeout, which takes longer to come back.
+            config = Config(read_timeout=300)
             if os.getenv('AWS_PROFILE'):
                 bedrock_client = boto3.client(
                     'bedrock-runtime',
                     region_name=os.getenv('AWS_REGION', 'us-east-1'),
+                    config=config,
                 )
             else:
                 bedrock_client = boto3.client(
@@ -1297,6 +1410,7 @@ def bedrock_provider():
                         'AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'
                     ),
                     aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
+                    config=config,
                 )
             yield BedrockProvider(bedrock_client=bedrock_client)
             bedrock_client.close()
@@ -1330,9 +1444,9 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
 
 @pytest.fixture()
-async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
-    # NOTE: You need to comment out this line to rewrite the cassettes locally.
-    if not os.getenv('CI', False):
+def vertex_provider(request: pytest.FixtureRequest, vertex_provider_auth: None):  # pragma: lax no cover
+    record_mode = cast(Any, request.config).getoption('record_mode')
+    if not os.getenv('CI', False) and record_mode not in {'all', 'new_episodes', 'rewrite'}:
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
@@ -1372,7 +1486,7 @@ def model(
             from pydantic_ai.models.anthropic import AnthropicModel
             from pydantic_ai.providers.anthropic import AnthropicProvider
 
-            return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+            return AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
         elif request.param == 'mistral':
             from pydantic_ai.models.mistral import MistralModel
             from pydantic_ai.providers.mistral import MistralProvider
@@ -1435,7 +1549,37 @@ def disable_ssrf_protection_for_vcr():
         yield
 
 
-_RequestPartT = TypeVar('_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart)
+def legacy_retry_prompt_part(
+    content: list[pydantic_core.ErrorDetails] | str,
+    *,
+    tool_name: str | None = None,
+    tool_call_id: str | None = None,
+    timestamp: datetime | None = None,
+) -> RetryPromptPart:  # pyright: ignore[reportDeprecated]
+    """Build the deprecated `RetryPromptPart` for a test that exercises how a legacy part is handled.
+
+    `filterwarnings = ["error"]` turns the deprecation into a failure, and every one of these tests
+    wants the part, not the warning — `test_retry_feedback.py` owns proving that it fires.
+    """
+    # TODO(v3): remove `legacy_retry_prompt_part` along with `RetryPromptPart`
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+        part = RetryPromptPart(content=content, tool_name=tool_name)  # pyright: ignore[reportDeprecated]
+    if tool_call_id is not None:
+        part.tool_call_id = tool_call_id
+    if timestamp is not None:
+        part.timestamp = timestamp
+    return part
+
+
+_RequestPartT = TypeVar(
+    '_RequestPartT',
+    bound=SystemPromptPart
+    | UserPromptPart
+    | ToolReturnPart
+    | RetryPromptPart  # pyright: ignore[reportDeprecated]
+    | RetryFeedbackPart,
+)
 _ResponsePartT = TypeVar(
     '_ResponsePartT',
     bound=TextPart | ToolCallPart | NativeToolCallPart | NativeToolReturnPart | ThinkingPart | FilePart,
@@ -1486,6 +1630,56 @@ def message_part(
     part = msg.parts[part_index]
     assert isinstance(part, part_type)
     return part
+
+
+def conversation_view(messages: Sequence[ModelMessage]) -> list[str]:
+    """One line per prompt, text, tool call and tool return part in `messages`, as the model is shown them."""
+    view: list[str] = []
+    for msg in messages:
+        for part in msg.parts:
+            if isinstance(part, ToolCallPart):
+                view.append(f'call {part.tool_call_id}')
+            elif isinstance(part, ToolReturnPart):
+                view.append(f'return {part.tool_call_id}: {part.content}')
+            elif isinstance(part, (UserPromptPart, SystemPromptPart, TextPart)):  # pragma: no branch
+                view.append(f'{part.part_kind}: {part.content}')
+    return view
+
+
+def server_history_agent(
+    toolsets: Sequence[AbstractToolset[None]] = (),
+) -> tuple[Agent[None, str | DeferredToolRequests], list[list[ModelMessage]], list[str]]:
+    """An agent for the UI adapters' server-held history tests, with the model requests and tool runs it records.
+
+    It calls `get_location` for "where am I?" and the approval-gated `delete_file` for "delete a.txt", and answers
+    `ok` otherwise. Pass the frontend `get_location` tool as `toolsets` for a protocol that doesn't send it.
+    """
+    requests: list[list[ModelMessage]] = []
+    deleted: list[str] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        requests.append(messages)
+        last = messages[-1].parts[-1]
+        if isinstance(last, UserPromptPart) and last.content == 'where am I?':
+            yield {0: DeltaToolCall(name='get_location', json_args='{}', tool_call_id='loc-1')}
+        elif isinstance(last, UserPromptPart) and last.content == 'delete a.txt':
+            yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "a.txt"}', tool_call_id='del-1')}
+        else:
+            yield 'ok'
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(stream_function=stream_function),
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        toolsets=toolsets,
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        deleted.append(path)
+        return f'Deleted {path}'
+
+    return agent, requests, deleted
 
 
 # endregion

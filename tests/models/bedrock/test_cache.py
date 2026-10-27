@@ -8,7 +8,7 @@ interaction between `bedrock_cache_tool_definitions` and `toolChoice` shapes.
 from __future__ import annotations as _annotations
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent, ModelRequest, RunContext, ToolReturnPart
 from pydantic_ai.settings import ModelSettings
@@ -22,7 +22,6 @@ with try_import() as imports_successful:
 
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
 ]
@@ -35,6 +34,7 @@ pytestmark = [
         pytest.param('us.amazon.nova-lite-v1:0', False, id='nova'),
     ],
 )
+@pytest.mark.moves_cache_prefix(reason='the second run restarts the same prompt, dropping the first run tool turn')
 async def test_bedrock_single_tool_choice_preserves_cache(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,

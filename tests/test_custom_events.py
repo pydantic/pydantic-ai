@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     CustomEvent,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     TextPart,
     ToolReturnPart,
@@ -32,17 +33,21 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.run import AgentRunResultEvent
 
 from ._inline_snapshot import snapshot
+from .conftest import iter_message_parts
 
-pytestmark = pytest.mark.anyio
 
+def _tool_has_answered(messages: list[ModelMessage]) -> bool:
+    """Whether the tool call has already come back with something other than a retry.
 
-def _has_tool_return(messages: list[ModelMessage]) -> bool:
-    return any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+    A retry is that call's own `ToolReturnPart` carrying `outcome='retried'`, so a plain
+    `isinstance` check reads one as an answer and stops the model calling the tool again.
+    """
+    return any(part.outcome != 'retried' for part in iter_message_parts(messages, ModelRequest, ToolReturnPart))
 
 
 async def _tool_then_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
-    """Stream a `progress` tool call on the first request, then final text."""
-    if not _has_tool_return(messages):
+    """Stream a `progress` tool call while the call is unanswered, then final text."""
+    if not _tool_has_answered(messages):
         yield {0: DeltaToolCall(name='progress', json_args='{}', tool_call_id='call_1')}
     else:
         yield 'done'
@@ -360,7 +365,7 @@ def test_duplicate_event_name_rejected():
     with pytest.raises(UserError, match="Duplicate custom event name 'upload_progress'"):
 
         @dataclass(kw_only=True)
-        class _ConflictingEvent(CustomEvent, name='upload_progress'):  # pyright: ignore[reportUnusedClass]
+        class _ConflictingEvent(CustomEvent, name='upload_progress'):
             pass
 
 
@@ -375,7 +380,7 @@ def test_reserved_name_rejected():
     with pytest.raises(UserError, match="Custom event name '__unknown__' is reserved"):
 
         @dataclass(kw_only=True)
-        class ReservedEvent(CustomEvent, name='__unknown__'):  # pyright: ignore[reportUnusedClass]
+        class ReservedEvent(CustomEvent, name='__unknown__'):
             pass
 
 
@@ -384,7 +389,7 @@ def test_envelope_field_shadowing_rejected():
     with pytest.raises(UserError, match='reserved for the event envelope: data'):
 
         @dataclass(kw_only=True)
-        class ShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
+        class ShadowingEvent(CustomEvent):
             data: Any = None
 
 
@@ -436,13 +441,13 @@ def test_ui_attribute_shadowing_rejected():
     with pytest.raises(UserError, match='declares a `ui` attribute'):
 
         @dataclass(kw_only=True)
-        class UiShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
+        class UiShadowingEvent(CustomEvent):
             ui: str = ''  # pyright: ignore[reportIncompatibleVariableOverride]
 
     with pytest.raises(UserError, match='declares a `ui` attribute'):
 
         @dataclass(kw_only=True)
-        class UiClassVarShadowingEvent(CustomEvent):  # pyright: ignore[reportUnusedClass]
+        class UiClassVarShadowingEvent(CustomEvent):
             ui: ClassVar[bool] = False
 
 
@@ -495,7 +500,7 @@ def test_undecorated_base_with_fields_rejected():
     with pytest.raises(UserError, match='declares fields but is not a dataclass'):
 
         @dataclass(kw_only=True)
-        class LeafEvent(UndecoratedBase):  # pyright: ignore[reportUnusedClass]
+        class LeafEvent(UndecoratedBase):
             done: int = 0
 
 
