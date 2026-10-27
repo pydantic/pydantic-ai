@@ -14,6 +14,7 @@ from pydantic_ai import FunctionToolset, Tool, ToolKind
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.framing import neutralize_tags
 from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
     ToolCallPart,
@@ -26,6 +27,7 @@ from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
+from pydantic_ai_harness import _framing_tags  # noqa: F401  # pyright: ignore[reportUnusedImport]  # registers every harness tag
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
 from pydantic_ai_harness.filesystem import READ_FILE_KIND
@@ -190,7 +192,11 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     """Strip ANSI escape sequences from text returns before measuring and reducing."""
 
     summary_prompt: str = _DEFAULT_SUMMARY_PROMPT
-    """Prompt template for `Summarize`. Must contain `{tool_name}` and `{output}`."""
+    """Prompt template for `Summarize`. Must contain `{tool_name}` and `{output}`.
+
+    `{output}` is the tool output with the `<` of every framing tag escaped as `&lt;`, Pydantic AI's own and
+    every registered one (`<output>`, which frames it in the default template, among them).
+    """
 
     serializer: Serializer | None = None
     """Render a structured (non-string, non-binary) return to the text that is measured,
@@ -595,7 +601,8 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
         action = self._resolve_summarize(action_path)
         model = self._summary_model(ctx, action)
-        prompt = self.summary_prompt.format(tool_name=tool_name, output=text)
+        # The output is untrusted data inside the template's frame, so no framing tag in it can close that frame.
+        prompt = self.summary_prompt.format(tool_name=tool_name, output=neutralize_tags(text))
         agent: Agent[None, str] = Agent(
             model, name='tool_output_limits', instructions='You summarize oversized tool output.'
         )

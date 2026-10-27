@@ -354,7 +354,7 @@ the pending parent request, and is filed under the parent run's `conversation_id
 By default `Summarize` inherits the running agent's model (`ctx.model`). Pass a model id or
 instance to `Summarize(model=...)` to override, or a `summarize` callable to bypass the
 built-in prompt entirely. The `summary_prompt` template on the capability must contain both
-`{tool_name}` and `{output}` placeholders.
+`{tool_name}` and `{output}` placeholders. The output fills `{output}` with the `<` of every framing tag escaped as `&lt;`, so it can't close the `<output>` element the default template puts it in.
 
 With a durable-execution capability attached, spill writes and built-in model summarization are
 journaled capability operations: a replay reuses the recorded handle, fallback, or summary instead

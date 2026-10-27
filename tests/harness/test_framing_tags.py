@@ -46,10 +46,9 @@ _HAND_BUILT_ALLOWLIST = {
     # Prose naming a tag for the model, unquoted. It builds none.
     ('compaction/_summarizing_compaction.py', 'provided below in <previous_summary>.'),
     ('compaction/_summarizing_compaction.py', 'A <harness_data> element is content'),
-    # Default prompt templates users copy and edit, so their frames are written out. The summarizer's
-    # `{messages}` arrive escaped by `format_transcript`.
+    # Default prompt templates users copy and edit, so their frames are written out. The values that fill
+    # them arrive escaped: `{messages}` by `format_transcript`, `{output}` by `neutralize_tags`.
     ('compaction/_summarizing_compaction.py', '<messages>\n{messages}\n</messages>'),
-    # TODO: `{output}` isn't escaped, so a tool output can close this frame; tracked as a follow-up.
     ('tool_output_limits/_capability.py', '<output>\n{output}\n</output>'),
     # browser-use's own placeholder for a secret the model types, not a frame.
     ('browser_use/_toolset.py', '<secret>\x00</secret>'),
