@@ -714,7 +714,7 @@ class WebService:
             items=history_items(saved.messages),
             openable=continuable and not busy,
             missing=self.catalog.follows_workspace and not continuable,
-            busy=saved.summary.owner_pid if busy else None,
+            owner_pid=saved.summary.owner_pid if busy else None,
         )
 
     def _continuable(self, workspace: str) -> bool:

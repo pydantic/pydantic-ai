@@ -902,7 +902,7 @@ def test_a_session_another_process_runs_shows_read_only_until_forked(make_web: '
         )
     )
     transcript = web_.get(f'/api/sessions/{busy.id}').json()
-    assert (transcript['openable'], transcript['missing'], transcript['busy']) == (False, False, os.getppid())
+    assert (transcript['openable'], transcript['missing'], transcript['owner_pid']) == (False, False, os.getppid())
     assert [entry.id for entry in web_.portal.call(store.listing)] == [busy.id]
     # A fork the user made from the row menu is theirs; continuing the busy session does not take it over.
     mine = web_.portal.call(web_.shell.sessions.fork, busy.id).id
@@ -916,7 +916,7 @@ def test_a_session_another_process_runs_shows_read_only_until_forked(make_web: '
         copy = receive_until(socket, Snapshot)[1].session
         assert copy.id not in (busy.id, mine)
         assert copy.title == 'Busy (fork)'
-        assert web_.get(f'/api/sessions/{copy.id}').json()['busy'] is None
+        assert web_.get(f'/api/sessions/{copy.id}').json()['owner_pid'] is None
         web_.post('/api/input', {'text': '/new'})
         receive_until(socket, Snapshot)
         assert web_.post(f'/api/sessions/{busy.id}/open').status_code == 200
@@ -2033,7 +2033,7 @@ def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path
         'items': [],
         'openable': False,
         'missing': False,
-        'busy': None,
+        'owner_pid': None,
     }
     with pytest.raises(ValueError, match='Select it in /resume to confirm'):
         web_.portal.call(shell.sessions.resume, elsewhere)

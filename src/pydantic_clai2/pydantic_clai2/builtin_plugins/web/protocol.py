@@ -896,7 +896,7 @@ class Transcript:
     and no other CLAI runs it."""
     missing: bool = False
     """Whether CLAI would follow it, but its directory is gone, as with a deleted worktree."""
-    busy: int | None = None
+    owner_pid: int | None = None
     """The process ID of another CLAI running it now, when it could otherwise be opened; opening it continues in a fork."""
 
 

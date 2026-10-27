@@ -682,13 +682,13 @@ export function App() {
             {preview && (
               <div className="preview-banner">
                 <span>
-                  {preview.busy !== null
-                    ? `Running in another CLAI (pid ${preview.busy}). You can read it here.`
+                  {preview.owner_pid !== null
+                    ? `Running in another CLAI (pid ${preview.owner_pid}). You can read it here.`
                     : preview.missing
                       ? `Saved in ${preview.workspace}, which no longer exists. You can read it here.`
                       : `Saved in ${preview.workspace}. Start CLAI there to continue it.`}
                 </span>
-                {preview.busy !== null && (
+                {preview.owner_pid !== null && (
                   <button className="ghost small" onClick={() => continueInFork(preview)}>
                     Fork to continue here
                   </button>
