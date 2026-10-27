@@ -224,6 +224,33 @@ export interface Watching {
   sessions: readonly string[]
 }
 
+function openSocket(): WebSocket {
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
+  return new WebSocket(`${scheme}://${location.host}/ws?token=${encodeURIComponent(token)}&protocol=${PROTOCOL}`)
+}
+
+/** The page's first WebSocket while nothing has adopted it, with what it heard so far. */
+let early: { events: Event[]; adopt: () => WebSocket } | null = null
+
+/**
+ * Open the page's first WebSocket now, as the bundle loads, rather than once the page has rendered: its snapshot is
+ * on its way meanwhile. The first `connect` adopts it, with the messages it heard before.
+ */
+export function preconnect(): void {
+  const socket = openSocket()
+  const events: Event[] = []
+  const types = ['open', 'message', 'close'] as const
+  const keep = (event: Event) => events.push(event)
+  for (const type of types) socket.addEventListener(type, keep)
+  early = {
+    events,
+    adopt: () => {
+      for (const type of types) socket.removeEventListener(type, keep)
+      return socket
+    },
+  }
+}
+
 /** Keep one WebSocket open, reconnecting with backoff; each connection starts with a snapshot.
 
 Each new connection watches `watching()`'s sessions again, after calling `onWatch` with the shown one, before any of
@@ -265,24 +292,34 @@ export function connect(
       delay = Math.min(delay * 2, 2000)
     }
   }
+  const opened = () => {
+    delay = 500
+    failures = 0
+    watched = null
+    const { shown, sessions } = watching()
+    if (shown !== null) onWatch(shown)
+    send(sessions)
+    onState('open')
+  }
+  const received = (event: MessageEvent<string>) => onMessage(JSON.parse(event.data) as ServerMessage)
+  const closed = () => {
+    if (stopped) return
+    onState('closed')
+    void retry()
+  }
   const open = () => {
     onState('connecting')
-    const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
-    socket = new WebSocket(`${scheme}://${location.host}/ws?token=${encodeURIComponent(token)}&protocol=${PROTOCOL}`)
-    socket.onopen = () => {
-      delay = 500
-      failures = 0
-      watched = null
-      const { shown, sessions } = watching()
-      if (shown !== null) onWatch(shown)
-      send(sessions)
-      onState('open')
-    }
-    socket.onmessage = (event: MessageEvent<string>) => onMessage(JSON.parse(event.data) as ServerMessage)
-    socket.onclose = () => {
-      if (stopped) return
-      onState('closed')
-      void retry()
+    const adopted = early
+    early = null
+    socket = adopted?.adopt() ?? openSocket()
+    socket.onopen = opened
+    socket.onmessage = received
+    socket.onclose = closed
+    // What the page's first socket heard before the page was ready for it, in order.
+    for (const event of adopted?.events ?? []) {
+      if (event.type === 'open') opened()
+      else if (event.type === 'message') received(event as MessageEvent<string>)
+      else closed()
     }
   }
   open()
