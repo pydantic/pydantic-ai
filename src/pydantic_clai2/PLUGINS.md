@@ -284,19 +284,34 @@ It reports `working` while agent runs are in flight, `blocked` while `AskUser`
 waits for an answer, and `idle` otherwise. Failed and cancelled runs return to
 `idle` too. Nested runs are counted; concurrent question waits are tracked by
 request ID. Tool names supply activity text, never tool arguments or results.
-User-opened menus do not report `blocked`. Other approval UIs are not tracked:
-CLAI2 has no universal approval-wait event. Herdr owns attention notifications;
-this plugin sends none. To avoid duplicate desktop alerts, separately disable
-CLAI2's `notifications` plugin if you prefer herdr's alerts.
+User-opened menus do not report `blocked`. `AskUser` is the only built-in
+question that waits for the user during a run, since CLAI2 asks for no tool
+approvals; a third-party plugin's own approval UI is not tracked. Herdr owns
+attention notifications; this plugin sends none. To avoid duplicate desktop
+alerts, separately disable CLAI2's `notifications` plugin if you prefer herdr's
+alerts.
 
-Persisted sessions report their stable conversation ID and SQLite database path,
-not a per-run ID. Resume manually with `clai2 --resume SESSION-ID` using the same
-CLAI2 config directory. Automatic restoration by herdr is not verified. Hosts
-without CLAI2 session persistence still report state and token metadata.
+Reports use the source `clai2`. Persisted sessions report their stable
+conversation ID and SQLite database path, not a per-run ID, along with the
+command herdr (0.9.2 or later) runs to restore the pane after a herdr server
+restart:
+
+- `clai2 --resume SESSION-ID` once the conversation is saved
+- `clai2 --session-id SESSION-ID` before its first prompt, so the pane reopens
+  the same empty conversation rather than the previous one
+
+Either adds `--database` with the exact settings database path when it is not
+the default `config.db`. The command runs `clai2` from your `PATH` and does not
+repeat `--model` or `--agent`. A host without a settings database path, or a
+path containing an apostrophe or a control character (which herdr refuses),
+sends no command. Turn restoration off in herdr with
+`[session] resume_agents_on_restore = false`. Hosts without CLAI2 session
+persistence still report state and token metadata.
 
 Metadata has a 24-hour TTL and reports `$model`, `$tokens` (retained-history
 input plus output tokens), and `$context` (percentage from the compaction
-plugin's context events, omitted when unknown). Add those fields to your herdr
+plugin's context events; cleared with JSON null when unknown so a prior turn's
+value does not linger). Add those fields to your herdr
 sidebar's `rows_by_agent.clai2` configuration to display them. No prompts,
 answers, or tool contents are sent; session IDs, database paths, and conversation
 titles are sent to the local herdr socket.
@@ -3252,6 +3267,11 @@ the context reaches the model on the next prompt.
 background fork. It is `None` while startup resume is selecting a conversation,
 or for a host without session persistence. Custom hosts can supply a
 `session_id` callback to read their current ID.
+
+`host.settings_database` is the exact settings file this process uses (`--database`,
+or the default `config.db`). A host built outside the shell has `None` unless it
+supplies `settings_database=`. Process-scoped plugins see the same path in every
+session; it does not follow `host.live.current()`.
 
 `host.workspace` is the directory the session works in: where its runs' file and
 shell tools work, and where its `AGENTS.md`, skills, `.clai/settings.json`, and MCP

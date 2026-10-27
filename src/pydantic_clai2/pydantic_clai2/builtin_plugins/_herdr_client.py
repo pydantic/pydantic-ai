@@ -10,7 +10,8 @@ from typing import Literal
 
 from pydantic import JsonValue, TypeAdapter
 
-_SOURCE = 'herdr:clai2'
+SOURCE = 'clai2'
+"""Herdr reserves the `herdr:` prefix for its own integrations."""
 _REPLY = TypeAdapter(dict[str, JsonValue])
 _LOGGER = logging.getLogger(__name__)
 Lane = Literal['state', 'session', 'activity', 'metadata', 'title', 'release']
@@ -73,8 +74,8 @@ class HerdrClient:
     def _request(self, method: str, params: dict[str, JsonValue]) -> dict[str, JsonValue]:
         self._seq += 1
         if method.startswith('pane.'):
-            params = {'pane_id': self.pane_id, 'source': _SOURCE, 'agent': 'clai2', 'seq': self._seq, **params}
-        payload = (json.dumps({'id': f'{_SOURCE}:{self._seq}', 'method': method, 'params': params}) + '\n').encode()
+            params = {'pane_id': self.pane_id, 'source': SOURCE, 'agent': 'clai2', 'seq': self._seq, **params}
+        payload = (json.dumps({'id': f'{SOURCE}:{self._seq}', 'method': method, 'params': params}) + '\n').encode()
         deadline = monotonic() + 0.5
 
         def remaining() -> float:
