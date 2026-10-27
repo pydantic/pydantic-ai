@@ -132,6 +132,11 @@ To keep forced tool output, turn thinking off with `thinking=False` where the mo
 See AWS's [adaptive thinking documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html)
 and [forced tool use restrictions](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-tool-use.html#model-parameters-anthropic-claude-forced-tool-use).
 
+For Claude, Bedrock compiles strict schemas with Anthropic's
+[schema complexity limits](anthropic.md#schema-complexity-limits), which Pydantic AI checks the same way: a bare
+structured `output_type` whose schema is over them keeps tool output, and explicitly strict schemas over them raise a
+[`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before the request is sent.
+
 The output mode is chosen on the run's first request and kept for the rest of the run (except behind a
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], where each model chooses on every request), so a thinking
 setting that changes from step to step doesn't add or remove the output tool between requests and
