@@ -2357,7 +2357,6 @@ async def test_closing_generator_that_owns_iter_run_drains_wrap_run():
 
     async def stream_hello(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         yield 'hello'
-        await asyncio.Event().wait()
 
     events: list[str] = []
     agent = Agent(
