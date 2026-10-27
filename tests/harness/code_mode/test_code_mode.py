@@ -2362,6 +2362,9 @@ class TestCodeMode:
         assert 'demo_tool' not in run_code_desc
         assert 'load_capability' not in run_code_desc
 
+    @pytest.mark.moves_cache_prefix(
+        reason='with the default `dynamic_catalog=False`, loading a capability rewrites the `run_code` description'
+    )
     async def test_loaded_capability_tool_folds_into_run_code(self) -> None:
         """Once the model loads a deferred capability, its tools become callable from `run_code`.
 

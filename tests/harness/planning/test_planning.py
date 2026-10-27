@@ -61,6 +61,7 @@ from pydantic_ai_harness.planning._toolset import (
     validate_hierarchy,
 )
 from tests.conftest import RequestCapture, try_import
+from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 from tests.harness._recording_durability import RecordingDurability
 from tests.models.conftest import cache_breakpoints, json_objects
 
@@ -179,6 +180,7 @@ def _counting_resolver(stores: list[InMemoryPlanStore]) -> Callable[[RunContext[
     return resolver
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_durability_runs_registered_tools_against_run_store() -> None:
     stores: list[InMemoryPlanStore] = []
 
@@ -1299,6 +1301,7 @@ class TestEndToEnd:
         )
         assert '<plan-reminder>' not in durable
 
+    @pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
     async def test_cached_prefix_is_a_prefix_of_the_next_request(self) -> None:
         """Everything before the breakpoint, tool results included, is what the next request starts with."""
         captured: list[list[ModelMessage]] = []
@@ -1464,6 +1467,7 @@ class TestEndToEnd:
         )[provider]
 
 
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_plan_tools_update_and_remove_through_the_recorded_store() -> None:
     """An agent run whose plan tools update and remove a step through the durable store operations."""
     turns = iter(

@@ -24,6 +24,7 @@ from pydantic_ai_harness.compaction import (
     TieredCompaction,
 )
 from tests.conftest import try_import
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 with try_import() as logfire_import_successful:
     from logfire.testing import CaptureLogfire
@@ -189,6 +190,7 @@ class TestCompactOnRequest:
             'Not compacted again: a compaction is already scheduled before your next turn.',
         ]
 
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_stands_down_when_automatic_compaction_already_ran(self) -> None:
         strategy = Tail()
         script = Script(

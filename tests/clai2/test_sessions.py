@@ -719,6 +719,9 @@ async def test_stock_agent_delegates_with_plugin_tools_instructions_and_guardrai
     assert agent is not session.agent
 
 
+@pytest.mark.moves_cache_prefix(
+    reason='a changed plugin snapshot rebuilds the agent with other tools and instructions, which the test exercises'
+)
 async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: Path) -> None:
     model = TestModel(call_tools=[], custom_output_text='answer')
     agent = create_stock_agent(model)

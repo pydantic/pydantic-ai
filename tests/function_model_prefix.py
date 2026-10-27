@@ -11,7 +11,7 @@ from __future__ import annotations
 import copy
 import json
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 import pytest
@@ -22,7 +22,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model, ModelRequestParameters, override_allow_model_requests
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, merge_model_settings
 
 from .cassette_utils import (
     CassettePrefixViolation,
@@ -33,6 +33,22 @@ from .cassette_utils import (
 )
 
 _ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages'
+
+# Reasons for `@pytest.mark.moves_cache_prefix` shared by the tests whose conversations move the prefix on purpose.
+# A test that moves it for a reason of its own gives that reason inline.
+
+TOOLS_CHANGE_MID_RUN = (
+    'the test changes the offered tools between steps (a `prepare`, filter, selector or dynamic toolset)'
+)
+INSTRUCTIONS_CHANGE_MID_RUN = 'the test changes the instructions between steps'
+FALLBACK_REWINDS = 'a failed fallback continuation rewinds the history to before the response it abandoned'
+COMPACTION_REWRITES_HISTORY = 'compaction or tool-result clearing rewrites earlier history by design'
+REQUEST_SCOPED_PROMPT_DROPPED = (
+    'a request-scoped prompt is sent with its own request only, so the next request drops it by design'
+)
+HOOK_REWRITES_REQUEST = (
+    'a hook or history processor removes or rewrites parts of an earlier request, which the test exercises'
+)
 
 
 @dataclass
@@ -58,18 +74,19 @@ class RequestRecorder:
         model_request_parameters: ModelRequestParameters,
     ) -> None:
         try:
-            # Resolved for the test model's own profile, so Anthropic renders the output mode the conversation
-            # was actually run with (a `final_result` tool, say) rather than the one it would have picked. The model
-            # prepares the request again when it runs it, and warns about ignored settings then.
+            # Anthropic renders the output mode the test model resolved for its own profile, the one the
+            # conversation was actually run with (a `final_result` tool, say), rather than the one it would pick.
+            # The rest of the preparation is left to `AnthropicModel`: preparing twice would render the instructions'
+            # `<context>` blocks twice. The test model prepares the request again when it runs it, and warns about
+            # ignored settings then.
+            test_model = cast(Model, model)
             with suppress_warnings():
-                model_settings, model_request_parameters = cast(Model, model).prepare_request(
-                    model_settings, model_request_parameters
-                )
+                _, prepared = test_model.prepare_request(model_settings, model_request_parameters)
             recorded = RecordedRequest(
                 model,
                 copy.deepcopy(messages),
-                copy.deepcopy(model_settings),
-                copy.deepcopy(model_request_parameters),
+                copy.deepcopy(merge_model_settings(test_model.settings, model_settings)),
+                copy.deepcopy(replace(model_request_parameters, output_mode=prepared.output_mode)),
             )
         except Exception:  # pragma: no cover - a part holding an uncopyable value just isn't checked
             return
@@ -255,7 +272,7 @@ def function_model_prefix_violations(requests: list[RecordedRequest]) -> list[Ca
         for body in bodies
     ]
     violations: list[CassettePrefixViolation] = []
-    for later_index, later in enumerate(requests):
+    for later_index in range(len(requests)):
         later_blocks = blocks[later_index]
         if later_blocks is None:
             continue

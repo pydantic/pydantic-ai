@@ -42,6 +42,7 @@ from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from tests.clai2.test_tasks import task
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 
 def test_only_bare_opted_in_commands_run_during_a_turn() -> None:
@@ -643,6 +644,7 @@ def _plain(transcript: TranscriptBuffer) -> str:
     return Text.from_ansi('\n'.join(transcript.frame(width=200, height=500).rows)).plain
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_speculation_toggled_mid_turn_shows_at_once_and_binds_on_the_next_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
