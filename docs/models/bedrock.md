@@ -138,9 +138,9 @@ setting that changes from step to step doesn't add or remove the output tool bet
 [invalidate the prompt cache](../capabilities/caching.md#what-invalidates-a-cache). A Claude run that starts with tool
 output keeps it once thinking turns on, with the output tool offered under `toolChoice={'auto': {}}`. OpenAI GPT-5.6
 and GPT-6 accept output tools while they think, so they keep tool output (offered without a forced `toolChoice`, as
-for these models without thinking). Most models on Bedrock don't accept output tools alongside thinking, so a request that thinks switches to
-[`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. DeepSeek V3.2
-does the same, using `PromptedOutput`. Z.AI GLM accepts a forced tool choice while it thinks, so it keeps tool output.
+for these models without thinking). Models other than Claude, xAI Grok, Z.AI GLM, and OpenAI GPT-5.6 and GPT-6 don't
+accept output tools alongside thinking, so there a request that thinks switches to
+[`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
 
 xAI Grok 4.6 and 4.7 (`us.xai.grok-4.6`, `global.xai.grok-4.6`, `us.xai.grok-4.7`, `global.xai.grok-4.7`) always
 reason, and Pydantic AI keeps forcing tool choice with them, since Converse accepts a forced tool choice with Grok 4.6
