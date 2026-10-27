@@ -107,6 +107,7 @@ from .. import (
     download_item,
     get_user_agent,
 )
+from .._anthropic_schema_limits import default_output_mode_within_limits, limit_exceeded_error, model_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
 from .._prompt_cache import (
     excess_cache_points,
@@ -402,12 +403,15 @@ _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS = (AsyncAnthropicBedrock,)
 # Anthropic web-tool availability is client/platform-specific:
 # * `AsyncAnthropicBedrock` is the legacy Amazon Bedrock InvokeModel client, where web search/fetch
 #   are unavailable.
+# * `AsyncAnthropicBedrockMantle` is the Bedrock Messages API. Verified live, it rejects `web_search_20250305`,
+#   `web_search_20260209`, `web_fetch_20250910` and `web_fetch_20260209` with a 400 ("tool type ... is not
+#   supported for this model") on every Claude model it serves. https://github.com/pydantic/pydantic-ai/issues/11481
 # * Vertex AI supports basic web search only.
-# * Direct Anthropic API, Claude Platform on AWS (`AsyncAnthropicBedrockMantle`), and Microsoft
-#   Foundry support dynamic-filtering web tools on supported model profiles.
-_WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
-_WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
-_WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
+# * Direct Anthropic API, Claude Platform on AWS (`AsyncAnthropicAWS`, an `AsyncAnthropic` subclass), and
+#   Microsoft Foundry support dynamic-filtering web tools on supported model profiles.
+_WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
+_WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
+_WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
 # The advisor tool is documented for the direct Anthropic API and Claude Platform on AWS only. Claude Platform on AWS
 # is `AsyncAnthropicAWS`, an `AsyncAnthropic` subclass, so it keeps the tool. The Bedrock Messages API
 # (`AsyncAnthropicBedrockMantle`, which isn't an `AsyncAnthropicBedrock` subclass) is listed explicitly: verified
@@ -443,6 +447,9 @@ _CACHE_DIAGNOSTICS_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
+# Anthropic's explicit strict-schema limits were verified live on the Messages API and on both Bedrock clients. Vertex
+# and Foundry weren't reachable with our credentials, so they keep sending such requests for the API to judge.
+_STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS = (AsyncAnthropicFoundry, AsyncAnthropicVertex)
 
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
@@ -1074,6 +1081,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         client, and `anthropic_cache` and the unified `cache` setting place a breakpoint on the last block there
         instead. Narrowing the default rather than the resolved profile lets a `supports_auto_cache` the user sets
         explicitly win, for models this list doesn't know yet.
+
+        Anthropic's strict-schema limits are only checked on the clients they were verified on, and a user whose
+        Vertex or Foundry deployment is known to enforce them can opt in with `anthropic_enforces_strict_schema_limits`.
         """
         client = self._provider.client
         profile = merge_profile(
@@ -1086,7 +1096,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(
             self._model_name
         ):
-            return merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))
+            profile = merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))
+        if isinstance(client, _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS):
+            profile = merge_profile(profile, AnthropicModelProfile(anthropic_enforces_strict_schema_limits=False))
         return profile
 
     @property
@@ -1291,8 +1303,28 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters.output_tools
             and _request_thinking_type(self.profile, model_settings, model_request_parameters) == 'enabled'
         ):
-            return 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
-        return super()._default_structured_output_mode(model_settings, model_request_parameters)
+            mode: StructuredOutputMode = (
+                'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
+            )
+        else:
+            mode = super()._default_structured_output_mode(model_settings, model_request_parameters)
+        return default_output_mode_within_limits(
+            self, mode, model_settings, model_request_parameters, self._strict_schema_limit_exceeded
+        )
+
+    def _strict_schema_limit_exceeded(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> str | None:
+        """The limit the request's strict schemas exceed, where the API enforces Anthropic's limits."""
+        return model_exceeded_limit(
+            self,
+            model_settings,
+            model_request_parameters,
+            supports_strict_tools=lambda: self.profile.get('supports_json_schema_output', False),
+            sent_tools=lambda settings, params: self._tool_choice_declarations(
+                cast(AnthropicModelSettings, settings or {}), params
+            )[0].values(),
+        )
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1329,6 +1361,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
+            raise limit_exceeded_error(exceeded, self.model_name)
         if profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)

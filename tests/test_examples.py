@@ -128,7 +128,7 @@ class ExamplesConfig(BaseExamplesConfig):
         return config
 
 
-RUNNABLE_HARNESS_PAGES = frozenset({'azure-durable-task.md', 'memory.md'})
+RUNNABLE_HARNESS_PAGES = frozenset({'azure-durable-task.md', 'detect-loops.md', 'memory.md'})
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
 
 
