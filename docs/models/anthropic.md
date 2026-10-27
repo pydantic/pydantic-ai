@@ -574,6 +574,22 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 
 A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from history that can't ride Anthropic's native reasoning channel — most often because its signature didn't survive your storage round trip — is sent as text in a `user` message of its own ahead of the assistant turn it came from, wrapped in an `<assistant_thinking>` tag. That is why a request can carry a `user` turn you never wrote. See [the thinking page](../capabilities/thinking.md#carried-over-thinking) for why the assistant turn is the wrong place for it, and for the opt-out.
 
+## Batch API
+
+`AnthropicModel` supports [batch processing](../batch.md) through the Claude API's
+[Message Batches](https://platform.claude.com/docs/en/build-with-claude/batch-processing), which charge
+[50% of standard API prices](https://platform.claude.com/docs/en/build-with-claude/batch-processing#pricing).
+Batching and prompt-caching discounts apply together. One batch can hold up to 100,000 requests or 256 MB, and its
+requests can use different models and settings. Beta flags apply to a whole batch, so requests that need different
+ones, for example through `anthropic_betas`, go into separate batches. A request's `custom_id` must be 1 to 64
+letters, digits, `_` or `-`.
+
+Message Batches aren't available through Bedrock, Vertex AI or Microsoft Foundry, nor yet through the
+[Pydantic AI Gateway](../gateway.md): use `AnthropicProvider` with a Claude API key instead. They need an API key or
+auth token on the client. They don't support streaming, `anthropic_speed` or `max_tokens=0` cache pre-warming.
+Configure transport timeouts and custom headers on the Anthropic client: per-request `timeout` and
+`extra_headers` are unsupported. Retrieving a batch needs the endpoint and beta flags that submitted it, but not the same API key: any key the workspace accepts works.
+
 ## Mid-conversation system messages
 
 Adding an instruction to the agent's `system_prompt` partway through a long session rewrites the front of the prompt, which invalidates every cached prefix behind it. Anthropic avoids that by accepting a system message *inside* the conversation, at the instruction's own position in the history rather than ahead of it, so everything cached up to that point stays cached.
@@ -676,7 +692,7 @@ Anthropic enforces the check for accounts created on or after 31 August 2026. Fo
 
 Anthropic applies the drop to one request only. Its response records the transformation, so Pydantic AI uses that response history to keep sending `drop_block` for the rest of the affected conversation. This avoids another rejected request on every later turn without storing mutable state on the model or changing an unrelated conversation. The same behavior applies to [`count_tokens()`][pydantic_ai.models.Model.count_tokens]: token counting retries the first matching rejection once, and later counts carrying the recovery history send the drop immediately. A recovery seen only while counting applies only to later counts, because that endpoint omits server-side tools and can therefore have a different prefix from inference. An explicit `block_binding` still wins for both counting and inference.
 
-The automatic behavior is available through the direct Anthropic API, Pydantic AI Gateway and other `AsyncAnthropic`-compatible proxies, Claude Platform on AWS, legacy Amazon Bedrock, and Google Vertex AI. It is not enabled for the AWS-operated Bedrock Messages API client (`AsyncAnthropicBedrockMantle`), which does not accept Anthropic beta headers, or Microsoft Foundry, where this beta is not currently documented. Explicit settings remain pass-through on every transport.
+The automatic behavior is available through the direct Anthropic API, Pydantic AI Gateway and other `AsyncAnthropic`-compatible proxies, Claude Platform on AWS, both Amazon Bedrock clients (the Bedrock Messages API's `AsyncAnthropicBedrockMantle` and the legacy `AsyncAnthropicBedrock`), and Google Vertex AI. It is not enabled for Microsoft Foundry, where this beta is not currently documented. Explicit settings remain pass-through on every transport.
 
 Anthropic reports every drop, and Pydantic AI surfaces it two ways. Under [instrumentation](../logfire.md) the Pydantic AI model request span carries an `anthropic.input_transformations` event, so a drop is visible in the trace as it happens; an unrelated ambient application span is never modified. On the response it is always recorded in `provider_details`:
 

@@ -37,7 +37,7 @@ from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.keys import choose_key
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_clai2.plugins.sign_in import SUBCOMMANDS, run_subcommand, sign_in_now, status, warn_if_signed_out
-from pydantic_clai2.runtime._session import WorkspacelessCapability
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 from pydantic_clai2.ui.menus import dialogs as menu_dialogs
 from pydantic_clai2.ui.menus.field_menu import first_error
 
@@ -91,7 +91,7 @@ def saved_key() -> KeyReference | None:
         raise UserError('The saved Pylon key reference is invalid. Choose a key again with /pylon key.') from None
 
 
-class PylonConfig:
+class PylonSource:
     """The settings menu's rows, backed by plugin settings plus the `/keys` reference."""
 
     title = 'Pylon settings'
@@ -198,7 +198,7 @@ class PylonPlugin(Plugin[PylonSettings, DepsT]):
 
     def __init__(self, host: PluginHost[DepsT], settings: PylonSettings) -> None:
         super().__init__(host, settings)
-        self.config = PylonConfig(settings, host.save_settings)
+        self.config = PylonSource(settings, host.save_settings)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         return (WorkspacelessCapability[DepsT](self._for_run),)
@@ -275,7 +275,7 @@ class PylonPlugin(Plugin[PylonSettings, DepsT]):
         return message
 
 
-def _status(config: PylonConfig) -> str:
+def _status(config: PylonSource) -> str:
     settings = config.settings
     options = f'read-only tools {_text(settings.read_only)}, server instructions {_text(settings.include_instructions)}'
     if settings.auth == 'browser':

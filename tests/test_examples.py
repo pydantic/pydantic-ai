@@ -13,6 +13,7 @@ import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from datetime import timedelta
 from importlib.util import find_spec
 from inspect import FrameInfo, unwrap
 from pathlib import Path
@@ -57,12 +58,14 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
+from pydantic_ai.capabilities import BatchModelRequests
 from pydantic_ai.embeddings import EmbeddingModel, infer_embedding_model
 from pydantic_ai.embeddings.test import TestEmbeddingModel
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.images import ImageGenerationModel, infer_image_generation_model
 from pydantic_ai.images.test import TestImageGenerationModel
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, infer_model
+from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.decision import DecisionModel, UnfillableRoute, UnsureRoute
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -82,6 +85,7 @@ from pydantic_ai.realtime.codec import (
 
 from .conftest import TestEnv, legacy_retry_prompt_part, try_import
 from .docs_model_aliases import resolve_model_aliases, restore_model_aliases
+from .function_model_prefix import TOOLS_CHANGE_MID_RUN
 from .realtime_connections import InferredConnection
 
 with try_import() as imports_successful:
@@ -133,6 +137,18 @@ def _is_harness_page(path: Path) -> bool:
     return (root_dir / path).resolve().is_relative_to(root_dir / 'docs' / 'harness')
 
 
+_MOVES_CACHE_PREFIX = {
+    'dynamic_toolset.py': TOOLS_CHANGE_MID_RUN,
+    'output_functions.py': (
+        'the router hands its conversation, without its last response, to an agent with other instructions and tools'
+    ),
+    'wrap_up_near_request_limit.py': (
+        'a request-scoped prompt counts down the requests left, and the last request withdraws the function tools'
+    ),
+}
+"""Examples whose `FunctionModel` conversation moves the prompt-cache prefix on purpose, by title, with the reason."""
+
+
 def find_filter_examples() -> Iterable[ParameterSet]:
     # Ensure this is run from the package root regardless of where/how the tests are run
     root_dir = Path(__file__).parent.parent
@@ -167,6 +183,8 @@ def find_filter_examples() -> Iterable[ParameterSet]:
                 if path == Path('docs/workspace.md') or title == 'mcp_client_sampling.py'
                 else []
             )
+            if title in _MOVES_CACHE_PREFIX:
+                marks.append(pytest.mark.moves_cache_prefix(reason=_MOVES_CACHE_PREFIX[title]))
             yield pytest.param(ex, id=test_id, marks=marks)
 
 
@@ -543,6 +561,7 @@ def test_docs_examples(
     mocker.patch('pydantic_ai.embeddings.infer_embedding_model', side_effect=mock_infer_embedding_model)
     mocker.patch('pydantic_ai.images.infer_image_generation_model', side_effect=mock_infer_image_generation_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
+    mocker.patch.object(BatchModelRequests, '__post_init__', fast_batching)
     mocker.patch('pydantic_evals.reporting.render_numbers._render_duration', side_effect=mock_render_duration)
 
     mocker.patch('httpx.Client.get', side_effect=http_request)
@@ -876,6 +895,20 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the weather in Tokyo?': 'As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).',
     'What is the capital of France?': 'The capital of France is Paris.',
+    # docs/batch.md
+    'I was charged twice for my subscription this month.': ToolCallPart(
+        tool_name='final_result', args={'category': 'billing', 'urgent': True}
+    ),
+    'The CSV export stops after 1,000 rows.': ToolCallPart(
+        tool_name='final_result', args={'category': 'bug', 'urgent': False}
+    ),
+    'How do I change the email address on my account?': ToolCallPart(
+        tool_name='final_result', args={'category': 'account', 'urgent': False}
+    ),
+    'The app crashes whenever I upload a photo.': "Sorry about that! We're looking into photo uploads and will update you soon.",
+    'I love the new dashboard, but it takes ages to load on my laptop.': 'Likes the new dashboard, but it loads slowly.',
+    'Arrived quickly and works perfectly.': 'positive',
+    'Broke after two days, and support never replied.': 'negative',
     'What is the capital of Italy?': 'The capital of Italy is Rome.',
     'What is the capital of the UK?': 'The capital of the UK is London.',
     'What is the capital of Mexico?': 'The capital of Mexico is Mexico City.',
@@ -2102,6 +2135,18 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
             model_name=model_name,
             profile=model.profile if isinstance(model, Model) else None,
         )
+
+
+def fast_batching(self: BatchModelRequests) -> None:
+    """Keep batching, through the mocked model's in-memory batch API, without waiting on the example's intervals."""
+    fast = timedelta(milliseconds=1)
+    self._pool = BatchPool(  # pyright: ignore[reportPrivateUsage]
+        max_requests=self.max_requests,
+        max_wait=fast,
+        max_resubmissions=self.max_resubmissions,
+        poll_interval=fast,
+        max_poll_interval=fast,
+    )
 
 
 def mock_group_by_temporal(aiter: Any, soft_max_interval: float | None) -> Any:

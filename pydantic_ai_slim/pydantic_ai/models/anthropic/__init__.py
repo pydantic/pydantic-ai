@@ -7,7 +7,9 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from itertools import chain
-from typing import Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overload
+
+from typing_extensions import TypedDict
 
 from ... import UnexpectedModelBehavior, _utils, usage
 from ..._context_size import mark_context_input_tokens
@@ -81,6 +83,7 @@ from ...providers._bedrock_model_names import (
     bedrock_lacks_claude_structured_output,
 )
 from ...providers.anthropic import AsyncAnthropicClient
+from ...providers.gateway import is_gateway_provider
 from ...settings import CacheConfig, CacheRetention, CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ...tools import AgentDepsT, ToolDefinition
 from ...toolsets._tool_search import discovered_tool_names_in_order
@@ -255,6 +258,7 @@ try:
     )
     from anthropic.types.model_param import ModelParam
 
+    from . import _batch
     from ._bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION, count_tokens_via_bedrock
     from ._cache_control import (
         ANTHROPIC_CACHEABLE_PARAM_TYPES,
@@ -339,6 +343,9 @@ except ImportError as _import_error:
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
+if TYPE_CHECKING:
+    from ..batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
+
 __all__ = (
     'AnthropicCompaction',
     'AnthropicModel',
@@ -369,16 +376,23 @@ _FAST_MODE_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
+# The Message Batches API is the Claude API's own. Bedrock and Vertex batch through their platforms' batch inference
+# jobs instead, which take files in cloud storage rather than a request list.
+_BATCH_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
 # `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
-# Bedrock `anthropic_beta` body field and Vertex beta routes. The AWS-operated Bedrock Messages API
-# explicitly does not accept Anthropic beta headers, while Foundry has no published support for this
-# beta, so those two stay excluded until the provider contract changes or a live request verifies them.
-_THINKING_BINDING_UNSUPPORTED_CLIENTS = (
-    AsyncAnthropicBedrockMantle,
-    AsyncAnthropicFoundry,
-)
+# Bedrock `anthropic_beta` body field and Vertex beta routes. Verified live on the Bedrock Messages API
+# (`AsyncAnthropicBedrockMantle`) with `anthropic.claude-opus-5-5`: it takes `block_binding` under this beta in
+# the `anthropic-beta` header, and rejects a stale block or drops it as the Claude API does
+# (https://github.com/pydantic/pydantic-ai/issues/11481). Foundry has no published support for this beta, so it
+# stays excluded until the provider contract changes or a live request verifies it.
+_THINKING_BINDING_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 # The legacy Bedrock InvokeModel API (`AsyncAnthropicBedrock`) accepts the `bm25` tool-search variant wherever it
 # accepts `regex`, but an unset strategy resolves to `regex` there: it was the only variant Bedrock accepted,
 # and resolving to `bm25` would change the search algorithm for every request that doesn't set one. For the same
@@ -397,11 +411,17 @@ _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS = (AsyncAnthropicBedrock,)
 _WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle)
 _WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
 _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
-# The advisor tool is available on the direct Anthropic API and Claude Platform on AWS
-# (`AsyncAnthropicBedrockMantle`) only — not on the legacy Bedrock InvokeModel client, Vertex, or
-# Foundry. `AsyncAnthropicBedrockMantle` isn't a subclass of `AsyncAnthropicBedrock`, so the plain
-# isinstance tuple keeps it supported.
-_ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, AsyncAnthropicFoundry)
+# The advisor tool is documented for the direct Anthropic API and Claude Platform on AWS only. Claude Platform on AWS
+# is `AsyncAnthropicAWS`, an `AsyncAnthropic` subclass, so it keeps the tool. The Bedrock Messages API
+# (`AsyncAnthropicBedrockMantle`, which isn't an `AsyncAnthropicBedrock` subclass) is listed explicitly: verified
+# live, it rejects `advisor_20260301` with a 400 ("tool type ... is not supported for this model") on Claude Opus
+# 5.5, Sonnet 5 and Haiku 4.5. https://github.com/pydantic/pydantic-ai/issues/11481
+_ADVISOR_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicVertex,
+    AsyncAnthropicFoundry,
+)
 # Mid-conversation `{'role': 'system'}` messages are published as available on the Anthropic API,
 # Amazon Bedrock and Google Cloud, which leaves Microsoft Foundry as the only transport that has to
 # fall back to the `<system>`-tagged user rendering. Verified on Bedrock rather than assumed: with
@@ -410,11 +430,13 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, Asy
 # that ignores the entry on *every* transport — which measured the model, not the transport.
 _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 # Per-message effort (`mid-conversation-output-config-2026-07-01`) is documented for the Claude API, Google Cloud
-# and Amazon Bedrock. The AWS-operated Bedrock Messages API doesn't accept Anthropic beta headers, and Foundry
-# isn't listed, so those two send effort changes as the request-level setting. The legacy InvokeModel client
-# serves a narrower model list, which `AnthropicModel.profile` applies.
+# and Amazon Bedrock. Foundry isn't listed, so it sends effort changes as the request-level setting. Both Bedrock
+# APIs serve a narrower model list, which `AnthropicModel.profile` applies. The Bedrock Messages API
+# (`AsyncAnthropicBedrockMantle`) accepts the beta on `anthropic.claude-opus-5-5` but rejects a per-message
+# `output_config` on `anthropic.claude-opus-5` ("Extra inputs are not permitted"), as the legacy InvokeModel
+# API does. https://github.com/pydantic/pydantic-ai/issues/11481
 # https://platform.claude.com/docs/en/build-with-claude/effort#per-message-effort-beta
-_MID_CONVERSATION_EFFORT_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrockMantle, AsyncAnthropicFoundry)
+_MID_CONVERSATION_EFFORT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 _MID_CONVERSATION_EFFORT_BETA = 'mid-conversation-output-config-2026-07-01'
 # Cache diagnostics are documented as Claude API only. Verified live: the Bedrock InvokeModel and Messages APIs
 # both reject the `diagnostics` field with a 400 ("Extra inputs are not permitted").
@@ -751,6 +773,57 @@ _MIN_TOKENS_AFTER_THINKING_BUDGET = 4096
 """The room the default `max_tokens` leaves beyond an extended thinking `budget_tokens`."""
 
 
+class _MessageCreateParams(TypedDict):
+    max_tokens: int
+    system: str | list[BetaTextBlockParam] | Omit
+    messages: list[BetaMessageParam]
+    model: str
+    tools: list[BetaToolUnionParam] | Omit
+    tool_choice: BetaToolChoiceParam | Omit
+    mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] | Omit
+    output_config: BetaOutputConfigParam | Omit
+    cache_control: BetaCacheControlEphemeralParam | Omit
+    thinking: BetaThinkingConfigParam | Omit
+    stop_sequences: list[str] | Omit
+    metadata: BetaMetadataParam | Omit
+    context_management: BetaContextManagementConfigParam | Omit
+    compaction: BetaCompactionConfigParam | Omit
+    container: BetaContainerParams | str | Omit
+    service_tier: Literal['auto', 'standard_only'] | Omit
+    diagnostics: BetaDiagnosticsParam | Omit
+    extra_body: object | None
+
+
+@dataclass(kw_only=True)
+class _PreparedMessagesCreate:
+    """The `messages.create` parameters of one request, before any recovery retry changes them.
+
+    `_messages_create` sends them, retrying with a different container or thinking object when the API
+    rejects one; a batch request encodes the initial values once, as it gets no retry.
+    """
+
+    system_prompt: str | list[BetaTextBlockParam]
+    anthropic_messages: list[BetaMessageParam]
+    tools: list[BetaToolUnionParam]
+    tool_choice: BetaToolChoiceParam | None
+    mcp_servers: list[BetaRequestMCPServerURLDefinitionParam]
+    output_config: BetaOutputConfigParam | None
+    auto_cache_control: BetaCacheControlEphemeralParam | None
+    max_tokens: int
+    stop_sequences: list[str] | Omit
+    effective_thinking: dict[str, object] | Omit
+    betas: set[str]
+    extra_headers: dict[str, str]
+    context_management: BetaContextManagementConfigParam | None
+    compaction: BetaCompactionConfigParam | None
+    container: BetaContainerParams | str | None
+    container_from_history: bool
+    initial_thinking: BetaThinkingConfigParam | Omit
+    initial_betas: set[str]
+    initial_thinking_override: dict[str, object] | None
+    initial_effective_thinking: dict[str, object] | Omit
+
+
 def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
     """The `max_tokens` to send when the request doesn't set one.
 
@@ -857,6 +930,52 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return str(self.client.base_url)
 
     @property
+    def batch_max_requests(self) -> int | None:
+        return 100_000 if self.profile.get('anthropic_supports_message_batches', False) else None
+
+    @property
+    def batch_max_bytes(self) -> int | None:
+        return None if self.batch_max_requests is None else _batch.MAX_BATCH_BYTES
+
+    def _no_batch_api_message(self) -> str:
+        if is_gateway_provider(self._provider):
+            return f'`AnthropicModel` {self.model_name!r} has no batch API through the Pydantic AI Gateway yet.'
+        if isinstance(self.client, _BATCH_UNSUPPORTED_CLIENTS):
+            return (
+                f'`AnthropicModel` {self.model_name!r} has no batch API on this platform: Message Batches are served '
+                'by the Claude API, with the `anthropic:` provider.'
+            )
+        return super()._no_batch_api_message()
+
+    def batch_request_size(self, request: EncodedBatchRequest) -> int:
+        return _batch.request_size(request)
+
+    def _batch_credential(self) -> str:
+        return _batch.batch_credential(self)
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        return await _batch.batch_encode(self, request)
+
+    async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+        with map_api_errors(self.model_name):
+            return await _batch.batch_create(self, requests)
+
+    async def batch_status(self, batch: Batch) -> Batch:
+        with map_api_errors(self.model_name):
+            return await _batch.batch_status(self, batch)
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        with map_api_errors(self.model_name):
+            return await _batch.batch_results(self, batch)
+
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        with map_api_errors(self.model_name):
+            return await _batch.batch_cancel(self, batch)
+
+    def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
+        return _batch.batch_decode(self, result, request)
+
+    @property
     def model_name(self) -> AnthropicModelName:
         """The model name."""
         return self._model_name
@@ -916,7 +1035,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             _profile.get('supports_mid_conversation_effort', False)
             and not isinstance(client, _MID_CONVERSATION_EFFORT_UNSUPPORTED_CLIENTS)
             and (
-                not isinstance(client, AsyncAnthropicBedrock)
+                not isinstance(client, AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle)
                 or bedrock_claude_supports_mid_conversation_effort(self._model_name)
             )
         )
@@ -948,14 +1067,26 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return cast(AnthropicModelProfile, _profile)
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Narrow `supports_auto_cache` by model on the legacy Bedrock client, before the user's `profile=` applies.
+        """Set the defaults that depend on the client, before the user's `profile=` applies.
+
+        `anthropic_supports_message_batches` follows the client class: only the Claude API's own client serves
+        Message Batches, and not through the Pydantic AI Gateway, which doesn't serve them yet.
 
         The legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve
-        from the Messages API infrastructure, so `anthropic_cache` and the unified `cache` setting place a
-        breakpoint on the last block there instead. Narrowing the default rather than the resolved profile lets
-        a `supports_auto_cache` the user sets explicitly win, for models this list doesn't know yet.
+        from the Messages API infrastructure, so `supports_auto_cache` is narrowed by model on the legacy Bedrock
+        client, and `anthropic_cache` and the unified `cache` setting place a breakpoint on the last block there
+        instead. Narrowing the default rather than the resolved profile lets a `supports_auto_cache` the user sets
+        explicitly win, for models this list doesn't know yet.
         """
-        if isinstance(self._provider.client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(
+        client = self._provider.client
+        profile = merge_profile(
+            profile,
+            AnthropicModelProfile(
+                anthropic_supports_message_batches=not isinstance(client, _BATCH_UNSUPPORTED_CLIENTS)
+                and not is_gateway_provider(self._provider)
+            ),
+        )
+        if isinstance(client, AsyncAnthropicBedrock) and not bedrock_claude_supports_automatic_caching(
             self._model_name
         ):
             return merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))
@@ -1305,6 +1436,139 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         on one are settled here, on the request as it would otherwise be sent, so the rest of the request (and the
         prompt cache it reads) stays the same.
         """
+        prepared = await self._prepare_messages_create(
+            messages, model_settings, model_request_parameters, compaction=compaction
+        )
+        anthropic_profile = self.profile
+        client = _with_max_retries(self.client, model_settings)
+
+        async def create(
+            container_param: BetaContainerParams | str | None,
+            thinking: BetaThinkingConfigParam | Omit,
+            betas: set[str],
+            thinking_override: dict[str, object] | None,
+        ) -> BetaMessage | AnthropicEventStream:
+            max_tokens = prepared.max_tokens
+
+            async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
+                return await client.beta.messages.create(
+                    **self._messages_create_params(
+                        messages, model_settings, prepared, container_param, thinking, thinking_override
+                    ),
+                    betas=sorted(betas) or OMIT,
+                    stream=stream,
+                    timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
+                    speed=self._effective_speed(model_settings, anthropic_profile),
+                    extra_headers=prepared.extra_headers,
+                )
+
+            async def open_stream() -> AnthropicEventStream:
+                raw_stream = cast(AsyncStream[BetaRawMessageStreamEvent], await send(True))
+                event_stream: AnthropicEventStream = _utils.PeekableAsyncStream(raw_stream)
+                try:
+                    # An error that stops the response, like an expired container, arrives as the first event,
+                    # so peek it here to reach the retries below.
+                    await event_stream.peek()
+                except BaseException:
+                    await raw_stream.close()
+                    raise
+                return event_stream
+
+            if stream:
+                return await open_stream()
+            # The SDK refuses a non-streaming request it expects to take over 10 minutes, but only with its default
+            # timeout. A default `max_tokens` above that limit is the model's maximum output, so stream it when a
+            # custom timeout is set too, rather than hold one connection open for the whole response.
+            if (
+                'max_tokens' not in model_settings
+                and max_tokens > _MAX_NON_STREAMING_TOKENS
+                and ('timeout' in model_settings or self.client.timeout != DEFAULT_TIMEOUT)
+            ):
+                return await open_stream()
+            try:
+                return cast(BetaMessage, await send(False))
+            except ValueError as e:
+                if 'Streaming is required' not in str(e):
+                    raise
+                return await open_stream()
+
+        initial_thinking = prepared.initial_thinking
+        initial_betas = prepared.initial_betas
+        initial_thinking_override = prepared.initial_thinking_override
+        retry_container = prepared.container
+        with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
+            try:
+                return await create(prepared.container, initial_thinking, initial_betas, initial_thinking_override)
+            except APIStatusError as error:
+                if (
+                    is_expired_container_error(error)
+                    and prepared.container_from_history
+                    and any(
+                        is_str_dict(block) and block['type'] == 'container_upload'
+                        for message in prepared.anthropic_messages
+                        for block in message['content']
+                    )
+                ):
+                    try:
+                        return await create(None, initial_thinking, initial_betas, initial_thinking_override)
+                    except APIStatusError as fallback_error:
+                        # Classify what the fallback hit, not the 500 that caused it, so a stale
+                        # thinking block rejected only on this attempt still reaches the retry
+                        # below. The history-resolved container is gone, so it stays dropped there.
+                        error = fallback_error
+                        retry_container = None
+                if not is_stale_thinking_block_error(anthropic_profile, prepared.initial_effective_thinking, error):
+                    raise error
+
+            result = await create(
+                retry_container,
+                OMIT,
+                prepared.betas | {ANTHROPIC_THINKING_BINDING_BETA},
+                drop_stale_thinking_blocks(prepared.effective_thinking),
+            )
+            warn_stale_thinking_block_recovery(self.model_name)
+            return result
+
+    def _messages_create_params(
+        self,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings,
+        prepared: _PreparedMessagesCreate,
+        container: BetaContainerParams | str | None,
+        thinking: BetaThinkingConfigParam | Omit,
+        thinking_override: dict[str, object] | None,
+    ) -> _MessageCreateParams:
+        return {
+            'max_tokens': prepared.max_tokens,
+            'system': prepared.system_prompt or OMIT,
+            'messages': prepared.anthropic_messages,
+            'model': self._model_name,
+            'tools': prepared.tools or OMIT,
+            'tool_choice': prepared.tool_choice or OMIT,
+            'mcp_servers': prepared.mcp_servers or OMIT,
+            'output_config': prepared.output_config or OMIT,
+            'cache_control': prepared.auto_cache_control or OMIT,
+            'thinking': thinking,
+            'stop_sequences': prepared.stop_sequences,
+            'metadata': model_settings.get('anthropic_metadata', OMIT),
+            'context_management': prepared.context_management or OMIT,
+            'compaction': prepared.compaction or OMIT,
+            'container': container or OMIT,
+            'service_tier': _resolve_anthropic_service_tier(model_settings),
+            'diagnostics': self._cache_diagnostics(messages, model_settings),
+            'extra_body': _build_extra_body(
+                model_settings, thinking_override, bedrock=isinstance(self.client, AsyncAnthropicBedrock)
+            ),
+        }
+
+    async def _prepare_messages_create(
+        self,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        *,
+        compaction: BetaCompactionConfigParam | None = None,
+    ) -> _PreparedMessagesCreate:
         model_request_parameters = self._declare_newcomers_left_alone(model_settings, model_request_parameters)
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
         # entries are then appended in history order; Anthropic excludes them from its cache key.
@@ -1362,108 +1626,28 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 compaction_boundary=compaction_boundary,
             )
         )
-        client = _with_max_retries(self.client, model_settings)
-
-        async def create(
-            container_param: BetaContainerParams | str | None,
-            thinking: BetaThinkingConfigParam | Omit,
-            betas: set[str],
-            thinking_override: dict[str, object] | None,
-        ) -> BetaMessage | AnthropicEventStream:
-            max_tokens = model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile))
-
-            async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
-                return await client.beta.messages.create(
-                    max_tokens=max_tokens,
-                    system=system_prompt or OMIT,
-                    messages=anthropic_messages,
-                    model=self._model_name,
-                    tools=tools or OMIT,
-                    tool_choice=tool_choice or OMIT,
-                    mcp_servers=mcp_servers or OMIT,
-                    output_config=output_config or OMIT,
-                    betas=sorted(betas) or OMIT,
-                    stream=stream,
-                    cache_control=auto_cache_control or OMIT,
-                    thinking=thinking,
-                    stop_sequences=stop_sequences,
-                    timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
-                    metadata=model_settings.get('anthropic_metadata', OMIT),
-                    context_management=context_management or OMIT,
-                    compaction=compaction or OMIT,
-                    container=container_param or OMIT,
-                    service_tier=_resolve_anthropic_service_tier(model_settings),
-                    speed=self._effective_speed(model_settings, anthropic_profile),
-                    diagnostics=self._cache_diagnostics(messages, model_settings),
-                    extra_headers=extra_headers,
-                    extra_body=_build_extra_body(
-                        model_settings, thinking_override, bedrock=isinstance(client, AsyncAnthropicBedrock)
-                    ),
-                )
-
-            async def open_stream() -> AnthropicEventStream:
-                raw_stream = cast(AsyncStream[BetaRawMessageStreamEvent], await send(True))
-                event_stream: AnthropicEventStream = _utils.PeekableAsyncStream(raw_stream)
-                try:
-                    # An error that stops the response, like an expired container, arrives as the first event,
-                    # so peek it here to reach the retries below.
-                    await event_stream.peek()
-                except BaseException:
-                    await raw_stream.close()
-                    raise
-                return event_stream
-
-            if stream:
-                return await open_stream()
-            # The SDK refuses a non-streaming request it expects to take over 10 minutes, but only with its default
-            # timeout. A default `max_tokens` above that limit is the model's maximum output, so stream it when a
-            # custom timeout is set too, rather than hold one connection open for the whole response.
-            if (
-                'max_tokens' not in model_settings
-                and max_tokens > _MAX_NON_STREAMING_TOKENS
-                and ('timeout' in model_settings or self.client.timeout != DEFAULT_TIMEOUT)
-            ):
-                return await open_stream()
-            try:
-                return cast(BetaMessage, await send(False))
-            except ValueError as e:
-                if 'Streaming is required' not in str(e):
-                    raise
-                return await open_stream()
-
-        retry_container = container
-        with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
-            try:
-                return await create(container, initial_thinking, initial_betas, initial_thinking_override)
-            except APIStatusError as error:
-                if (
-                    is_expired_container_error(error)
-                    and container_from_history
-                    and any(
-                        is_str_dict(block) and block['type'] == 'container_upload'
-                        for message in anthropic_messages
-                        for block in message['content']
-                    )
-                ):
-                    try:
-                        return await create(None, initial_thinking, initial_betas, initial_thinking_override)
-                    except APIStatusError as fallback_error:
-                        # Classify what the fallback hit, not the 500 that caused it, so a stale
-                        # thinking block rejected only on this attempt still reaches the retry
-                        # below. The history-resolved container is gone, so it stays dropped there.
-                        error = fallback_error
-                        retry_container = None
-                if not is_stale_thinking_block_error(anthropic_profile, initial_effective_thinking, error):
-                    raise error
-
-            result = await create(
-                retry_container,
-                OMIT,
-                betas | {ANTHROPIC_THINKING_BINDING_BETA},
-                drop_stale_thinking_blocks(effective_thinking),
-            )
-            warn_stale_thinking_block_recovery(self.model_name)
-            return result
+        return _PreparedMessagesCreate(
+            system_prompt=system_prompt,
+            anthropic_messages=anthropic_messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            mcp_servers=mcp_servers,
+            output_config=output_config,
+            auto_cache_control=auto_cache_control,
+            max_tokens=model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)),
+            stop_sequences=stop_sequences,
+            effective_thinking=effective_thinking,
+            betas=betas,
+            extra_headers=extra_headers,
+            context_management=context_management,
+            compaction=compaction,
+            container=container,
+            container_from_history=container_from_history,
+            initial_thinking=initial_thinking,
+            initial_betas=initial_betas,
+            initial_thinking_override=initial_thinking_override,
+            initial_effective_thinking=initial_effective_thinking,
+        )
 
     def _stale_thinking_block_recovery_history(
         self, messages: list[ModelMessage]
@@ -2470,7 +2654,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
             elif isinstance(request_part, ToolReturnPart):
                 request_context.user_content_params.append(await self._map_tool_return_part(request_part, map_context))
-            elif isinstance(request_part, SpeechPart):  # pragma: no cover
+            elif isinstance(request_part, SpeechPart):
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
                 raise _unconverted_speech_part_error()
             elif isinstance(request_part, _UnpreparedPart):  # pragma: no cover
@@ -3227,7 +3411,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 ),
                 include_citations,
             )
-        else:  # pragma: no cover
+        else:
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
 
     @staticmethod
@@ -3262,7 +3446,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 ),
                 include_citations,
             )
-        else:  # pragma: no cover
+        else:
             raise RuntimeError(f'Unsupported document media type: {item.media_type}')
 
     @staticmethod

@@ -1,0 +1,68 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/live/sessions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1982"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        session:
+          model: gpt-live-1
+          instructions: >-
+            You are a voice assistant. Keep replies short and conversational. When the user
+            asks for something you cannot answer from this conversation alone, delegate the
+            task and tell them you are looking it up.
+          delegation:
+            type: responses
+            responses:
+              model: gpt-5.6-sol
+              instructions: Answer in a few words.
+          client:
+            data_channel:
+              allowed_client_events: []
+              allowed_server_events: []
+        transport:
+          type: webrtc
+          sdp: "v=0\r\no=- 4002040451 4002040451 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\na=msid-semantic:WMS *\r\nm=audio 58343 UDP/TLS/RTP/SAVPF 96 9 0 8\r\nc=IN IP4 0.0.0.0\r\na=sendrecv\r\na=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid\r\na=extmap:2 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\na=mid:0\r\na=msid:04d95ebb-da7a-476a-a881-876c6ac374b2 7ab64c25-c2cc-490e-94ad-db55c6622ae2\r\na=rtcp:9 IN IP4 0.0.0.0\r\na=rtcp-mux\r\na=ssrc:2287190909 cname:c736fd46-c644-4249-85e7-ef2ab510285d\r\na=rtpmap:96 opus/48000/2\r\na=rtpmap:9 G722/8000\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=candidate:709cc48ea914c3da3d670ec618fe0cb3 1 udp 2130706431 0.0.0.0 58343 typ host\r\na=candidate:ed965c56f4ffb96ff0b222854037f43e 1 udp 2130706431 0.0.0.0 46698 typ host\r\na=candidate:76a82f60bf1d31afeef555561d342574 1 udp 2130706431 :: 51383 typ host\r\na=end-of-candidates\r\na=ice-ufrag:pCfA\r\na=ice-pwd:QKIrnQcDrO94u38ErxlEhR\r\na=fingerprint:sha-256 C1:10:CD:89:AC:B1:2F:82:65:5E:1D:4E:41:59:33:37:98:FE:20:23:66:23:72:78:D5:5B:6F:C8:DC:FC:8C:34\r\na=fingerprint:sha-384 F3:CE:C8:08:F9:28:6F:86:66:1D:C8:3D:B5:81:58:17:5F:42:DF:64:D1:9D:F6:33:17:40:4A:C2:3B:87:04:D5:7A:F9:C8:2B:22:AA:28:02:6F:65:F3:18:85:6A:44:B1\r\na=fingerprint:sha-512 DF:C5:F0:90:1E:DA:D5:52:42:B0:92:97:4A:85:F0:59:9D:EA:72:6C:3A:C0:36:A8:4C:58:FC:09:DF:20:B7:40:FF:88:85:54:75:29:52:CC:CD:91:F4:77:73:78:3E:DA:5B:9C:EE:00:3C:F0:21:A4:A1:9C:04:5F:11:64:F4:93\r\na=setup:actpass\r\n"
+  response:
+    status: 201
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Request-Id
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - "1465"
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      timing-allow-origin:
+      - "*"
+    body:
+      type: json
+      content:
+        session:
+          id: live_u2_EdMvrp3oN3j5U0QSQ3uu7r4XuxcsVJF8
+        transport:
+          type: webrtc
+          sdp: "v=0\r\no=- 4094218635976446289 1793051651 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=msid-semantic:WMS *\r\na=fingerprint:sha-256 EC:D2:80:A0:00:1A:46:0B:3D:4F:4D:0F:12:69:B5:99:AA:5A:F1:51:74:96:90:79:25:28:47:17:BF:17:A0:FA\r\na=ice-lite\r\na=group:BUNDLE 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 96 0 8\r\nc=IN IP4 0.0.0.0\r\na=setup:passive\r\na=mid:0\r\na=ice-ufrag:KzK0FL/u2/3oN3j5\r\na=ice-pwd:qBs73YeamYkqOCySMKj6nAOJMiPaRZr9\r\na=rtcp-mux\r\na=rtcp-rsize\r\na=rtpmap:96 opus/48000/2\r\na=fmtp:96 minptime=10;useinbandfec=1\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=ssrc:1400253543 cname:realtimeapi\r\na=ssrc:1400253543 msid:realtimeapi audio\r\na=ssrc:1400253543 mslabel:realtimeapi\r\na=ssrc:1400253543 label:audio\r\na=msid:realtimeapi audio\r\na=sendrecv\r\na=candidate:3842797013 1 udp 2130706431 4.151.150.176 3478 typ host ufrag KzK0FL/u2/3oN3j5\r\na=candidate:1352698770 1 udp 2130706431 68.155.152.41 3478 typ host ufrag KzK0FL/u2/3oN3j5\r\na=candidate:727169150 1 udp 2130706431 4.151.200.38 3478 typ host ufrag KzK0FL/u2/3oN3j5\r\na=candidate:2832417414 1 udp 2130706431 20.168.48.117 3478 typ host ufrag KzK0FL/u2/3oN3j5\r\na=candidate:2321888134 1 tcp 1671430143 68.155.152.41 443 typ host tcptype passive ufrag KzK0FL/u2/3oN3j5\r\na=candidate:1878291698 1 tcp 1671430143 4.151.200.38 443 typ host tcptype passive ufrag KzK0FL/u2/3oN3j5\r\n"
+  recorded_at: 2026-10-26T21:54:12.006698+00:00

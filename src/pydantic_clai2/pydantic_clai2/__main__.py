@@ -64,7 +64,7 @@ def main() -> None:
     splash = Splash(enabled=bool(enabled))
     splash.start()
     try:
-        from pydantic_clai2.cli._cli import run
+        from pydantic_clai2.cli.cli import run
 
         with warnings.catch_warnings(), quiet_telemetry_logs():
             if not sys.warnoptions:

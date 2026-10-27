@@ -126,7 +126,7 @@ _CHAT_LATEST_REASONING = _ReasoningSupport(
 _GPT_5_PRO_EFFORTS: frozenset[OpenAIReasoningEffort] = frozenset(('medium', 'high', 'xhigh'))
 """The efforts GPT-5.2+ -pro models accept (live-verified for gpt-5.2-pro, gpt-5.4-pro and gpt-5.5-pro, 2026-10)."""
 
-_GPT_6_MODEL_PREFIXES = ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol')
+_GPT_6_MODEL_PREFIXES = ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra')
 
 _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # GPT-6 Astra reasons by default and does not accept `effort='none'` (its guide migrates
@@ -148,8 +148,11 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
         supports_context=True,
         efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
     ),
-    # GPT-6 Sol and Luna retain GPT-5.6's default medium reasoning and accept `effort='none'`.
+    # GPT-6.1 Terra, GPT-6 Sol and Luna retain GPT-5.6's default medium reasoning and accept `effort='none'`.
     # https://developers.openai.com/api/docs/guides/latest-model
+    'gpt-6.1-terra': _ReasoningSupport(
+        enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
+    ),
     'gpt-6-sol': _ReasoningSupport(
         enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
     ),
@@ -564,6 +567,18 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """Whether the provider exposes server-side input-token counting (`responses/input_tokens`). Default: `True`.
 
     When `False`, `count_tokens()` raises a `UserError` instead of calling a missing endpoint.
+    """
+
+    openai_supports_batch_api: bool
+    """Whether the provider serves the [OpenAI Batch API](https://platform.openai.com/docs/guides/batch) for Responses API
+    requests. Default: `False`.
+
+    [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] and
+    [`model_request_batch`][pydantic_ai.direct.model_request_batch] use it with `OpenAIResponsesModel`, which uploads a
+    batch's requests with `POST /v1/files` and submits them with `POST /v1/batches` for the `/v1/responses` endpoint.
+    Set by `OpenAIProvider`, also for an OpenAI-compatible `base_url`, except with an Azure OpenAI client, whose
+    batches need a batch deployment. Set it in a custom profile for another provider that serves these endpoints, or
+    to `False` for an endpoint that doesn't.
     """
 
 

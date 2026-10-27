@@ -24,6 +24,7 @@ from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import BinaryContent, ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai.providers import infer_provider_class
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SavedConversation
@@ -325,6 +326,11 @@ class LiveSession(Protocol):
         ...
 
     @property
+    def forks(self) -> 'tuple[ForkInfo, ...]':
+        """The session's background `/fork` runs, oldest first, as `/forks` lists them."""
+        ...
+
+    @property
     def running(self) -> bool:
         """Whether a turn runs in the session now."""
         ...
@@ -411,8 +417,10 @@ class LiveSessions(Protocol):
     async def open(self, conversation_id: str, /) -> LiveSession:
         """The live session holding a saved conversation, resuming it in a new one, in its own directory, if none does.
 
-        Concurrent calls for one conversation return the same session. Raises `LookupError` for an unknown
-        conversation, `ValueError` when its directory is gone, and `RuntimeError` where CLAI opens no sessions.
+        Concurrent calls for one conversation return the same session. A conversation another process runs
+        continues in a fork of it, reusing one saved before, so the session's conversation ID differs.
+        Raises `LookupError` for an unknown conversation, `ValueError` when its directory is gone, and
+        `RuntimeError` where CLAI opens no sessions.
         Do not await it from `on_session_start`: the new session waits for the plugins still loading.
         """
         ...
@@ -577,7 +585,9 @@ class SessionStart:
     agent: AbstractAgent[Never, object]
     settings: Settings
     conversation_chosen: bool = False
-    """Whether launch options (`--resume`, `--session-id`, `--fork-session`) picked `host.conversation`.
+    """Whether launch options (`--resume`, `--continue`, `--session-id`, `--fork-session`) picked `host.conversation`.
+
+    `--continue` counts only when it found a saved session to restore.
 
     A plugin that restores a conversation of its own choosing on start should then leave it alone.
     """
@@ -622,6 +632,37 @@ class TaskProgress:
     """The event from the task's own run, its `DelegationStartEvent` or `DelegationEndEvent`, or one of its
     `sub_agents` task events, such as `TaskQuestionEvent`; `None` when only the task changed, such as when it
     started, finished, or began waiting for an answer."""
+
+
+ForkStatus = Literal['running', 'done', 'failed', 'cancelled']
+
+
+@dataclass(frozen=True, kw_only=True)
+class ForkInfo:
+    """One background `/fork`, as a `/forks` row lists it, for a plugin that shows them, such as a remote UI."""
+
+    id: int
+    """The number `/fork cancel ID` takes, counting from 1 in each live session."""
+    model: str
+    """The model it runs, or `agent default`."""
+    prompt: str
+    status: ForkStatus
+    elapsed: float
+    """Seconds it has run so far, or ran in all once it ended."""
+    session_id: str | None
+    """The saved conversation `/resume` continues it in, once it has saved one."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class ForkEnd:
+    """A background `/fork` finished, failed, or was cancelled."""
+
+    fork: ForkInfo
+    """The fork as it ended."""
+    output: str | None = None
+    """Its answer, once it is `done`; a structured output as `str` makes it."""
+    error: BaseException | None = None
+    """Why it `failed`."""
 
 
 UpdateStage = Literal['installing', 'output', 'failed', 'installed', 'restarting']
@@ -706,7 +747,7 @@ class ModelProvider:
     models: tuple[str, ...] = ()
     """Names without the prefix, offered by `/model add` and `/set model`."""
     settings_from: SettingsProvider | None = None
-    """The provider whose `/model settings` controls these models take; `None` offers the generic ones."""
+    """The provider whose `/model settings` controls, and known context window, these models take; `None` offers the generic ones."""
     resolve_profile: Callable[[str, str], Model] | None = None
     """Build NAME for another account: called as `resolve_profile(NAME, PROFILE)` for `PREFIX@PROFILE:NAME`.
 
@@ -829,6 +870,7 @@ HostEvent = (
     | CommandEnd
     | PluginLoadFailed
     | TaskProgress
+    | ForkEnd
     | InstallProgress
 )
 Renderer = Callable[[AgentStreamEvent], RenderableType | None]
@@ -857,6 +899,7 @@ class PluginHost(Generic[DepsT]):
         settings: dict[str, JsonValue],
         full_screen: FullScreen = bare_screen,
         conversation: Conversation | None = None,
+        settings_database: Path | None = None,
         session_id: Callable[[], str | None] = lambda: None,
         status: Status | None = None,
         save_settings: Callable[[dict[str, JsonValue]], None] = lambda _settings: None,
@@ -873,9 +916,12 @@ class PluginHost(Generic[DepsT]):
         live: LiveSessions | None = None,
         default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
         default_model_name: Callable[[], Awaitable[str | None]] | None = None,
+        resolve_model: Callable[[str], Awaitable[Model | str]] | None = None,
+        model_settings: Callable[[str], ModelSettings | None] | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
+        `settings_database` is the settings store's exact path, if the host has one.
         `save_settings` writes changed settings back to the plugin's declaration; without it they
         last until the plugin unloads. `submit_prompt` runs a prompt as the next turn, and
         `send_input` and `interrupt` drive the prompt as the keyboard does; see the methods of the
@@ -899,6 +945,8 @@ class PluginHost(Generic[DepsT]):
         screen. Between turns it is a no-op.
         """
         self.conversation: Conversation = conversation if conversation is not None else Transcript()
+        self.settings_database = settings_database
+        """The settings database used for this process; `None` on a host built outside the shell."""
         self._session_id = session_id
         self.status = status if status is not None else Status()
         self._settings = settings
@@ -917,6 +965,8 @@ class PluginHost(Generic[DepsT]):
         self._workspace = workspace
         self._default_model = default_model
         self._default_model_name = default_model_name
+        self._resolve_model = resolve_model
+        self._model_settings = model_settings
         self.live = live
         """Every live session of this CLAI, for a plugin with `scope = 'process'`; `None` for any other.
 
@@ -926,6 +976,17 @@ class PluginHost(Generic[DepsT]):
         that one has closed, the oldest live session). Its other attributes, such as `conversation` and
         `status`, always name the session that loaded it.
         """
+
+    async def resolve_model(self, name: str) -> Model | str:
+        """Resolve a model ID, saved chain, or account through the session's providers.
+
+        A host outside CLAI without a resolver returns the ID unchanged for core to resolve.
+        """
+        return await self._resolve_model(name) if self._resolve_model is not None else name
+
+    def model_settings(self, name: str) -> ModelSettings | None:
+        """The session's defaults and saved settings for this model or chain, without the parent's run overrides."""
+        return self._model_settings(name) if self._model_settings is not None else None
 
     @property
     def workspace(self) -> Path:
@@ -1226,7 +1287,7 @@ class Plugin(Generic[SettingsT, DepsT]):
         return ()
 
     def get_spinners(self) -> Sequence[Spinner]:
-        """Working animations for `/spinner`; build each with `make_spinner`.
+        """Working animations for `/spinner`; build each with `build_spinner`.
 
         A plugin spinner replaces a builtin of the same name, and the user's `spinners.json` replaces
         both. Unloading the plugin removes it; a selected spinner that is gone shows `working`.
@@ -1303,6 +1364,9 @@ class Plugin(Generic[SettingsT, DepsT]):
         keep it cheap: the task waits for it.
         """
 
+    async def on_fork_end(self, event: ForkEnd) -> None:
+        """A background `/fork` finished, failed, or was cancelled."""
+
     async def on_install_progress(self, event: InstallProgress) -> None:
         """`/update` started installing a newer CLAI, uv printed a line, or the install ended."""
 
@@ -1342,6 +1406,7 @@ _HANDLERS: dict[type[HostEvent], str] = {
     CommandEnd: 'on_command_end',
     PluginLoadFailed: 'on_plugin_load_failed',
     TaskProgress: 'on_task_progress',
+    ForkEnd: 'on_fork_end',
     InstallProgress: 'on_install_progress',
 }
 
