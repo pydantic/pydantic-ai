@@ -26,7 +26,7 @@ durable-execution backend goes in the "Durable Execution" section instead (like
 `harness/acp.md`). `tests/test_docs_navigation.py` fails for a page that has no entry and is not
 listed in that test's `UNPUBLISHED_PAGES`.
 
-### Semantic Parity
+## Semantic Parity
 
 Update both the capability README and `docs/harness/<capability>.md` for every user-facing change:
 public classes, parameters, defaults, tool names, extras, and safety semantics.
