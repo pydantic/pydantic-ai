@@ -412,9 +412,7 @@ def _place_hidden_tools(placements: dict[str, _Placement], tools: Mapping[str, T
         tool.tool_def.tool_kind == 'tool-search' and placements[name] == 'native' for name, tool in tools.items()
     )
     if not local_search:
-        for name in corpus:
-            if placements[name] == 'hidden':
-                placements[name] = 'native'
+        placements.update({name: 'native' for name in corpus if placements[name] == 'hidden'})
         return set()
     native = {name for name in corpus if placements[name] == 'native'}
     sandboxes_corpus = any(placements[name] != 'native' for name in corpus)
