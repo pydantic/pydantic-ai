@@ -229,7 +229,8 @@ class TestFold:
         [info] = seen
         tools = {tool.name: tool for tool in info.function_tools}
         assert sorted(tools) == ['edit_file', 'run_code', 'run_workflow', 'write_file']
-        assert 'async def shell(' in (tools['run_code'].description or '')
+        # The functions `run_code` can call are listed in its catalog, in the instructions.
+        assert 'async def shell(' in (info.instructions or '')
 
     async def test_writes_stay_native_and_guidance_rides_along(self, tmp_path: Path) -> None:
         seen: list[AgentInfo] = []
