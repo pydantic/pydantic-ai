@@ -253,7 +253,7 @@ InstructionVisibility = Literal['prefix', 'via_history']
 
 - `'prefix'`: in the instructions every request starts with.
 - `'via_history'`: in message history. That's the instructions of a loaded
-  [deferred capability](../capabilities/on-demand.md), stated after its `load_capability` tool return as an
+  [deferred capability](../../capabilities/on-demand.md), stated after its `load_capability` tool return as an
   [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] for the capability's block,
   `capability:<id>`, holding all of its parts joined, and appended again whenever they change.
 
@@ -345,7 +345,7 @@ class ModelRequestParameters:
     boundaries at the static/dynamic instruction boundary.
 
     While `before_model_request` hooks run, this also holds the instructions of the
-    [deferred capabilities](../capabilities/on-demand.md) the model has loaded, which
+    [deferred capabilities](../../capabilities/on-demand.md) the model has loaded, which
     [`instruction_visibility`][pydantic_ai.models.ModelRequestParameters.instruction_visibility] marks
     `'via_history'`. The agent takes those out before the model is called, so a model only sees the prefix.
     """

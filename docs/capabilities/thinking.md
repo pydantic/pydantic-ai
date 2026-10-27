@@ -101,7 +101,7 @@ The request-level effort is part of the provider's [prompt cache](caching.md) ke
 | API | How the change is sent | Models |
 |---|---|---|
 | OpenAI Responses | a `configuration_update` input item | GPT-6 family |
-| Anthropic | an effort-only `system` entry with a per-message `output_config`, under the `mid-conversation-output-config-2026-07-01` beta | Claude Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5 on the Claude API and Google Cloud; Fable 5.1 and Opus 5.5 on the legacy Bedrock InvokeModel client |
+| Anthropic | an effort-only `system` entry with a per-message `output_config`, under the `mid-conversation-output-config-2026-07-01` beta | Claude Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5 on the Claude API and Google Cloud; Fable 5.1 and Opus 5.5 on the legacy Bedrock InvokeModel client; Opus 5.5 on the Bedrock Messages API client |
 | OpenRouter | a content-less `system` message carrying a `configuration_update`, which OpenRouter sends on in the routed model's own form | Claude Fable 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5; GPT-6 Astra, Sol and Luna and GPT-6.1 Sol, but not their `-pro` variants |
 
 Every other API and model gets the new level as the request-level setting, as before. So do these cases, where the API doesn't take a mid-conversation change:

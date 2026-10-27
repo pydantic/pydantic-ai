@@ -114,9 +114,9 @@ prompt.
 The follow-up wraps what the tool returned in `<tool_result tool_name="..." tool_call_id="...">`
 tags, the same tags Pydantic AI puts around tool files it sends on the user channel. This tells the
 model the text is the tool's output rather than something the user said, and which pending call it
-completes. A closing `</tool_result>` tag inside the output is escaped, so the output cannot end the
-frame early. A failed call is framed the same way with `outcome="failed"`, wrapping the message from
-`ModelRetry` or `ToolFailed`.
+completes. The `<` of every opening or closing framing tag inside the output (`<tool_result>`,
+`<system>` and the rest) is escaped, so the output stays inside its frame. A failed call is framed
+the same way with `outcome="failed"`, wrapping the message from `ModelRetry` or `ToolFailed`.
 
 Text and files returned by the tool are sent to the model. [`ToolReturn.metadata`][pydantic_ai.messages.ToolReturn.metadata]
 is discarded.

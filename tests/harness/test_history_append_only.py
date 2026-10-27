@@ -258,6 +258,7 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
 
 SCENARIOS: dict[str, Scenario] = {
     'CodeMode': Scenario(look_up=_run_look_up),
+    'CompactOnRequest': Scenario(state_calls=(('compact_context', {'focus': 'the forecast'}),)),
     'DeduplicateFileReads': Scenario(
         state_calls=(('read_file', {'path': 'notes.md'}), ('read_file', {'path': 'notes.md'}))
     ),
@@ -309,6 +310,10 @@ _HISTORY = (('messages', 'user-prompt'), ('messages', 'model-response'), ('messa
 
 ALLOWED: dict[str, Allowed] = {
     'ClearToolResults': Allowed(_COMPACTION, _HISTORY),
+    'CompactOnRequest': Allowed(
+        'Compaction rewrites history by design, once per accepted `compact_context` request from the model',
+        _HISTORY,
+    ),
     'DeduplicateFileReads': Allowed(
         'Clears superseded file reads in place, as documented, when the model reads a file again',
         (('messages', 'tool-return'),),
