@@ -320,6 +320,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 succeeds, is reported as a case failure while the other cases continue. Lifecycle hooks and
                 evaluators are not bounded. A sync task runs in a worker thread that can't be interrupted, so
                 on timeout it keeps running in the background, outside `max_concurrency`, and its result is discarded.
+                With a timeout set, cancelling the evaluation (for example with Ctrl-C) also leaves an in-flight
+                sync task running in the background; without one, cancellation waits for it to finish.
                 If None (the default), tasks run without a time limit.
 
         Returns:
@@ -467,6 +469,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 succeeds, is reported as a case failure while the other cases continue. Lifecycle hooks and
                 evaluators are not bounded. A sync task runs in a worker thread that can't be interrupted, so
                 on timeout it keeps running in the background, outside `max_concurrency`, and its result is discarded.
+                With a timeout set, cancelling the evaluation (for example with Ctrl-C) also leaves an in-flight
+                sync task running in the background; without one, cancellation waits for it to finish.
                 If None (the default), tasks run without a time limit.
 
         Returns:
