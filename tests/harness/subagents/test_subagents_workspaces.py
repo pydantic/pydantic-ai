@@ -33,7 +33,7 @@ def is_toolset(value: object) -> TypeIs[SubAgentToolset[object]]:
 @pytest.mark.parametrize('enabled', [False, True])
 async def test_directory_schema_is_opt_in(tmp_path: Path, enabled: bool) -> None:
     async def resolve(ctx: RunContext[object], name: str, directory: str) -> Workspace:
-        return Workspace(LocalWorkspaceBackend(tmp_path / directory))
+        return Workspace(LocalWorkspaceBackend(tmp_path / directory))  # pragma: no cover
 
     def inspect(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         schema = info.function_tools[0].parameters_json_schema
@@ -158,6 +158,39 @@ async def test_background_resume_keeps_directory(tmp_path: Path, controlled: boo
     assert seen == [str(selected), str(selected)]
 
 
+async def test_owner_rejects_resume_directory_change_before_mutation(tmp_path: Path) -> None:
+    async def run(record: DelegationTask) -> str:
+        assert record.working_directory == str(tmp_path)
+        return 'finished'
+
+    adapter = TypeAdapter(DelegationTask)
+    async with DelegationTasks().opened() as owner:
+        await owner.delegate(
+            agent_name='worker',
+            prompt='inspect',
+            conversation_id='parent',
+            model=None,
+            background=False,
+            resume=None,
+            run=run,
+            working_directory=str(tmp_path),
+        )
+        (record,) = owner.records.values()
+        saved = adapter.dump_python(record, mode='json')
+        with pytest.raises(ModelRetry, match='cannot change its working directory'):
+            await owner.delegate(
+                agent_name='worker',
+                prompt='changed prompt',
+                conversation_id='parent',
+                model='changed-model',
+                background=False,
+                resume=record.id,
+                run=run,
+                working_directory=str(tmp_path / 'elsewhere'),
+            )
+        assert adapter.dump_python(record, mode='json') == saved
+
+
 async def test_directory_requires_resolver_and_old_records_keep_defaults(tmp_path: Path) -> None:
     child = Agent(TestModel(custom_output_text='done'), name='worker')
     capability = SubAgents[object](agents=[SubAgent(child)])
@@ -183,7 +216,7 @@ async def test_resolver_errors_and_composition(tmp_path: Path) -> None:
         raise ModelRetry('directory refused')
 
     async def other(ctx: RunContext[object], name: str, directory: str) -> Workspace:
-        return Workspace(LocalWorkspaceBackend(tmp_path))
+        return Workspace(LocalWorkspaceBackend(tmp_path))  # pragma: no cover
 
     capability = SubAgents[object](agents=[SubAgent(Agent(TestModel(), name='worker'))], workspace_resolver=resolve)
     toolset = capability.get_toolset()
@@ -200,7 +233,7 @@ async def test_durable_directory_override_is_rejected(tmp_path: Path) -> None:
     from pydantic_ai.durable_exec.temporal import TemporalRunContext
 
     async def resolve(ctx: RunContext[object], name: str, directory: str) -> Workspace:
-        raise AssertionError('resolver must not run')
+        raise AssertionError('resolver must not run')  # pragma: no cover
 
     capability = SubAgents[object](agents=[SubAgent(Agent(TestModel(), name='worker'))], workspace_resolver=resolve)
     toolset = capability.get_toolset()
@@ -218,7 +251,7 @@ async def test_remote_directory_override_is_rejected(tmp_path: Path) -> None:
     from pydantic_ai_harness.subagents import InMemoryTransport, RemoteSubAgent
 
     async def resolve(ctx: RunContext[object], name: str, directory: str) -> Workspace:
-        raise AssertionError('resolver must not run')
+        raise AssertionError('resolver must not run')  # pragma: no cover
 
     capability = SubAgents[object](
         task_control=TaskControl(remote_agents=[RemoteSubAgent(name='remote')], transport=InMemoryTransport()),

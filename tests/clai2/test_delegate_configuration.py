@@ -110,7 +110,7 @@ async def test_review_resolves_models_settings_and_policy_directory(tmp_path: Pa
 
     @agent.tool_plain
     def unsafe() -> str:
-        raise AssertionError('Review must not inherit this tool')
+        raise AssertionError('Review must not inherit this tool')  # pragma: no cover
 
     async with DelegationTasks().opened() as owner:
         with owner.bind():
