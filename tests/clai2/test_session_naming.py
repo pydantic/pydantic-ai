@@ -46,7 +46,8 @@ async def test_naming_uses_revision_and_bounded_tail(tmp_path: Path) -> None:
 
     namer, client = SessionNamer(store=store), NamingClient(generate=generate)
     assert await namer.name(conversation_id=summary.id, client=client)
-    assert len(prompts[0]) < 2600
+    # The tail, plus the start of a conversation still under its fallback title.
+    assert len(prompts[0]) < 2900
     assert 'fix renderer' in prompts[0]
     named = (await store.get(conversation_id=summary.id)).summary
     assert named.title == 'Fix renderer'
@@ -311,7 +312,10 @@ async def test_naming_keeps_where_an_imported_session_came_from(tmp_path: Path) 
 async def test_templated_sessions_get_their_own_titles_not_the_prompt_prefix(tmp_path: Path) -> None:
     """The prompt-prefix fallback is a placeholder, not a previous title to keep."""
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
-    template = 'You are fixing GitHub issue https://github.com/pydantic/pydantic-ai/issues/{} in a dedicated worktree.'
+    # Long enough that the issue number, past the fallback's cut, also leaves the naming tail.
+    template = (
+        'You are fixing GitHub issue https://github.com/pydantic/pydantic-ai/issues/{} ' + 'Follow the steps. ' * 200
+    )
     sessions = [Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path) for _ in range(2)]
     for number, session in zip(('11281', '11282'), sessions):
         await session.prompt(template.format(number))

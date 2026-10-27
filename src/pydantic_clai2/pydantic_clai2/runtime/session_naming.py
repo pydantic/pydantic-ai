@@ -164,18 +164,19 @@ class SessionNamer:
         if not self.needed(saved.summary):
             return None
         # A bounded current tail, rather than a message-count cursor, remains valid after
-        # compaction and recovery. Prior metadata supplies continuity with older context.
-        digest = conversation_text(saved.messages)[-2400:]
+        # compaction and recovery. A generated name, or else the conversation's start, supplies older context.
+        text = conversation_text(saved.messages)
+        digest = text[-2400:]
         if not digest.strip():
             return None
-        # A fallback title is a placeholder cut from the first prompt, not a name to keep stable:
-        # sessions started from one template would all keep the same cut-off prefix.
-        previous = (
-            f'Previous title: {saved.summary.title}\nPrevious detail: {saved.summary.subtitle}\n'
-            if saved.summary.title_source == 'generated'
-            else ''
-        )
-        prompt = f'{previous}Current conversation tail:\n{digest}'
+        if saved.summary.title_source == 'generated':
+            context = f'Previous title: {saved.summary.title}\nPrevious detail: {saved.summary.subtitle}\n'
+        else:
+            # A fallback title is a placeholder cut from the first prompt, not a name to keep stable: sessions
+            # started from one template would all keep the same prefix. Their distinguishing detail, such as
+            # an issue number, may lie past it and have left the tail, so the namer sees the start instead.
+            context = f'Conversation start:\n{text[:400]}\n' if len(text) > len(digest) else ''
+        prompt = f'{context}Current conversation tail:\n{digest}'
         result = await client.generate(prompt)
         if result is None:
             return None

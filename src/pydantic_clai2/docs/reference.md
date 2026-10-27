@@ -2236,8 +2236,10 @@ A saved session immediately gets a fallback title from its first prompt. A
 single background worker can replace it with a short title, subtitle, and up to
 four topic tags. The browser refreshes names while idle without moving selection.
 
-The worker uses the previous summary plus up to 2,400 characters of recent
-user/assistant text. It refreshes generated names after 16 content revisions;
+The worker uses up to 2,400 characters of recent user/assistant text, plus the
+previous summary once a model has generated one. Until then, the fallback title
+is not offered as a name to keep; the start of a longer conversation is sent
+instead, so sessions begun from one template are told apart. It refreshes generated names after 16 content revisions;
 revisions, unlike message offsets, survive compaction. This is a bounded current
 summary, not a lossless incremental transcript archive. Opening the browser
 backfills up to ten eligible sessions. Queue length, request count, output size,
