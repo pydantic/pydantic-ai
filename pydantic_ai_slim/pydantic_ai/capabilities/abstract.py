@@ -1209,22 +1209,21 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Called for an attempt at a model request when compaction was asked for with
         [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction], or with reason
-        `'context_overflow'` when the model rejected the attempt for exceeding its context window, to send it to that
-        model once more, after the
-        [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] hooks,
-        with [`request.model`][pydantic_ai.capabilities.CompactionRequest.model] set to the model about to
-        serve it. Capabilities are asked in order and the first result is used, so capability order is the
-        fallback chain: a capability that can't compact for this model, or this request, returns `None`.
+        `'context_overflow'` when the model rejected the attempt for exceeding its context window, to send it to
+        that model once more. It runs after the
+        [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] hooks, with
+        [`request.model`][pydantic_ai.capabilities.CompactionRequest.model] set to the model about to serve the
+        attempt. Capabilities are asked in order and the first result is used, so capability order is the fallback
+        chain: a capability that can't compact for this model, or this request, returns `None`.
 
-        The returned [`CompactionResult.messages`][pydantic_ai.capabilities.CompactionResult.messages] are sent
-        in place of [`request.messages`][pydantic_ai.capabilities.CompactionRequest.messages], and replace the
-        run's message history once a response to them is accepted. What's committed has the persistent originals of the
+        The returned [`CompactionResult.messages`][pydantic_ai.capabilities.CompactionResult.messages] are sent in
+        place of [`request.messages`][pydantic_ai.capabilities.CompactionRequest.messages], and replace the run's
+        message history once a response to them is accepted. What's committed has the persistent originals of the
         messages it kept, and what's sent has this request's own changes to them; see
-        [`CompactionRequest.messages`][pydantic_ai.capabilities.CompactionRequest.messages]. A compaction for a
-        model that then fails
-        is discarded, and its usage is counted like a failed attempt's. A
-        [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] raised here fails the attempt like an error
-        from the model itself, so it reaches
+        [`CompactionRequest.messages`][pydantic_ai.capabilities.CompactionRequest.messages]. A compaction for a model
+        that then fails is discarded, and its usage is counted like a failed attempt's. A
+        [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] raised here fails the attempt like an error from the
+        model itself, so it reaches
         [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] and
         [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] can move on to another model.
 

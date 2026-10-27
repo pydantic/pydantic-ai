@@ -266,7 +266,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     @property
     def _has_compact_history(self) -> bool:
-        return any(c._has_compact_history for c in self.capabilities)
+        return any(c._has_compact_history for c in self._dispatch)
 
     @property
     def _can_supply_model(self) -> bool:
@@ -805,8 +805,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         raise error
 
     async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
-        # In capability order: the first capability that compacts wins, and the ones after it are its fallbacks.
-        for capability in self.capabilities:
+        # In dispatch order: the first capability that compacts wins, and the ones after it are its fallbacks.
+        for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None and (
                 result := await capability.compact_history(cap_ctx, request)
             ) is not None:
