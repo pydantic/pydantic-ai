@@ -872,7 +872,13 @@ class SessionCore:
     def _with_item_details(
         self, response: _Response, part: SpeechPart | TextPart, item_id: str | None
     ) -> SpeechPart | TextPart:
-        if item_id is None or (details := response.item_details.get(item_id)) is None:
+        if item_id is None:
+            return part
+        if isinstance(part, SpeechPart):
+            # Only speech takes the item ID: a `TextPart.id` is replayed to the API that produced it, and a realtime
+            # item ID means nothing to a standard model.
+            part = replace(part, id=item_id, provider_name=self._provider_name)
+        if (details := response.item_details.get(item_id)) is None:
             return part
         return replace(part, provider_name=self._provider_name, provider_details=details)
 

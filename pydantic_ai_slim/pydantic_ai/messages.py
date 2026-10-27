@@ -3833,7 +3833,11 @@ class SpeechPart:
     """
 
     id: str | None = None
-    """The provider item ID, used to correlate the part with provider-side conversation items."""
+    """The provider item ID, used to correlate the part with provider-side conversation items.
+
+    Set on the model's speech when the provider names its output items, as the OpenAI Realtime protocol does;
+    `None` on providers that don't, like Gemini Live and GPT-Live.
+    """
 
     provider_name: str | None = None
     """The name of the provider that generated or transcribed the audio.
