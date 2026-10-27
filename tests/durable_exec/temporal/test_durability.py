@@ -115,7 +115,7 @@ from pydantic_ai.models import (
 from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.batch import Batch, EncodedBatchRequest
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel, StreamFunctionDef
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -863,17 +863,17 @@ async def _stalls_before_first_event_fn(
 
 async def _pauses_after_first_event_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
     yield 'partial '
-    await asyncio.sleep(1)
+    await asyncio.sleep(0.1)
     yield 'answer'
 
 
-def _first_event_timeout_agent(name: str, stream_function: Any) -> Agent[None, str]:
+def _first_event_timeout_agent(name: str, stream_function: StreamFunctionDef) -> Agent[None, str]:
     return Agent(
         FunctionModel(stream_function=stream_function, model_name='slow'),
         name=name,
         deps_type=type(None),
         capabilities=[ProcessEventStream(_drain_events), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
-        model_settings={'first_event_timeout': 0.5},
+        model_settings={'first_event_timeout': 0.05},
     )
 
 
@@ -899,7 +899,7 @@ class FirstEventTimeoutWorkflow:
 @pytest.mark.parametrize(
     ('agent', 'expected'),
     [
-        pytest.param(stalled_first_event_agent, 'ModelRequestTimeout first_event_timeout 0.5', id='stalled'),
+        pytest.param(stalled_first_event_agent, 'ModelRequestTimeout first_event_timeout 0.05', id='stalled'),
         pytest.param(paused_first_event_agent, 'partial answer', id='paused-after-first-event'),
     ],
 )

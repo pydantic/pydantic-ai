@@ -1032,8 +1032,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
         """Start the deadlines of a request to this model made now, if they're set here or on the model.
 
-        That's `request_timeout`'s, and on a streamed request `first_event_timeout`'s. A model that makes its requests through other models, each under deadlines of their own, overrides this to
-        return `None`, as [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does.
+        That's `request_timeout`'s, and on a streamed request `first_event_timeout`'s. A model that makes its
+        requests through other models, each under deadlines of their own, overrides this to return `None`, as
+        [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does.
         """
         return RequestDeadline.start(
             self.model_name, merge_model_settings(self.settings, model_settings), stream=stream

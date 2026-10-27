@@ -4,7 +4,7 @@ import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, cast
 
 import pydantic_core
 from pydantic_core import core_schema
@@ -56,6 +56,7 @@ __all__ = (
     'ModelConnectionError',
     'TransportPhase',
     'ModelTimeoutError',
+    'RequestTimeoutSetting',
     'ModelContextWindowExceededError',
     'ModelRequestRejectedError',
     'ModelAuthenticationError',
@@ -740,6 +741,10 @@ TransportPhase = Literal['pool', 'connect', 'write', 'read']
 """The stage of a request at which a transport failure happened; see
 [`ModelConnectionError.phase`][pydantic_ai.exceptions.ModelConnectionError.phase]."""
 
+RequestTimeoutSetting: TypeAlias = Literal['request_timeout', 'first_event_timeout']
+"""The model setting whose timeout ran out; see
+[`ModelRequestTimeout.setting`][pydantic_ai.exceptions.ModelRequestTimeout.setting]."""
+
 
 class ModelConnectionError(ModelAPIError):
     """Raised when the request could not reach the provider or its response could not be read.
@@ -868,14 +873,14 @@ class ModelRequestTimeout(ModelAPIError):
     timeout: float
     """The timeout that ran out, in seconds."""
 
-    setting: Literal['request_timeout', 'first_event_timeout']
+    setting: RequestTimeoutSetting
     """The model setting whose timeout ran out."""
 
     def __init__(
         self,
         model_name: str,
         timeout: float,
-        setting: Literal['request_timeout', 'first_event_timeout'] = 'request_timeout',
+        setting: RequestTimeoutSetting = 'request_timeout',
     ):
         self.timeout = timeout
         self.setting = setting
