@@ -110,10 +110,9 @@ async def test_closed_session_releases_deps(turns: int) -> None:
             pass
 
     del deps, session
-    # Let the run and teardown tasks unwind, without giving the cyclic collector a chance to help.
-    for _ in range(100):
-        if deps_ref() is None:
-            break
-        await asyncio.sleep(0.01)
+    # Let the finished tasks' done callbacks run (one loop pass suffices; a few spare ones keep this
+    # robust across Python versions), without giving the cyclic collector a chance to help.
+    for _ in range(10):
+        await asyncio.sleep(0)
 
     assert deps_ref() is None
