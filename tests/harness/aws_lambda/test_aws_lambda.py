@@ -792,6 +792,30 @@ def shutdown(loop: asyncio.AbstractEventLoop, owner: threading.Thread | None = N
         loop.close()
 
 
+def hold_cancel_until_unwinding(
+    loop: asyncio.AbstractEventLoop, unwinding: threading.Event, monkeypatch: pytest.MonkeyPatch
+) -> threading.Event:
+    """Send the handler's cancel of an abandoned run only once the run has started unwinding.
+
+    The handler thread replies to the suspended step and then sends the cancel, which can reach
+    the loop before or after the run resumes. Holding it, as a handler thread that lags the loop on
+    a busy runner does, means it always finds the run still unwinding instead of interrupting it
+    before its cleanup starts. The returned event says the hold happened: a renamed cancel callback
+    would slip past it and bring the race back.
+    """
+    schedule = loop.call_soon_threadsafe
+    held = threading.Event()
+
+    def hold(callback: Callable[..., object], *args: Any) -> asyncio.Handle:
+        if callback.__name__ == 'cancel_and_notify':
+            assert unwinding.wait(timeout=_READINESS_WAIT_TIMEOUT)
+            held.set()
+        return schedule(callback, *args)
+
+    monkeypatch.setattr(loop, 'call_soon_threadsafe', hold)
+    return held
+
+
 class TestBridgeFailureModes:
     """Regressions for ways the bridge could strand the handler thread or swallow SDK control flow."""
 
@@ -1064,7 +1088,6 @@ class TestBridgeFailureModes:
                 raise Suspend('retry scheduled')
 
         unwinding = threading.Event()
-        cancel_held = threading.Event()
         cleanup_finished = threading.Event()
 
         agent = build_agent(act)
@@ -1082,24 +1105,11 @@ class TestBridgeFailureModes:
         warm = loops.get()
         thread = loops._thread  # pyright: ignore[reportPrivateUsage]
         assert thread is not None
-        schedule = warm.call_soon_threadsafe
-
-        def cancel_once_unwinding(callback: Callable[..., object], *args: Any) -> asyncio.Handle:
-            # The handler thread replies to the suspended step and then sends the cancel, which can
-            # reach the loop before or after the run resumes. Send it once the run is unwinding, as a
-            # handler thread that lags the loop on a busy runner does, so it always finds the run
-            # still unwinding instead of interrupting it before the cleanup starts.
-            if callback.__name__ == 'cancel_and_notify':
-                assert unwinding.wait(timeout=_READINESS_WAIT_TIMEOUT)
-                cancel_held.set()
-            return schedule(callback, *args)
-
-        monkeypatch.setattr(warm, 'call_soon_threadsafe', cancel_once_unwinding)
+        cancel_held = hold_cancel_until_unwinding(warm, unwinding, monkeypatch)
 
         with pytest.raises(Suspend):
             run_durable(run_with_quick_cleanup, context=SuspendingContext(), cancel_timeout=_READINESS_WAIT_TIMEOUT)
 
-        # A renamed cancel callback would slip past the hold and bring the race back.
         assert cancel_held.is_set()
         assert cleanup_finished.wait(timeout=_READINESS_WAIT_TIMEOUT)
         # The unwind beat the budget, so the loop is still the one the next invocation gets.
@@ -1109,13 +1119,13 @@ class TestBridgeFailureModes:
         shutdown(warm, owner=thread)
         gc.collect()
 
-    @pytest.mark.skip(reason='Cleanup never finishes in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
     def test_retirement_drains_cleanup_scheduled_when_the_main_task_finishes(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         loops = _bridge._AgentLoop()  # pyright: ignore[reportPrivateUsage]
         monkeypatch.setattr(_bridge, '_agent_loop', loops)
-        monkeypatch.setattr(_bridge, '_RETIRED_LOOP_GRACE_SECONDS', 0.5)
+        unwinding = threading.Event()
+        retiring = asyncio.Event()
         cleanup_finished = threading.Event()
 
         class Suspend(BaseException):
@@ -1135,18 +1145,33 @@ class TestBridgeFailureModes:
             try:
                 return await agent.run('go')  # type: ignore[return-value]
             finally:
-                await asyncio.sleep(0.03)
+                unwinding.set()
+                # Outlive the cancel budget: finish only once the retirement is waiting on this run.
+                with suppress(asyncio.CancelledError):
+                    await asyncio.Event().wait()
+                await retiring.wait()
                 asyncio.create_task(delayed_cleanup())
 
         retired = loops.get()
         thread = loops._thread  # pyright: ignore[reportPrivateUsage]
         assert thread is not None
+        cancel_held = hold_cancel_until_unwinding(retired, unwinding, monkeypatch)
+        retire = loops.retire
+
+        def retire_and_release(loop: asyncio.AbstractEventLoop, task: asyncio.Task[Any] | None) -> None:
+            # Release the run after the retirement's cleanup is queued, so that cleanup is already
+            # waiting on the run when it finishes and schedules its follow-up task.
+            retire(loop, task)
+            loop.call_soon_threadsafe(retiring.set)
+
+        monkeypatch.setattr(loops, 'retire', retire_and_release)
 
         with pytest.raises(Suspend):
             run_durable(abandoned_run, context=SuspendingContext(), cancel_timeout=0.01)
 
-        assert cleanup_finished.wait(timeout=5)
-        thread.join(timeout=5)
+        assert cancel_held.is_set()
+        assert cleanup_finished.wait(timeout=_READINESS_WAIT_TIMEOUT)
+        thread.join(timeout=_READINESS_WAIT_TIMEOUT)
         assert retired.is_closed()
         assert not thread.is_alive()
 
@@ -1157,6 +1182,7 @@ class TestBridgeFailureModes:
         assert thread is not None
         task_started = threading.Event()
         task_cancelled = threading.Event()
+        tasks: list[asyncio.Task[None]] = []
 
         async def pending_work() -> None:
             task_started.set()
@@ -1165,13 +1191,17 @@ class TestBridgeFailureModes:
             finally:
                 task_cancelled.set()
 
-        loop.call_soon_threadsafe(loop.create_task, pending_work())
-        assert task_started.wait(timeout=5)
+        # Keep the task: a loop holds its tasks only weakly, so a dropped task waiting on an event
+        # nothing else references can be garbage-collected, running its `finally`, before the
+        # retirement gets to cancel it.
+        loop.call_soon_threadsafe(lambda: tasks.append(loop.create_task(pending_work())))
+        assert task_started.wait(timeout=_READINESS_WAIT_TIMEOUT)
 
         loops.retire(loop, None)
 
-        thread.join(timeout=5)
+        thread.join(timeout=_READINESS_WAIT_TIMEOUT)
         assert task_cancelled.is_set()
+        assert tasks[0].cancelled()
         assert loop.is_closed()
         assert not thread.is_alive()
 
