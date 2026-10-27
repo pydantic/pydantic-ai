@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from dirty_equals import IsInt
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
@@ -22,18 +24,11 @@ try:
 except ImportError:  # pragma: no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
-pytestmark = pytest.mark.anyio
-
 VERBOSE_SUMMARY = '\n\n'.join(
     f'## {heading}\n' + 'The user is planning the search relevance upgrade with Elena and wants a next step. ' * 2
     for heading in ('Intent', 'Key decisions', 'Current state', 'Next steps')
 )
 """A summary longer than the short turns it replaces, as a small model can write for the default prompt."""
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def _history() -> list[ModelMessage]:
@@ -68,6 +63,15 @@ def _compact_spans(capfire: CaptureLogfire) -> list[dict[str, Any]]:
     return [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'compact_messages']
 
 
+def _compaction_attributes(span: dict[str, Any]) -> dict[str, Any]:
+    """The attributes compaction sets on its span, without the ones core's instrumentation adds."""
+    return {
+        key: value
+        for key, value in span['attributes'].items()
+        if key.startswith('compaction.') or key == 'gen_ai.conversation.compacted'
+    }
+
+
 def _has_summary(messages: list[ModelMessage]) -> bool:
     return any(isinstance(part, CompactionPart) for message in messages for part in message.parts)
 
@@ -95,10 +99,17 @@ class TestSummarizingCompaction:
         assert sent[0][:-1] == history
         assert not _has_summary(result.all_messages())
         [span] = _compact_spans(capfire)
-        attributes = span['attributes']
-        assert 'gen_ai.conversation.compacted' not in attributes
-        assert attributes['compaction.strategy'] == 'SummarizingCompaction'
-        assert attributes['compaction.skipped'] == 'not_smaller'
+        attributes = _compaction_attributes(span)
+        assert attributes == snapshot(
+            {
+                'compaction.strategy': 'SummarizingCompaction',
+                'compaction.skipped': 'not_smaller',
+                'compaction.messages_before': 13,
+                'compaction.messages_after': IsInt(),
+                'compaction.tokens_before': 62,
+                'compaction.tokens_after': IsInt(),
+            }
+        )
         assert attributes['compaction.tokens_after'] > attributes['compaction.tokens_before']
 
 
@@ -125,11 +136,26 @@ class TestFallbackCompaction:
         assert not _has_summary(sent[0])
         assert estimate_token_count(sent[0]) < estimate_token_count(history)
         skipped, compacted = _compact_spans(capfire)
-        assert skipped['attributes']['compaction.strategy'] == 'SummarizingCompaction'
-        assert skipped['attributes']['compaction.skipped'] == 'not_smaller'
-        assert compacted['attributes']['compaction.strategy'] == 'FallbackCompaction'
-        assert compacted['attributes']['gen_ai.conversation.compacted'] is True
-        assert 'compaction.skipped' not in compacted['attributes']
+        assert _compaction_attributes(skipped) == snapshot(
+            {
+                'compaction.strategy': 'SummarizingCompaction',
+                'compaction.skipped': 'not_smaller',
+                'compaction.messages_before': 13,
+                'compaction.messages_after': 5,
+                'compaction.tokens_before': 62,
+                'compaction.tokens_after': 239,
+            }
+        )
+        assert _compaction_attributes(compacted) == snapshot(
+            {
+                'gen_ai.conversation.compacted': True,
+                'compaction.strategy': 'FallbackCompaction',
+                'compaction.messages_before': 13,
+                'compaction.messages_after': 3,
+                'compaction.tokens_before': 62,
+                'compaction.tokens_after': 51,
+            }
+        )
         # Only the strategy whose result was kept leaves a receipt.
         assert [event['attributes']['compaction.receipt.strategy'] for event in compacted['events']] == [
             'SlidingWindowCompaction'
@@ -151,7 +177,16 @@ class TestFallbackCompaction:
         assert calls == ['Short.']
         assert _has_summary(sent[0])
         [span] = _compact_spans(capfire)
-        assert span['attributes']['compaction.strategy'] == 'FallbackCompaction'
+        assert _compaction_attributes(span) == snapshot(
+            {
+                'gen_ai.conversation.compacted': True,
+                'compaction.strategy': 'FallbackCompaction',
+                'compaction.messages_before': 13,
+                'compaction.messages_after': IsInt(),
+                'compaction.tokens_before': 62,
+                'compaction.tokens_after': IsInt(),
+            }
+        )
 
     async def test_the_history_is_unchanged_when_no_strategy_shrinks_it(self, capfire: CaptureLogfire) -> None:
         calls: list[str] = []
@@ -170,4 +205,13 @@ class TestFallbackCompaction:
         assert sent[0][:-1] == history
         assert result.all_messages()[:-2] == history
         [span] = _compact_spans(capfire)
-        assert span['attributes']['compaction.skipped'] == 'not_smaller'
+        assert _compaction_attributes(span) == snapshot(
+            {
+                'compaction.strategy': 'SummarizingCompaction',
+                'compaction.skipped': 'not_smaller',
+                'compaction.messages_before': 13,
+                'compaction.messages_after': 4,
+                'compaction.tokens_before': 62,
+                'compaction.tokens_after': 195,
+            }
+        )

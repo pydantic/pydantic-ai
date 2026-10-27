@@ -204,7 +204,7 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
                     strategy='SummarizingCompaction',
                     messages=messages,
                     compact=partial(strategy.compact, list(messages), ctx),
-                    tokenizer=strategy.tokenizer,
+                    tokenizer=self.tokenizer,
                 )
                 if compacted is not None:
                     return compacted
