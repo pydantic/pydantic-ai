@@ -687,9 +687,9 @@ class Session(Generic[DepsT, OutputT]):
             saved = await self.conversations.get(conversation_id=conversation_id)
             if not allow_other_workspace:
                 self.check_workspace(saved.summary.workspace)
-            # An existing fork is chosen when no other process runs it, so a mark of this one's is stale: claiming it
-            # found no live session here holding it.
-            stale = busy is not None and saved.summary.owner_pid == os.getpid()
+            # A fork is continued when no other process runs it, so this process's mark on one is stale: claiming it
+            # found no live session here holding it. Forking it again would pile up copies.
+            stale = saved.summary.forked_from is not None and saved.summary.owner_pid == os.getpid()
             forking = None if stale else busy_conflict(saved.summary)
             messages = saved.messages
             interrupted = saved.summary.outcome in ('running', 'failed', 'cancelled')

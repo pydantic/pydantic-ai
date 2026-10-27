@@ -521,6 +521,28 @@ async def test_a_conversation_another_process_runs_has_one_copy_across_processes
     ]
 
 
+async def test_a_copy_this_process_left_running_opens_without_another_copy(tmp_path: Path) -> None:
+    """A turn in the copy cut off without saving its end leaves this process's mark on it; opening continues it."""
+    fleet = Fleet(tmp_path, builtin=())
+    store = fleet.process.conversations
+    workspace = str(fleet.folder('a').resolve())
+    busy = await store.save(
+        summary=ConversationSummary(workspace=workspace, title='Busy', outcome='running', owner_pid=os.getpid()),
+        messages=[],
+    )
+    copy = await store.save(
+        summary=ConversationSummary(
+            workspace=workspace, title='Busy (fork)', outcome='running', owner_pid=os.getpid(), forked_from=busy.id
+        ),
+        messages=[],
+    )
+    with anyio.fail_after(20):
+        async with fleet.live.serving():
+            opened = await fleet.live.open(busy.id)
+            assert opened.conversation.conversation_id == copy.id
+    assert len(await store.listing()) == 2
+
+
 async def test_a_session_runs_as_the_one_being_handled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """One session opening another does not make the new one run as the opener."""
     fleet = Fleet(tmp_path, builtin=())

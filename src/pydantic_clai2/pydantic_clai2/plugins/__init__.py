@@ -416,9 +416,10 @@ class LiveSessions(Protocol):
     async def open(self, conversation_id: str, /) -> LiveSession:
         """The live session holding a saved conversation, resuming it in a new one, in its own directory, if none does.
 
-        Concurrent calls for one conversation return the same session. One another process runs is continued in
-        a fork of it, reusing one saved before, so the session's conversation ID differs. Raises `LookupError` for an unknown
-        conversation, `ValueError` when its directory is gone, and `RuntimeError` where CLAI opens no sessions.
+        Concurrent calls for one conversation return the same session. A conversation another process runs
+        continues in a fork of it, reusing one saved before, so the session's conversation ID differs.
+        Raises `LookupError` for an unknown conversation, `ValueError` when its directory is gone, and
+        `RuntimeError` where CLAI opens no sessions.
         Do not await it from `on_session_start`: the new session waits for the plugins still loading.
         """
         ...
