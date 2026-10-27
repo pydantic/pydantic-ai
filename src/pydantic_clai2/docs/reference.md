@@ -2119,9 +2119,7 @@ menu", or "Use my model provider". The default agent lists `clai_customization`
 as a deferred capability in its catalog, one line until the model calls
 `load_capability` to reveal two docs tools. The loaded capability gives the model
 a short instruction to use these docs for questions about CLAI, and to read the
-customization guide before advising on customizing CLAI. That instruction is
-placed after the coding guidance the plugins contribute and before the repository
-instruction file.
+customization guide before advising on customizing CLAI.
 
 - `search_clai_docs(query)` returns the best matching sections, each with its path
   and a short snippet.
@@ -2138,8 +2136,7 @@ The docs are this reference, the [README](../README.md), the
 Pydantic AI Harness capability CLAI uses, such as `harness/shell` and
 `harness/subagents`. They ship with the installed packages and are read only when a
 tool is called, never included in every prompt or loaded capability. No network
-access or source checkout is needed. Both tools ignore extra arguments supplied by a model; other
-tools keep their existing validation.
+access or source checkout is needed.
 
 The customization guide covers plugin installation and reload, hooks, tools,
 settings, commands, rendering, custom TUI menus, and model/provider launchers. It

@@ -190,11 +190,9 @@ then does the model get `search_clai_docs(query)` and `read_clai_docs(path)`, wi
 a short instruction to read the
 [customization guide](pydantic_clai2/customization.md) before advising on CLAI
 customization. An ordinary coding turn gets neither the docs nor their tools.
-The instruction is ordered after the guidance the plugins contribute and before
-the repository instruction file. The docs are read on tool invocation, a section
-at a time for long ones. No checkout or network connection is needed. Both tools
-ignore extra arguments supplied by a model; other tools keep their existing
-validation. [Ask CLAI about itself](docs/reference.md#ask-clai-about-itself) lists
+The docs are read on tool invocation, a section at a time for long ones. No
+checkout or network connection is needed.
+[Ask CLAI about itself](docs/reference.md#ask-clai-about-itself) lists
 the docs and how paths and long docs work.
 
 The customization guide includes examples for commands, hooks, settings,

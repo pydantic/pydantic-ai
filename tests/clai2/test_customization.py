@@ -10,14 +10,21 @@ from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    InstructionDeltaPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_clai2 import Session
 from pydantic_clai2.app import create_agent
 from pydantic_clai2.builtin_plugins.repo_context import RepoContextPlugin
-from pydantic_clai2.clai_docs import read_clai_docs
 from pydantic_clai2.customization import CAPABILITY_ID, customization_guide
 from pydantic_clai2.plugins import PluginHost, load_plugin
 
@@ -135,25 +142,58 @@ async def test_custom_agent_can_opt_in_with_the_former_name() -> None:
 
 
 @pytest.mark.parametrize(
-    'arguments',
+    ('tool_name', 'arguments'),
     [
-        '{"path": "customization"}',
-        '{"path": "customization", "reasoning_effort": "low"}',
-        '{"path": "customization", "extra": {"nested": [1, null, true]}}',
+        ('read_clai_docs', {'path': 'reference#saved-api-keys'}),
+        ('search_clai_docs', {'query': 'saved api keys'}),
     ],
 )
-async def test_docs_tools_ignore_extra_tool_arguments(arguments: str) -> None:
+async def test_docs_tools_retry_unexpected_arguments(tool_name: str, arguments: dict[str, str]) -> None:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart('load_capability', {'id': CAPABILITY_ID})])
         tools = {tool.name: tool for tool in info.function_tools}
-        assert tools['read_clai_docs'].strict is False
-        assert tools['read_clai_docs'].parameters_json_schema['additionalProperties'] is True
+        assert tools[tool_name].parameters_json_schema['additionalProperties'] is False
         if len(messages) == 3:
-            return ModelResponse(parts=[ToolCallPart('read_clai_docs', arguments)])
-        return ModelResponse(parts=[TextPart('guide loaded')])
+            return ModelResponse(parts=[ToolCallPart(tool_name, {**arguments, 'extra': 'wrong'})])
+        if len(messages) == 5:
+            [retried] = [part for part in messages[-1].parts if isinstance(part, ToolReturnPart)]
+            assert retried.outcome == 'retried'
+            assert retried.retry is not None and retried.retry.cause == 'validation_error'
+            return ModelResponse(parts=[ToolCallPart(tool_name, arguments)])
+        return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[customization_guide()])
-    result = await agent.run('Read the guide')
-    assert tool_returns(result.all_messages()) == [read_clai_docs('customization')]
-    assert result.output == 'guide loaded'
+    result = await agent.run('Read the docs')
+    returns = [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == tool_name and part.outcome == 'success'
+    ]
+    assert len(returns) == 1
+    assert result.output == 'done'
+
+
+async def test_loading_docs_does_not_read_docs_or_inject_the_guide(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unexpected_read(*args: object, **kwargs: object) -> str:
+        raise AssertionError('Loading the capability must not read any docs')  # pragma: no cover
+
+    monkeypatch.setattr('pydantic_clai2.clai_docs._read', unexpected_read)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': CAPABILITY_ID})])
+        assert DOC_TOOLS <= {tool.name for tool in info.function_tools}
+        return ModelResponse(parts=[TextPart('loaded')])
+
+    result = await Agent(FunctionModel(respond), deps_type=type(None), capabilities=[customization_guide()]).run(
+        'Load docs'
+    )
+    [loaded] = [
+        part for message in result.all_messages() for part in message.parts if isinstance(part, InstructionDeltaPart)
+    ]
+    assert str(loaded.id) == 'capability:clai_customization'
+    assert loaded.content is not None
+    assert 'search_clai_docs' in loaded.content and 'read_clai_docs' in loaded.content
+    assert '# Customizing CLAI 2' not in loaded.content

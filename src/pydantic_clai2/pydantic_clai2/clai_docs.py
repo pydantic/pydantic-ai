@@ -10,9 +10,7 @@ from importlib.resources import files
 from pathlib import Path, PurePosixPath
 
 from pydantic_ai import ModelRetry, Tool
-from pydantic_ai.capabilities import Capability, CapabilityOrdering
-from pydantic_ai_harness.ask_user import AskUser
-from pydantic_ai_harness.repo_context import RepoContext
+from pydantic_ai.capabilities import Capability
 
 CLAI_DOCS: dict[str, tuple[str, str]] = {
     'readme': ('README.md', 'The product tour: what CLAI does and how to start.'),
@@ -224,7 +222,7 @@ def _read_section(doc: _Doc, section: _Section) -> str:
     return f'{own}\nThis section is too long to read whole. Read a subsection by its path:\n\n{_outline(subsections)}'
 
 
-def read_clai_docs(path: str = '', **_ignored: object) -> str:
+def read_clai_docs(path: str = '') -> str:
     """Read CLAI's docs: the list of docs, one doc, or one section of a doc.
 
     The docs ship with the installed package: CLAI's user reference, plugin contract, and
@@ -267,7 +265,7 @@ def _snippet(lines: list[str], terms: list[str]) -> str:
     return ''
 
 
-def search_clai_docs(query: str, **_ignored: object) -> str:
+def search_clai_docs(query: str) -> str:
     """Search CLAI's docs and return the best matching sections, with a short snippet of each.
 
     Matches words, and words that contain them, in the headings and text of every doc
@@ -305,17 +303,7 @@ def search_clai_docs(query: str, **_ignored: object) -> str:
 
 
 class ClaiDocs(Capability[None]):
-    """CLAI's docs as two tools, with a hint placed between the working guidance and the repository's instructions.
-
-    Instructions follow capability order. This one is bound to the agent while the coding tools
-    arrive as plugins for each run, so unconstrained it would lead the system prompt: a
-    conditional aside about CLAI itself, read before the agent learns what it is here to do.
-    `wrapped_by=[AskUser, Capability]` puts it after the guidance the plugins contribute, whether
-    that is the coding instructions (`Capability` carries the shipped ones) or a general aside
-    (`AskUser`), and `wraps=[RepoContext]` puts it before the repository instruction file, which
-    belongs next to the task, not above it. An edge to an absent capability simply does not apply;
-    with none of them installed the hint keeps the default position, first.
-    """
+    """Search and read installed CLAI docs, exposed only after the model loads this capability."""
 
     def __init__(self) -> None:
         """Offer the docs as a deferred capability; no doc is read until a tool is called."""
@@ -324,9 +312,5 @@ class ClaiDocs(Capability[None]):
             description=_DESCRIPTION,
             defer_loading=True,
             instructions=_HINT,
-            tools=[Tool(search_clai_docs, strict=False), Tool(read_clai_docs, strict=False)],
+            tools=[Tool(search_clai_docs), Tool(read_clai_docs)],
         )
-
-    def get_ordering(self) -> CapabilityOrdering:
-        """Sit after the working guidance and before the repository's instructions."""
-        return CapabilityOrdering(wrapped_by=[AskUser, Capability], wraps=[RepoContext])

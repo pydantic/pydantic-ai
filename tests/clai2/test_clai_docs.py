@@ -82,7 +82,6 @@ def test_catalog_lists_every_doc() -> None:
     catalog = read_clai_docs()
     for doc_id in DOC_IDS:
         assert f'\n- {doc_id} (' in catalog
-    assert '- harness/ask_user (12 KB): Let the model ask the user multiple-choice questions mid-run' in catalog
 
 
 def test_harness_summary_is_the_first_sentence(synthetic: None) -> None:
@@ -287,10 +286,10 @@ async def test_agent_searches_then_reads_a_section() -> None:
             assert [tool.name for tool in info.function_tools] == ['load_capability']
             return ModelResponse(parts=[ToolCallPart('load_capability', {'id': CAPABILITY_ID})])
         tools = {tool.name: tool for tool in info.function_tools}
-        assert tools['search_clai_docs'].strict is False
-        assert tools['read_clai_docs'].strict is False
+        assert tools['search_clai_docs'].parameters_json_schema['additionalProperties'] is False
+        assert tools['read_clai_docs'].parameters_json_schema['additionalProperties'] is False
         if len(messages) == 3:
-            return ModelResponse(parts=[ToolCallPart('search_clai_docs', {'query': 'saved api keys', 'extra': 1})])
+            return ModelResponse(parts=[ToolCallPart('search_clai_docs', {'query': 'saved api keys'})])
         if len(messages) == 5:
             return ModelResponse(parts=[ToolCallPart('read_clai_docs', {'path': 'reference#saved-api-keys'})])
         return ModelResponse(parts=[TextPart('done')])
