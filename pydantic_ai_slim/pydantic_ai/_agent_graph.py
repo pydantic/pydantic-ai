@@ -2335,7 +2335,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     if capability.defer_loading is not True
                 },
             )
-            _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
+            # A hook that rewrote the history (`ctx.messages[:] = ...`) with a copy of this request left
+            # `self.request` out of it, so the instructions sent are recorded where the history now holds them.
+            for target in (
+                [self.request]
+                if any(message is self.request for message in ctx.state.message_history)
+                else recording_targets
+            ):
+                _apply_instruction_parts(target, model_request_parameters.instruction_parts)
             _record_model_settings_changes(
                 ctx,
                 model,
