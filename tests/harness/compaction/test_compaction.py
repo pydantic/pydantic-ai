@@ -5171,8 +5171,8 @@ class TestStructuralFeaturesThroughAgent:
         replaces = 'write the current one followed by "(replaces: <earlier choice>)"'
         ownership = 'Keep each assignment as stated until the user reassigns it'
         explicit_change = (
-            'a requirement or decision is replaced only when the user explicitly changes it, '
-            'not by a passing remark or a later unrelated turn.'
+            'A requirement or decision the previous summary established stays until the user explicitly '
+            'changes it; a passing remark or a later unrelated turn does not replace it.'
         )
         for prompt in prompts:
             assert '## Requirements\n' in prompt

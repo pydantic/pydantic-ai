@@ -146,10 +146,9 @@ Summaries are now a `CompactionPart`; this only recognizes ones in histories sav
 _INCREMENTAL_UPDATE_INSTRUCTION = (
     'An anchored summary from earlier compaction is provided below in <previous-summary>. '
     'Update it using the conversation above: preserve still-true details, remove details the '
-    'conversation shows are no longer true, and merge in new facts.  Keep what the previous summary established unless the '
-    'conversation above explicitly changes it: a requirement or decision is replaced only when the user '
-    'explicitly changes it, not by a passing remark or a later unrelated turn.  Keep the same section '
-    'structure.'
+    'conversation shows are no longer true, and merge in new facts.  A requirement or decision the '
+    'previous summary established stays until the user explicitly changes it; a passing remark or a '
+    'later unrelated turn does not replace it.  Keep the same section structure.'
 )
 
 _HARNESS_DATA_INSTRUCTION = (
