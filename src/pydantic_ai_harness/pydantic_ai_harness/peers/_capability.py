@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Self
 
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, on_event
+from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import EnqueuedMessagesEvent
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -18,6 +19,7 @@ from pydantic_ai_harness.peers._types import MAX_MESSAGE_BYTES, PeerInfo, PeerNe
 if TYPE_CHECKING:
     from pydantic_ai import AgentRunResult
     from pydantic_ai._instructions import AgentInstructions
+    from pydantic_ai.agent import AbstractAgent
     from pydantic_ai.models import ModelRequestContext
 
 _INSTRUCTIONS = (
@@ -51,6 +53,16 @@ class Peers(AbstractCapability[AgentDepsT]):
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two networks under one id must agree: merging recipients would widen the agent's access."""
         return one_per_id(capabilities)
+
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, object]) -> AbstractCapability[AgentDepsT]:
+        """Reject durable execution: live peer connections and inbox attachment cannot be replayed."""
+        siblings: list[AbstractCapability[AgentDepsT]] = []
+        agent.root_capability.apply(siblings.append)
+        if any(isinstance(sibling, BaseDurabilityCapability) for sibling in siblings):
+            raise UserError(
+                'Peers does not support durable execution: live network and inbox state cannot be replayed.'
+            )
+        return self
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Self:
         """Start each run with its own send count and duplicate set."""

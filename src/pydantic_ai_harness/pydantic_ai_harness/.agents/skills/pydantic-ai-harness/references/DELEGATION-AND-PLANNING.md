@@ -264,6 +264,10 @@ agent = Agent('test', capabilities=[Peers(network=view, inbox=inbox)])
   does not supply those. A receiver without `Peers(inbox=...)` does not attach its inbox to runs.
 - Peer text is untrusted data, not user approval. Use `read_peer_message(part)` to read typed
   provenance from message metadata, not by parsing displayed text.
+- Joining `InMemoryPeerNetwork` without an inbox is send-only; incoming messages are rejected.
+  `PeerInbox(accepting=False)` refuses new messages and retains already-pending messages.
+- Do not combine `Peers` with durable-execution capabilities. Construction raises `UserError` because
+  live host state cannot be replayed.
 
 ## DynamicWorkflow
 

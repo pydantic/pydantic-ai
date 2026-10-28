@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 import anyio
 import pytest
@@ -875,6 +876,33 @@ class TestPeers:
         inbox.detach()
         assert await inbox.pending() == []
         assert await PeerInbox(path=tmp_path / 'pending.json').pending() == []
+
+    @pytest.mark.parametrize('engine', ['temporal', 'dbos', 'prefect'])
+    def test_live_peers_reject_durable_execution_before_a_tool_call(
+        self, engine: Literal['temporal', 'dbos', 'prefect']
+    ) -> None:
+        durability: AbstractCapability[object]
+        if engine == 'temporal':
+            pytest.importorskip('temporalio')
+            from pydantic_ai.durable_exec.temporal import TemporalDurability
+
+            durability = TemporalDurability()
+        elif engine == 'dbos':
+            pytest.importorskip('dbos')
+            from pydantic_ai.durable_exec.dbos import DBOSDurability
+
+            durability = DBOSDurability()
+        else:
+            pytest.importorskip('prefect')
+            from pydantic_ai.durable_exec.prefect import PrefectDurability
+
+            durability = PrefectDurability()
+        network = ScriptedNetwork([])
+        with pytest.raises(UserError, match='Peers does not support durable execution'):
+            Agent(
+                text_model(), name='peers', deps_type=object, capabilities=[Peers[object](network=network), durability]
+            )
+        assert network.sent == []
 
     async def test_accepting_flag_controls_new_messages_without_discarding_pending(self) -> None:
         inbox = PeerInbox(accepting=False)

@@ -52,6 +52,8 @@ Incoming text is framed as untrusted peer data on the user channel, with typed p
 
 Unlike [Subagents](subagents.md), [Peers][pydantic_ai_harness.peers.Peers] does not create a child run, forward dependencies or usage, or wait for another agent's result. Its tools run as ordinary function tools, so core's tool-call spans cover them; the capability adds no dedicated telemetry spans.
 
+`Peers` uses live host state and does not support durable execution. Combining it with a Temporal, DBOS, or Prefect durability capability raises [UserError][pydantic_ai.exceptions.UserError] when the agent is constructed.
+
 ## API reference
 
 ::: pydantic_ai_harness.peers.Peers
