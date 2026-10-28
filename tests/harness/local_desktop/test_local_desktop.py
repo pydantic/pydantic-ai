@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
+import signal
 import sys
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -123,17 +123,23 @@ def test_a_screen_that_stopped_starts_again_in_a_later_event_loop(fake_x: Path, 
     backend = _backend(desktop)
     try:
         _in_new_event_loop(backend.display.display_size)
-        for process in desktop._screen._processes:  # pyright: ignore[reportOptionalMemberAccess,reportPrivateUsage]
-            process.kill()
-            process.wait()
+        for pid in _pids(fake_x):
+            _kill(pid)
         assert _in_new_event_loop(backend.display.display_size) == (1280, 800)
     finally:
         _in_new_event_loop(lambda: _stop(desktop))
     assert len(_lines(fake_x, 'Xvfb')) == 2
 
 
-def _processes(desktop: LocalDesktop[None]) -> list[subprocess.Popen[bytes]]:
-    return desktop._screen._processes  # pyright: ignore[reportOptionalMemberAccess,reportPrivateUsage]
+def _pids(log: Path) -> list[int]:
+    """The process ids of the fake Xvfb and window managers started so far, in order."""
+    pids = Path(f'{log}.pids')
+    return [int(pid) for pid in pids.read_text(encoding='utf-8').split()] if pids.exists() else []
+
+
+def _kill(pid: int) -> None:
+    os.kill(pid, signal.SIGKILL)
+    os.waitpid(pid, 0)  # gone before the next call looks
 
 
 @linux_only
@@ -144,18 +150,16 @@ async def test_a_window_manager_that_exited_is_started_again_on_the_same_screen(
     try:
         await backend.display.display_size()
         assert backend.display.take_fresh_start() is True
-        xvfb, window_manager = _processes(desktop)
-        window_manager.kill()
-        window_manager.wait()
+        xvfb, window_manager = _pids(fake_x)
+        _kill(window_manager)
 
         assert (await backend.run('echo $DISPLAY', shell=True)).stdout == ':7\n'
-        assert xvfb.poll() is None
+        os.kill(xvfb, 0)  # still running
         assert len(_lines(fake_x, 'Xvfb')) == 1
         assert len(_lines(fake_x, 'fluxbox')) == 2
         assert backend.display.take_fresh_start() is False
 
-        xvfb.kill()
-        xvfb.wait()
+        _kill(xvfb)
         await backend.display.display_size()
         assert backend.display.take_fresh_start() is True
     finally:
@@ -169,11 +173,14 @@ def test_a_screen_outlives_the_thread_that_started_it(fake_x: Path, tmp_path: Pa
     (bin_dir / 'setpriv').unlink()
     (bin_dir / 'setpriv').symlink_to(shutil.which('setpriv', path=os.defpath))  # pyright: ignore[reportArgumentType]
     desktop = LocalDesktop[None](tmp_path)
+    display = _backend(desktop).display
     try:
-        _in_new_event_loop(_backend(desktop).display.display_size)  # its thread has exited when this returns
-        xvfb = _processes(desktop)[0]
-        with pytest.raises(subprocess.TimeoutExpired):
-            xvfb.wait(timeout=0.5)
+        _in_new_event_loop(display.display_size)  # its thread has exited when this returns
+        _in_new_event_loop(display.display_size)
+        # A screen that had stopped with the thread would have been started again.
+        assert len(_lines(fake_x, 'Xvfb')) == 1
+        assert display.take_fresh_start() is True
+        assert display.take_fresh_start() is False
     finally:
         _in_new_event_loop(lambda: _stop(desktop))
 
@@ -200,7 +207,9 @@ async def test_a_screen_that_cannot_start_says_why(
     desktop = LocalDesktop[None](tmp_path)
     with pytest.raises(WorkspaceUnavailableError, match=error.replace('`', '.')):
         await _backend(desktop).display.screenshot()
-    assert desktop._screen._processes == []  # pyright: ignore[reportOptionalMemberAccess,reportPrivateUsage]
+    for pid in _pids(fake_x):  # what did start was stopped
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
 
 
 @linux_only
@@ -267,3 +276,19 @@ def test_it_is_a_local_workspace_with_a_screen(tmp_path: Path):
     # Like `LocalWorkspace`, a ref for another directory never redirects it.
     assert desktop.get_workspace(None, ref=WorkspaceRef(provider='local', id='/elsewhere')) is None  # pyright: ignore[reportArgumentType]
     assert desktop.id == 'local_workspace'
+
+
+def test_workspaces_on_one_screen_name_it_alike(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """So `ComputerUse` runs on one screen take turns at it, whichever directory each works in."""
+    monkeypatch.setenv('DISPLAY', ':0')
+    first, second = (tmp_path / 'a', tmp_path / 'b')
+    first.mkdir()
+    second.mkdir()
+    session = [_backend(LocalDesktop[None](path, real_screen=True)) for path in (first, second)]
+    assert session[0].ref != session[1].ref
+    assert session[0].display.screen_key == session[1].display.screen_key
+
+    private = LocalDesktop[None](first)
+    assert _backend(private).display.screen_key == _backend(private).display.screen_key
+    assert _backend(private).display.screen_key != _backend(LocalDesktop[None](first)).display.screen_key
+    assert _backend(private).display.screen_key != session[0].display.screen_key

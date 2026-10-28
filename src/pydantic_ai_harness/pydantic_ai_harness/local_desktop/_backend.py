@@ -170,9 +170,16 @@ class LocalDesktopBackend(LocalWorkspaceBackend):
     ):
         super().__init__(working_dir, env=env)
         self._screen = screen
-        self._display = ManagedDisplay(self._start_display)
+        self._display = ManagedDisplay(self._start_display, screen_key=self._screen_key)
         # A later start of the screen than this backend has seen started it without the windows it had.
         self._screen_starts = None if screen is None else screen.starts
+
+    def _screen_key(self) -> object | None:
+        # Every workspace on this machine that uses the session's screen shares its `DISPLAY`, whatever its directory.
+        if self._screen is None:
+            display = os.environ.get('DISPLAY')
+            return ('DISPLAY', display) if display else None
+        return self._screen
 
     async def _display_env(self) -> dict[str, str]:
         if sys.platform != 'linux':

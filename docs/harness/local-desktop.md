@@ -54,7 +54,8 @@ menu, that starts again and the windows stay.
 `LocalDesktop('.', real_screen=True)` drives the screen you're logged in to: the agent sees your windows, moves your
 mouse and types into whatever has focus. Pair it with `ComputerUse(requires_approval=True)` to approve each call
 first. Typing a character outside ASCII, such as `é`, borrows a rarely used key's code, such as a media key's,
-which then types that character until you log out.
+which then types that character until you log out. Agents in one process that use your screen, in any working
+directory, take turns at it a whole `computer` call at a time.
 
 It works in an X11 (Xorg) session. In a Wayland session, the default on recent Ubuntu and Fedora, a desktop can
 neither see nor control the screen, so the run fails at its first request (commands still run); use the private
