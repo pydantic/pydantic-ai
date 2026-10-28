@@ -61,11 +61,8 @@ async def find_root(workspace: Workspace, working_dir: Path, markers: Sequence[s
     """
     for directory in (working_dir, *working_dir.parents):
         for marker in markers:
-            try:
-                await workspace.stat(str(directory / marker))
-            except (FileNotFoundError, NotADirectoryError):
-                continue
-            return directory
+            if await workspace.exists(str(directory / marker)):
+                return directory
     return None
 
 
