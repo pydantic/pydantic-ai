@@ -3308,6 +3308,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 5, 22, 29, 38, tzinfo=UTC),

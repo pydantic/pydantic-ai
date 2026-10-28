@@ -257,26 +257,9 @@ Phrase the instruction as what changed rather than as an override of the user. M
 
 ### Request-scoped system prompts
 
-Some instructions are only true for one model request: a nudge against instruction fade, a note that the user can't see a tool's output, the budget left right now. Give such a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] [`scope='request'`][pydantic_ai.messages.SystemPromptPart.scope] and the model sees it for the request it's part of, and not for any request after that:
+Some instructions are only true for the model request they're sent with: the budget left right now, a nudge against instruction fade. Give such a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] [`scope='request'`][pydantic_ai.messages.SystemPromptPart.scope]. The model sees a request-scoped prompt only in the model request it's part of: the next request, even the next step of the same run, no longer shows it.
 
-```python {title="request_scoped_system_prompt.py"}
-from pydantic_ai import Agent, RunContext, SystemPromptPart
-
-agent = Agent('{{ anthropic:large }}')
-
-
-@agent.tool
-def run_tests(ctx: RunContext) -> str:
-    ctx.enqueue(
-        SystemPromptPart(
-            "The user can't see this tool's output. Summarize the failures for them.",
-            scope='request',
-        )
-    )
-    return '3 failed, 41 passed'
-```
-
-A capability that nudges the model on every request enqueues one from `before_model_request`. Content enqueued there goes into the request being prepared and into the message history, as a `ModelRequest` of its own:
+That suits a value that changes from one request to the next and is sent with every request, so each request shows the current value and none of the stale ones. A capability does this from `before_model_request`. Content enqueued there goes into the request being prepared and into the message history, as a `ModelRequest` of its own:
 
 ```python {title="request_scoped_reminder_capability.py"}
 from dataclasses import dataclass
@@ -288,18 +271,42 @@ from pydantic_ai.models import ModelRequestContext
 
 
 @dataclass
-class StayTerse(AbstractCapability[Any]):
+class ShowRequestsLeft(AbstractCapability[Any]):
     async def before_model_request(
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.enqueue(SystemPromptPart('Reminder: keep answers to one line.', scope='request'))
+        limit = ctx.usage_limits.request_limit if ctx.usage_limits else None
+        if limit is not None:
+            left = limit - ctx.usage.requests
+            ctx.enqueue(
+                SystemPromptPart(f'{left} model request(s) left in this run.', scope='request')
+            )
         return request_context
 
 
-agent = Agent('{{ anthropic:large }}', capabilities=[StayTerse()])
+agent = Agent('{{ anthropic:large }}', capabilities=[ShowRequestsLeft()])
 ```
 
-The Harness [System Reminders](harness/system-reminders.md) capability is built this way.
+[Wrapping up before the request limit](agent.md#wrapping-up-before-the-request-limit) builds this into a capability that also takes the tools away on the last request. The Harness [System Reminders](harness/system-reminders.md) capability is built this way too.
+
+Text the model must follow at every step belongs in the agent's [instructions](agent.md#instructions), which every request sends. A request-scoped reminder can restate it at the end of a request, against instruction fade, but doesn't replace it. And something the model must still act on after the next request needs the default `scope='conversation'`, or it's gone by the time it matters. A note that the user can't see a tool's output has to hold until the final answer, and the model may call more tools before it gives one, so record the note as a lasting system prompt, or put it in the tool's return value:
+
+```python {title="lasting_system_prompt.py"}
+from pydantic_ai import Agent, RunContext, SystemPromptPart
+
+agent = Agent('{{ anthropic:large }}')
+
+
+@agent.tool
+def run_tests(ctx: RunContext) -> str:
+    ctx.enqueue(
+        SystemPromptPart(
+            "The user can't see the output of `run_tests`. "
+            'Summarize its failures in your final answer.'
+        )
+    )
+    return '3 failed, 41 passed'
+```
 
 A request-scoped prompt is not a request-only change: the prompt stays in history and only what the model is shown changes, while a request-only change, such as assigning `request_context.messages`, never reaches history at all. So don't add it to `request_context.messages` alone: it then never enters the history, so the next request doesn't send it, and on a model that ties its reasoning to the exact conversation, dropping it from one request to the next counts as editing the conversation. See [Changing what the model sees](capabilities/custom.md#steering-messages-and-reminders) for the other ways a capability can change what's sent, and what each does to the prompt cache.
 
@@ -322,49 +329,42 @@ Use a request-scoped prompt for something about the current moment. Something th
 
 ### Identifying system prompts
 
-Code that adds a system prompt sometimes needs to find it again: to count the reminders it has sent, to replace a note it wrote earlier, or to tell its own records apart from prompts that came from somewhere else. Give the [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] a [`metadata`][pydantic_ai.messages.SystemPromptPart.metadata] dictionary and identify it by that, never by its visible text:
+Code that adds a system prompt sometimes needs to find it again: to add a note only once, to count the reminders it has sent, to replace a note it wrote earlier, or to tell its own records apart from prompts that came from somewhere else. Give the [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] a [`metadata`][pydantic_ai.messages.SystemPromptPart.metadata] dictionary and identify it by that, never by its visible text:
 
 ```python {title="system_prompt_metadata.py"}
-from dataclasses import dataclass
-from typing import Any
-
 from pydantic_ai import Agent, ModelMessage, ModelRequest, RunContext, SystemPromptPart
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models import ModelRequestContext
 
-ORIGIN = 'my_app.stay_terse'
+ORIGIN = 'my_app.hidden_test_output'
 
 
-def reminders(messages: list[ModelMessage]) -> list[SystemPromptPart]:
-    return [
-        part
+def has_note(messages: list[ModelMessage]) -> bool:
+    return any(
+        isinstance(part, SystemPromptPart)
+        and part.metadata is not None
+        and part.metadata.get('origin') == ORIGIN
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, SystemPromptPart)
-        and part.metadata is not None
-        and part.metadata.get('origin') == ORIGIN
-    ]
+    )
 
 
-@dataclass
-class StayTerse(AbstractCapability[Any]):
-    async def before_model_request(
-        self, ctx: RunContext[Any], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        count = len(reminders(ctx.messages)) + 1
+agent = Agent('{{ anthropic:large }}')
+
+
+@agent.tool
+def run_tests(ctx: RunContext) -> str:
+    if not has_note(ctx.messages):  # (1)!
         ctx.enqueue(
             SystemPromptPart(
-                f'Reminder {count}: keep answers to one line.',
-                scope='request',
+                "The user can't see the output of `run_tests`. "
+                'Summarize its failures in your final answer.',
                 metadata={'origin': ORIGIN},
             )
         )
-        return request_context
-
-
-agent = Agent('{{ anthropic:large }}', capabilities=[StayTerse()])
+    return '3 failed, 41 passed'
 ```
+
+1. The note is a lasting system prompt, as in [Request-scoped system prompts](#request-scoped-system-prompts), so one copy covers every later call: adding it only when the history doesn't hold it yet keeps a second call from adding another.
 
 The metadata is never sent to the model, so it doesn't change the request or the prompt cache. It stays with the part wherever the part goes: into [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages], through [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter], and into a continued conversation. [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] is no substitute: Pydantic AI merges consecutive requests in the history a run starts with and in each request it prepares, and a merged request keeps only Pydantic AI's own metadata. Visible text is no substitute either: the wording changes, and a user can type the same words.
 
@@ -809,6 +809,33 @@ print(result2.all_messages())
 ```
 
 _(This example is complete, it can be run "as is")_
+
+### Sending history to another provider
+
+Some of what a response holds can only be sent back to a provider that can verify it. Pydantic AI decides what to send back to each provider by two rules:
+
+- **Stateful data** refers to state kept by the provider that returned it: response, item, file, container and conversation IDs. It's only sent back to a provider with the same [`provider_name`][pydantic_ai.messages.ModelResponse.provider_name].
+- **Stateless signed or encrypted data** is checked by the provider's own key and format: OpenAI encrypted reasoning and compaction items, Anthropic thinking signatures and redacted thinking, Gemini thought signatures, xAI encrypted reasoning and tool results, and OpenRouter and Snowflake reasoning details. It's sent back to a provider with the same *canonical system* (the [`canonical_system`][pydantic_ai.providers.Provider.canonical_system] of its provider), or one that lists it in its [`compatible_systems`][pydantic_ai.providers.Provider.compatible_systems].
+
+Data that can't be sent back gets each model's fallback: thinking is written out as text, a foreign OpenAI compaction item is left out, and so is the history before it, which the model then gets in full, and a Gemini function call gets the documented `skip_thought_signature_validator` signature in place of a foreign one.
+
+The canonical systems differ from the provider names where providers share a key, or where one name covers two transports:
+
+| Provider | Canonical system |
+|---|---|
+| `openai`, `openai-codex`, and the Pydantic AI Gateway's OpenAI route | `openai` |
+| `azure`, and `OpenAIProvider` with an `AsyncAzureOpenAI` client | `azure` |
+| `anthropic` with any client (Anthropic API, Bedrock, Claude Platform on AWS, Vertex AI, Foundry), Bedrock Converse with a Claude model, and the Gateway's Anthropic route | `anthropic` |
+| `bedrock`, with any other model | `bedrock` |
+| `google` and `google-cloud` with a Google Cloud client, and the Gateway's Google route | `google-cloud` |
+| `google` and `google-cloud` with a Gemini API client | `google` |
+| Every other provider, including `bedrock-mantle`, `openai-chatgpt`, `openrouter` and `snowflake` | its name |
+
+So history from the Codex backend continues on the OpenAI API with its encrypted reasoning and compaction items, and Claude's thinking moves between the Anthropic API and Bedrock with its signatures. A response records its canonical system in [`ModelResponse.canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system] when it differs from `provider_name`, and always when the provider's canonical system depends on its client, as for Google providers and `OpenAIProvider`, which is how a Gemini API response and a Google Cloud one, both named `google`, are told apart: the two reject each other's thought signatures. For a `google` response recorded before Pydantic AI stored the canonical system, its `provider_url` says which: a first-party Gemini API or Google Cloud URL decides, and any other, like a proxy's, keeps the earlier behavior of sending the signatures to a model with the same provider name.
+
+Some providers accept data they can't use: OpenAI ignores encrypted reasoning from another organization, and Claude models with [account-bound thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking#account-bound-thinking) ignore thinking from another account. Neither fails the request.
+
+[`Model.accepts_stateless_artifacts()`][pydantic_ai.models.Model.accepts_stateless_artifacts] tells you whether a model would send a part's data back. A provider subclass that only changes its name, such as one that signs in differently to the same API, keeps its parent's canonical system, except for subclasses of [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], which are assumed to talk to another service. To declare your own, override `canonical_system` or `compatible_systems` on your provider, or pass them to [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider].
 
 ## Sharing messages between agents
 
