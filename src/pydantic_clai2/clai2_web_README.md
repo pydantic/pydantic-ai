@@ -47,6 +47,21 @@ no other, Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/C
 sidebar. As in the terminal, Up on the composer's first line recalls the session's sent prompts,
 newest first, and Down on its last line steps back toward your unsent draft.
 
+Unsent text and images are saved automatically in this browser, separately for each session.
+Reloading or reopening the same address restores them into their session's editor; nothing is
+sent automatically. The editor clears after the server accepts a message, unless you have edited
+it while the request was pending. A failed request leaves your current draft in place. Clearing
+the text and removing all its images discards the saved draft too. Drafts have no automatic expiry.
+If a saved draft's session is unavailable, the page keeps it and offers to discard it explicitly.
+
+Saving uses the browser's native IndexedDB, with no extra dependencies or server storage. It is
+local to this browser profile and address (including the port); clearing site data also removes
+the drafts. Simultaneous editing of the same session in multiple tabs is not synchronized. A
+save still in progress or a storage failure is shown in the page, and leaving with unsaved changes
+asks for confirmation when the browser supports it. If storage cannot be loaded, editing still
+works in memory. If you left while sending, check the conversation before sending a recovered
+draft again: the server may have received it before the page could record the acknowledgement.
+
 While a turn runs, the composer works as the terminal's prompt does. Enter queues your message for
 after the turn. Alt+Enter (Option+Enter on a Mac), or the bolt button beside Send, steers the running
 turn instead: its model reads the message at its next request, and the transcript shows it then.
