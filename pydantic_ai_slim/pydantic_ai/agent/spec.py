@@ -6,7 +6,7 @@ import os
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias, Union, cast
 
 from pydantic import BaseModel, Field, model_serializer, model_validator
 from pydantic_core import from_json, to_json
@@ -35,7 +35,11 @@ _YAML_SCHEMA_LINE_PREFIX = '# yaml-language-server: $schema='
 class OpenAICompatibleModelSpec(
     BaseModel,
     extra='forbid',
-    json_schema_extra={'oneOf': [{'required': ['base_url']}, {'required': ['base_url_env']}]},
+    json_schema_extra={
+        'oneOf': [
+            {'required': [field], 'properties': {field: {'type': 'string'}}} for field in ('base_url', 'base_url_env')
+        ]
+    },
 ):
     """A model on a service with an OpenAI-compatible API, for the `model` field of a spec.
 
@@ -73,7 +77,7 @@ class OpenAICompatibleModelSpec(
     """The name of the environment variable to read the API key from when the model is built, if the service needs one."""
 
     @model_validator(mode='after')
-    def _check_base_url(self) -> OpenAICompatibleModelSpec:
+    def _check_base_url(self) -> Self:
         if (self.base_url is None) == (self.base_url_env is None):
             raise ValueError('Exactly one of `base_url` and `base_url_env` must be set.')
         return self
@@ -89,7 +93,9 @@ class OpenAICompatibleModelSpec(
 
         def read_env(name: str, field: str) -> str:
             if not (value := os.environ.get(name)):
-                raise UserError(f"The environment variable `{name}` named by the model spec's `{field}` is not set.")
+                raise UserError(
+                    f"The environment variable `{name}` named by the model spec's `{field}` is not set or empty."
+                )
             return value
 
         if self.base_url_env is not None:

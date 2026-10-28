@@ -741,11 +741,11 @@ def test_agent_from_spec_openai_compatible_model_without_api_key(monkeypatch: py
     [
         (
             {'base_url_env': 'MY_GATEWAY_BASE_URL'},
-            "The environment variable `MY_GATEWAY_BASE_URL` named by the model spec's `base_url_env` is not set.",
+            "The environment variable `MY_GATEWAY_BASE_URL` named by the model spec's `base_url_env` is not set or empty.",
         ),
         (
             {'base_url': 'http://localhost:8000/v1', 'api_key_env': 'MY_GATEWAY_API_KEY'},
-            "The environment variable `MY_GATEWAY_API_KEY` named by the model spec's `api_key_env` is not set.",
+            "The environment variable `MY_GATEWAY_API_KEY` named by the model spec's `api_key_env` is not set or empty.",
         ),
     ],
 )
@@ -817,6 +817,23 @@ async def test_run_time_spec_openai_compatible_model(via: str) -> None:
         async with agent.iter('hello', spec=spec if via == 'run' else None) as run:
             assert isinstance(run.ctx.deps.model, OpenAIChatModel)
             assert run.ctx.deps.model.system == 'my-gateway'
+
+
+@pytest.mark.parametrize('via', ['run', 'override'])
+async def test_run_time_model_skips_spec_openai_compatible_model(monkeypatch: pytest.MonkeyPatch, via: str) -> None:
+    """A `model` passed alongside a run-time spec replaces the spec's model without building it."""
+    monkeypatch.delenv('MY_GATEWAY_BASE_URL', raising=False)
+    agent = Agent('test')
+    spec = {'model': _openai_compatible_model(base_url_env='MY_GATEWAY_BASE_URL')}
+    model = TestModel(custom_output_text='explicit model')
+
+    if via == 'override':
+        with agent.override(model=model, spec=spec):
+            result = await agent.run('hello')
+    else:
+        result = await agent.run('hello', model=model, spec=spec)
+
+    assert result.output == 'explicit model'
 
 
 def test_agent_from_spec_capabilities_merged():
@@ -1936,7 +1953,10 @@ def test_model_json_schema_with_capabilities():
                 },
                 'OpenAICompatibleModelSpec': {
                     'additionalProperties': False,
-                    'oneOf': [{'required': ['base_url']}, {'required': ['base_url_env']}],
+                    'oneOf': [
+                        {'properties': {'base_url': {'type': 'string'}}, 'required': ['base_url']},
+                        {'properties': {'base_url_env': {'type': 'string'}}, 'required': ['base_url_env']},
+                    ],
                     'properties': {
                         'provider': {'const': 'openai-compatible', 'title': 'Provider', 'type': 'string'},
                         'provider_name': {'title': 'Provider Name', 'type': 'string'},
