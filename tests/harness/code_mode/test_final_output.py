@@ -329,6 +329,20 @@ caught: This code already submitted the final output, so it cannot call more fun
         with pytest.raises(UsageLimitExceeded):
             await agent.run('Invoice the order.', usage_limits=UsageLimits(tool_calls_limit=1))
 
+    async def test_usage_limit_from_an_output_function_ends_the_run_even_if_caught(self):
+        def submit(order_id: str, total: int) -> Invoice:
+            raise UsageLimitExceeded('The output function went over its limit.')
+
+        code = 'try:\n    submit_invoice(order_id="ord_1", total=1)\nexcept Exception:\n    pass\n"carried on"'
+        agent = Agent(
+            run_code_model(code),
+            output_type=ToolOutput(submit, name='submit_invoice'),
+            capabilities=[CodeMode(allow_final_output=True)],
+        )
+
+        with pytest.raises(UsageLimitExceeded, match='went over its limit'):
+            await agent.run('Invoice the order.')
+
     async def test_eager_submission_waits_for_a_parallel_input_guardrail(self, monkeypatch: pytest.MonkeyPatch):
         """An output function can have side effects, so an eager submission waits for the guard's verdict too."""
         submitted: list[Invoice] = []

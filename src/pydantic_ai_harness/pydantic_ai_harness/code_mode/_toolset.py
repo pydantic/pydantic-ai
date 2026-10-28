@@ -1321,6 +1321,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     rejection, tool_name=call_part.tool_name, tool_call_id=tool_call_id
                 )
                 raise RuntimeError('The output was rejected, so the code stopped here.') from None
+            except UsageLimitExceeded as e:
+                # Snippet code can catch it at the call site, so the feed re-raises it once it stops.
+                execution.usage_limit_exceeded = e
+                raise
             execution.output_submission = 'accepted'
             execution.nested_returns[tool_call_id] = ToolReturnPart(
                 tool_name=call_part.tool_name, content='Final output submitted.', tool_call_id=tool_call_id
