@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 import pytest
 from pydantic import BaseModel, Field, JsonValue, StrictInt
 
-from pydantic_ai import Agent, ModelProfile, UserError
+from pydantic_ai import Agent, ModelProfile, Tool, UserError
 from pydantic_ai._json_schema import resolve_json_pointer
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.output import NativeOutput, ToolOutput
@@ -785,3 +785,156 @@ def test_openai_single_item_tuple_normalization_is_skipped_for_strict_false():
 
     result = transformer.walk()
     assert result['properties']['values'] == array_schema
+
+
+def _nested_objects(depth: int) -> dict[str, JsonValue]:
+    schema: dict[str, JsonValue] = {
+        'type': 'object',
+        'properties': {'leaf': {'type': 'string'}},
+        'required': ['leaf'],
+        'additionalProperties': False,
+    }
+    for level in range(depth - 1):
+        schema = {
+            'type': 'object',
+            'properties': {f'level_{level}': schema},
+            'required': [f'level_{level}'],
+            'additionalProperties': False,
+        }
+    return schema
+
+
+def _wide_objects(objects: int, properties_each: int) -> dict[str, JsonValue]:
+    return {
+        'type': 'object',
+        'properties': {
+            f'object_{i}': {
+                'type': 'object',
+                'properties': {f'field_{j}': {'type': 'string'} for j in range(properties_each)},
+                'required': [f'field_{j}' for j in range(properties_each)],
+                'additionalProperties': False,
+            }
+            for i in range(objects)
+        },
+        'required': [f'object_{i}' for i in range(objects)],
+        'additionalProperties': False,
+    }
+
+
+def _referencing(definition: dict[str, JsonValue], *, key: str = '$defs') -> dict[str, JsonValue]:
+    return {
+        'type': 'object',
+        'properties': {'value': {'$ref': f'#/{key}/Value'}},
+        'required': ['value'],
+        'additionalProperties': False,
+        key: {'Value': definition},
+    }
+
+
+def _nested_through(
+    depth: int, wrap: Callable[[dict[str, JsonValue]], JsonValue], innermost: JsonValue = None
+) -> dict[str, JsonValue]:
+    schema: dict[str, JsonValue] = {
+        'type': 'object',
+        'properties': {'leaf': innermost or {'type': 'string'}},
+        'required': ['leaf'],
+        'additionalProperties': False,
+    }
+    for level in range(depth - 1):
+        schema = {
+            'type': 'object',
+            'properties': {f'level_{level}': wrap(schema)},
+            'required': [f'level_{level}'],
+            'additionalProperties': False,
+        }
+    return schema
+
+
+def _nested_around_definition(depth: int, definition_depth: int) -> dict[str, JsonValue]:
+    schema = _nested_through(depth, lambda schema: schema, innermost={'$ref': '#/$defs/Value'})
+    schema['$defs'] = {'Value': _nested_objects(definition_depth)}
+    return schema
+
+
+# Each schema was sent to the Chat Completions and Responses APIs in strict mode on 2026-10-26, and whether the API
+# accepted it decided `strict_compatible`.
+SIZE_LIMIT_CASES: dict[str, tuple[dict[str, JsonValue], bool]] = {
+    'nesting-at-limit': (_nested_objects(10), True),
+    'nesting-over-limit': (_nested_objects(11), False),
+    'nesting-through-arrays': (_nested_through(11, lambda schema: {'type': 'array', 'items': schema}), False),
+    'nesting-through-unions': (_nested_through(11, lambda schema: {'anyOf': [schema, {'type': 'null'}]}), False),
+    'properties-at-limit': (_wide_objects(50, 99), True),
+    'properties-over-limit': (_wide_objects(50, 101), False),
+    # Each definition is counted on its own, and `$ref`s aren't followed.
+    'definition-nesting-over-limit': (_referencing(_nested_objects(11)), False),
+    'definition-properties-over-limit': (_referencing(_wide_objects(50, 101)), False),
+    'nesting-split-across-definition': (_nested_around_definition(6, 6), True),
+    # Not sent live: draft-07 `definitions` are referenced like `$defs`.
+    'draft-07-definition-nesting-over-limit': (_referencing(_nested_objects(11), key='definitions'), False),
+}
+
+
+@pytest.mark.parametrize('case', SIZE_LIMIT_CASES.values(), ids=SIZE_LIMIT_CASES.keys())
+def test_openai_strict_size_limits(case: tuple[dict[str, JsonValue], bool]):
+    """A schema over OpenAI's limits on nesting depth or object properties is sent without strict mode, which accepts it.
+
+    A unit test, as the cases pin the counting rules themselves.
+    """
+    schema, strict_compatible = case
+    profile = OpenAIProvider.model_profile('gpt-6-luna')
+    assert profile is not None
+    transformer_type = profile.get('json_schema_transformer')
+    assert transformer_type is not None
+
+    transformer = transformer_type(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is strict_compatible
+
+
+def test_openai_strict_size_limits_keep_explicit_strict():
+    """An explicit `strict=True` is kept, so the API reports the limit.
+
+    A unit test, as it pins the transformer's strictness decision, which sends no request.
+    """
+    profile = OpenAIProvider.model_profile('gpt-6-luna')
+    assert profile is not None
+    transformer_type = profile.get('json_schema_transformer')
+    assert transformer_type is not None
+
+    transformer = transformer_type(_nested_objects(11), strict=True)
+    transformer.walk()
+    assert transformer.is_strict_compatible is True
+
+
+@pytest.mark.parametrize('api', ['chat', 'responses'])
+async def test_openai_deeply_nested_tool_is_sent_non_strict(
+    api: Literal['chat', 'responses'],
+    allow_model_requests: None,
+    openai_api_key: str,
+    request_capture: RequestCapture,
+):
+    """A tool schema nested deeper than OpenAI's strict mode allows used to fail with a 400, and now goes without strict."""
+
+    def configure(**settings: object) -> str:
+        return 'configured'  # pragma: no cover
+
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    model = (
+        OpenAIChatModel('gpt-6-luna', provider=provider)
+        if api == 'chat'
+        else OpenAIResponsesModel('gpt-6-luna', provider=provider)
+    )
+    tool = Tool.from_schema(configure, name='configure', description='Configure.', json_schema=_nested_objects(11))
+    agent = Agent(model, tools=[tool])
+
+    result = await agent.run('Reply with just OK, without calling any tools.', model_settings={'thinking': False})
+
+    assert result.output == snapshot('OK')
+    body = request_capture.body('/chat/completions' if api == 'chat' else '/responses')
+    tools = body['tools']
+    assert isinstance(tools, list)
+    wire_tool = tools[0]
+    assert isinstance(wire_tool, dict)
+    function = wire_tool['function'] if api == 'chat' else wire_tool
+    assert isinstance(function, dict)
+    assert function.get('strict', False) is False
