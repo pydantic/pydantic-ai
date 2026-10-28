@@ -22,7 +22,13 @@ from pydantic_clai2.builtin_plugins.workspaces import (
     describe,
 )
 from pydantic_clai2.builtin_plugins.workspaces.backend import is_url, repo_slug
-from pydantic_clai2.builtin_plugins.workspaces.registry import Registry, check_id, workspaces_dir
+from pydantic_clai2.builtin_plugins.workspaces.registry import (
+    Registry,
+    check_id,
+    workspaces_dir,
+    write_private as write_workspace_private,
+)
+from pydantic_clai2.config import private_files
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, load_plugin
 from pydantic_clai2.plugins.menus import Option
 from pydantic_clai2.runtime import worktrees
@@ -299,16 +305,19 @@ async def test_the_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert check_id('ok-1') == 'ok-1'
 
 
-def test_write_private_leaves_nothing_behind_when_it_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from pydantic_clai2.builtin_plugins.workspaces import registry
-    from pydantic_clai2.config import private_files
+def test_workspace_private_writer_keeps_the_text_keyword(tmp_path: Path) -> None:
+    path = tmp_path / 'workspace.json'
+    write_workspace_private(path, text='private')
+    assert path.read_text() == 'private'
 
+
+def test_write_private_leaves_nothing_behind_when_it_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def fail(source: object, target: object) -> None:
         raise OSError('disk full')
 
     monkeypatch.setattr(private_files.os, 'replace', fail)
     with pytest.raises(OSError, match='disk full'):
-        registry.write_private(tmp_path / 'file', text='text')
+        private_files.write_private(tmp_path / 'file', 'text')
     assert list(tmp_path.iterdir()) == []
 
 

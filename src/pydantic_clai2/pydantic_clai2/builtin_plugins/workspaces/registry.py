@@ -80,7 +80,7 @@ class Registry:
         """Write the record, replacing the last one."""
         folder = self.folder(workspace.id)
         folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-        write_private(folder / 'workspace.json', _RECORD.dump_json(workspace, indent=2).decode())
+        _write_private(folder / 'workspace.json', _RECORD.dump_json(workspace, indent=2).decode())
 
     def get(self, workspace_id: str) -> Workspace:
         """A workspace's record; `LookupError` for an unknown or unreadable one."""

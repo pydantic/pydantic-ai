@@ -8,8 +8,8 @@ import re
 import sys
 import weakref
 from collections.abc import AsyncIterator, Callable
+from datetime import datetime, timedelta, tzinfo
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import ClassVar
 
 import anyio
@@ -30,9 +30,14 @@ from pydantic_clai2.cli.web import run_web
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import LiveSession, LiveSessions, Plugin, SessionEnd, SessionEndReason
-from pydantic_clai2.plugins.process_plugins import JoinedSessions, handling
-from pydantic_clai2.runtime.live_registry import listing as live_listing
+from pydantic_clai2.plugins import LiveSession, LiveSessions, Plugin, PluginHost, SessionEnd, SessionEndReason
+from pydantic_clai2.plugins.process_plugins import JoinedSessions, LiveRuntime, handling
+from pydantic_clai2.runtime.live_registry import (
+    ControlProtocolError,
+    LiveProcess,
+    LiveRegistry,
+    listing as live_listing,
+)
 from pydantic_clai2.runtime.live_runtimes import LiveRuntimes
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
@@ -156,38 +161,86 @@ def blocked(
 async def test_registry_tracks_open_sessions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The real session lifecycle advertises only live sessions and removes the record on exit."""
-    with TemporaryDirectory(prefix='clai2-', dir='/tmp') as runtime:
-        monkeypatch.setenv('XDG_RUNTIME_DIR', runtime)
-        monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path))
-        fleet = Fleet(tmp_path)
-        async with fleet.live.serving():
-            home = await fleet.live.new(workspace=fleet.folder('home'))
-            fleet.live.registry.flush()  # Flush the scheduled debounce without waiting in a test.
-            records = await live_listing()
-            assert len(records) == 1
-            assert [(session.id, session.handle) for session in records[0].sessions] == [(home.id, 'home')]
-            monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
-            await anyio.to_thread.run_sync(cli.run)
-            assert capsys.readouterr().out == f'Handle\tStatus\tTitle\tWorkspace\nhome\tidle\t\t{home.workspace}\n'
-            with pytest.raises(ValueError, match='must not be empty'):
-                home.wait_for_user('')
-            finished = home.wait_for_user('approval')
-            assert home.waiting_for == 'approval'
-            assert fleet.live.registry.snapshot().sessions[0].status == 'waiting'
-            second = home.wait_for_user('a question')
-            assert home.waiting_for == 'a question'
-            second()
-            second()  # Releasing a wait twice leaves the earlier one intact.
-            assert home.waiting_for == 'approval'
-            finished()
-            assert home.waiting_for == ''
-            await fleet.live.close(home.id)
-            await until(fleet.live, lambda: not fleet.live.listing())
-            fleet.live.registry.flush()
-            await anyio.to_thread.run_sync(cli.run)
-            assert capsys.readouterr().out == 'No live sessions.\n'
-        assert await live_listing() == []
+    """The real session lifecycle advertises fresh sessions without rewriting process discovery metadata."""
+    fleet = Fleet(tmp_path)
+    async with fleet.live.serving():
+        home = await fleet.live.new(workspace=fleet.folder('home'))
+        records = await live_listing()
+        assert len(records) == 1
+        assert [(session.id, session.name) for session in records[0].sessions] == [(home.id, 'home')]
+        record = fleet.live.registry.directory / f'{os.getpid()}.json'
+        metadata = record.read_bytes()
+        metadata_stat = record.stat()
+        started = records[0].sessions[0].status_since
+        assert started is not None
+        transition = started + timedelta(seconds=1)
+        clock = [transition]
+
+        class Clock:
+            @staticmethod
+            def now(tz: tzinfo | None = None) -> datetime:
+                return clock[0]
+
+        monkeypatch.setattr('pydantic_clai2.runtime.live_registry.datetime', Clock)
+        monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
+        await anyio.to_thread.run_sync(cli.run)
+        assert (
+            capsys.readouterr().out
+            == f'ID\tName\tStatus\tTitle\tWorkspace\n{home.id[:8]}\thome\tidle\t\t{home.workspace}\n'
+        )
+        with pytest.raises(ValueError, match='must not be empty'):
+            home.wait_for_user('')
+        finished = home.wait_for_user('approval')
+        assert home.waiting_for == 'approval'
+        clock[0] = transition + timedelta(seconds=1)
+        waiting = fleet.live.registry.snapshot().sessions[0]
+        assert waiting.status == 'waiting'
+        assert waiting.status_since == transition, 'the transition was recorded before a lister requested it'
+        second = home.wait_for_user('a question')
+        assert home.waiting_for == 'a question'
+        second()
+        second()  # Releasing a wait twice leaves the earlier one intact.
+        assert home.waiting_for == 'approval'
+        finished()
+        assert home.waiting_for == ''
+        assert record.read_bytes() == metadata
+        assert (record.stat().st_ino, record.stat().st_mtime_ns) == (metadata_stat.st_ino, metadata_stat.st_mtime_ns)
+        await fleet.live.close(home.id)
+        await until(fleet.live, lambda: not fleet.live.listing())
+        await anyio.to_thread.run_sync(cli.run)
+        assert capsys.readouterr().out == 'No live sessions.\n'
+    assert await live_listing() == []
+
+
+async def test_cli_session_id_prefixes_are_unique_across_processes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def session(identifier: str) -> LiveRuntime:
+        host = PluginHost[None](
+            name='peer', console=Console(file=io.StringIO()), settings={}, workspace=lambda: tmp_path / 'home'
+        )
+        return LiveRuntime(live_id=identifier, host=host, running=lambda: False)
+
+    first = LiveRegistry(lambda: [session('deadbeef0' + '0' * 23)])
+    second = LiveRegistry(lambda: [session('deadbeef1' + '0' * 23)])
+    second.pid = os.getppid()  # A second live process identity, without spawning a subprocess.
+    monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
+    async with first.serving(lambda callback: lambda: None), second.serving(lambda callback: lambda: None):
+        await anyio.to_thread.run_sync(cli.run)
+        lines = capsys.readouterr().out.splitlines()
+        assert lines[0] == 'ID\tName\tStatus\tTitle\tWorkspace'
+        assert {line.split('\t')[0] for line in lines[1:]} == {'deadbeef0', 'deadbeef1'}
+        assert {line.split('\t')[1] for line in lines[1:]} == {'home'}
+
+
+def test_cli_listing_errors_are_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def failed_listing() -> list[LiveProcess]:
+        raise ControlProtocolError('Live-session response is too large')
+
+    monkeypatch.setattr('pydantic_clai2.runtime.live_registry.listing', failed_listing)
+    monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])
+    with pytest.raises(SystemExit, match='too large'):
+        cli.run()
 
 
 async def test_unsafe_socket_folder_does_not_stop_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

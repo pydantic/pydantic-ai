@@ -32,18 +32,27 @@ In the environment, which only you can read, rather than on the command line `ps
 
 
 def _list_live_sessions() -> None:
-    from pydantic_clai2.runtime.live_registry import listing
+    from pydantic_clai2.runtime.live_registry import ControlProtocolError, listing
 
     if sys.platform == 'win32':
         raise SystemExit('`clai2 sessions` requires Unix sockets.')
-    rows = [
-        f'{session.handle}\t{session.status}\t{session.title}\t{session.workspace}'
-        for record in asyncio.run(listing())
-        for session in record.sessions
-    ]
-    if rows:
-        print('Handle\tStatus\tTitle\tWorkspace')
-        print('\n'.join(rows))
+    try:
+        sessions = [session for record in asyncio.run(listing()) for session in record.sessions]
+    except ControlProtocolError as exc:
+        raise SystemExit(str(exc)) from exc
+    identifiers = {session.id for session in sessions}
+    prefixes: dict[str, str] = {}
+    for identifier in identifiers:
+        length = min(8, len(identifier))
+        while length < len(identifier) and any(
+            other != identifier and other.startswith(identifier[:length]) for other in identifiers
+        ):
+            length += 1
+        prefixes[identifier] = identifier[:length]
+    if sessions:
+        print('ID\tName\tStatus\tTitle\tWorkspace')
+        for session in sessions:
+            print(f'{prefixes[session.id]}\t{session.name}\t{session.status}\t{session.title}\t{session.workspace}')
     else:
         print('No live sessions.')
 
@@ -447,7 +456,22 @@ def _resume_source(args: argparse.Namespace) -> None:
             args.resume_from, args.resume = source, session_id
 
 
+def _validate_session_listing(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if args.command == 'sessions' and (
+        args.arguments
+        or args.model is not None
+        or args.prompt is not None
+        or args.request_limit is not None
+        or args.database is not None
+        or args.web
+        or args.port is not None
+        or args.token_file is not None
+    ):
+        parser.error('`sessions` does not accept arguments or chat/settings options')
+
+
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    _validate_session_listing(args, parser)
     if args.command and (
         args.resume is not None
         or args.continue_session
@@ -458,7 +482,7 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
     ):
         parser.error(
             '--resume, --continue, --session-id, --fork-session, --worktree, and --agent cannot be combined with'
-            ' config or plugins'
+            ' config, plugins, or sessions'
         )
     if args.update and (
         args.command
@@ -473,7 +497,7 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         or args.request_limit is not None
     ):
         parser.error(
-            '--update cannot be combined with config, plugins, --prompt, --web, --resume, --continue, '
+            '--update cannot be combined with config, plugins, sessions, --prompt, --web, --resume, --continue, '
             '--session-id, --agent, --worktree, --model, or --request-limit'
         )
     # `--continue` resumes the session it finds at startup, so it is checked as a `--resume` would be.
@@ -490,7 +514,7 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         )
     if args.web:
         if args.command or args.prompt is not None or args.agent is not None:
-            parser.error('--web cannot be combined with config, plugins, --prompt, or --agent')
+            parser.error('--web cannot be combined with config, plugins, sessions, --prompt, or --agent')
         if args.resume == '':
             parser.error('--web requires an explicit --resume SESSION-ID')
     elif args.port is not None or args.token_file is not None:
@@ -499,7 +523,7 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error('--port must be between 0 and 65535')
     if args.prompt is not None:
         if args.command:
-            parser.error('--prompt cannot be combined with config or plugins')
+            parser.error('--prompt cannot be combined with config, plugins, or sessions')
         if not args.prompt.strip():
             parser.error('--prompt requires non-empty text')
         if args.resume == '':

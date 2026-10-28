@@ -5,6 +5,7 @@ import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from tempfile import TemporaryDirectory, mkdtemp
 
 import keyring
 import pytest
@@ -80,6 +81,21 @@ def fresh_rich_styles() -> None:
     """Build styles afresh: Rich keeps a cached style's first escape codes, whatever colour system a later console uses."""
     Style.parse.cache_clear()
     Style._add.cache_clear()  # pyright: ignore[reportPrivateUsage] -- `Style + Style` caches its result here.
+
+
+@pytest.fixture(scope='session')
+def runtime_root() -> Iterator[Path]:
+    """Clean up after test-scoped OS monkeypatches have been restored."""
+    with TemporaryDirectory(prefix='c2-runtime-', dir='/tmp') as root:
+        yield Path(root)
+
+
+@pytest.fixture(autouse=True)
+def runtime_directory(runtime_root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Keep live-control sockets private, short, and outside the developer's real runtime directory."""
+    directory = Path(mkdtemp(prefix='r-', dir=runtime_root))
+    monkeypatch.setenv('XDG_RUNTIME_DIR', str(directory))
+    return directory
 
 
 @pytest.fixture(autouse=True)

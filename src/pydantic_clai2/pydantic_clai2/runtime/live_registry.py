@@ -1,9 +1,11 @@
-"""Private per-process discovery of live CLAI sessions over a local control socket."""
+"""Private process discovery and typed, same-UID Unix control frames.
+
+The discovery file contains only process identity and socket path. A `hello` carries fresh sessions;
+requests are bounded at 64 KiB and replies at 1 MiB, with explicit errors for oversized session data.
+"""
 
 import asyncio
 import ctypes
-import json
-import logging
 import os
 import secrets
 import socket
@@ -11,22 +13,24 @@ import stat
 import struct
 import sys
 from collections.abc import Callable
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import TypeAdapter, ValidationError
+from anyio import CancelScope
+from pydantic import Field, TypeAdapter, ValidationError
 
 from pydantic_clai2.config.private_files import write_private
 from pydantic_clai2.config.settings_store import state_dir
 from pydantic_clai2.plugins import LiveSession
 
 _PROTOCOL = 1
-_MAX_FRAME = 65_536
+_MAX_REQUEST = 65_536
+_MAX_REPLY = 1_048_576
 _TIMEOUT = 0.5
-_LOGGER = logging.getLogger(__name__)
+LiveStatus = Literal['idle', 'running', 'waiting']
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -34,34 +38,70 @@ class LiveEntry:
     """One session in a process's live listing."""
 
     id: str
-    handle: str
+    name: str
     conversation_id: str
     title: str
     workspace: str
     model: str
-    status: Literal['idle', 'running', 'waiting']
+    status: LiveStatus
     waiting_for: str = ''
     status_since: datetime | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
 class LiveRecord:
-    """A private on-disk snapshot, verified against its owner's control socket."""
+    """Static private discovery record."""
 
-    schema: int
     pid: int
     instance: str
-    protocol: int
-    features: list[str]
     socket: str
-    started_at: datetime
-    updated_at: datetime
-    sessions: list[LiveEntry] = field(default_factory=lambda: list[LiveEntry]())
 
 
+@dataclass(frozen=True, kw_only=True)
+class LiveProcess(LiveRecord):
+    """A verified process and its current sessions."""
+
+    sessions: list[LiveEntry]
+
+
+@dataclass(frozen=True, kw_only=True)
+class HelloRequest:
+    """Request the current process identity and sessions."""
+
+    op: Literal['hello'] = 'hello'
+    protocol: int = 1
+
+
+@dataclass(frozen=True, kw_only=True)
+class Hello:
+    """Current process identity and live sessions."""
+
+    op: Literal['hello_reply']
+    instance: str
+    protocol: Literal[1]
+    sessions: list[LiveEntry]
+
+
+@dataclass(frozen=True, kw_only=True)
+class ControlError:
+    """A typed control-protocol failure."""
+
+    op: Literal['error']
+    error: Literal['unsupported', 'response_too_large']
+    message: str
+
+
+Frame = Annotated[HelloRequest | Hello | ControlError, Field(discriminator='op')]
+_FRAME: TypeAdapter[Frame] = TypeAdapter(Frame)
 _RECORD = TypeAdapter(LiveRecord)
-_ENTRIES = TypeAdapter(list[LiveEntry])
-_FRAME = TypeAdapter(dict[str, object])
+
+
+class ControlProtocolError(RuntimeError):
+    """The peer returned a typed control-protocol error."""
+
+
+class ResponseTooLargeError(ControlProtocolError):
+    """The process has more session data than its reply limit permits."""
 
 
 def _private_directory(path: Path) -> Path:
@@ -70,17 +110,15 @@ def _private_directory(path: Path) -> Path:
 
 
 def _check_private_directory(path: Path) -> Path:
-    mode = path.lstat()
-    if not stat.S_ISDIR(mode.st_mode) or mode.st_uid != os.getuid() or mode.st_mode & 0o077:
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise PermissionError(f'Unsafe CLAI directory {path}')
     return path
 
 
 def _socket_directory() -> Path:
     base = os.environ.get('XDG_RUNTIME_DIR') or os.environ.get('TMPDIR')
-    if base:
-        return _private_directory(Path(base).absolute() / f'pydantic-clai2-{os.getuid()}')
-    return _private_directory(Path('/tmp') / f'pydantic-clai2-{os.getuid()}')
+    return _private_directory((Path(base).absolute() if base else Path('/tmp')) / f'pydantic-clai2-{os.getuid()}')
 
 
 def _owned_socket(path: Path) -> bool:
@@ -99,36 +137,48 @@ def _unlink_if_unchanged(path: Path, inode: int) -> None:
         pass
 
 
-def _peer_uid(connection: socket.socket) -> int | None:
+def peer_uid(connection: socket.socket) -> int | None:
+    """The connecting process's UID, or `None` when the platform cannot verify it."""
     if sys.platform == 'darwin':
-        uid = ctypes.c_uint()
-        gid = ctypes.c_uint()
+        uid, gid = ctypes.c_uint(), ctypes.c_uint()
         libc = ctypes.CDLL(None, use_errno=True)
         if libc.getpeereid(connection.fileno(), ctypes.byref(uid), ctypes.byref(gid)) != 0:
             return None
         return uid.value
-    if hasattr(socket, 'SO_PEERCRED'):
-        _, uid, _ = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-        return uid
-    return None
+    peercred = getattr(socket, 'SO_PEERCRED', None)
+    if peercred is None:
+        return None
+    _, uid, _ = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, peercred, 12))
+    return uid
 
 
-async def request(path: Path, frame: dict[str, object]) -> dict[str, object]:
-    """Exchange one bounded control frame with a process socket."""
-    payload = json.dumps(frame).encode() + b'\n'
-    if len(payload) > _MAX_FRAME:
-        raise ValueError('Control frame exceeds 64 KiB')
-    reader, writer = await asyncio.wait_for(asyncio.open_unix_connection(str(path)), _TIMEOUT)
+async def request(path: Path, frame: HelloRequest) -> Hello:
+    """Exchange a typed, bounded control frame."""
+    payload = _FRAME.dump_json(frame) + b'\n'
+    if len(payload) > _MAX_REQUEST:
+        raise ValueError('Control request exceeds 64 KiB')
+    reader, writer = await asyncio.wait_for(asyncio.open_unix_connection(str(path), limit=_MAX_REPLY + 1), _TIMEOUT)
     try:
         writer.write(payload)
         await asyncio.wait_for(writer.drain(), _TIMEOUT)
         line = await asyncio.wait_for(reader.readline(), _TIMEOUT)
-        if not line or len(line) > _MAX_FRAME or not line.endswith(b'\n'):
+        if not line or len(line) > _MAX_REPLY or not line.endswith(b'\n'):
             raise ValueError('Invalid control frame')
-        return _FRAME.validate_json(line)
+        try:
+            reply = _FRAME.validate_json(line)
+        except ValidationError as exc:
+            raise ControlProtocolError('Invalid control frame') from exc
+        if isinstance(reply, ControlError):
+            if reply.error == 'response_too_large':
+                raise ResponseTooLargeError(reply.message)
+            raise ControlProtocolError(reply.message)
+        if isinstance(reply, HelloRequest):
+            raise ControlProtocolError('Unexpected hello request reply')
+        return reply
     finally:
         writer.close()
-        await writer.wait_closed()
+        with suppress(OSError):
+            await writer.wait_closed()
 
 
 def _record_socket(record: LiveRecord) -> Path:
@@ -143,55 +193,51 @@ def _record_socket(record: LiveRecord) -> Path:
     return path
 
 
-async def listing(*, directory: Path | None = None) -> list[LiveRecord]:
-    """Find reachable processes; remove only records whose exact socket and inode are safely stale."""
+async def listing(*, directory: Path | None = None) -> list[LiveProcess]:
+    """Fetch current sessions from each verified process."""
     directory = directory or state_dir() / 'live'
     if os.name != 'posix' or not directory.exists():
         return []
     _private_directory(directory)
-    found: list[LiveRecord] = []
+    found: list[LiveProcess] = []
     for path in directory.glob('*.json'):
         try:
             info = path.lstat()
             if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
                 continue
             record = _RECORD.validate_json(path.read_bytes())
-            if (
-                record.schema != 1
-                or record.protocol != _PROTOCOL
-                or path.name != f'{record.pid}.json'
-                or record.pid <= 0
-            ):
+            if path.name != f'{record.pid}.json' or record.pid <= 0:
                 continue
-            socket_path = _record_socket(record)
-            if not _owned_socket(socket_path):
-                if not socket_path.exists():
+            sock = _record_socket(record)
+            if not _owned_socket(sock):
+                if not sock.exists():
                     _unlink_if_unchanged(path, info.st_ino)
                 continue
-            socket_inode = socket_path.lstat().st_ino
+            inode = sock.lstat().st_ino
             try:
                 os.kill(record.pid, 0)
             except ProcessLookupError:
-                # Only a refused connection proves the socket is abandoned. Never unlink a new
-                # listener after PID reuse, even if its old record has not been refreshed yet.
                 try:
-                    await request(socket_path, {'op': 'hello', 'protocol': _PROTOCOL})
+                    await request(sock, HelloRequest())
                 except (ConnectionRefusedError, FileNotFoundError):
-                    _unlink_if_unchanged(socket_path, socket_inode)
+                    _unlink_if_unchanged(sock, inode)
                     _unlink_if_unchanged(path, info.st_ino)
                 continue
             except PermissionError:
                 continue
             try:
-                hello = await request(socket_path, {'op': 'hello', 'protocol': _PROTOCOL})
+                hello = await request(sock, HelloRequest())
             except ConnectionRefusedError:
                 _unlink_if_unchanged(path, info.st_ino)
                 continue
-            except (OSError, ValueError, TimeoutError, asyncio.LimitOverrunError):
-                # Timeout is inconclusive; another process may be starting or unresponsive.
+            except ResponseTooLargeError:
+                raise
+            except (OSError, ValueError, TimeoutError, ControlProtocolError, asyncio.LimitOverrunError):
                 continue
-            if hello.get('instance') == record.instance and hello.get('protocol') == _PROTOCOL:
-                found.append(record)
+            if hello.instance == record.instance:
+                found.append(
+                    LiveProcess(pid=record.pid, instance=record.instance, socket=record.socket, sessions=hello.sessions)
+                )
             else:
                 _unlink_if_unchanged(path, info.st_ino)
         except (OSError, ValidationError, ValueError):
@@ -200,47 +246,34 @@ async def listing(*, directory: Path | None = None) -> list[LiveRecord]:
 
 
 class LiveRegistry:
-    """One process's socket and atomically replaced listing, scoped to `serving()`."""
+    """Serve one process's live sessions and maintain its static discovery record."""
 
     def __init__(self, sessions: Callable[[], list[LiveSession]], *, directory: Path | None = None) -> None:
         self.sessions = sessions
         self.directory = directory or state_dir() / 'live'
         self.pid = os.getpid()
         self.instance = secrets.token_hex(16)
-        self.started_at = datetime.now(UTC)
         self.socket_path: Path | None = None
         self._server: asyncio.AbstractServer | None = None
-        self._timer: asyncio.TimerHandle | None = None
         self._unsubscribe: Callable[[], None] | None = None
-        self._handles: dict[str, str] = {}
-        self._statuses: dict[str, tuple[str, datetime]] = {}
+        self._statuses: dict[str, tuple[LiveStatus, datetime]] = {}
 
-    def snapshot(self) -> LiveRecord:
+    def snapshot(self) -> Hello:
+        """Current session metadata, with status-transition times retained between requests."""
         now = datetime.now(UTC)
         sessions = self.sessions()
-        live_ids = {session.id for session in sessions}
-        self._handles = {key: value for key, value in self._handles.items() if key in live_ids}
-        self._statuses = {key: value for key, value in self._statuses.items() if key in live_ids}
+        ids = {session.id for session in sessions}
+        self._statuses = {key: value for key, value in self._statuses.items() if key in ids}
         entries: list[LiveEntry] = []
         for session in sessions:
-            if session.id not in self._handles:
-                name = session.workspace.name or 'session'
-                handle = name
-                suffix = 2
-                while handle in self._handles.values():
-                    handle = f'{name}-{suffix}'
-                    suffix += 1
-                self._handles[session.id] = handle
-            status: Literal['idle', 'running', 'waiting'] = (
-                'waiting' if session.waiting_for else 'running' if session.running else 'idle'
-            )
+            status: LiveStatus = 'waiting' if session.waiting_for else 'running' if session.running else 'idle'
             previous = self._statuses.get(session.id)
             if previous is None or previous[0] != status:
                 self._statuses[session.id] = (status, now)
             entries.append(
                 LiveEntry(
                     id=session.id,
-                    handle=self._handles[session.id],
+                    name=session.workspace.name or 'session',
                     conversation_id=session.conversation.conversation_id,
                     title=session.conversation.title or '',
                     workspace=str(session.workspace),
@@ -250,70 +283,46 @@ class LiveRegistry:
                     waiting_for=session.waiting_for,
                 )
             )
-        return LiveRecord(
-            schema=1,
-            pid=self.pid,
-            instance=self.instance,
-            protocol=_PROTOCOL,
-            features=['list'],
-            socket=str(self.socket_path),
-            started_at=self.started_at,
-            updated_at=now,
-            sessions=entries,
-        )
+        return Hello(op='hello_reply', instance=self.instance, protocol=1, sessions=entries)
 
     def changed(self) -> None:
-        if self._timer is None:
-            self._timer = asyncio.get_running_loop().call_later(0.25, self.flush)
-
-    def flush(self) -> None:
-        """Persist the current session snapshot immediately, or remove it if no sessions are open."""
-        if self._timer is not None:
-            self._timer.cancel()
-            self._timer = None
-        try:
-            path = self.directory / f'{self.pid}.json'
-            if not self.sessions():
-                self._forget_record()
-                return
-            write_private(path, _RECORD.dump_json(self.snapshot()).decode())
-        except OSError:
-            _LOGGER.exception('Could not update CLAI live registry')
-
-    def _forget_record(self) -> None:
-        path = self.directory / f'{self.pid}.json'
-        try:
-            info = path.lstat()
-            record = _RECORD.validate_json(path.read_bytes())
-            if record.instance == self.instance:
-                _unlink_if_unchanged(path, info.st_ino)
-        except (FileNotFoundError, ValidationError):
-            pass
+        """Track session transitions in memory; discovery metadata is never rewritten."""
+        self.snapshot()
 
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             connection = writer.get_extra_info('socket')
-            if connection is None or _peer_uid(connection) != os.getuid():
+            if connection is None or peer_uid(connection) != os.getuid():
                 return
             line = await asyncio.wait_for(reader.readline(), _TIMEOUT)
-            if not line or len(line) > _MAX_FRAME or not line.endswith(b'\n'):
+            if not line or len(line) > _MAX_REQUEST or not line.endswith(b'\n'):
                 return
-            request = _FRAME.validate_json(line)
-            if request.get('op') == 'hello':
-                result: dict[str, object] = {'instance': self.instance, 'protocol': _PROTOCOL, 'features': ['list']}
-            elif request.get('op') == 'list':
-                result = {'sessions': _ENTRIES.dump_python(self.snapshot().sessions, mode='json')}
+            try:
+                frame = _FRAME.validate_json(line)
+            except ValidationError:
+                frame = None
+            if not isinstance(frame, HelloRequest):
+                reply: Frame = ControlError(op='error', error='unsupported', message='Unsupported control request')
             else:
-                result = {'error': 'unsupported'}
-            payload = json.dumps(result).encode() + b'\n'
-            if len(payload) <= _MAX_FRAME:
-                writer.write(payload)
-                await writer.drain()
+                reply = self.snapshot()
+            payload = _FRAME.dump_json(reply) + b'\n'
+            if len(payload) > _MAX_REPLY:
+                payload = (
+                    _FRAME.dump_json(
+                        ControlError(
+                            op='error', error='response_too_large', message='Live session response exceeds 1 MiB'
+                        )
+                    )
+                    + b'\n'
+                )
+            writer.write(payload)
+            await writer.drain()
         except (OSError, ValueError, TimeoutError, asyncio.LimitOverrunError):
             pass
         finally:
             writer.close()
-            await writer.wait_closed()
+            with suppress(OSError):
+                await writer.wait_closed()
 
     @asynccontextmanager
     async def serving(self, subscribe: Callable[[Callable[[], None]], Callable[[], None]]):
@@ -328,7 +337,7 @@ class LiveRegistry:
                 raise PermissionError(f'Unsafe CLAI socket {path}')
             old_inode = path.lstat().st_ino
             try:
-                await request(path, {'op': 'hello', 'protocol': _PROTOCOL})
+                await request(path, HelloRequest())
             except (ConnectionRefusedError, FileNotFoundError):
                 _unlink_if_unchanged(path, old_inode)
                 if path.exists():
@@ -337,34 +346,45 @@ class LiveRegistry:
                 raise OSError(f'CLAI socket already active at {path}')
         self.socket_path = path
         listener = socket.socket(socket.AF_UNIX)
-        bound_inode: int | None = None
+        inode: int | None = None
         try:
             previous_umask = os.umask(0o077)
             try:
                 listener.bind(str(path))
-                bound_inode = path.lstat().st_ino
+                inode = path.lstat().st_ino
             finally:
                 os.umask(previous_umask)
             path.chmod(0o600)
             listener.listen()
             listener.setblocking(False)
-            self._server = await asyncio.start_unix_server(self._serve, sock=listener, limit=_MAX_FRAME + 1)
+            self._server = await asyncio.start_unix_server(self._serve, sock=listener, limit=_MAX_REQUEST + 1)
         except BaseException:
             listener.close()
-            if bound_inode is not None:
-                _unlink_if_unchanged(path, bound_inode)
+            if inode is not None:
+                _unlink_if_unchanged(path, inode)
             raise
         socket_inode = path.lstat().st_ino
-        self._unsubscribe = subscribe(self.changed)
-        self.flush()
+        record_path = self.directory / f'{self.pid}.json'
         try:
+            write_private(
+                record_path,
+                _RECORD.dump_json(LiveRecord(pid=self.pid, instance=self.instance, socket=str(path))).decode(),
+            )
+            self.changed()
+            self._unsubscribe = subscribe(self.changed)
             yield
         finally:
-            self._unsubscribe()
-            if self._timer is not None:
-                self._timer.cancel()
-                self._timer = None
-            self._server.close()
-            await self._server.wait_closed()
-            _unlink_if_unchanged(path, socket_inode)
-            self._forget_record()
+            if self._unsubscribe is not None:
+                self._unsubscribe()
+                self._unsubscribe = None
+            with CancelScope(shield=True):
+                self._server.close()
+                await self._server.wait_closed()
+                _unlink_if_unchanged(path, socket_inode)
+                try:
+                    record_info = record_path.lstat()
+                    record = _RECORD.validate_json(record_path.read_bytes())
+                    if record.instance == self.instance:
+                        _unlink_if_unchanged(record_path, record_info.st_ino)
+                except (FileNotFoundError, ValidationError):
+                    pass
