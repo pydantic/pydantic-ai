@@ -32,6 +32,8 @@ from ...exceptions import (
     ModelRequestRejectedError,
     ModelServerError,
     ModelUnavailableError,
+    RetryModelRequest,
+    UserError,
     _CategorizedHTTPError,  # pyright: ignore[reportPrivateUsage]
 )
 from ...messages import ModelResponse
@@ -44,6 +46,9 @@ _STREAMED_KEY = 'pydantic_ai_streamed_before_failing'
 """The detail that holds what a streamed request produced before the error ended it; see `mark_streamed_before_failing`."""
 
 _response_adapter: TypeAdapter[ModelResponse] = TypeAdapter(ModelResponse)
+
+_RETRY_MODEL_REQUEST_KEY = 'pydantic_ai_retry_model_request'
+"""Marks the `ApplicationError` detail that holds a `RetryModelRequest`'s model name."""
 
 
 def _encode(error: ModelAPIError) -> dict[str, Any] | None:
@@ -62,6 +67,11 @@ def _encode(error: ModelAPIError) -> dict[str, Any] | None:
         return None
     args = reduced[1]
     state = reduced[2] if len(reduced) > 2 else None
+    if isinstance(state, dict):
+        # What Pydantic AI attached to the error isn't JSON: what has to cross is carried separately below.
+        state = {
+            key: value for key, value in cast(dict[str, Any], state).items() if not key.startswith('_pydantic_ai_')
+        }
     encoded: dict[str, Any] = {
         'module': error_type.__module__,
         'qualname': error_type.__qualname__,
@@ -210,3 +220,47 @@ def _rebuild(application_error: ApplicationError) -> ModelAPIError | None:
     if error is not None and (streamed := detail.get(_STREAMED_KEY)) is not None:
         mark_streamed_before_failing(error, _response_adapter.validate_python(streamed))
     return error
+
+
+@contextmanager
+def retry_requests_as_application_errors() -> Generator[None]:
+    """In a capability operation's activity, raise a `RetryModelRequest` as an `ApplicationError` the workflow rebuilds.
+
+    A capability's `prepare_model_request`, `after_model_request` or `on_model_request_error` hook that runs as a
+    durable operation asks for another attempt by raising it, which the attempt loop in the workflow handles. The
+    model to attempt crosses as its name: a model instance can't, so asking for one raises a `UserError` here.
+    """
+    try:
+        yield
+    except RetryModelRequest as retry:
+        if retry.model is not None and not isinstance(retry.model, str):
+            raise UserError(
+                '`RetryModelRequest` raised from a capability hook that runs as a durable operation can only name '
+                "the model to attempt by its name: register a model instance with the durability capability's "
+                '`models` and pass its name.'
+            ) from retry
+        raise ApplicationError(
+            str(retry) or 'RetryModelRequest',
+            {_RETRY_MODEL_REQUEST_KEY: {'model': retry.model}},
+            type=RetryModelRequest.__name__,
+            # Asking for another attempt is the hook's answer, not a failure to retry.
+            non_retryable=True,
+        ) from retry
+
+
+@contextmanager
+def rebuilt_retry_requests() -> Generator[None]:
+    """In the workflow, re-raise a `RetryModelRequest` a capability operation's activity raised, as itself."""
+    try:
+        yield
+    except ActivityError as activity_error:
+        cause = activity_error.cause
+        if (
+            isinstance(cause, ApplicationError)
+            and cause.details
+            and isinstance(detail := cause.details[0], dict)
+            and isinstance(encoded := cast(dict[str, Any], detail).get(_RETRY_MODEL_REQUEST_KEY), dict)
+        ):
+            model = cast(dict[str, Any], encoded).get('model')
+            raise RetryModelRequest(model if isinstance(model, str) else None) from activity_error
+        raise

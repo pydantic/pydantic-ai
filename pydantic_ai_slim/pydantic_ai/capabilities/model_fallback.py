@@ -41,11 +41,11 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     from pydantic_ai import Agent
     from pydantic_ai.capabilities import ModelFallback
 
-    # Try gpt-5.6-sol, then Fable.
-    agent = Agent('openai:gpt-5.6-sol', capabilities=[ModelFallback('anthropic:claude-fable-5')])
+    # Try gpt-6.1-sol, then Fable 5.1.
+    agent = Agent('openai:gpt-6.1-sol', capabilities=[ModelFallback('anthropic:claude-fable-5-1')])
 
     # No agent model: the first candidate is used for the first attempt.
-    agent = Agent(capabilities=[ModelFallback('openai:gpt-5.6-sol', 'anthropic:claude-fable-5')])
+    agent = Agent(capabilities=[ModelFallback('openai:gpt-6.1-sol', 'anthropic:claude-fable-5-1')])
     ```
 
     A model already attempted this step is skipped, so listing the agent's own model as the first
@@ -175,19 +175,44 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         Every attempt is noted here, whichever capability asked for it, so a model that was already
         attempted this step is never picked again.
         """
-        self._reset_for_step(ctx)
-        if not self._pin_checked:
-            self._pin_checked = True
-            if (pinned := self._pinned_candidate(request_context)) is not None:
-                # Should the continuation fail, the chain moves on from the model it's pinned to, like it
-                # would have when the job was started, instead of starting over with a model that would
-                # just start another. That holds whether or not the step's model already is that model.
-                index, candidate = pinned
+        # Keyed on `run_step` rather than `request_context.attempt`, so the chain still starts over for a new step
+        # when another capability asked for its first extra attempt.
+        if self._step != ctx.run_step:
+            self._step = ctx.run_step
+            self._cursor = 0
+            self._attempted_models = []
+            self._attempted_ids = set()
+            self._chain = self._new_chain()
+            self._pin_checked = False
+            self._moved = False
+        messages = request_context.messages
+        if (
+            not self._pin_checked
+            and messages
+            and isinstance(last := messages[-1], ModelResponse)
+            and last.state == 'suspended'
+            and (pin := continuation_pin(last, key=FALLBACK_CAPABILITY_PIN_KEY)) is not None
+        ):
+            # A resumed suspended response pinned to one of this capability's models, or to the step's model alone.
+            # Should its continuation fail, the chain moves on from the model it's pinned to, like it would have when
+            # the job was started, instead of starting over with a model that would just start another. That holds
+            # whether or not the step's model already is that model.
+            index = next((index for index, candidate in enumerate(self.models) if _pin_id(candidate) == pin), None)
+            if pin == _pin_id(request_context.model_id or request_context.model):
+                self._cursor = (-1 if index is None else index) + 1
+            elif index is None:
+                raise UserError(
+                    f'Cannot resume this suspended response: it was started by {pin!r}, which is neither the '
+                    "model selected for this step nor one of `ModelFallback`'s models. Pass that model explicitly to "
+                    '`run(model=...)` when resuming.'
+                )
+            else:
                 self._cursor = index + 1
-                if candidate is not None:
-                    # The step would continue a provider-side job on a model other than the one that
-                    # started it; send it to that model instead, before anything is sent.
-                    raise RetryModelRequest(candidate)
+                self._pin_checked = True
+                # The step would continue a provider-side job on a model other than the one that started it; send
+                # it to that model instead, before anything is sent.
+                raise RetryModelRequest(self.models[index])
+        self._pin_checked = True
         moved, self._moved = self._moved, False
         if moved and self._already_attempted(request_context.model):
             # A candidate given as a string, which the agent resolved only now, turned out to be a model already
@@ -241,44 +266,6 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     def _new_chain(self) -> FallbackChain:
         return FallbackChain(self._predicates, owner='ModelFallback')
 
-    def _reset_for_step(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Reset the chain when a new request step begins.
-
-        Keyed on `run_step` rather than `request_context.attempt` so the state is still reset
-        correctly when some other capability drove the first extra attempt.
-        """
-        if self._step != ctx.run_step:
-            self._step = ctx.run_step
-            self._cursor = 0
-            self._attempted_models = []
-            self._attempted_ids = set()
-            self._chain = self._new_chain()
-            self._pin_checked = False
-            self._moved = False
-
-    def _pinned_candidate(self, request_context: ModelRequestContext) -> tuple[int, Model | str | None] | None:
-        """Where in the chain a resumed suspended response is pinned, if it's pinned to one of this capability's models.
-
-        Returns the pinned model's index among `models`, and the model to move the request to, or `None` when the
-        step's model already is the pinned one. The index is `-1` when the pin is to the step's model alone.
-        """
-        messages = request_context.messages
-        if not (messages and isinstance(last := messages[-1], ModelResponse) and last.state == 'suspended'):
-            return None
-        pin = continuation_pin(last, key=FALLBACK_CAPABILITY_PIN_KEY)
-        if pin is None:
-            return None
-        index = next((index for index, candidate in enumerate(self.models) if _pin_id(candidate) == pin), None)
-        if pin == _pin_id(request_context.model_id or request_context.model):
-            return (-1 if index is None else index), None
-        if index is None:
-            raise UserError(
-                f'Cannot resume this suspended response: it was started by {pin!r}, which is neither the '
-                "model selected for this step nor one of `ModelFallback`'s models. Pass that model explicitly to "
-                '`run(model=...)` when resuming.'
-            )
-        return index, self.models[index]
-
     def _advance(self) -> RetryModelRequest:
         """Return the exception that moves to the next untried candidate, or the aggregated failure."""
         while self._cursor < len(self.models):
@@ -292,10 +279,15 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         self._chain.exhausted()
 
     def _already_attempted(self, candidate: Model | KnownModelName | str) -> bool:
-        if isinstance(candidate, Model):
-            # The attempted model may be wrapped by now, e.g. by a durable-execution capability.
-            return any(_is_or_wraps(attempted, candidate) for attempted in self._attempted_models)
-        return candidate in self._attempted_ids
+        if not isinstance(candidate, Model):
+            return candidate in self._attempted_ids
+        # The attempted model may be wrapped by now, e.g. by a durable-execution capability.
+        for attempted in self._attempted_models:
+            while attempted is not candidate and isinstance(attempted, WrapperModel):
+                attempted = attempted.wrapped
+            if attempted is candidate:
+                return True
+        return False
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -305,12 +297,3 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
 def _pin_id(model: Model | str) -> str:
     """How a candidate is identified in a continuation pin: the string it was given as, or its `model_id`."""
     return model if isinstance(model, str) else model.model_id
-
-
-def _is_or_wraps(model: Model, candidate: Model) -> bool:
-    while True:
-        if model is candidate:
-            return True
-        if not isinstance(model, WrapperModel):
-            return False
-        model = model.wrapped

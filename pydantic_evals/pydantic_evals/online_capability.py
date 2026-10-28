@@ -6,13 +6,17 @@ dispatching them asynchronously in the background after each run completes.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import warnings
+from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Annotated, Any, Self
 
 import logfire_api
+from pydantic import BaseModel, PlainSerializer, TypeAdapter, model_validator
+from typing_extensions import TypedDict
 
+from pydantic_ai.capabilities import durable_operation
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -26,6 +30,8 @@ from .online import (
     OnlineEvaluator,
     SpanReference,
 )
+from .otel._errors import SpanTreeRecordingError
+from .otel.span_tree import SpanTree
 
 __all__ = ('OnlineEvaluation',)
 
@@ -49,7 +55,7 @@ def _parse_traceparent(traceparent: str | None) -> SpanReference | None:
     return SpanReference(trace_id=trace_id, span_id=span_id)
 
 
-_Dispatch = Callable[[dict[str, Any]], None]
+_Dispatch = Callable[[dict[str, Any]], Awaitable[None]]
 """Dispatches one capability's evaluators for a run, given the run's measured evaluation context."""
 
 
@@ -80,6 +86,10 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         final result.
         For streaming runs, evaluators are dispatched only after the final
         result is available and the surrounding context manager exits.
+
+    Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/),
+    sampling and dispatch run as one durable operation, so a replay doesn't evaluate the run again.
+    Pass an explicit `id` to use it with a durability capability.
 
     Example:
     ```python
@@ -145,14 +155,18 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         # Use the raw prompt so sampling and evaluation see the same inputs value.
         inputs = ctx.prompt
 
-        # Determine which evaluators are sampled (before running the agent)
-        sampled = _online_internal.sample_evaluators(
-            self._online_evaluators,
-            config,
-            inputs,
-        )
-        if not sampled:
-            return await handler()
+        # Workflow code replays, so a durable run leaves sampling and dispatch to
+        # `_dispatch_durably`, which the engine journals once per run.
+        durable = ctx.in_durable_context
+        sampled: list[OnlineEvaluator] = []
+        if durable:
+            if not any(_online_internal.may_sample(online_eval, config) for online_eval in self._online_evaluators):
+                return await handler()
+        else:
+            # Determine which evaluators are sampled (before running the agent)
+            sampled = _online_internal.sample_evaluators(self._online_evaluators, config, inputs)
+            if not sampled:
+                return await handler()
 
         # Merge config and run metadata
         metadata: dict[str, Any] | None = None
@@ -168,7 +182,27 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         def dispatch(output: Any, *, failed: bool) -> _Dispatch:
             """Bind this capability's own outcome of the run; the capturing capability supplies the measurements."""
 
-            def dispatch_with(eval_context_kwargs: dict[str, Any]) -> None:
+            async def dispatch_with(eval_context_kwargs: dict[str, Any]) -> None:
+                if durable:
+                    if failed and not any(ev.run_on_errors for ev in self._online_evaluators):
+                        return
+                    await self._dispatch_durably(
+                        ctx,
+                        _DurableDispatch(
+                            name=ctx.run_id,
+                            inputs=inputs,
+                            output=output,
+                            failed=failed,
+                            metadata=metadata,
+                            duration=eval_context_kwargs['duration'],
+                            span_tree=eval_context_kwargs['_span_tree'],
+                            attributes=eval_context_kwargs['attributes'],
+                            metrics=eval_context_kwargs['metrics'],
+                            span_reference=span_reference,
+                            target=target,
+                        ),
+                    )
+                    return
                 evaluators = [ev for ev in sampled if ev.run_on_errors] if failed else sampled
                 if not evaluators:
                     return
@@ -208,15 +242,103 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
                 result = await handler()
         except Exception as e:
             assert get_eval_context_kwargs is not None
-            _dispatch_all([dispatch(e, failed=True), *run_evaluation.dispatchers], get_eval_context_kwargs())
+            await _dispatch_all(
+                [dispatch(e, failed=True), *run_evaluation.dispatchers], get_eval_context_kwargs(), run_failed=True
+            )
             raise
         finally:
             _CURRENT_RUN_EVALUATION.reset(token)
 
-        _dispatch_all([dispatch(result.output, failed=False), *run_evaluation.dispatchers], get_eval_context_kwargs())
+        await _dispatch_all(
+            [dispatch(result.output, failed=False), *run_evaluation.dispatchers], get_eval_context_kwargs()
+        )
         return result
 
+    @durable_operation(name='dispatch')
+    async def _dispatch_durably(self, ctx: RunContext[AgentDepsT], dispatch: _DurableDispatch) -> None:
+        """Sample and start the evaluators of a durable run, once: the engine journals this call."""
+        config = self._resolved_config
+        sampled = _online_internal.sample_evaluators(self._online_evaluators, config, dispatch.inputs)
+        if dispatch.failed:
+            sampled = [ev for ev in sampled if ev.run_on_errors]
+        if not sampled:
+            return
+        context = EvaluatorContext(
+            name=dispatch.name,
+            inputs=dispatch.inputs,
+            output=dispatch.output,
+            expected_output=None,
+            metadata=dispatch.metadata,
+            duration=dispatch.duration,
+            _span_tree=dispatch.span_tree
+            if isinstance(dispatch.span_tree, SpanTree | SpanTreeRecordingError)
+            else SpanTreeRecordingError(
+                "The span tree is not available because the run's evaluation context crossed a durable "
+                'execution boundary that cannot carry it.'
+            ),
+            attributes=dispatch.attributes,
+            metrics=dispatch.metrics,
+        )
+        _online_internal.dispatch_async(
+            _online_internal.dispatch_evaluators(sampled, context, dispatch.span_reference, dispatch.target, config)
+        )
 
-def _dispatch_all(dispatchers: list[_Dispatch], eval_context_kwargs: dict[str, Any]) -> None:
+
+async def _dispatch_all(
+    dispatchers: list[_Dispatch], eval_context_kwargs: dict[str, Any], *, run_failed: bool = False
+) -> None:
     for run_dispatch in dispatchers:
-        run_dispatch(eval_context_kwargs)
+        try:
+            await run_dispatch(eval_context_kwargs)
+        except Exception as dispatch_error:
+            if not run_failed:
+                raise
+            # The run's own exception is what the caller needs to see.
+            warnings.warn(f'Online evaluation of the failed agent run was not dispatched: {dispatch_error!r}')
+
+
+class _ErrorPayload(TypedDict):
+    type: str
+    message: str
+
+
+_error_payload_adapter = TypeAdapter(_ErrorPayload)
+
+
+def _json_safe_output(output: Any) -> Any:
+    """Reduce an exception to its type name and message when the dispatch is serialized."""
+    if isinstance(output, BaseException):
+        return _ErrorPayload(type=type(output).__name__, message=str(output))
+    return output
+
+
+class _DurableDispatch(BaseModel):
+    """The evaluation context of a durable run, as it crosses into `_dispatch_durably`.
+
+    Engines whose durable units run in the run's own process pass it through unchanged, so the
+    evaluators see the live values. Serialized to JSON (as Temporal does), the values arrive in
+    their JSON form, an exception as an `Exception` naming its original type, and no span tree.
+    """
+
+    name: str | None
+    inputs: Any
+    output: Annotated[Any, PlainSerializer(_json_safe_output, when_used='json')]
+    failed: bool
+    metadata: dict[str, Any] | None
+    duration: float
+    span_tree: Annotated[Any, PlainSerializer(lambda _: None, when_used='json')]
+    """A `SpanTree` or `SpanTreeRecordingError`; `None` once serialized.
+
+    Typed `Any` because Pydantic can't build a schema for `SpanTree`.
+    """
+    attributes: dict[str, Any]
+    metrics: dict[str, int | float]
+    span_reference: SpanReference | None
+    target: str
+
+    @model_validator(mode='after')
+    def _rebuild_exception(self) -> Self:
+        if self.failed and not isinstance(self.output, BaseException):
+            error = _error_payload_adapter.validate_python(self.output)
+            self.output = Exception(f'{error["type"]}: {error["message"]}')
+        return self

@@ -491,13 +491,38 @@ async def test_an_error_hook_is_only_called_for_a_request_it_handles(kind: str, 
             assert (await agent.run('x')).output == 'recovered'
         assert capability.recovered == ['failing']
     else:
+
+        async def consume(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for _ in stream:
+                pass
+
         with pytest.raises(ModelAPIError, match='boom'):
-            if streaming:
-                async with agent.run_stream('x') as result:
-                    await result.get_output()
-            else:
-                await agent.run('x')
+            # An event stream handler makes the run stream its request.
+            await agent.run('x', event_stream_handler=consume if streaming else None)
         assert capability.recovered == []
+
+
+@pytest.mark.parametrize('streaming', [False, True])
+async def test_only_the_capabilities_that_handle_a_request_error_are_called(streaming: bool):
+    """Of several error hooks, the one whose capability doesn't handle the request is skipped for the next one."""
+
+    def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError(model_name='failing', message='boom')
+
+    handling = _HandlesSomeErrors('failing')
+    other = _HandlesSomeErrors('other')
+    agent = Agent(
+        FunctionModel(fail, stream_function=failure_stream, model_name='failing'),
+        deps_type=type(None),
+        # The innermost capability's hook is asked first.
+        capabilities=[handling, other],
+    )
+    if streaming:
+        async with agent.run_stream('x') as result:
+            assert await result.get_output() == 'recovered'
+    else:
+        assert (await agent.run('x')).output == 'recovered'
+    assert (handling.recovered, other.recovered) == (['failing'], [])
 
 
 async def test_a_wrapper_with_its_own_error_hook_handles_every_request_error():
@@ -528,12 +553,9 @@ async def test_hooks_handle_every_request_error():
     ) -> ModelResponse:
         return ModelResponse(parts=[TextPart('recovered')])
 
-    model = FunctionModel(stream_function=failure_stream, model_name='any')
-    request_context = ModelRequestContext(
-        model=model, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    agent = Agent(
+        FunctionModel(stream_function=failure_stream, model_name='any'), deps_type=type(None), capabilities=[hooks]
     )
-    agent = Agent(model, deps_type=type(None), capabilities=[hooks])
-    assert hooks._handles_model_request_error(cast(RunContext[None], None), request_context)  # pyright: ignore[reportPrivateUsage]
     async with agent.run_stream('x') as result:
         assert await result.get_output() == 'recovered'
 

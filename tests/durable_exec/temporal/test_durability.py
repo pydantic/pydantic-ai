@@ -111,6 +111,7 @@ from pydantic_ai.models import (
     ModelRequestParameters,
     ModelResolutionContext,
     ModelSelectionContext,
+    StreamedResponse,
     infer_model,
 )
 from pydantic_ai.models._batch_model import BatchPool
@@ -124,6 +125,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings
 from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput, ResponseDone
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset
@@ -5719,6 +5721,87 @@ async def test_durability_continuation_delay_uses_durable_timer(client: Client):
     assert _continuation_delay_model.request_calls == 2
     assert _scheduled_activity_count(history) == 2
     assert any(event.HasField('timer_started_event_attributes') for event in history.events)
+
+
+class _ContinuationFailsToOpen(ScriptedContinuationModel):
+    """Fails to open the stream that would continue a suspended response."""
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        self.request_stream_calls += 1
+        raise ModelAPIError(model_name='scripted', message='continuation failed')
+        yield  # pragma: no cover
+
+
+async def _streamed_answer(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'from the backup'
+
+
+_resume_failing_model = _ContinuationFailsToOpen()
+
+_resume_fallback_agent = Agent(
+    _resume_failing_model,
+    deps_type=type(None),
+    name='durability_resume_fallback_agent',
+    capabilities=[
+        ModelFallback('resume_backup'),
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            models={'resume_backup': FunctionModel(stream_function=_streamed_answer, model_name='resume_backup')},
+            event_stream_handler=_drain_events,
+        ),
+    ],
+)
+
+
+@workflow.defn
+class DurabilityResumeFallbackWorkflow:
+    @workflow.run
+    async def run(self, history: list[ModelMessage]) -> AgentRunResult[str]:
+        return await _resume_fallback_agent.run(message_history=history)
+
+
+async def test_durability_resumed_step_falls_back_when_its_continuation_fails_to_open(client: Client):
+    """A step resumed from a suspended response, whose streamed continuation fails to open, falls back in the workflow.
+
+    The suspended response's job is cancelled, and the next model generates the turn in an activity of its own.
+    """
+    _resume_failing_model.reset()
+    history_messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        scripted_response(
+            texts=['The answer '], state='suspended', provider_response_id='job-1', input_tokens=5, output_tokens=2
+        ),
+    ]
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityResumeFallbackWorkflow],
+        plugins=[AgentPlugin(_resume_fallback_agent)],
+    ):
+        wf = await client.start_workflow(
+            DurabilityResumeFallbackWorkflow.run,
+            args=[history_messages],
+            id=DurabilityResumeFallbackWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+        history = await wf.fetch_history()
+
+    assert result.output == 'from the backup'
+    assert _resume_failing_model.request_stream_calls == 1
+    assert [response.provider_response_id for response in _resume_failing_model.cancelled] == ['job-1']
+    assert [(attempt.model_name, attempt.outcome) for attempt in result.response.failed_attempts or []] == [
+        ('scripted', 'error')
+    ]
+    # The failed continuation, the job cancellation, and the backup's request.
+    assert _scheduled_activity_count(history) == 3
 
 
 async def test_durability_continuation_resume_from_history(client: Client):

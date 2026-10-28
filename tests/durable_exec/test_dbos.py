@@ -62,11 +62,13 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
+from pydantic_ai.durable_exec._utils import mark_streamed_before_failing, streamed_before_failing
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelAPIError,
     ModelHTTPError,
+    ModelRequestTimeout,
     ModelRetry,
     RunCancelled,
     RunTimedOut,
@@ -106,6 +108,7 @@ from ..realtime_connections import InferredConnection
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
     from dbos._error import DBOSAwaitedWorkflowCancelledError
+    from dbos._serialization import DBOSDefaultSerializer, deserialize_exception, serialize_exception
 
     from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
     from pydantic_ai.durable_exec.dbos import (
@@ -6108,3 +6111,26 @@ async def test_dbos_stream_failing_before_output_falls_back(dbos: DBOS) -> None:
 
     assert await run_workflow() == 'from backup'
     assert answered == ['backup']
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        ModelAPIError('primary', 'stream broke'),
+        ModelHTTPError(503, 'primary', 'overloaded'),
+        ModelRequestTimeout('primary', 5),
+    ],
+    ids=lambda error: type(error).__name__,
+)
+def test_dbos_records_what_a_stream_produced_before_failing(error: ModelAPIError) -> None:
+    """A step that failed after its stream produced output is raised on replay with what the stream produced.
+
+    DBOS records a step's error by pickling it and raises the unpickled copy when a recovered workflow replays the
+    step, so the run treats it as a stream that failed after it started, as the run that recorded it did.
+    """
+    partial = ModelResponse(parts=[TextPart('partial')], usage=RequestUsage(input_tokens=5, output_tokens=1))
+    mark_streamed_before_failing(error, partial)
+    recorded, serialization = serialize_exception(error, None, DBOSDefaultSerializer)
+    replayed = deserialize_exception(recorded, serialization, DBOSDefaultSerializer)
+    assert type(replayed) is type(error)
+    assert streamed_before_failing(replayed) == partial
