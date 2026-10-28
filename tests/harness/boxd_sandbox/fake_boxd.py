@@ -10,13 +10,20 @@ without waiting for it to end; and a command killed by a signal exits 128 plus i
 machine kills its commands, and a command that ends while its machine is deleted or stopped raises
 `APIConnectionError`, as production's does. A machine created from a snapshot keeps the snapshot's networks, isolated or not.
 A fork copies the machine's record, not its files: every machine runs its commands in `host_root`.
+
+File operations run the SDK's own `AsyncFs` over the host's files, so machine paths are host paths. Each
+call fails as boxd's does: a gRPC status with the reason in its trailer, which the SDK's `from_grpc_error`
+turns into the exception production raises.
 """
 
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
+import shutil
 import signal
+import stat
 import subprocess
 from collections.abc import AsyncIterator, Sequence
 from contextlib import suppress
@@ -25,6 +32,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import anyio
+import grpc
 from boxd import (
     APIConnectionError,
     APIStatusError,
@@ -38,15 +46,27 @@ from boxd import (
     NotFoundError,
 )
 from boxd._generated import api_pb2
+from boxd.errors import REASON_TRAILER, from_grpc_error
 from boxd.models import OrgRef
+from boxd.resources.fs import AsyncFs
 from boxd.resources.machines import AsyncMachines
 
 # Output a command writes after it exits is read for this long, then dropped.
 _DRAIN_GRACE = 0.05
 # boxd's generated protobuf module has no type stubs.
-_ExecChunk: Any = cast(Any, api_pb2).ExecChunk
+_pb: Any = cast(Any, api_pb2)
+_ExecChunk: Any = _pb.ExecChunk
 _EXIT_POLL = 0.01
 _SIZES = (1, 2, 4, 8)
+# A file failure's errno, as the reason boxd names it and the status it sends.
+_FS_FAILURES = {
+    errno.ENOENT: ('not_found', grpc.StatusCode.NOT_FOUND),
+    errno.EACCES: ('permission_denied', grpc.StatusCode.PERMISSION_DENIED),
+    errno.EEXIST: ('file_exists', grpc.StatusCode.ALREADY_EXISTS),
+    errno.EISDIR: ('is_a_directory', grpc.StatusCode.FAILED_PRECONDITION),
+    errno.ENOTDIR: ('not_a_directory', grpc.StatusCode.FAILED_PRECONDITION),
+}
+_FILE, _DIRECTORY, _SYMLINK, _OTHER = 1, 2, 3, 4
 
 
 def _not_found(machine_id: str) -> NotFoundError:
@@ -184,10 +204,159 @@ class _FakeTransport:
         return _FakeExecCall(self._owner, requests)
 
 
+class _FakeRpcError(grpc.RpcError):
+    """A failed boxd call as gRPC reports it: a status, its details, and the reason trailer."""
+
+    def __init__(self, code: grpc.StatusCode, details: str, reason: str) -> None:
+        self._code = code
+        self._details = details
+        self._reason = reason
+
+    def code(self) -> grpc.StatusCode:
+        return self._code
+
+    def details(self) -> str:
+        return self._details
+
+    # grpc returns `(key, value)` pairs, which the SDK reads; typeshed's stub types them as objects.
+    def trailing_metadata(self) -> Any:
+        return ((REASON_TRAILER, self._reason),)
+
+
+def _fs_failure(error: OSError, path: str) -> BoxdError:
+    assert error.errno is not None
+    reason, code = _FS_FAILURES[error.errno]
+    return from_grpc_error(_FakeRpcError(code, f'{path}: {os.strerror(error.errno)}', reason))
+
+
+def _type(mode: int) -> int:
+    if stat.S_ISREG(mode):
+        return _FILE
+    if stat.S_ISDIR(mode):
+        return _DIRECTORY
+    return _SYMLINK if stat.S_ISLNK(mode) else _OTHER
+
+
+def _entry(path: str) -> Any:
+    """`path` as boxd describes it: the entry itself, and the size, mode and owner of what it resolves to."""
+    link = os.lstat(path)
+    try:
+        target = os.stat(path)
+    except OSError:
+        target = None  # A dangling or looping symlink.
+    info = target or link
+    return _pb.FsEntry(
+        name=os.fsencode(os.path.basename(path)),
+        path=os.fsencode(path),
+        type=_type(link.st_mode),
+        target_type=0 if target is None else _type(target.st_mode),
+        size=info.st_size,
+        mode=stat.S_IMODE(info.st_mode),
+        mtime_ns=info.st_mtime_ns,
+        uid=info.st_uid,
+        gid=info.st_gid,
+        symlink_target=os.fsencode(os.readlink(path)) if stat.S_ISLNK(link.st_mode) else b'',
+    )
+
+
+async def _messages(*messages: Any) -> AsyncIterator[Any]:
+    for message in messages:
+        yield message
+
+
+class _FakeFsTransport:
+    """boxd's `Fs*` gRPC calls over the host's files, under the SDK's own `AsyncFs`."""
+
+    def __init__(self, owner: FakeBoxd) -> None:
+        self._owner = owner
+
+    def _check(self, method: str, machine_id: str) -> None:
+        owner = self._owner
+        owner.check_call()
+        owner.check_runnable(owner.find(machine_id))
+        owner.fs_calls.append(method)
+        if owner.agent_outdated:
+            raise from_grpc_error(
+                _FakeRpcError(grpc.StatusCode.FAILED_PRECONDITION, 'the boxd agent is too old', 'agent_outdated')
+            )
+
+    async def call(self, method: str, request: Any) -> Any:
+        if method == 'FsWrite':
+            return await self._write(request)
+        self._check(method, request.vm_id)
+        path = os.fsdecode(request.path)
+        try:
+            if method == 'FsStat':
+                return _pb.FsStatResponse(entry=_entry(path))
+            if method == 'FsMkdir':
+                os.makedirs(path, exist_ok=True)
+                return _pb.FsMkdirResponse()
+            if method == 'FsRemove':
+                # The backend removes recursively, and boxd removes a symlink itself.
+                assert request.recursive
+                if os.path.isdir(path) and not os.path.islink(path):
+                    shutil.rmtree(path)
+                else:
+                    os.unlink(path)
+                return _pb.FsRemoveResponse()
+            assert method == 'FsRealpath'
+            # Unlike boxd, a symlink loop is kept as written rather than refused; the protocol allows both.
+            return _pb.FsRealpathResponse(path=os.fsencode(os.path.realpath(path)))
+        except OSError as error:
+            raise _fs_failure(error, path) from None
+
+    async def server_stream(self, method: str, request: Any) -> AsyncIterator[Any]:
+        self._check(method, request.vm_id)
+        path = os.fsdecode(request.path)
+        try:
+            if method == 'FsList':
+                entries = [_entry(os.path.join(path, name)) for name in os.listdir(path)]
+                return _messages(_pb.FsListChunk(entries=entries))
+            assert method == 'FsRead'
+            entry = _entry(path)
+            if entry.target_type == _DIRECTORY:
+                raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR))
+            if entry.target_type != _FILE:
+                # Refused before opening it: a FIFO with no writer would block.
+                raise from_grpc_error(
+                    _FakeRpcError(
+                        grpc.StatusCode.FAILED_PRECONDITION, f'{path}: not a regular file', 'not_a_regular_file'
+                    )
+                )
+            with open(path, 'rb') as file:
+                data = file.read()
+        except BoxdError:
+            raise
+        except OSError as error:
+            raise _fs_failure(error, path) from None
+        return _messages(_pb.FsReadChunk(entry=entry, data=data), _pb.FsReadChunk(eof=True, bytes_read=len(data)))
+
+    async def _write(self, chunks: AsyncIterator[Any]) -> Any:
+        first = await anext(chunks)
+        data = bytearray(first.data)
+        async for chunk in chunks:
+            data.extend(chunk.data)
+        self._check('FsWrite', first.vm_id)
+        path = os.fsdecode(first.path)
+        try:
+            try:
+                file = open(path, 'wb')
+            except FileNotFoundError:
+                # boxd creates missing parents, of a symlink's target too.
+                os.makedirs(os.path.dirname(os.path.realpath(path)), exist_ok=True)
+                file = open(path, 'wb')
+            with file:
+                file.write(data)
+            return _pb.FsWriteResponse(bytes_written=len(data), entry=_entry(path))
+        except OSError as error:
+            raise _fs_failure(error, path) from None
+
+
 class FakeMachines:
     def __init__(self, owner: FakeBoxd) -> None:
         self._owner = owner
         self._transport = _FakeTransport(owner)
+        self.fs = AsyncFs(_FakeFsTransport(owner))
 
     async def create(
         self,
@@ -352,6 +521,9 @@ class FakeBoxd:
         self.create_names: list[str | None] = []
         self.lines: list[str] = []
         self.exec_commands: list[str] = []
+        # The `Fs*` calls made, in order; with `agent_outdated`, each is refused as a machine's old agent refuses it.
+        self.fs_calls: list[str] = []
+        self.agent_outdated = False
         # Every command stream's pipe readers, which `reap` finishes before it reads the pipes itself.
         self.readers: list[asyncio.Task[None]] = []
         self.closed_streams = 0

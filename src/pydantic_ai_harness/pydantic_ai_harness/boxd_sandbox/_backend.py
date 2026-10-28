@@ -1,7 +1,7 @@
 """A [boxd](https://boxd.sh) machine behind Pydantic AI's `WorkspaceBackend` protocol.
 
-SDK behavior verified 2026-10-26 against boxd 0.2.17 on boxd's production cluster. Re-check these before
-changing acquisition, command, or error handling:
+SDK behavior verified 2026-10-28 against boxd 0.2.20 on boxd's production cluster. Re-check these before
+changing acquisition, command, file, or error handling:
 
 - `machines.create` returns once the machine is scheduled. A name is unique in its org: creating a second
   machine under it raises `ConflictError`, and `machines.get` finds a machine by id or name.
@@ -25,9 +25,13 @@ changing acquisition, command, or error handling:
   `deadline_exceeded` ("no output from the command for 30m").
 - Each client exchanges `BOXD_API_KEY` for a session token on its first call, and boxd allows 30 exchanges per
   60 seconds from one source IP (`RateLimitError` past that). Missing and rejected credentials raise
-  `AuthenticationError`, and so does an exchange that could not reach boxd or got a 5xx answer.
-- The file API's upload replaces its target through a temporary file, which drops an existing file's mode
-  and replaces a symlink instead of writing through it, so file operations go through the shell.
+  `AuthenticationError`; an exchange that could not reach boxd raises `APIConnectionError`, and one that got
+  a 5xx answer `APIStatusError`.
+- `machines.fs` runs as the `boxd` user and sees the files commands see. A write creates missing parents,
+  writes through a symlink, and keeps an existing file's mode; a read or write of a FIFO is refused at once.
+  A failure is the matching builtin `OSError` (`FileNotFoundError`, `IsADirectoryError`, ...), a symlink loop
+  is `ELOOP`, and `remove` deletes a symlink itself. A machine whose boxd agent predates the file API, such as
+  one restored from an older snapshot, raises `MachineAgentOutdatedError` until it reboots.
 """
 
 from __future__ import annotations
@@ -38,16 +42,18 @@ import shlex
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 import anyio
 import anyio.lowlevel
-import httpx
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
+    FileEntry,
     SupportsCommands,
+    SupportsFilesystem,
+    SupportsRealpath,
     WorkspaceBackend,
     WorkspaceError,
     WorkspaceOutputLimitError,
@@ -55,6 +61,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -66,11 +73,13 @@ from pydantic_ai_harness._workspace_provider import (
 )
 
 if TYPE_CHECKING:
-    from boxd import AsyncBoxd, Machine
+    from boxd import AsyncBoxd, FsEntry, Machine
 
     from pydantic_ai.workspaces import WorkspaceCommand
 
 __all__ = ('BoxdSandboxBackend',)
+
+_T = TypeVar('_T')
 
 try:
     import boxd
@@ -154,14 +163,8 @@ def _refusal(machine: Machine) -> str | None:
 
 
 def _credentials_rejected(error: Exception) -> bool:
-    """Whether `error` says boxd refused the credentials, rather than that it could not be asked.
-
-    The SDK also raises `AuthenticationError` for a token exchange that never reached boxd; that one
-    is transient.
-    """
-    if isinstance(error, boxd.PermissionDeniedError):
-        return True
-    return isinstance(error, boxd.AuthenticationError) and not isinstance(error.__cause__, httpx.HTTPError)
+    """Whether `error` says boxd found no credentials or refused them, rather than that it could not be asked."""
+    return isinstance(error, boxd.AuthenticationError | boxd.PermissionDeniedError)
 
 
 async def destroy_machine(client: AsyncBoxd | None, machine_id: str) -> None:
@@ -232,10 +235,12 @@ async def _mapped_errors(
 
     A deleted machine can surface as a connection failure, a refusal, or a not-found answer, so with
     `machine_id`, a failure that does not already end the run is followed by one lookup of the machine.
+    A file operation's failure inside the machine is already the builtin `OSError` the protocol promises,
+    and passes through before a `MachinePermissionError` could be read as refused credentials.
     """
     try:
         yield
-    except WorkspaceError:
+    except (WorkspaceError, boxd.MachineFilesystemError):
         raise
     except Exception as error:
         translated = _translate(error, context)
@@ -334,6 +339,16 @@ def _command_line(argv: Sequence[str], *, cwd: str | None, env: Mapping[str, str
     return f'{prefix}exec {shlex.join(argv)} </dev/null'
 
 
+def _file_entry(entry: FsEntry) -> FileEntry:
+    """The protocol's view of a boxd entry: a symlink as what it points to, with a size only for a regular file."""
+    return FileEntry(
+        name=entry.name,
+        path=entry.path,
+        is_dir=entry.target_type == 'directory',
+        size=entry.size if entry.target_type == 'file' else None,
+    )
+
+
 class _Output:
     """A command's stdout and stderr so far, bounded by `_MAX_OUTPUT_BYTES` across both streams."""
 
@@ -355,10 +370,11 @@ class _Output:
         return self.stdout.decode(errors='replace'), self.stderr.decode(errors='replace')
 
 
-class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
+class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
     """A [boxd](https://boxd.sh) machine as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
-    Commands run inside an isolated boxd microVM.
+    Commands run inside an isolated boxd microVM, and file operations use boxd's file API as the same
+    user.
 
     Building one does no I/O. The first operation creates an isolated machine named `pydantic-ai-`
     and 32 hex digits, or attaches to the one `ref` names, waking or starting it as needed;
@@ -426,6 +442,8 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._resolved_working_dir: str | None = None
         # A machine this backend created still needs its `working_dir` made.
         self._working_dir_pending = False
+        # Set once the machine's boxd agent turns out to predate the file API; files then go through the shell.
+        self._agent_outdated = False
         self._lock = anyio.Lock()
         # Set while nothing will call `aclose()`: the owned client then closes when the last
         # operation in flight ends.
@@ -617,6 +635,8 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
         client, self._client = self._client, None
         self._ready = False
         self._resolved_working_dir = None
+        # Rebooting a machine updates its agent.
+        self._agent_outdated = False
         return client
 
     @asynccontextmanager
@@ -689,3 +709,86 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands):
                 )
             stdout, stderr = output.text()
             return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
+
+    async def read_bytes(self, path: str) -> bytes:
+        return await self._files(
+            f'Could not read {path!r}',
+            lambda client, machine_id: client.machines.fs.read(machine_id, path),
+            lambda shell: shell.read_bytes(path),
+        )
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        async def write(client: AsyncBoxd, machine_id: str) -> None:
+            await client.machines.fs.write(machine_id, path, data)
+
+        await self._files(f'Could not write {path!r}', write, lambda shell: shell.write_bytes(path, data))
+
+    async def stat(self, path: str) -> FileEntry:
+        async def stat(client: AsyncBoxd, machine_id: str) -> FileEntry:
+            return _file_entry(await client.machines.fs.stat(machine_id, path))
+
+        return await self._files(f'Could not stat {path!r}', stat, lambda shell: shell.stat(path))
+
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
+        async def list_dir(client: AsyncBoxd, machine_id: str) -> Sequence[FileEntry]:
+            entries = await client.machines.fs.list(machine_id, path)
+            return sorted((_file_entry(entry) for entry in entries), key=lambda entry: entry.name)
+
+        return await self._files(f'Could not list {path!r}', list_dir, lambda shell: shell.list_dir(path))
+
+    async def make_dir(self, path: str) -> None:
+        await self._files(
+            f'Could not create directory {path!r}',
+            lambda client, machine_id: client.machines.fs.mkdir(machine_id, path),
+            lambda shell: shell.make_dir(path),
+        )
+
+    async def remove(self, path: str) -> None:
+        async with self._operation():
+            # The removal is recursive, so refuse the working directory and its ancestors, like the
+            # built-in backends. The leaf stays unresolved: removing a link removes only the link.
+            root = await self.working_dir()
+            target = posixpath.join(await self.realpath(posixpath.dirname(path)), posixpath.basename(path))
+            if root == target or root.startswith(target.rstrip('/') + '/'):
+                raise ValueError('cannot remove the workspace root or its ancestor')
+            await self._files(
+                f'Could not remove {path!r}',
+                lambda client, machine_id: client.machines.fs.remove(machine_id, path, recursive=True),
+                lambda shell: shell.remove(path),
+            )
+
+    async def exists(self, path: str) -> bool:
+        return await self._files(
+            f'Could not check {path!r}',
+            lambda client, machine_id: client.machines.fs.exists(machine_id, path),
+            lambda shell: shell.exists(path),
+        )
+
+    async def realpath(self, path: str) -> str:
+        return await self._files(
+            f'Could not resolve {path!r}',
+            lambda client, machine_id: client.machines.fs.realpath(machine_id, path),
+            lambda shell: shell.realpath(path),
+        )
+
+    async def _files(
+        self,
+        context: str,
+        native: Callable[[AsyncBoxd, str], Awaitable[_T]],
+        shell: Callable[[_ShellFilesystem], Awaitable[_T]],
+    ) -> _T:
+        """Run a file operation with boxd's file API, or as shell commands on a machine whose agent predates it."""
+        async with self._operation():
+            client, machine_id = await self._acquire()
+            if not self._agent_outdated:
+                async with _mapped_errors(context, client=client, machine_id=machine_id):
+                    try:
+                        return await native(client, machine_id)
+                    except boxd.MachineAgentOutdatedError:
+                        self._agent_outdated = True
+                        logger.info(
+                            'The boxd agent in machine %s predates the file API, so file operations run as shell '
+                            'commands until the machine reboots.',
+                            machine_id,
+                        )
+            return await shell(_ShellFilesystem(self))

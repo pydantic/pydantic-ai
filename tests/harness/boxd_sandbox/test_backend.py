@@ -10,12 +10,12 @@ from typing import Any
 
 import anyio
 import boxd
-import httpx
 import pytest
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
+    FileEntry,
     WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceRef,
@@ -147,10 +147,9 @@ class TestCreate:
         assert 'invalid or expired' not in str(error.value)
 
     async def test_a_token_exchange_that_could_not_reach_boxd_propagates(self, host: FakeBoxd) -> None:
-        error = boxd.AuthenticationError('could not reach https://app.boxd.sh/api/v1/auth/token: timed out')
-        error.__cause__ = httpx.ConnectTimeout('timed out')
+        error = boxd.APIConnectionError('could not reach https://app.boxd.sh/api/v1/auth/token: timed out')
         host.create_errors.append(error)
-        with pytest.raises(boxd.AuthenticationError) as raised:
+        with pytest.raises(boxd.APIConnectionError) as raised:
             await BoxdSandboxBackend().run(['true'])
         assert raised.value is error
 
@@ -251,9 +250,9 @@ class TestAttach:
 
     async def test_a_token_exchange_failure_while_waiting_is_retried(self, host: FakeBoxd) -> None:
         machine = host.add()
-        error = boxd.AuthenticationError('could not reach https://app.boxd.sh/api/v1/auth/token: reset')
-        error.__cause__ = httpx.ReadError('reset')
-        host.probe_errors.append(error)
+        host.probe_errors.append(
+            boxd.APIConnectionError('could not reach https://app.boxd.sh/api/v1/auth/token: reset')
+        )
         await BoxdSandboxBackend(ref=_ref(machine.id)).run(['true'])
         assert host.exec_commands == ['true', 'true']
 
@@ -448,6 +447,87 @@ class TestRun:
         backend = BoxdSandboxBackend(env={'PATH': '/nonexistent'})
         with pytest.raises(WorkspaceError, match=r'`pwd -P` exited 127'):
             await backend.working_dir()
+
+
+class TestFiles:
+    async def test_file_operations_use_boxd_s_file_api(self, host: FakeBoxd) -> None:
+        backend = BoxdSandboxBackend()
+        root = await backend.working_dir()
+        path = f'{root}/dir/b.txt'
+        await backend.write_bytes(path, b'data')
+        await backend.write_bytes(f'{root}/dir/a.txt', b'')
+        assert await backend.read_bytes(path) == b'data'
+        assert await backend.stat(path) == FileEntry(name='b.txt', path=path, is_dir=False, size=4)
+        assert await backend.stat(f'{root}/dir') == FileEntry(name='dir', path=f'{root}/dir', is_dir=True, size=None)
+        # Sorted by name, as the shell filesystem lists them.
+        assert [entry.name for entry in await backend.list_dir(f'{root}/dir')] == ['a.txt', 'b.txt']
+        await backend.make_dir(f'{root}/made/nested')
+        assert await backend.exists(f'{root}/made/nested')
+        assert await backend.realpath(f'{root}/made/../dir') == f'{root}/dir'
+        await backend.remove(f'{root}/dir')
+        assert not await backend.exists(f'{root}/dir')
+        assert host.fs_calls == [
+            'FsWrite',
+            'FsWrite',
+            'FsRead',
+            'FsStat',
+            'FsStat',
+            'FsList',
+            'FsMkdir',
+            'FsStat',
+            'FsRealpath',
+            'FsRealpath',
+            'FsRemove',
+            'FsStat',
+        ]
+        # The only command was the working directory's probe.
+        assert len(host.lines) == 1
+
+    async def test_a_machine_whose_agent_predates_the_file_api_uses_the_shell(
+        self, host: FakeBoxd, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        host.agent_outdated = True
+        backend = BoxdSandboxBackend()
+        root = await backend.working_dir()
+        path = f'{root}/dir/file.txt'
+        with caplog.at_level(logging.INFO, logger=_MODULE):
+            await backend.write_bytes(path, b'data')
+        assert 'predates the file API, so file operations run as shell commands' in caplog.text
+        assert await backend.read_bytes(path) == b'data'
+        assert await backend.stat(path) == FileEntry(name='file.txt', path=path, is_dir=False, size=4)
+        assert [entry.name for entry in await backend.list_dir(f'{root}/dir')] == ['file.txt']
+        await backend.make_dir(f'{root}/made')
+        assert await backend.exists(f'{root}/made')
+        assert await backend.realpath(f'{root}/made/../dir') == f'{root}/dir'
+        await backend.remove(f'{root}/dir')
+        assert not await backend.exists(f'{root}/dir')
+        # Asked once, then remembered for the connection.
+        assert host.fs_calls == ['FsWrite']
+
+    async def test_a_new_connection_asks_the_file_api_again(self, host: FakeBoxd) -> None:
+        host.agent_outdated = True
+        backend = BoxdSandboxBackend()
+        path = f'{await backend.working_dir()}/file.txt'
+        await backend.write_bytes(path, b'data')
+        await backend.aclose()
+        # Rebooting the machine updated its agent.
+        host.agent_outdated = False
+        assert await backend.read_bytes(path) == b'data'
+        assert host.fs_calls == ['FsWrite', 'FsRead']
+
+    async def test_a_machine_deleted_before_a_file_operation_is_unavailable(self, host: FakeBoxd) -> None:
+        backend = BoxdSandboxBackend()
+        root = await backend.working_dir()
+        host.only.status = 'destroyed'
+        with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
+            await backend.read_bytes(f'{root}/file.txt')
+
+    async def test_rejected_credentials_during_a_file_operation_are_unavailable(self, host: FakeBoxd) -> None:
+        backend = BoxdSandboxBackend()
+        root = await backend.working_dir()
+        host.reject_credentials = True
+        with pytest.raises(WorkspaceUnavailableError, match='boxd did not accept the credentials'):
+            await backend.write_bytes(f'{root}/file.txt', b'data')
 
 
 class TestGetMachine:

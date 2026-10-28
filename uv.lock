@@ -28,6 +28,7 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+boxd = "2026-10-27T23:56:00Z"
 boxlite = "2026-10-18T01:35:01Z"
 cassetter = false
 certifi = "2026-10-20T02:25:00Z"
@@ -941,17 +942,18 @@ wheels = [
 
 [[package]]
 name = "boxd"
-version = "0.2.17"
+version = "0.2.20"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "grpcio" },
     { name = "httpx" },
     { name = "protobuf" },
     { name = "pydantic" },
+    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/66/d8/15e698f75c26ec97c0c397464350bfe2795cfe67018a61edd236598cbf6f/boxd-0.2.17.tar.gz", hash = "sha256:6a577b7e4d939d562da4dd8e65fb2ef7f434827c2468eb7c7cc12a200f5ff6ea", size = 154009, upload-time = "2026-10-16T18:03:46.114Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/89/19/69db3c22bd64cf84f88855b5747496fa1b98e88424612c3581a38bf43150/boxd-0.2.20.tar.gz", hash = "sha256:697d23250a3c4fc7e30c4effa8d16c9ae6382b032b044590875eb1ab78060be4", size = 228125, upload-time = "2026-10-27T23:55:11.41Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/82/a0285348c24e8763e160aace27158f81dc0e75178a27081c8b58abe30aec/boxd-0.2.17-py3-none-any.whl", hash = "sha256:6cf6cbc5db9bc0d2b619bc99f608ad9746a43db3e513ec2ca37d465e16832930", size = 109632, upload-time = "2026-10-16T18:03:44.579Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/d7/618f1fbc42b05de518a5379f3ce4b9e36726a123d3df9792a11fa2c17552/boxd-0.2.20-py3-none-any.whl", hash = "sha256:9ab22af1b759bea1d37dc82043dff54b642be13ddad77d775c10d64b035cb93c", size = 152475, upload-time = "2026-10-27T23:55:10.258Z" },
 ]
 
 [[package]]
@@ -6749,7 +6751,7 @@ requires-dist = [
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.11,<0.12" },
     { name = "aws-durable-execution-sdk-python", marker = "python_full_version >= '3.11' and extra == 'aws-lambda'", specifier = ">=1.7.0,<2" },
     { name = "beartype", marker = "python_full_version >= '3.15' and extra == 'stackone'", specifier = ">=0.23.0rc2" },
-    { name = "boxd", marker = "extra == 'boxd'", specifier = ">=0.2.17,<0.3" },
+    { name = "boxd", marker = "extra == 'boxd'", specifier = ">=0.2.20,<0.3" },
     { name = "boxlite", marker = "(python_full_version < '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'boxlite')", specifier = ">=0.10.7,<0.11" },
     { name = "browser-use", marker = "python_full_version >= '3.11' and extra == 'browser-use'", specifier = ">=0.13.6,<0.14" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.223.1,<1" },

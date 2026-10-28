@@ -77,7 +77,7 @@ async def run_python(ctx: RunContext, code: str) -> str:
     return result.stdout + result.stderr
 ```
 
-Commands run under `sh -c` as the non-root `boxd` user, which has passwordless `sudo`. File writes create missing parent directories, write through a symlink to its target, and keep an existing file's mode, and file reads refuse FIFOs rather than waiting for a writer.
+Commands run under `sh -c` as the non-root `boxd` user, which has passwordless `sudo`. File writes create missing parent directories, write through a symlink to its target, and keep an existing file's mode, and file reads refuse FIFOs rather than waiting for a writer. File operations use boxd's file API as the same user, so Unix permissions apply to them as they do to commands. On a machine whose boxd agent predates that API, such as one created from an older snapshot, they run as shell commands until the machine reboots.
 
 ### What a timeout stops
 
