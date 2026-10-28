@@ -203,25 +203,25 @@ class Answerer(Protocol):
         ...  # pragma: no cover
 
 
-def _check_note(note: tuple[UserContent, ...], *, header: str) -> None:
+def _check_note(note: tuple[UserContent, ...]) -> None:
     if not isinstance(note, tuple):
-        raise ValueError('an answer note must be a tuple of `UserContent` items')
+        raise ValueError('must be a tuple of `UserContent` items')
     if not note:
         return
     # Reuse core's content-type guard before notes reach a model adapter.
     try:
         UserPromptPart(content=note)
     except ValueError as exc:
-        raise ValueError(f'answer note for {header!r} must contain only `UserContent` items') from exc
+        raise ValueError('must contain only `UserContent` items') from exc
     has_content = False
     for item in note:
         if isinstance(item, FileUrl):
             if urlparse(item.url).scheme not in {'http', 'https'}:
-                raise ValueError('answer note file URLs must use http or https')
+                raise ValueError('file URLs must use http or https')
             if item.force_download is not False:
-                raise ValueError('answer note file URLs must use `force_download=False`')
+                raise ValueError('file URLs must use `force_download=False`')
         elif isinstance(item, UploadedFile):
-            raise ValueError('answer notes must not contain provider-uploaded file references')
+            raise ValueError('must not contain provider-uploaded file references')
         if isinstance(item, str | TextContent):
             text = item if isinstance(item, str) else item.content
             _printable(text, newlines=True)
@@ -229,7 +229,7 @@ def _check_note(note: tuple[UserContent, ...], *, header: str) -> None:
         elif not isinstance(item, CachePoint):
             has_content = True
     if not has_content:
-        raise ValueError('an answer note must not be blank')
+        raise ValueError('must not be blank')
 
 
 def check_response(request: AskUserRequest, response: AskUserResponse) -> None:
@@ -250,7 +250,10 @@ def check_response(request: AskUserRequest, response: AskUserResponse) -> None:
         question = questions.pop(answer.header, None)
         if question is None:
             raise ValueError(f'answer for unknown or repeated question {answer.header!r}')
-        _check_note(answer.note, header=answer.header)
+        try:
+            _check_note(answer.note)
+        except ValueError as exc:
+            raise ValueError(f'answer note for {answer.header!r} {exc}') from exc
         if answer.custom_answer is not None:
             if answer.selected:
                 raise ValueError('a custom answer cannot also select options')

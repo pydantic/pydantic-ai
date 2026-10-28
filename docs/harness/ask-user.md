@@ -273,7 +273,9 @@ started. Two identical ones now become one, and two that differ fail when the ag
 
 `AskUser` emits no spans. Core's tool-call span already covers the wait, and the two events
 above carry what was asked and answered. That span records the tool's arguments and result,
-which here are the questions and the user's answers, custom text included. Set
+which here are the questions and the user's answers, custom text included. Notes and attachments
+appear in the following model request's user content; inline answers also record them in the tool
+span's serialized `ToolReturn`. The `include_content` setting applies to notes as well. Set
 [`include_content=False`](../logfire.md#excluding-prompts-and-completions) to leave them out.
 
 ## Specs

@@ -899,16 +899,17 @@ class TestAnswerNotes:
         ],
     )
     def test_invalid_note_content(self, note: tuple[UserContent, ...], message: str) -> None:
-        with pytest.raises(ValueError, match=message):
+        with pytest.raises(ValueError, match=message) as exc_info:
             ask_user_result(
                 AskUserRequest(questions=(question(),)),
                 AskUserResponse(answers=(AskUserAnswer(header='Approach', selected=('A',), note=note),)),
             )
+        assert str(exc_info.value).startswith("answer note for 'Approach' ")
 
     @pytest.mark.parametrize(
         ('note', 'message'),
         [
-            ('not a tuple', 'an answer note must be a tuple of `UserContent` items'),
+            ('not a tuple', "answer note for 'Approach' must be a tuple of `UserContent` items"),
             ((123,), "answer note for 'Approach' must contain only `UserContent` items"),
             (({'image': 'not UserContent'},), "answer note for 'Approach' must contain only `UserContent` items"),
         ],
@@ -942,3 +943,14 @@ class TestAnswerNotes:
             request, AskUserResponse(answers=(AskUserAnswer(header='Approach', selected=('A',)),))
         ) == {'Approach': ['A']}
         assert ask_user_result(request, AskUserResponse(cancelled=True)) == DECLINED
+
+    def test_error_names_the_question_with_a_bad_note(self) -> None:
+        request = AskUserRequest(questions=(question('First'), question('Second')))
+        response = AskUserResponse(
+            answers=(
+                AskUserAnswer(header='First', selected=('A',)),
+                AskUserAnswer(header='Second', selected=('A',), note=('bad\ttext',)),
+            )
+        )
+        with pytest.raises(ValueError, match="answer note for 'Second' must not contain control characters"):
+            ask_user_result(request, response)
