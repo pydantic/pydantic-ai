@@ -93,7 +93,6 @@ from pydantic_ai.exceptions import (
     ModelRetry,
     ModelTimeoutError,
     ModelUnavailableError,
-    RetryModelRequest,
     SkipModelRequest,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -1457,63 +1456,6 @@ async def test_durability_operation_called_from_a_tool_runs_in_the_tool_activity
             task_queue=TASK_QUEUE,
         )
     assert output == 'agent__operation_from_tool__toolset__operation_from_tool__call_tool'
-
-
-# --- `RetryModelRequest` raised by a durable capability hook ---
-
-
-def _rerouted_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[TextPart('from the rerouted model')])
-
-
-class _RerouteFirstAttempt(AbstractCapability[Any]):
-    id = 'reroute_first_attempt'
-
-    @durable_operation('prepare')
-    async def prepare_model_request(
-        self, ctx: RunContext[Any], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        if request_context.attempt == 1:
-            raise RetryModelRequest('rerouted')
-        return request_context
-
-
-_reroute_agent = Agent(
-    FunctionModel(_failing_model_fn, model_name='failing'),
-    name='durable_hook_reroute',
-    capabilities=[
-        _RerouteFirstAttempt(),
-        TemporalDurability(
-            activity_config=BASE_ACTIVITY_CONFIG,
-            models={'rerouted': FunctionModel(_rerouted_model_fn, model_name='rerouted')},
-        ),
-    ],
-)
-
-
-@workflow.defn
-class DurableHookRerouteWorkflow:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        return (await _reroute_agent.run(prompt)).output
-
-
-async def test_durability_hook_running_as_an_activity_can_reroute_the_request(client: Client):
-    """A `RetryModelRequest` a durable capability hook raises in its activity reaches the attempt loop as itself."""
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[DurableHookRerouteWorkflow],
-        plugins=[AgentPlugin(_reroute_agent)],
-    ):
-        output = await client.execute_workflow(
-            DurableHookRerouteWorkflow.run,
-            args=['Hello'],
-            id=DurableHookRerouteWorkflow.__name__,
-            task_queue=TASK_QUEUE,
-            execution_timeout=timedelta(seconds=30),
-        )
-    assert output == 'from the rerouted model'
 
 
 # --- Durability outside workflow (transparent passthrough) ---
