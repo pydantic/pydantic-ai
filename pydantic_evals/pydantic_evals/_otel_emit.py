@@ -16,7 +16,6 @@ supplied, so they appear nested under the original function call in the trace.
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -48,8 +47,6 @@ _ATTR_ERROR_TYPE = 'error.type'
 _ATTR_TARGET = 'gen_ai.evaluation.target'
 _ATTR_EVALUATOR_SOURCE = 'gen_ai.evaluation.evaluator.source'
 _ATTR_EVALUATOR_VERSION = 'gen_ai.evaluation.evaluator.version'
-# The OTel log record ID, unique per emitted event, so consumers can dedupe re-delivered records.
-_ATTR_RECORD_UID = 'log.record.uid'
 
 # Extensions with no semconv analogue. They use the names and values that Logfire's
 # hosted scorers write, so one query reads results from both.
@@ -175,7 +172,6 @@ def _base_attrs(
     evaluator_version: str | None,
 ) -> dict[str, Any]:
     attrs = dict(shared_attrs)
-    attrs[_ATTR_RECORD_UID] = str(uuid.uuid4())
     attrs[_ATTR_EVAL_NAME] = name
     attrs[_ATTR_EVALUATOR_SOURCE] = _serialize_evaluator_source(source)
     if evaluator_version is not None:

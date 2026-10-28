@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from inline_snapshot import snapshot
 
-from ..conftest import IsStr, try_import
+from ..conftest import try_import
 
 with try_import() as imports_successful:
     from opentelemetry import baggage as _baggage, context as _otel_context
@@ -87,7 +87,7 @@ def test_emits_event_with_parent_span(capfire: CaptureLogfire):
 
 
 def test_record_attributes_per_result_kind(capfire: CaptureLogfire):
-    """Every event carries a unique id, the shared run id, and a score type derived from the value type."""
+    """Every event carries the shared run id, and a score type derived from the value type."""
     failure = EvaluatorFailure(name='Judge', error_message='boom', error_stacktrace='tb', source=_spec('Judge'))
     emit_otel_events(
         results=[_result('Passed', True), _result('Accuracy', 1), _result('Tone', 'pass')],
@@ -100,7 +100,6 @@ def test_record_attributes_per_result_kind(capfire: CaptureLogfire):
     assert records == snapshot(
         [
             {
-                'log.record.uid': IsStr(),
                 'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
                 'gen_ai.evaluation.target': 'f',
                 'gen_ai.evaluation.name': 'Passed',
@@ -110,7 +109,6 @@ def test_record_attributes_per_result_kind(capfire: CaptureLogfire):
                 'logfire.scorer.score_type': 'pass_fail',
             },
             {
-                'log.record.uid': IsStr(),
                 'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
                 'gen_ai.evaluation.target': 'f',
                 'gen_ai.evaluation.name': 'Accuracy',
@@ -119,7 +117,6 @@ def test_record_attributes_per_result_kind(capfire: CaptureLogfire):
                 'logfire.scorer.score_type': 'numeric',
             },
             {
-                'log.record.uid': IsStr(),
                 'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
                 'gen_ai.evaluation.target': 'f',
                 'gen_ai.evaluation.name': 'Tone',
@@ -128,7 +125,6 @@ def test_record_attributes_per_result_kind(capfire: CaptureLogfire):
                 'logfire.scorer.score_type': 'categorical',
             },
             {
-                'log.record.uid': IsStr(),
                 'logfire.scorer.run_id': '00000000-0000-4000-8000-000000000000',
                 'gen_ai.evaluation.target': 'f',
                 'gen_ai.evaluation.name': 'Judge',
@@ -138,7 +134,6 @@ def test_record_attributes_per_result_kind(capfire: CaptureLogfire):
             },
         ]
     )
-    assert len({str(r['log.record.uid']) for r in records}) == len(records)
 
 
 def test_bool_false_emits_fail_label(capfire: CaptureLogfire):
