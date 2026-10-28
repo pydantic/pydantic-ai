@@ -9,7 +9,7 @@ Coordinates are pixels of the latest screenshot the model saw, or, when the mode
 `computer_use_coordinate_grid`, points on that grid. New action types may be added, so a tool of this kind fails a
 call with a type it doesn't know.
 
-A result's content is text and images: a short summary, then what zoom and cursor-position actions returned, in
+A result's content is text and images: a short summary, then what each action that returns something returned, in
 action order, then the screenshot. The last image is always the screen after the call. The summary's wording isn't
 stable; [`ComputerResult`][pydantic_ai.computer_use.ComputerResult] in the result's `metadata` is.
 """
