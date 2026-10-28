@@ -317,6 +317,7 @@ try:
         map_tool_search_tool_result_block,
         map_web_fetch_tool_result_block,
         map_web_search_tool_result_block,
+        provisions_code_execution,
         text_editor_code_execution_tool_result_content_ta,
         web_search_tool_result_content_ta,
     )
@@ -459,6 +460,17 @@ _CACHE_DIAGNOSTICS_UNSUPPORTED_CLIENTS = (
 # Anthropic's explicit strict-schema limits were verified live on the Messages API and on both Bedrock clients. Vertex
 # and Foundry weren't reachable with our credentials, so they keep sending such requests for the API to judge.
 _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS = (AsyncAnthropicFoundry, AsyncAnthropicVertex)
+# A `container` on a request without code execution was verified live to be rejected by the Claude API
+# (`Container identifier can only be provided when using the code execution tool`). Claude Platform on AWS
+# (`AsyncAnthropicAWS`) is an `AsyncAnthropic` subclass, so it gets the same behavior. The legacy Bedrock InvokeModel
+# API rejects any `container`. Vertex and the Bedrock Messages API couldn't be reached to check, and Foundry wasn't
+# tried. Vertex and Foundry send no container at all (`_FILE_AND_CONTAINER_IDS_UNSUPPORTED_CLIENTS`), so this only
+# keeps the Bedrock Messages API sending the history container.
+_CONTAINER_WITHOUT_CODE_EXECUTION_UNVERIFIED_CLIENTS = (
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
 
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
@@ -632,7 +644,11 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """Container configuration for multi-turn conversations.
 
     By default, if previous messages contain a container_id (from a prior response),
-    it will be reused automatically. An id recovered that way is the only container
+    it will be reused automatically on requests that have code execution: `CodeExecutionTool`,
+    or the `20260209` version of `WebSearchTool` or `WebFetchTool`, which the model calls from
+    code execution by default. The Anthropic API rejects a container on any other request, so
+    Pydantic AI doesn't send it there. Tools passed in `extra_body['tools']` aren't read, so a
+    request that carries them still sends it. An id recovered from history is the only container
     Pydantic AI may replace on its own: if a request carrying both that id and
     `CodeExecutionTool` uploads comes back `500`, the id is dropped and the request is
     sent once more so the upload lands in a fresh container. Nothing else is replaced —
@@ -1096,6 +1112,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         Anthropic's strict-schema limits are only checked on the clients they were verified on, and a user whose
         Vertex or Foundry deployment is known to enforce them can opt in with `anthropic_enforces_strict_schema_limits`.
+        Likewise, a history container is only withheld from a request without code execution on the clients where the
+        API was verified to reject it; `anthropic_rejects_container_without_code_execution` opts the others in.
         """
         client = self._provider.client
         profile = merge_profile(
@@ -1111,6 +1129,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             profile = merge_profile(profile, AnthropicModelProfile(supports_auto_cache=False))
         if isinstance(client, _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS):
             profile = merge_profile(profile, AnthropicModelProfile(anthropic_enforces_strict_schema_limits=False))
+        if isinstance(client, _CONTAINER_WITHOUT_CODE_EXECUTION_UNVERIFIED_CLIENTS):
+            profile = merge_profile(
+                profile, AnthropicModelProfile(anthropic_rejects_container_without_code_execution=False)
+            )
         return profile
 
     @property
@@ -1657,7 +1679,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_choice = settle_tool_choice(tool_choice)
             output_config = settle_output_config(output_config)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
-        container, container_from_history = self._get_container(messages, model_settings)
+        container, container_from_history = self._get_container(messages, model_settings, tools)
         recovery_messages, compaction_boundary = self._stale_thinking_block_recovery_history(messages)
         initial_thinking, initial_betas, initial_thinking_override, initial_effective_thinking = (
             thinking_with_stale_block_history(
@@ -1895,7 +1917,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return BetaDiagnosticsParam(previous_message_id=previous_message_id)
 
     def _get_container(
-        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
+        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings, tools: list[BetaToolUnionParam]
     ) -> tuple[BetaContainerParams | str | None, bool]:
         """Resolve the `container` request parameter, and whether we resolved it from history.
 
@@ -1916,6 +1938,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         the Skills path (`{"skills": ...}` / `{"id": ..., "skills": ...}`) keeps
         working. History-based reuse is always sent as the raw id string since we
         never have skills to attach there.
+
+        An id from history, including a `pause_turn` reconnect id, isn't sent on a request without code execution
+        where the API rejects it (`anthropic_rejects_container_without_code_execution`), such as a follow-up with no
+        tools. `extra_body['tools']` replaces `tools` on the wire but isn't read: a request that carries it keeps the
+        container.
         """
         if (container := model_settings.get('anthropic_container')) is not None:
             if container is False:
@@ -1924,6 +1951,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 return cid, False
             return container, False
         if not self.profile.get('anthropic_accepts_file_and_container_ids', True):
+            return None, False
+        extra_body = model_settings.get('extra_body')
+        if (
+            self.profile.get('anthropic_rejects_container_without_code_execution', True)
+            and not (_is_str_mapping(extra_body) and 'tools' in extra_body)
+            and not provisions_code_execution(tools)
+        ):
             return None, False
         # On pause_turn continuation, pass just the container ID string to reconnect.
         # Re-passing BetaContainerParams triggers a prefill rejection on some models
