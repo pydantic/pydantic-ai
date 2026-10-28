@@ -103,6 +103,8 @@ A batch is also submitted early when the next request would take it past the pro
 
 A run that takes several batch round trips waits up to `max_wait`, plus the time until the next check, for each, on top of the provider's own time. Lower `max_poll_interval` when that adds up, at the cost of more status requests.
 
+To try another model once a request's error reaches the run, add [`ModelFallback`](capabilities/model-fallback.md): the request then goes into a batch on the next model in its chain. When a run resumed from history finds that the batch it was waiting on failed, it also moves on to the next model, rather than starting over with a new batch on the first.
+
 ### Sharing batches between agents
 
 Each `BatchModelRequests` instance collects its own batches. Add the same instance to several agents, or pass it to runs with `capabilities=`, and their requests share batches:
