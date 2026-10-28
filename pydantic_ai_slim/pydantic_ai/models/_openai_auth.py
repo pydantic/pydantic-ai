@@ -18,6 +18,7 @@ def non_static_auth_source(client: AsyncOpenAI) -> Literal['sdk', 'http'] | None
         or callable(getattr(client, '_azure_ad_token_provider', None))
     ):
         return 'sdk'
-    if client._client.auth is not None:  # pyright: ignore[reportPrivateUsage]
+    http_client = getattr(client, '_client', None)
+    if getattr(http_client, 'auth', None) is not None:
         return 'http'
     return None
