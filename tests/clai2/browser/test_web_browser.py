@@ -2,19 +2,32 @@
 
 import asyncio
 import json
+import os
+import re
+import subprocess
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 from anyio.from_thread import start_blocking_portal
-from playwright.async_api import Browser, Dialog, Page, Route, async_playwright, expect
+from playwright.async_api import Dialog, Page, Route, expect
 
 from pydantic_ai import Agent, ModelRetry, models
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2.builtin_plugins.web.app import create_app
-from pydantic_clai2.builtin_plugins.web.server import WebServer
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
+from pydantic_clai2.builtin_plugins.web.app import HEADER
+from tests.clai2.browser.conftest import Serve
 from tests.clai2.test_web import TOKEN
 from tests.clai2.test_web_sessions import Fleet
 
@@ -130,10 +143,17 @@ class WebUI:
     gamma: str
     delta: str
     epsilon: str
+    busy: str
+    """A session another CLAI runs: this test process's parent."""
+    saved: str
+    """Saved in Gamma's folder, so it opens while Gamma is the default session, and not live until a test opens it."""
+    moved: str
+    """Saved in Gamma's folder too, and never opened: its tests pretend the folder went."""
+    fleet: Fleet
 
 
 @pytest.fixture(scope='module')
-def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
+def web_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterator[WebUI]:
     """Share one process, server, and its live sessions across browser cases."""
     root = tmp_path_factory.mktemp('browser-ui')
     with pytest.MonkeyPatch.context() as patch, start_blocking_portal() as portal:
@@ -171,45 +191,41 @@ def web_ui(tmp_path_factory: pytest.TempPathFactory) -> Iterator[WebUI]:
                 portal.call(fleet.runtimes[name].session.commit_messages, messages)
                 response = fleet.post(f'/api/sessions/{conversation}/rename', {'title': title})
                 assert response.status_code == 204, response.text
-            server = portal.call(
-                lambda: WebServer.serve(
-                    lambda port: create_app(service=fleet.service, token=TOKEN, hosts=frozenset({f'127.0.0.1:{port}'})),
-                    host='127.0.0.1',
-                    port=0,
+            busy = portal.call(
+                lambda: fleet.launch.sessions.store.save(
+                    summary=ConversationSummary(
+                        workspace=str(fleet.folder('beta')),
+                        title='Browser Busy',
+                        outcome='running',
+                        owner_pid=os.getppid(),
+                    ),
+                    messages=[],
                 )
             )
-            try:
+            summary = ConversationSummary(workspace=str(fleet.folder('gamma')), title='Browser Saved')
+            history: list[ModelMessage] = [
+                ModelRequest(parts=[UserPromptPart(content='Saved prompt')]),
+                ModelResponse(parts=[TextPart(content='Saved answer')]),
+            ]
+            saved = portal.call(lambda: fleet.launch.process.conversations.save(summary=summary, messages=history))
+            moved_summary = ConversationSummary(workspace=str(fleet.folder('gamma')), title='Browser Moved')
+            moved = portal.call(lambda: fleet.launch.process.conversations.save(summary=moved_summary, messages=[]))
+            with serve(fleet) as url:
                 yield WebUI(
-                    url=f'http://127.0.0.1:{server.port}',
+                    url=url,
                     alpha=alpha,
                     beta=beta,
                     lines=lines,
                     gamma=gamma,
                     delta=delta,
                     epsilon=epsilon,
+                    busy=busy.id,
+                    saved=saved.id,
+                    moved=moved.id,
+                    fleet=fleet,
                 )
-            finally:
-                portal.call(server.stop)
         finally:
             fleet.exit()
-
-
-@pytest.fixture(scope='module')
-async def chromium() -> AsyncIterator[Browser]:
-    async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch()
-        try:
-            yield browser
-        finally:
-            await browser.close()
-
-
-@pytest.fixture
-async def page(chromium: Browser) -> AsyncIterator[Page]:
-    async with await chromium.new_context() as context:
-        page = await context.new_page()
-        page.set_default_timeout(10_000)
-        yield page
 
 
 async def test_hostile_markdown_and_external_links(page: Page, web_ui: WebUI) -> None:
@@ -334,6 +350,68 @@ async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None
     await search.fill('Beta')
     await expect(sidebar.get_by_text('Browser Beta', exact=True)).to_be_visible()
     await expect(sidebar.get_by_text('Browser Alpha', exact=True)).to_have_count(0)
+
+
+async def test_removed_worktrees_fold_after_live_ones_and_archive_as_a_group(page: Page, web_ui: WebUI) -> None:
+    """A project's removed worktrees wait, closed, in one group after its live ones; each archives at once."""
+
+    def sidebar_session(session_id: str, title: str) -> dict[str, object]:
+        return {
+            'id': session_id,
+            'title': title,
+            'workspace': f'/wt/{session_id}',
+            'updated_at': '2026-01-01T00:00:00Z',
+            'state': 'ready',
+            'messages': 2,
+            'model': None,
+            'current': False,
+            'archived': False,
+        }
+
+    worktrees = [
+        {
+            'root': '/wt/live',
+            'label': 'live',
+            'current': False,
+            'missing': False,
+            'sessions': [sidebar_session('l', 'Live work')],
+        },
+        {
+            'root': '/wt/gone',
+            'label': 'gone',
+            'current': False,
+            'missing': True,
+            'sessions': [sidebar_session('g1', 'Gone one'), sidebar_session('g2', 'Gone two')],
+        },
+    ]
+
+    async def sessions(route: Route) -> None:
+        await route.fulfill(json=[{'key': 'repo', 'name': 'repo', 'current': True, 'worktrees': worktrees}])
+
+    async def archive(route: Route) -> None:
+        await route.fulfill(status=204)
+
+    await page.route('**/api/sessions?*', sessions)
+    await page.route('**/api/sessions/archive', archive)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    await expect(sidebar.get_by_text('Live work', exact=True)).to_be_visible()
+    fold = sidebar.get_by_role('button', name='Removed worktrees (1)')
+    await expect(fold).to_be_visible()
+    await expect(sidebar.get_by_text('Gone one', exact=True)).to_have_count(0)
+    await fold.click()
+    await expect(sidebar.get_by_text('Gone one', exact=True)).to_be_visible()
+    gone = sidebar.locator('.worktree-head').filter(has_text='gone')
+    await gone.hover()
+    await gone.get_by_role('button', name='Worktree actions').click()
+    async with page.expect_request('**/api/sessions/archive') as request:
+        await sidebar.get_by_role('button', name='Archive all sessions in this worktree').click()
+    assert (await request.value).post_data_json == {'ids': ['g1', 'g2']}
+    # A search lists only a worktree's matching sessions, so it cannot archive all of them.
+    await sidebar.get_by_role('textbox', name='Search sessions', exact=True).fill('Gone one')
+    await gone.hover()
+    await gone.get_by_role('button', name='Worktree actions').click()
+    await expect(sidebar.get_by_role('button', name='Archive all sessions in this worktree')).to_be_disabled()
 
 
 async def test_session_switch_and_reconnect(page: Page, web_ui: WebUI) -> None:
@@ -644,6 +722,30 @@ async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: 
     assert '\\n' not in await body.inner_text()
 
 
+async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) -> None:
+    """Settings > About in a session the browser opened refuses Update…; its row must not claim it saved anything."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    await page.evaluate("location.hash = '#settings/about'")
+    settings = page.get_by_role('dialog', name='Settings')
+    version = settings.locator('.setting').filter(has=page.locator('.setting-label', has_text='Version'))
+    async with page.expect_response(f'**/api/sessions/{web_ui.beta}/commands/update/fields/version/action') as acted:
+        await version.get_by_role('button', name='Update Version').click()
+    assert (await acted.value).status == 400
+    # Read with the toast in one page call: a badge renders with it, and a retry would pass once its timer clears it.
+    badge = await page.wait_for_function(
+        """() => {
+          if (!document.querySelector('.toast.error')?.textContent?.includes('/reload and /update restart CLAI.')) return null
+          const row = [...document.querySelectorAll('.setting')]
+            .find((setting) => setting.querySelector('.setting-label')?.textContent === 'Version')
+          return row.querySelector('.setting-state')?.textContent ?? 'none'
+        }"""
+    )
+    assert await badge.json_value() == 'none'
+
+
 async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     sidebar = page.locator('.sidebar')
@@ -681,3 +783,390 @@ async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI
     await sidebar.get_by_text('Browser Gamma', exact=True).click()
     await expect(current).to_have_text('Browser Gamma')
     await expect(composer).to_be_focused()
+
+
+async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    state = await page.request.get(f'{web_ui.url}/api/sessions/{web_ui.lines}/state', headers={HEADER: TOKEN})
+    folder = Path((await state.json())['session']['workspace'])
+    for name in ('README.md', 'docs/README.md', 'src/package/module.py'):
+        (folder / name).parent.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_text(name)
+    await page.locator('.sidebar').get_by_text('Browser Lines', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Lines')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await expect(composer).to_be_enabled()
+    options = page.get_by_role('listbox').get_by_role('option')
+    names = options.locator('.suggestion-name')
+
+    # `@` at the start of the box offers the folder's files, best first, and Enter takes the one selected.
+    await composer.fill('@READ')
+    await expect(names).to_have_text(['README.md', 'README.md'])
+    await expect(options.nth(1).locator('.suggestion-meta')).to_have_text('docs')
+    await expect(options.first).to_have_attribute('aria-selected', 'true')
+    await composer.press('Enter')
+    await expect(composer).to_have_value('@README.md ')
+    await expect(options).to_have_count(0)
+
+    # Mid-text too: a folder stays open, offering its own files next, with the folder shown beside each.
+    await composer.fill('foo @src/pa')
+    await expect(names).to_have_text(['package/', 'module.py'])
+    await expect(options.nth(1).locator('.suggestion-meta')).to_have_text('src/package')
+    await composer.press('ArrowDown')
+    await expect(options.nth(1)).to_have_attribute('aria-selected', 'true')
+    await composer.press('ArrowUp')
+    await composer.press('Enter')
+    await expect(composer).to_have_value('foo @src/package/')
+    await expect(names).to_have_text(['module.py'])
+    await composer.press('Tab')
+    await expect(composer).to_have_value('foo @src/package/module.py ')
+    await expect(options).to_have_count(0)
+
+    # A mention typed before more text replaces only itself, the caret stays after it, and the list stays closed.
+    await composer.fill('see  and more')
+    await composer.evaluate('area => area.setSelectionRange(4, 4)')
+    await page.keyboard.type('@REA')
+    await expect(names.first).to_have_text('README.md')
+    await composer.press('Tab')
+    await expect(composer).to_have_value('see @README.md and more')
+    assert await composer.evaluate('area => area.selectionStart') == len('see @README.md')
+    await expect(options).to_have_count(0)
+
+    # With the caret moved into a mention, the part before it is completed and the rest of the word replaced.
+    async with page.expect_response('**/files?*'):
+        await composer.fill('@src/pazzz')
+    await expect(options).to_have_count(0)
+    for _ in 'zzz':
+        await composer.press('ArrowLeft')
+    await expect(names.first).to_have_text('package/')
+    await composer.press('Tab')
+    await expect(composer).to_have_value('@src/package/')
+
+    # Moving the caret off the mention closes its list.
+    await composer.fill('see @REA')
+    await expect(names.first).to_have_text('README.md')
+    await composer.press('Home')
+    await expect(options).to_have_count(0)
+    await composer.press('End')
+    await expect(names.first).to_have_text('README.md')
+
+    # Keys pressed before the list catches up with the draft wait for it, instead of taking a stale suggestion.
+    await composer.fill('@src/')
+    await expect(names).to_have_text(['package/', 'module.py'])
+    held = asyncio.Event()
+
+    async def hold(route: Route) -> None:
+        await held.wait()
+        await route.continue_()
+
+    await page.route('**/files?*', hold)
+    await composer.press('m')
+    await composer.press('Tab')
+    await options.first.click()
+    await expect(composer).to_have_value('@src/m')
+    held.set()
+    await expect(names).to_have_text(['module.py'])
+    await page.unroute('**/files?*', hold)
+    await composer.press('Tab')
+    await expect(composer).to_have_value('@src/package/module.py ')
+
+    # Esc while newer files are on their way keeps the list closed when they arrive.
+    await composer.fill('@READ')
+    await expect(names.first).to_have_text('README.md')
+    late = asyncio.Event()
+
+    async def hold_late(route: Route) -> None:
+        await late.wait()
+        await route.continue_()
+
+    await page.route('**/files?*', hold_late)
+    async with page.expect_response('**/files?*') as arrived:
+        await composer.press('M')
+        await composer.press('Escape')
+        await expect(options).to_have_count(0)
+        late.set()
+    await (await arrived.value).body()
+    await page.unroute('**/files?*', hold_late)
+    await composer.press('ArrowLeft')
+    await expect(composer).to_have_value('@READM')
+    await expect(options).to_have_count(0)
+
+    # A file typed in full is offered first, and Enter sends it instead of swapping it for another of that name.
+    await composer.fill('see @README.md')
+    await expect(names).to_have_text(['README.md', 'README.md'])
+    await expect(options.first.locator('.suggestion-meta')).to_have_count(0)
+    async with page.expect_request(f'**/api/sessions/{web_ui.lines}/input') as typed_in_full:
+        await composer.press('Enter')
+    assert (await typed_in_full.value).post_data_json == {'text': 'see @README.md'}
+    # The first message moves the composer from the new-session hero to the bottom bar; type there.
+    await expect(page.locator('.user-bubble').filter(has_text='see @README.md')).to_be_visible()
+    await expect(composer).to_have_value('')
+    # A longer word under the caret is not the file typed in full, so Enter takes the suggestion instead.
+    await composer.fill('@README.mdx')
+    await composer.press('ArrowLeft')
+    await expect(names.first).to_have_text('README.md')
+    await composer.press('Enter')
+    await expect(composer).to_have_value('@README.md ')
+
+    # Esc closes the list, and Enter then sends the mention as typed, for the agent to read with its tools.
+    await composer.fill('read @READ')
+    await expect(names.first).to_have_text('README.md')
+    await composer.press('Escape')
+    await expect(options).to_have_count(0)
+    async with page.expect_request(f'**/api/sessions/{web_ui.lines}/input') as sent:
+        await composer.press('Enter')
+    assert (await sent.value).post_data_json == {'text': 'read @READ'}
+
+
+async def test_a_session_another_clai_runs_shows_until_forked(page: Page, web_ui: WebUI) -> None:
+    """Clicking it shows it read-only and saves nothing; only the banner's button continues it, in a fork."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    # This CLAI does not follow sessions' folders, so it continues only those of the session it shows: Beta's.
+    await sidebar.get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    async with page.expect_response(f'**/api/sessions/{web_ui.busy}') as shown:
+        await sidebar.get_by_text('Browser Busy', exact=True).click()
+    assert (await shown.value).ok
+    banner = page.locator('.preview-banner')
+    await expect(banner).to_contain_text(f'Running in another CLAI (pid {os.getppid()}).')
+    await expect(sidebar.get_by_text('Browser Busy (fork)', exact=True)).to_have_count(0)
+    await banner.get_by_role('button', name='Fork to continue here').click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Busy (fork)')
+    await expect(banner).to_have_count(0)
+
+
+async def list_gamma_folder_as_openable(page: Page, web_ui: WebUI) -> None:
+    """Opening Gamma makes it the default session, so the sidebar lists the sessions saved in its folder as openable."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Gamma', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    await page.reload()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Gamma')
+
+
+async def test_a_saved_session_opens_from_its_row_named_at_once(page: Page, web_ui: WebUI) -> None:
+    """A saved session's row says it opens live: a click opens it without fetching its transcript first.
+
+    The header names it from the row at once, and never as a new session while its snapshot is on its way.
+    """
+    await page.add_init_script("""
+      window.claiTestTitles = [];
+      new MutationObserver(() => {
+        const title = document.querySelector('.topbar .title')?.textContent;
+        if (title !== undefined && window.claiTestTitles.at(-1) !== title) window.claiTestTitles.push(title);
+      }).observe(document, { subtree: true, childList: true, characterData: true });
+    """)
+    await list_gamma_folder_as_openable(page, web_ui)
+    requested: list[str] = []
+    page.on('request', lambda request: requested.append(request.url))
+    held: list[Route] = []
+
+    async def hold(route: Route) -> None:
+        held.append(route)
+
+    await page.route(f'**/api/sessions/{web_ui.saved}/open', hold)
+    async with page.expect_request(f'**/api/sessions/{web_ui.saved}/open'):
+        await page.locator('.sidebar').get_by_text('Browser Saved', exact=True).click()
+    await expect(page.locator('.topbar .title')).to_have_text('Browser Saved')
+    await expect(page).to_have_title('Browser Saved · CLAI')
+    [route] = held
+    await route.continue_()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Saved')
+    await expect(page.locator('.user-bubble').filter(has_text='Saved prompt', visible=True)).to_be_visible()
+    assert f'{web_ui.url}/api/sessions/{web_ui.saved}' not in requested, 'the row said it opens'
+    titles = await page.evaluate('window.claiTestTitles')
+    assert 'New session' not in titles[titles.index('Browser Saved') :], titles
+
+
+async def test_a_row_that_says_it_opens_shows_read_only_when_it_no_longer_can(page: Page, web_ui: WebUI) -> None:
+    """A row listed before the session's folder went: opening fails, so it shows read-only, as its transcript says."""
+    await list_gamma_folder_as_openable(page, web_ui)
+    await page.route(
+        f'**/api/sessions/{web_ui.moved}/open',
+        lambda route: route.fulfill(status=400, json={'detail': 'The folder is gone.'}),
+    )
+    transcript: dict[str, object] = {
+        'id': web_ui.moved,
+        'title': 'Browser Moved',
+        'workspace': '/gone',
+        'items': [],
+        'openable': False,
+        'missing': True,
+        'owner_pid': None,
+    }
+    await page.route(f'**/api/sessions/{web_ui.moved}', lambda route: route.fulfill(json=transcript))
+    # The row says it opens, so the click asks to open it before anything else.
+    async with page.expect_request(f'**/api/sessions/{web_ui.moved}/open'):
+        await page.locator('.sidebar').get_by_text('Browser Moved', exact=True).click()
+    await expect(page.locator('.preview-banner')).to_contain_text('which no longer exists')
+    await expect(page.locator('.topbar .title')).to_have_text('Browser Moved')
+    await expect(page.get_by_role('alert')).to_have_count(0)
+
+
+async def test_a_pick_over_a_read_only_view_names_the_picked_session(page: Page, web_ui: WebUI) -> None:
+    """While a session opens over a read-only view, the header names the session picked, as the tab title does."""
+    await list_gamma_folder_as_openable(page, web_ui)
+    await page.route(
+        f'**/api/sessions/{web_ui.moved}/open',
+        lambda route: route.fulfill(status=400, json={'detail': 'The folder is gone.'}),
+    )
+    transcript: dict[str, object] = {
+        'id': web_ui.moved,
+        'title': 'Browser Moved',
+        'workspace': '/gone',
+        'items': [],
+        'openable': False,
+        'missing': True,
+        'owner_pid': None,
+    }
+    await page.route(f'**/api/sessions/{web_ui.moved}', lambda route: route.fulfill(json=transcript))
+    sidebar = page.locator('.sidebar')
+    await sidebar.get_by_text('Browser Moved', exact=True).click()
+    await expect(page.locator('.preview-banner')).to_contain_text('which no longer exists')
+    held: list[Route] = []
+
+    async def hold(route: Route) -> None:
+        held.append(route)
+
+    await page.route(f'**/api/sessions/{web_ui.saved}/open', hold)
+    async with page.expect_request(f'**/api/sessions/{web_ui.saved}/open'):
+        await sidebar.get_by_text('Browser Saved', exact=True).click()
+    await expect(page.locator('.topbar .title')).to_have_text('Browser Saved')
+    await expect(page).to_have_title('Browser Saved · CLAI')
+    [route] = held
+    await route.continue_()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Saved')
+
+
+async def test_the_websocket_opens_before_the_page_renders(page: Page, web_ui: WebUI) -> None:
+    """The first snapshot is on its way while React renders the page, not only once it has mounted."""
+    await page.add_init_script("""
+      window.claiTestRendered = [];
+      const OriginalWebSocket = window.WebSocket;
+      window.WebSocket = class extends OriginalWebSocket {
+        constructor(...args) {
+          super(...args);
+          window.claiTestRendered.push(document.getElementById('root')?.childElementCount ?? 0);
+        }
+      };
+    """)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await expect(page.get_by_title('Connected', exact=True)).to_be_visible()
+    assert await page.evaluate('window.claiTestRendered') == [0]
+
+
+async def test_opening_a_session_that_resolves_to_the_shown_one_ends_the_wait(page: Page, web_ui: WebUI) -> None:
+    """A busy session opens as its fork; when that fork already shows, the click's wait ends with the answer."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    sidebar = page.locator('.sidebar')
+    current = page.locator('.session.current .session-title')
+    await expect(current).to_have_count(1)
+    # The page keeps watching the session it started on and would show it at once, without opening it.
+    started = await current.inner_text()
+    clicked, clicked_id = (
+        ('Browser Lines', web_ui.lines) if started != 'Browser Lines' else ('Browser Epsilon', web_ui.epsilon)
+    )
+    shown = 'Browser Beta'
+    await sidebar.get_by_text(shown, exact=True).click()
+    await expect(current).to_have_text(shown)
+    await expect(page.locator('.session.opening')).to_have_count(0)
+
+    async def to_shown(route: Route) -> None:
+        await route.fulfill(json={'id': web_ui.beta})
+
+    await page.route(f'**/api/sessions/{clicked_id}/open', to_shown)
+    async with page.expect_response(f'**/api/sessions/{clicked_id}/open'):
+        await sidebar.get_by_text(clicked, exact=True).click()
+    # Well before the 15 second fallback that ends a wait for a session that never shows.
+    await expect(page.locator('.opening-overlay')).to_have_count(0, timeout=2_000)
+    await expect(page.locator('.session.opening')).to_have_count(0, timeout=2_000)
+    await expect(current).to_have_text(shown)
+
+
+def git(*args: str) -> str:
+    return subprocess.run(['git', *args], check=True, capture_output=True, text=True).stdout.strip()
+
+
+async def stay(workspace: str) -> None:
+    """A session's relocation that `clai2 --web` wires, which this test never reaches; only the dialog depends on it."""
+
+
+async def test_new_session_checks_out_a_new_worktree(page: Page, web_ui: WebUI, tmp_path: Path) -> None:
+    repo = (tmp_path / 'repo').resolve()
+    git('init', '-b', 'main', str(repo))
+    git(
+        '-C',
+        str(repo),
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.com',
+        'commit',
+        '--allow-empty',
+        '-m',
+        'init',
+    )
+    opened = await page.request.post(
+        f'{web_ui.url}/api/sessions/new', headers={HEADER: TOKEN}, data={'workspace': str(repo)}
+    )
+    assert opened.ok, await opened.text()
+    root = repo / '.worktrees' / 'feature-x'
+    # As under `clai2 --web`, so New session asks where; the fixture's sessions stay where they are.
+    runtimes = web_ui.fleet.runtimes
+    runtimes['repo'].sessions.relocate = stay
+    try:
+        await page.goto(f'{web_ui.url}/?token={TOKEN}')
+        sidebar = page.locator('.sidebar')
+        dialog = page.get_by_role('dialog', name='New session')
+        new_worktree = dialog.get_by_role('button', name='New worktree of repo · main…')
+        await sidebar.get_by_role('button', name='New session').click()
+        await expect(dialog.get_by_role('option', name='repo · main')).to_be_visible()
+        await dialog.get_by_role('option', name='repo · main').hover()
+        await new_worktree.click()
+        await dialog.get_by_label('Branch of the new worktree of repo · main').fill('feature-x')
+        await dialog.get_by_label('Base').fill('main')
+        # A session that fails to start leaves the worktree made, and trying again starts one in it.
+        # Esc while the request runs keeps the form, as the disabled Back button does.
+        release = asyncio.Event()
+
+        async def busy(route: Route) -> None:
+            await release.wait()
+            await route.fulfill(status=409, json={'detail': 'Busy'})
+
+        await page.route('**/api/sessions/new', busy)
+        await dialog.get_by_role('button', name='Create and start').click()
+        await expect(dialog.get_by_role('button', name='Back')).to_be_disabled()
+        await page.keyboard.press('Escape')
+        await expect(dialog.get_by_label('Base')).to_be_visible()
+        release.set()
+        await expect(dialog.get_by_role('alert')).to_have_text('Busy')
+        await page.unroute('**/api/sessions/new')
+        await dialog.get_by_role('button', name='Create and start').click()
+        await expect(dialog).to_have_count(0)
+        await expect(page.locator(f'.workspace[title="{root}"]')).to_be_visible()
+        assert git('-C', str(root), 'branch', '--show-current') == 'feature-x'
+        # The next dialog lists it, offers no worktree of a folder outside Git, and refuses the same branch inline.
+        runtimes['feature-x'].sessions.relocate = stay
+        await page.reload()
+        await sidebar.get_by_role('button', name='New session').click()
+        await expect(dialog.get_by_role('option', name='repo · feature-x')).to_be_visible()
+        await dialog.get_by_role('option', name='alpha').hover()
+        await expect(dialog.get_by_role('button', name=re.compile('^New worktree'))).to_have_count(0)
+        await dialog.get_by_role('option', name='repo · main').hover()
+        await new_worktree.click()
+        # Esc goes back to the list, and Esc there closes the dialog.
+        await page.keyboard.press('Escape')
+        await expect(dialog.get_by_label('Another directory')).to_be_visible()
+        await new_worktree.click()
+        await dialog.get_by_label('Branch of the new worktree of repo · main').fill('feature-x')
+        await dialog.get_by_role('button', name='Create and start').click()
+        await expect(dialog.get_by_role('alert')).to_have_text(
+            'Cannot create worktree: branch feature-x already exists. Pick another name.'
+        )
+    finally:
+        for name in ('repo', 'feature-x'):
+            if name in runtimes:
+                runtimes[name].sessions.relocate = None

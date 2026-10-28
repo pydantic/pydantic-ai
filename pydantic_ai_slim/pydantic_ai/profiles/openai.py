@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from .._json_schema import JsonSchema, JsonSchemaTransformer
+from .._json_schema import JsonSchema, JsonSchemaTransformer, inline_objects, split_definitions
 from ..exceptions import UserError
 from ..native_tools import (
     CodeExecutionTool,
@@ -789,6 +789,28 @@ _TOP_LEVEL_DEFINITION_REF = re.compile(r'#/(\$defs|definitions)/[^/]+')
 
 _sentinel = object()
 
+_STRICT_MAX_NESTING_DEPTH = 10
+_STRICT_MAX_PROPERTIES = 5000
+"""OpenAI's limits on one strict schema, enforced by both the Chat Completions and Responses APIs.
+
+https://developers.openai.com/api/docs/guides/structured-outputs#objects-have-limitations-on-nesting-depth-and-size
+"""
+
+
+def _exceeds_strict_size_limits(schema: JsonSchema) -> bool:
+    """Whether a schema has more levels of nested objects, or more object properties, than OpenAI's strict mode allows.
+
+    The API counts the schema and each of its definitions on their own, without following `$ref`s.
+    """
+    root, definitions = split_definitions(schema)
+    for part in [root, *definitions]:
+        objects = list(inline_objects(part))
+        if max((depth for _, depth in objects), default=0) > _STRICT_MAX_NESTING_DEPTH:
+            return True
+        if sum(len(node['properties']) for node, _ in objects) > _STRICT_MAX_PROPERTIES:
+            return True
+    return False
+
 
 def _regex_contains_lookaround(pattern: str) -> bool:
     escaped = False
@@ -1004,6 +1026,9 @@ class _OpenAIJsonSchemaTransformer(_OpenAIGuardedJsonSchemaTransformer):  # pyri
             transformer = _OpenAIGuardedJsonSchemaTransformer(self.schema, strict=self.strict)
             result = transformer.walk()
             self.is_strict_compatible = transformer.is_strict_compatible
+        if self.strict is None and self.is_strict_compatible and _exceeds_strict_size_limits(result):
+            # OpenAI rejects such a schema in strict mode but accepts it without.
+            self.is_strict_compatible = False
         return result
 
     def _handle_array(self, schema: JsonSchema) -> JsonSchema:

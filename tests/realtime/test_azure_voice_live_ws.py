@@ -17,7 +17,10 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
     SpeechPart,
+    SpeechPartDelta,
+    SpeechTimestamp,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -200,6 +203,7 @@ async def test_audio_in_server_vad_turn(
         supports_text_output=True,
         supports_tool_return_schema=False,  # no native surface; opted-in schemas go into descriptions
         emits_input_speech_events=True,
+        output_speech_timestamp_granularity='word',
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
         response_usage_covers_context=True,
@@ -560,6 +564,54 @@ async def test_cascade_model_speaks_with_azure_voice(
     part = response.parts[0]
     assert isinstance(part, SpeechPart)
     assert part.transcript == snapshot('Hello there!')
+
+
+async def test_speech_timestamps_time_each_word(
+    azure_voice_live_ws_cassette: tuple[AzureProvider, RealtimeCassette],
+) -> None:
+    """With `output_speech_timestamps`, Voice Live times each word of an Azure voice's speech.
+
+    The words stream as they arrive, ahead of their audio, and the same list is recorded on the part.
+    """
+    provider, cassette = azure_voice_live_ws_cassette
+    model = AzureRealtimeModel(
+        'gpt-realtime',
+        provider=provider,
+        settings=AzureRealtimeModelSettings(
+            azure_voice_live=True, azure_voice_live_voice='en-US-AvaNeural', output_speech_timestamps=True
+        ),
+    )
+    agent = Agent(instructions='Answer in one short sentence.')
+
+    streamed: list[SpeechTimestamp] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('Say hello there, nice weather today.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch - breaks on the recorded terminal event
+                if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta):
+                    streamed.extend(event.delta.timestamps or ())
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [session_update] = sent_frames_containing(cassette, 'Answer in one short sentence.')
+    assert session_update['session']['output_audio_timestamp_types'] == ['word']
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    [part] = response.parts
+    assert isinstance(part, SpeechPart)
+    assert part.transcript == snapshot('Hello there, nice weather today!')
+    assert part.timestamps == streamed
+    assert part.timestamps == snapshot(
+        [
+            SpeechTimestamp(text='Hello', start_ms=50, duration_ms=400),
+            SpeechTimestamp(text='there', start_ms=462, duration_ms=275),
+            SpeechTimestamp(text=',', start_ms=837, duration_ms=62),
+            SpeechTimestamp(text='nice', start_ms=912, duration_ms=237),
+            SpeechTimestamp(text='weather', start_ms=1162, duration_ms=262),
+            SpeechTimestamp(text='today', start_ms=1437, duration_ms=425),
+            SpeechTimestamp(text='!', start_ms=1875, duration_ms=100),
+        ]
+    )
 
 
 async def test_gpt_realtime_2_is_served_by_voice_live(

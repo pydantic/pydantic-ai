@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from string import Formatter
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
 
+from pydantic_ai._framing import neutralize_tags
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -36,6 +37,7 @@ from pydantic_ai.output import TextOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts, with_text
+from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction._capability_loads import (
@@ -55,6 +57,7 @@ from pydantic_ai_harness.compaction._receipts import (
     record_receipt,
 )
 from pydantic_ai_harness.compaction._shared import (
+    compact_if_smaller,
     compact_with_span,
     context_for_request,
     estimate_token_count,
@@ -289,6 +292,7 @@ def format_transcript(
                             part.model_response(),
                             cause=part.retry.cause,
                             max_chars=tool_return_max_chars,
+                            core_framed=True,
                         )
                     )
                 elif (
@@ -316,20 +320,22 @@ _TRANSCRIPT_TAG_OPENER = re.compile(
 )
 """The `<` of an opening or closing tag of the summarizer transcript's own markup.
 
-Any case, whitespace around the `/`, attributes and a trailing `/>` all match, matching the framing
-helper in #10547; a longer tag name that merely starts with one of these doesn't. The optional `/` is
-grouped with the whitespace after it, so a long run of whitespace with no tag name after it is
-scanned once rather than split every possible way.
+Any case, whitespace around the `/`, attributes and a trailing `/>` all match, as `pydantic_ai._framing`
+matches core's framing tags, which `neutralize_tags` escapes; a longer tag name that merely starts with
+one of these doesn't. The optional `/` is grouped with the whitespace after it, so a long run of
+whitespace with no tag name after it is scanned once rather than split every possible way.
 """
 
 
 def _neutralize_transcript_tags(content: str) -> str:
-    """Escape the transcript's own tags in *content*.
+    """Escape the transcript's own tags and every framing tag core writes in *content*.
 
-    Content then can't open or close a message, the transcript, or the previous summary.
+    Content then can't open or close a message, the transcript, or the previous summary, and a
+    `<system>`, `<context>` or `<tool_result>` tag in it stays inside its element.
     """
-    # TODO(#10547): switch to `_framing.wrap()` once it lands.
-    return _TRANSCRIPT_TAG_OPENER.sub('&lt;', content)
+    # TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
+    # the transcript's tags as framing tags there.
+    return _TRANSCRIPT_TAG_OPENER.sub('&lt;', neutralize_tags(content))
 
 
 def _message_element(
@@ -339,15 +345,18 @@ def _message_element(
     name: str | None = None,
     cause: str | None = None,
     max_chars: int | None = None,
+    core_framed: bool = False,
 ) -> str:
     """One transcript entry: *content* in a `<message>` element tagged with its *role*, for tools *name*, and for retry feedback *cause*.
 
     *content* is escaped before it is cut to *max_chars*, so the cap bounds what the summarizer receives.
+    *core_framed* content was framed by core, which escaped the framing tags in its body, so its own frame
+    stays as written and only the transcript's tags are escaped.
     """
     attrs = ''.join(
         f' {key}="{html.escape(value)}"' for key, value in (('name', name), ('cause', cause)) if value is not None
     )
-    body = _neutralize_transcript_tags(content)
+    body = _TRANSCRIPT_TAG_OPENER.sub('&lt;', content) if core_framed else _neutralize_transcript_tags(content)
     if max_chars is not None:
         body = _truncate_with_marker(body, max_chars)
     return f'<message role="{role}"{attrs}>\n{body}\n</message>'
@@ -429,9 +438,15 @@ def _kept_first_user_message(message: ModelRequest, system_parts: list[SystemPro
 def is_legacy_summary(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[SystemPromptPart]:
     """Whether *part* is a summary written by a release that stored it as a system prompt.
 
-    Recognized by its text, so a user system prompt that opens with the same sentence counts too.
+    Recognized by its text, since those releases set no metadata on it, so a user system prompt that opens with the
+    same sentence counts too. A system prompt a harness capability marked with its `origin`, such as a lasting
+    `SystemReminders` reminder, is that capability's and never a summary.
     """
-    return isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX)
+    return (
+        isinstance(part, SystemPromptPart)
+        and part.content.startswith(SUMMARY_PREFIX)
+        and harness_origin(part.metadata) is None
+    )
 
 
 def extract_previous_summary(messages: list[ModelMessage]) -> str | None:
@@ -1030,7 +1045,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             request_ctx,
             strategy='SummarizingCompaction',
             messages=messages,
-            compact=lambda: self.compact(messages, request_ctx),
+            compact=lambda: self._compact_if_smaller(messages, request_ctx),
             tokenizer=self.tokenizer,
         )
         ctx.messages[:] = compacted
@@ -1040,6 +1055,19 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             estimate_token_count(compacted, self.tokenizer),
         )
         return replace(request_context, messages=compacted)
+
+    async def _compact_if_smaller(
+        self, messages: list[ModelMessage], ctx: RunContext[AgentDepsT]
+    ) -> list[ModelMessage]:
+        """`compact`, or *messages* unchanged when the compacted history would not be smaller."""
+        compacted = await compact_if_smaller(
+            ctx,
+            strategy='SummarizingCompaction',
+            messages=messages,
+            compact=lambda: self.compact(messages, ctx),
+            tokenizer=self.tokenizer,
+        )
+        return messages if compacted is None else compacted
 
     @durable_operation('summarize')
     async def _summarize(

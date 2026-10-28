@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Dismiss one bot verdict after the caller verifies every blocking finding.
+set -euo pipefail
+
+if [ "$#" -ne 6 ] || [ "$6" != '--all-blockers-addressed' ]; then
+  echo 'Usage: dismiss-addressed-bot-review OWNER/REPO PR REVIEW_ID VERIFIED_HEAD REASON_FILE --all-blockers-addressed' >&2
+  exit 2
+fi
+repo=$1
+pr=$2
+review_id=$3
+verified_head=$4
+reason_file=$5
+[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo 'OWNER/REPO must identify a repository.' >&2; exit 2; }
+[[ "$pr" =~ ^[1-9][0-9]*$ ]] || { echo 'PR must be a positive integer.' >&2; exit 2; }
+[[ "$review_id" =~ ^[1-9][0-9]*$ ]] || { echo 'REVIEW_ID must be a positive integer.' >&2; exit 2; }
+[[ "$verified_head" =~ ^[0-9a-f]{40}$ ]] || { echo 'VERIFIED_HEAD must be a full 40-character SHA.' >&2; exit 2; }
+[ -s "$reason_file" ] || { echo 'A reason file with verification evidence is required.' >&2; exit 2; }
+grep -q '[^[:space:]]' "$reason_file" || { echo 'The reason file must contain verification evidence.' >&2; exit 2; }
+
+pull="repos/${repo}/pulls/${pr}"
+review=$(gh api "$pull/reviews/$review_id")
+if ! jq -e --argjson id "$review_id" '
+  .id == $id and .user.type == "Bot" and .state == "CHANGES_REQUESTED"
+' <<<"$review" >/dev/null; then
+  echo 'Only a bot review that still requests changes can be dismissed.' >&2
+  exit 1
+fi
+reviewer=$(jq -er '.user.login | select(type == "string" and length > 0) | sub("\\[bot\\]$"; "")' <<<"$review")
+
+# Verdicts can be separate from their inline-comment reviews. Check every thread
+# involving this bot identity, including replies in threads opened by a human.
+threads=$(gh api graphql --paginate --slurp -f query='
+  query($owner:String!, $name:String!, $pr:Int!, $endCursor:String) {
+    repository(owner:$owner, name:$name) { pullRequest(number:$pr) {
+      state headRefOid
+      reviewThreads(first:100, after:$endCursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { isResolved comments(first:100) {
+          totalCount
+          nodes { author { login } }
+        } }
+      }
+    } }
+  }' -F owner="${repo%%/*}" -F name="${repo##*/}" -F pr="$pr")
+if ! jq -e --arg head "$verified_head" --arg reviewer "$reviewer" '
+  length > 0 and all(.[];
+    .errors == null
+    and .data.repository.pullRequest.state == "OPEN"
+    and .data.repository.pullRequest.headRefOid == $head
+    and (.data.repository.pullRequest.reviewThreads.nodes | type == "array")
+    and all(.data.repository.pullRequest.reviewThreads.nodes[];
+      .isResolved == true or
+      (.isResolved == false and .comments.totalCount == (.comments.nodes | length)
+        and (.comments.nodes | type == "array" and length > 0)
+        and all(.comments.nodes[];
+          (.author.login | type == "string")
+          and (.author.login | sub("\\[bot\\]$"; "")) != $reviewer))))
+' <<<"$threads" >/dev/null; then
+  echo 'The verified head is stale, thread data is incomplete, or this bot has unresolved threads.' >&2
+  exit 1
+fi
+
+# Refuse a push or closure that happened during verification.
+gh api "$pull" | jq -e --arg head "$verified_head" '
+  .state == "open" and .head.sha == $head
+' >/dev/null || { echo 'The PR is no longer open at the verified head.' >&2; exit 1; }
+
+# The caller supplies finding evidence and any attribution its instructions require.
+result=$(jq -n --rawfile reason "$reason_file" --arg head "$verified_head" '
+  {event: "DISMISS", message: ($reason + "\n\nVerified at `" + $head + "`.")}
+' | gh api --method PUT "$pull/reviews/$review_id/dismissals" --input -)
+jq -e '.state == "DISMISSED"' <<<"$result" >/dev/null
+printf 'Dismissed bot review %s on PR #%s after verification at %s.\n' "$review_id" "$pr" "$verified_head"
