@@ -548,7 +548,8 @@ carries more than 20 of them. The display can also implement
 [`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom], to capture part of the display at full resolution, and
 [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition]. Key names in actions are a fixed set,
 with X keysyms such as `KP_Enter` accepted as aliases; a character key presses whatever the layout needs to type
-it. `LocalWorkspace` has no display.
+it. Typed text holds no control characters other than `\n` and `\t`, which press Enter and Tab.
+`LocalWorkspace` has no display.
 
 ### Resolving symlinks
 
@@ -689,6 +690,8 @@ Before shipping a backend, use the suite to check:
   indefinitely delay a finished command.
 - File operations preserve bytes, follow symlinks where appropriate, and report path errors;
   understand containment limits: a working directory is not a jail, and symlinks may cross roots.
+- A display's screenshot is its declared size, a zoom keeps the region's shape at full resolution, and moving
+  the mouse puts the pointer there, when the display reports the pointer position.
 - Supply `attach_backend`, `destroy_environment`, and an independent `destructive_backend` to check
   reattachment, a destroyed reference, and destruction during a command. These optional rules
   skip when their fixtures are absent.
