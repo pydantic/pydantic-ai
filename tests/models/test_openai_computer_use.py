@@ -302,6 +302,20 @@ async def test_an_incomplete_call_runs_nothing(allow_model_requests: None) -> No
     assert output['output']['image_url'] == _BLANK_SCREENSHOT
 
 
+async def test_an_action_with_a_field_that_does_not_map_runs_nothing(allow_model_requests: None) -> None:
+    # A long press would otherwise run as a plain click, and the value would be stored in the history.
+    client = MockOpenAIResponses.create_mock(
+        [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'duration_ms': 800}), _done()]
+    )
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    provider = InMemoryProvider()
+    result = await Agent(model, toolsets=[computer_toolset()], capabilities=[provider.capability()]).run('Go.')
+
+    assert provider.actions == []
+    call = next(part for part in result.all_messages()[1].parts if isinstance(part, ToolCallPart))
+    assert call.args_as_dict() == {'actions': [{'type': 'click', 'unsupported_fields': ['duration_ms']}]}
+
+
 def test_the_blank_screenshot_is_a_valid_png() -> None:
     # OpenAI rejects an image whose chunk checksums don't match, failing the whole request.
     data = base64.b64decode(_BLANK_SCREENSHOT.split(',', 1)[1])
@@ -408,7 +422,13 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
             {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'right', 'amount': 2, 'modifiers': []},
         ),
         ({'type': 'keypress', 'keys': ['CTRL', 'S']}, {'type': 'keypress', 'keys': ['CTRL', 'S']}),
-        ({'type': 'teleport', 'x': 1}, {'type': 'teleport', 'x': 1}),
+        ({'type': 'type', 'text': 'hi'}, {'type': 'type', 'text': 'hi'}),
+        ({'type': 'wait'}, {'type': 'wait'}),
+        ({'type': 'teleport', 'x': 1}, {'type': 'teleport', 'unsupported_fields': ['x']}),
+        (
+            {'type': 'drag', 'path': [{'x': 1, 'y': 2}, {'x': 3, 'y': 4, 'pressure': 1}]},
+            {'type': 'drag', 'unsupported_fields': ['path']},
+        ),
     ],
 )
 def test_openai_actions_map_onto_the_computer_tool(action: dict[str, Any], mapped: dict[str, Any]) -> None:
