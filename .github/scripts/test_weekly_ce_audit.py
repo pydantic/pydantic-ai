@@ -115,6 +115,33 @@ def test_inventory_uses_tracked_objects_and_resolves_aliases(repository: tuple[P
     assert entries['local-notes/private.md'].sha256 is None
 
 
+def test_git_ignores_repository_fsmonitor(repository: tuple[Path, str]):
+    """Host validation must not execute an agent-configured filesystem monitor."""
+    root, source = repository
+    hook = root / 'fsmonitor'
+    marker = root / 'fsmonitor-invoked'
+    hook.write_text('#!/bin/sh\n: > "$PWD/fsmonitor-invoked"\nprintf "token\\0"\n')
+    hook.chmod(0o755)
+    git(root, 'config', 'core.fsmonitor', str(hook))
+    subprocess.run(['git', '-C', str(root), 'diff', '--quiet', source, '--'], check=True)
+    assert marker.exists()
+    marker.unlink()
+    git(root, 'diff', '--quiet', source, '--')
+    assert not marker.exists()
+
+
+def test_inventory_ignores_local_object_replacements(repository: tuple[Path, str]):
+    """A replacement ref cannot redefine committed instruction content."""
+    root, source = repository
+    original = inventory(root, source)
+    oid = git(root, 'rev-parse', f'{source}:AGENTS.md').decode().strip()
+    (root / 'replacement').write_text('Replacement instruction\n')
+    replacement = git(root, 'hash-object', '-w', 'replacement').decode().strip()
+    git(root, 'replace', oid, replacement)
+    assert subprocess.check_output(['git', '-C', str(root), 'cat-file', 'blob', oid]) == b'Replacement instruction\n'
+    assert inventory(root, source) == original
+
+
 def test_receipt_reconciles_canonical_report_only_and_paged_reads(repository: tuple[Path, str]):
     """Require complete paged canonical reads including report-only paths."""
     root, source = repository

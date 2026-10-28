@@ -62,8 +62,10 @@ def classify(path: str) -> Literal['editable', 'report-only', 'excluded']:
 
 
 def git(root: Path, *args: str) -> bytes:
-    """Run a git operation without invoking a shell."""
-    return subprocess.check_output(['git', '-C', str(root), *args])
+    """Use actual objects and disable repository filesystem monitor commands."""
+    return subprocess.check_output(
+        ['git', '--no-replace-objects', '-c', 'core.fsmonitor=false', '-C', str(root), *args]
+    )
 
 
 def inventory(root: Path, source: str) -> list[Entry]:
