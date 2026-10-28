@@ -466,6 +466,9 @@ _FALLBACK_FORMAT_SDKS: dict[str, str] = {
     'bedrock-converse': 'boto3',
 }
 
+# The gateway format IDs whose provider name in a `gateway/<provider>:<model>` string differs.
+_FALLBACK_FORMAT_PROVIDERS: dict[str, str] = {'gemini': 'google', 'bedrock-converse': 'bedrock'}
+
 _fallback_headers: ContextVar[Mapping[str, str] | None] = ContextVar('_gateway_fallback_headers', default=None)
 
 
@@ -509,7 +512,10 @@ def _fallback_target(headers: Mapping[str, str] | None) -> tuple[str, str | None
         return None
     if not (model.startswith('gateway/') and ':' in model):
         return None
-    return model, headers.get(_FALLBACK_STATE_RESPONSE_HEADER)
+    upstream, model_name = model.removeprefix('gateway/').split(':', 1)
+    # A format can also be named by the gateway's ID for it, as in the `formats` the client advertised.
+    upstream = _FALLBACK_FORMAT_PROVIDERS.get(upstream, upstream)
+    return f'gateway/{upstream}:{model_name}', headers.get(_FALLBACK_STATE_RESPONSE_HEADER)
 
 
 def _fallback_provider(provider: Provider[Any], upstream_provider: str) -> Provider[Any]:  # pyright: ignore[reportUnusedFunction]

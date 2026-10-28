@@ -24,7 +24,6 @@ from .model_fallback import ModelFallback
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, StreamedResponse
-    from pydantic_ai.providers import Provider
     from pydantic_ai.settings import ModelSettings
 
 __all__ = ('GatewayFallback',)
@@ -67,9 +66,14 @@ class GatewayFallback(AbstractCapability[Any]):
         return _advertising_model(request_context.model) is not None
 
     def get_wrapper_model(self, model: Model) -> Model | None:
-        if isinstance(model, _FallbackHeadersModel) or not _is_gateway_model(model) or _in_durable_unit():
-            # A model the gateway handed a request to sends the headers itself. A durable unit wraps the model it
-            # rebuilds, and the hand-back it gets couldn't be followed on the other side of the unit.
+        if isinstance(model, _FallbackHeadersModel) or not _is_gateway_model(model):
+            # A model the gateway handed a request to sends the headers itself.
+            return None
+        from pydantic_ai.durable_exec._operation_backend import in_durable_unit
+
+        if in_durable_unit():
+            # A durable unit wraps the model it rebuilds, and the hand-back it gets couldn't be followed on the other
+            # side of the unit.
             return None
         return _FallbackHeadersModel(model)
 
@@ -94,19 +98,15 @@ class GatewayFallback(AbstractCapability[Any]):
         model_string, state = target
         provider = advertised.provider
         assert provider is not None  # a gateway provider, or the request wouldn't have advertised
+        upstream, _ = parse_model_id(model_string)
+        assert upstream is not None  # `_fallback_target` only returns `gateway/<provider>:<model>` strings
         try:
-            model = _build_target(provider, model_string)
+            target_provider = _fallback_provider(provider, upstream)
+            model = infer_model(model_string, provider_factory=lambda _: target_provider)
         except (UserError, ImportError) as e:
             # A model this install can't build, like one of an unknown format: the hand-back is the error.
             raise error from e
         raise RetryModelRequest(_FallbackHeadersModel(model, state=state, hand_backs=advertised.hand_backs + 1))
-
-
-def _build_target(provider: Provider[Any], model_string: str) -> Model:
-    upstream, _ = parse_model_id(model_string)
-    assert upstream is not None  # `_fallback_target` only returns `gateway/<provider>:<model>` strings
-    target_provider = _fallback_provider(provider, upstream)
-    return infer_model(model_string, provider_factory=lambda _: target_provider)
 
 
 def _is_gateway_model(model: Model) -> bool:
@@ -130,12 +130,6 @@ def _advertising_model(model: Model) -> _FallbackHeadersModel | None:
             return current
         current = current.wrapped
     return None
-
-
-def _in_durable_unit() -> bool:
-    from pydantic_ai.durable_exec._operation_backend import in_durable_unit
-
-    return in_durable_unit()
 
 
 class _FallbackHeadersModel(WrapperModel):

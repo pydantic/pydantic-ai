@@ -28,6 +28,12 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 
 from ._inline_snapshot import snapshot
+from .append_only import (
+    Turn,
+    _anthropic_event_stream,  # pyright: ignore[reportPrivateUsage]
+    _anthropic_response,  # pyright: ignore[reportPrivateUsage]
+    _responses_response,  # pyright: ignore[reportPrivateUsage]
+)
 from .batch_utils import FAST_BATCH_SETTINGS
 from .conftest import try_import
 from .durable_exec.test_durable_exec_compat import JournalDurability
@@ -86,71 +92,27 @@ def unavailable() -> httpx2.Response:
 
 
 def anthropic_message(request: httpx2.Request, text: str) -> httpx2.Response:
-    """An Anthropic Messages response, streamed when the request asks for it, as `AnthropicModel` always does."""
-    message: dict[str, Any] = {
-        'id': 'msg_1',
-        'type': 'message',
-        'role': 'assistant',
-        'model': 'claude-sonnet-4-5',
-        'content': [],
-        'stop_reason': None,
-        'stop_sequence': None,
-        'usage': {'input_tokens': 10, 'output_tokens': 1},
-    }
-    events: list[tuple[str, dict[str, Any]]] = [
-        ('message_start', {'type': 'message_start', 'message': message}),
-        (
-            'content_block_start',
-            {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
-        ),
-        (
-            'content_block_delta',
-            {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': text}},
-        ),
-        ('content_block_stop', {'type': 'content_block_stop', 'index': 0}),
-        (
-            'message_delta',
-            {
-                'type': 'message_delta',
-                'delta': {'stop_reason': 'end_turn', 'stop_sequence': None},
-                'usage': {'output_tokens': 5},
-            },
-        ),
-        ('message_stop', {'type': 'message_stop'}),
-    ]
+    """An Anthropic Messages response, streamed as `AnthropicModel` asks for it."""
     assert json.loads(request.content)['stream']
-    body = ''.join(f'event: {event}\ndata: {json.dumps(data)}\n\n' for event, data in events)
-    return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=body.encode())
+    message = {**_anthropic_response(Turn(text=text), 0), 'model': 'claude-sonnet-4-5'}
+    return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=_anthropic_event_stream(message))
 
 
 def openai_response(text: str) -> dict[str, Any]:
     """A Responses API `response` object."""
-    return {
-        'id': 'resp_1',
-        'object': 'response',
-        'created_at': 1761600000,
-        'model': 'gpt-5',
-        'status': 'completed',
-        'output': [
-            {
-                'type': 'message',
-                'id': 'msg_1',
-                'role': 'assistant',
-                'status': 'completed',
-                'content': [{'type': 'output_text', 'text': text, 'annotations': []}],
-            }
-        ],
-        'parallel_tool_calls': True,
-        'tool_choice': 'auto',
-        'tools': [],
-        'usage': {
-            'input_tokens': 10,
-            'input_tokens_details': {'cached_tokens': 0},
-            'output_tokens': 5,
-            'output_tokens_details': {'reasoning_tokens': 0},
-            'total_tokens': 15,
+    return {**_responses_response(Turn(text=text), 0), 'model': 'gpt-5'}
+
+
+def gemini_response(text: str) -> httpx2.Response:
+    """A Gemini `generateContent` response."""
+    return httpx2.Response(
+        200,
+        json={
+            'candidates': [{'content': {'role': 'model', 'parts': [{'text': text}]}, 'finishReason': 'STOP'}],
+            'usageMetadata': {'promptTokenCount': 10, 'candidatesTokenCount': 5, 'totalTokenCount': 15},
+            'modelVersion': 'gemini-2.5-flash',
         },
-    }
+    )
 
 
 @dataclass
@@ -226,6 +188,40 @@ async def test_the_gateway_sends_the_request_to_a_model_in_another_format(allow_
     assert isinstance(response, ModelResponse)
     assert (response.model_name, response.provider_name) == ('claude-sonnet-4-5', 'anthropic')
     assert [(attempt.model_name, attempt.outcome) for attempt in response.failed_attempts or []] == [('gpt-5', 'error')]
+
+
+async def test_a_hand_back_can_name_the_format_by_the_gateways_id_for_it(allow_model_requests: None):
+    """`gateway/gemini:...`, in the gateway's own format vocabulary, is followed as `gateway/google:...`."""
+    gateway = FakeGateway(
+        [
+            ('/responses', lambda _: hand_back('gateway/gemini:gemini-2.5-flash', 'state-1')),
+            (':generateContent', lambda _: gemini_response('Hello from Gemini')),
+        ]
+    )
+
+    result = await Agent(gateway.openai_model()).run('Hello')
+
+    assert result.output == 'Hello from Gemini'
+    assert gateway.seen[1].fallback_headers == {**ADVERTISED, 'x-pydantic-ai-fallback-state': 'state-1'}
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_name == 'google-cloud'
+
+
+async def test_leaving_a_handed_back_stream_early_closes_it(allow_model_requests: None):
+    """A consumer that stops reading the stream of the model the gateway handed the request to leaves cleanly."""
+    gateway = FakeGateway(
+        [
+            ('/responses', lambda _: hand_back('gateway/anthropic:claude-sonnet-4-5', 'state-1')),
+            ('/v1/messages', lambda request: anthropic_message(request, 'Hello from Claude')),
+        ]
+    )
+
+    async with Agent(gateway.openai_model()).run_stream('Hello') as result:
+        # Read one chunk and leave.
+        assert await anext(aiter(result.stream_text(debounce_by=None)))
+
+    assert [request.path for request in gateway.seen] == ['/proxy/openai/responses', '/proxy/openai/v1/messages']
 
 
 class PassThroughWrapper(AbstractCapability[Any]):
@@ -550,6 +546,35 @@ async def test_converse_requests_advertise_too(allow_model_requests: None):
 
     assert result.output == 'Hello from Converse'
     assert seen == [ADVERTISED, {}]
+
+
+async def test_converse_stream_requests_advertise_too(allow_model_requests: None):
+    """Streamed Converse requests carry the header as well: the botocore hook covers `ConverseStream` too."""
+    provider = gateway_provider('bedrock', api_key=API_KEY, base_url=BASE_URL)
+    model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=provider)
+    seen: list[dict[str, str]] = []
+
+    def send(request: Any, **_: Any) -> AWSResponse:
+        seen.append(
+            {name.lower(): _text(value) for name, value in request.headers.items() if 'fallback' in name.lower()}
+        )
+        headers = HTTPHeaders()
+        headers['content-type'] = 'application/json'
+        error = {'__type': 'ValidationException', 'message': 'Stopped by the test after recording the headers'}
+        return AWSResponse(request.url, 400, headers, _RawBody(json.dumps(error).encode()))
+
+    event = 'before-send.bedrock-runtime.ConverseStream'
+    # botocore sends the response a `before-send` handler returns instead of the request, though the stubs type every
+    # handler as returning `None`.
+    model.client.meta.events.register_last(event, send)  # pyright: ignore[reportArgumentType]
+    try:
+        with pytest.raises(ModelHTTPError):
+            async with Agent(model).run_stream('Hello') as result:
+                await result.get_output()  # pragma: no cover
+    finally:
+        model.client.meta.events.unregister(event, send)  # pyright: ignore[reportArgumentType]
+
+    assert seen == [ADVERTISED]
 
 
 def test_the_capability_is_not_in_agent_specs():
