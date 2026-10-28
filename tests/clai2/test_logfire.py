@@ -435,7 +435,9 @@ async def test_unload_finishes_inside_outer_cancellation(recorder: Recorder) -> 
 
 
 @pytest.mark.parametrize('blocked', ['export', 'shutdown'])
-def test_shutdown_wall_clock_bound(recorder: Recorder, monkeypatch: pytest.MonkeyPatch, blocked: str) -> None:
+def test_shutdown_wall_clock_bound(
+    recorder: Recorder, monkeypatch: pytest.MonkeyPatch, blocked: Literal['export', 'shutdown']
+) -> None:
     # Exercise the SDK ignoring its timeout, without waiting out a real export deadline.
     entered = Event()
     release = Event()
