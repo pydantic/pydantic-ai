@@ -91,7 +91,7 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
 Keyword-only options: `instructions=None` (appended to the default guidance),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
 `repo_context=True` (`RepoContext` walking up to the repository root and surfacing nested instruction
-files as the agent reads), `sub_agents=True`, `agent_folders=None`, `task_control=None` (a `TaskControl`
+files as the agent reads, inlining up to 32,000 characters of them per run before switching to pointers), `sub_agents=True`, `agent_folders=None`, `task_control=None` (a `TaskControl`
 is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`.
 
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless
@@ -522,6 +522,8 @@ to that ancestor. It is a workspace path (on E2B, `/home/user`, not `Path.home()
 `nested_traversal=True` surfaces the instruction files between the working directory and whatever
 `FileSystem` reads or lists, shallowest first and each directory once per run (`nested_inject='pointer'`
 or `'contents'`), in the message tail so the cached prefix stays stable.
+`nested_max_chars` caps the `'contents'` inlined per run: a file that would go past it becomes a pointer
+(`Coder` sets 32,000). It requires `nested_inject='contents'`.
 
 ## Macroscope
 

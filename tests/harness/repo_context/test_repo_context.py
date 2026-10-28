@@ -756,6 +756,10 @@ CCCCCCCCCC
         with pytest.raises(UserError, match=r'`RepoContext\.nested_max_chars` must not be negative'):
             RepoContext(nested_max_chars=-1)
 
+    def test_budget_without_inlined_contents_is_rejected(self) -> None:
+        with pytest.raises(UserError, match=r"only applies with `nested_inject='contents'`"):
+            RepoContext(nested_traversal=True, nested_max_chars=1000)
+
     async def test_working_directory_file_is_surfaced_when_autoload_is_off(self, tmp_path: Path) -> None:
         _write(tmp_path / 'AGENTS.md', 'ROOT BODY')
         _write(tmp_path / 'README.md', 'readme')

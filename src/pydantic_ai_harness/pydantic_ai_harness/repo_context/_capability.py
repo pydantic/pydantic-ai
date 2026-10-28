@@ -184,8 +184,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         if isinstance(self.root_markers, str):
             raise UserError(f'`RepoContext.root_markers` takes a sequence of names, e.g. `({self.root_markers!r},)`.')
-        if self.nested_max_chars is not None and self.nested_max_chars < 0:
-            raise UserError('`RepoContext.nested_max_chars` must not be negative.')
+        if self.nested_max_chars is not None:
+            if self.nested_max_chars < 0:
+                raise UserError('`RepoContext.nested_max_chars` must not be negative.')
+            if self.nested_inject != 'contents':
+                raise UserError("`RepoContext.nested_max_chars` only applies with `nested_inject='contents'`.")
         if self.home_dir is not None and self.root_markers:
             raise UserError('`RepoContext` takes either `home_dir` or `root_markers` to stop the walk-up, not both.')
         if self.workspace_dir is not None:
