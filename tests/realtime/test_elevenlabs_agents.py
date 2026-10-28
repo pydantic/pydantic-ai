@@ -2645,21 +2645,20 @@ async def test_speech_timestamps_leave_out_stripped_audio_tags(strip_audio_tags:
 
 def _cut_off(response_id: str, text: str, heard: str, *, when: str, event_id: int) -> list[dict[str, Any]]:
     """An agent message timed word by word that a barge-in cuts off, as recorded live for each moment it can land."""
-    response = {
-        'type': 'agent_response',
-        'agent_response_event': {'agent_response': text, 'event_id': event_id, 'response_id': response_id},
-    }
+
+    def response(said: str) -> dict[str, Any]:
+        return {
+            'type': 'agent_response',
+            'agent_response_event': {'agent_response': said, 'event_id': event_id, 'response_id': response_id},
+        }
+
     interruption = {'type': 'interruption', 'interruption_event': {'event_id': event_id + 1}}
     if when == 'generated':
         # The text that follows is already cut down to what was heard, with no correction.
-        heard_response = {
-            **response,
-            'agent_response_event': {**response['agent_response_event'], 'agent_response': heard},
-        }
-        return [_aligned_audio(f'{text} ', event_id=event_id), interruption, heard_response]
+        return [_aligned_audio(f'{text} ', event_id=event_id), interruption, response(heard)]
     return [
         _aligned_audio(f'{text} ', event_id=event_id),
-        response,
+        response(text),
         *([_VOICED] if when == 'ended' else []),
         interruption,
         _correction(response_id, text, heard),
