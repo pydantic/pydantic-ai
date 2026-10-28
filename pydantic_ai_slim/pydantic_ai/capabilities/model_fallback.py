@@ -92,8 +92,6 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     """This step's way down the chain. Its attempt log stays empty: the agent records the attempts."""
     _moved: bool = field(repr=False)
     """Whether the next attempt is at a candidate this capability moved the request to."""
-    _stamps_answer: bool = field(repr=False)
-    """Whether the current attempt's response, if accepted, is stamped with the candidate serving it, for `sticky`."""
 
     def __init__(
         self,
@@ -144,7 +142,6 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         self._attempted_ids = set()
         self._chain = self._new_chain()
         self._moved = False
-        self._stamps_answer = False
 
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost so a rejected attempt is judged before any other capability's
@@ -192,7 +189,6 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             _attempted_ids=set(),
             _chain=self._new_chain(),
             _moved=False,
-            _stamps_answer=False,
         )
 
     async def prepare_model_request(
@@ -220,8 +216,6 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             # A candidate given as a string, which the agent resolved only now, turned out to be a model already
             # attempted this step, like the step's own model under an alias.
             raise self._advance()
-        # A response the step's own model gives needs no stamp: the next step starts with it anyway.
-        self._stamps_answer = self.sticky and moved and not _is_or_wraps(request_context.model, self._step_model)
         self._attempted_models.append(request_context.model)
         if request_context.model_id is not None:
             self._attempted_ids.add(request_context.model_id)
@@ -253,15 +247,12 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             # the response handlers, with a warning when there are any, as `FallbackModel` does.
             self._chain.warn_if_streamed_responses_unjudged()
         if request_context.streaming or not await self._chain.falls_back(response):
-            if response.state == 'suspended' or self._stamps_answer:
+            pin = _pin_id(request_context.model_id or request_context.model)
+            if response.state == 'suspended' or (self.sticky and self._answered_by_candidate(request_context, pin)):
                 # A suspended response's continuation, in this run or a later one that resumes it, has to go
                 # back to the model that started the provider-side job, not to the top of the chain. With
                 # `sticky`, the conversation's next request goes to the candidate that answered it too.
-                stamp_continuation_pin(
-                    response,
-                    _pin_id(request_context.model_id or request_context.model),
-                    key=FALLBACK_CAPABILITY_PIN_KEY,
-                )
+                stamp_continuation_pin(response, pin, key=FALLBACK_CAPABILITY_PIN_KEY)
             return response
         # The core records a rejected response's tokens and cost before the next attempt, so a
         # rejected generation is still paid for in `RunUsage` even though it never enters history,
@@ -285,7 +276,6 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             self._attempted_ids = set()
             self._chain = self._new_chain()
             self._moved = False
-            self._stamps_answer = False
 
     def _pinned_candidate(
         self, request_context: ModelRequestContext
@@ -325,6 +315,14 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         # Should the sticky model fail, the chain goes on from there and comes back around to the step's model, so
         # sticking to a candidate never leaves a model untried that the chain would otherwise have attempted.
         return [*self.models[index + 1 :], request_context.model, *self.models[:index]], self.models[index]
+
+    def _answered_by_candidate(self, request_context: ModelRequestContext, pin: str) -> bool:
+        """Whether the attempt is at one of this capability's models other than the step's, whoever moved it there.
+
+        An answer from the step's own model needs no stamp: the next step starts with it anyway.
+        """
+        assert self._step_model is not None, '`prepare_model_request` notes the step model before any attempt'
+        return not _is_or_wraps(request_context.model, self._step_model) and self._index_of(pin) is not None
 
     def _index_of(self, pin: str) -> int | None:
         return next((index for index, candidate in enumerate(self.models) if _pin_id(candidate) == pin), None)

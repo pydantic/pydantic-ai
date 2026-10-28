@@ -2396,3 +2396,31 @@ async def test_the_answer_that_crosses_a_token_limit_after_a_fallback_is_kept_as
     assert [(attempt.model_name, attempt.outcome) for attempt in response.failed_attempts or []] == [
         ('primary', 'rejected')
     ]
+
+
+async def test_sticky_stamps_an_answer_another_capability_retried_on_the_same_candidate():
+    """A candidate's answer is stamped even when another capability had it retried on that candidate."""
+    calls: list[str] = []
+
+    class RetryFirstAnswer(AbstractCapability[None]):
+        """Rejects the first response it sees, retrying the same model."""
+
+        rejected: bool = False
+
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            if not self.rejected:
+                self.rejected = True
+                raise RetryModelRequest()
+            return response
+
+    agent = Agent(
+        _candidate('primary', calls, fails=True),
+        deps_type=type(None),
+        capabilities=[RetryFirstAnswer(), ModelFallback(_candidate('backup', calls), sticky=True)],
+    )
+    first = await agent.run('x')
+    assert _stamps(first.new_messages()) == ['function:backup']
+    await agent.run('y', message_history=first.all_messages())
+    assert calls == ['primary', 'backup', 'backup', 'backup']
