@@ -157,8 +157,14 @@ async def test_an_action_that_fails_on_a_running_display_says_why(docker: FakeDo
 
 async def test_a_scaled_screenshot_comes_from_the_display(docker: FakeDocker, container_dir: Path) -> None:
     backend = _desktop(container_dir, image='my-desktop')
-    assert backend.display is not None
-    assert await backend.display.scaled_screenshot(640, 400) == FAKE_SCREENSHOT
+    assert await Workspace(backend).scaled_screenshot(640, 400) == FAKE_SCREENSHOT
+
+
+async def test_the_display_names_its_screen_by_the_containers_ref(docker: FakeDocker, container_dir: Path) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await Workspace(backend).display_size()
+    assert backend.display is not None and backend.ref is not None
+    assert backend.display.screen_key == backend.ref
 
 
 async def test_a_look_at_a_display_that_went_away_starts_it_and_looks_again(
