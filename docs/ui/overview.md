@@ -179,6 +179,56 @@ The adapters apply a few defaults so that the authoritative state stays on your 
 
     Authenticate the endpoint (as above) and enforce authorization for sensitive actions inside the tool function itself — against the authenticated user carried in your [dependencies](../dependencies.md#accessing-dependencies), not the client-supplied approval — for any call that reaches the tool function. Alternatively, persist paused runs server-side and pass your own `deferred_tool_results` rather than honoring the client's.
 
-For stricter conversation integrity (e.g. ensuring prior assistant turns and tool returns match what the server actually produced), persist the history server-side keyed by the thread/session ID and pass it to the adapter via `message_history` — caller-supplied history is trusted as coming from server-side persistence and isn't subject to this sanitization.
+For stricter conversation integrity (e.g. ensuring prior assistant turns and tool returns match what the server actually produced), keep the history on the server, as described [below](#keeping-the-history-on-the-server) — caller-supplied `message_history` is trusted as coming from server-side persistence and isn't subject to this sanitization.
 
 These defaults narrow what a fabricated history can reach, but a client that can submit history can always fabricate it; see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history) for what that means for your application's authorization model.
+
+### Keeping the history on the server
+
+The AI SDK's `useChat` and `@ag-ui/client` both send the whole conversation on every request. To make your own stored history the conversation instead, persist the agent's messages when a run completes, pass them back as `message_history` on the next request, and set [`manage_message_history='server'`][pydantic_ai.ui.UIAdapter.manage_message_history], which [`UIAdapter.from_request()`][pydantic_ai.ui.UIAdapter.from_request] and [`UIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] also accept:
+
+```py {title="server_side_history.py"}
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent, AgentRunResult
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+agent = Agent('{{ openai:medium }}')
+
+app = FastAPI()
+
+conversations: dict[str, list[ModelMessage]] = {}  # (1)!
+
+
+@app.post('/chat/{chat_id}')
+async def chat(chat_id: str, request: Request) -> Response:
+    def save(result: AgentRunResult[str]) -> None:
+        conversations[chat_id] = result.all_messages()
+
+    return await VercelAIAdapter.dispatch_request(
+        request,
+        agent=agent,
+        message_history=conversations.get(chat_id),
+        manage_message_history='server',
+        on_complete=save,
+    )
+```
+
+1. Use a database in production, and check that the user may access the conversation before reading or writing it.
+
+From the client's messages, the adapter then uses only the new turn: the messages after the last assistant response, such as the user's new message or the output of a tool the frontend ran. Everything before it comes from `message_history`, so the model sees each turn once, and the client can't change what the model saw on earlier turns. This works whether the client sends its whole history or only its new messages.
+
+- **Regenerating and editing.** When the new turn starts with a user message whose UI message id is already in `message_history`, the stored history is cut just before that message, so the run replaces that turn and everything after it. Tool results the server recorded alongside that message stay, so the client can't answer those calls again. That's what the AI SDK's `regenerate()` and `sendMessage({ messageId })` send, and what a retried submit looks like. A client can roll its own conversation back to any of its earlier user messages this way, as those features require, but not to any other message. When the id isn't in `message_history`, the new turn is appended, except for a regenerate, which is rejected with a protocol error event (Vercel AI's `error` chunk, AG-UI's `RUN_ERROR`) instead of answering a turn the server doesn't have: either the server never stored that message, as after a run that didn't complete (see below), or the client holds a different conversation than the server, as a client in a stale tab does.
+- **Saving the stored record.** Saving `result.all_messages()` over the stored history drops the turns a cut replaced, the client's own messages included, so a client can remove them before moderation or review reads them. If you need an append-only record, keep the earlier version too, for example by appending each run's `result.new_messages()` to a separate log, or, if your app doesn't offer edit or regenerate, reject a request whose first message resubmits a stored user message id before calling the adapter.
+- **Histories without UI message ids.** Matching a resubmitted message relies on the UI message ids the adapter keeps on the requests it loads, so `message_history` must be the history an adapter run produced, such as `result.all_messages()` saved in `on_complete`. A history persisted another way, such as from `agent.run()` or rebuilt from your own tables, carries no UI message ids, so every Vercel AI regenerate is rejected as stale and an edit is appended instead of replacing the turn.
+- **Tool results.** A tool result from the client is kept only if it answers a tool call that is still unanswered at the end of `message_history`. Others are dropped with a warning.
+- **Tool approvals.** A run that resumes after an approval has no new turn: `message_history` ends with the calls awaiting approval, and the approvals still come from the request, as described in the warning above.
+- **Sanitization.** The new turn is still client input, so the defaults above apply to it.
+- **Runs that don't complete.** `on_complete` only runs for a run that completes, so a turn whose run fails or is stopped isn't in the stored history. Once the client holds an assistant response after it, such as the partial one of a stopped stream, the client's copy of the turn isn't used either, since only the messages after the client's last assistant response are: the model doesn't see that turn again, though the frontend may still show it. A `regenerate()` of that turn, which is how the AI SDK's usual retry after an error or a stop works, is rejected as described above, since the server has no copy of the message to regenerate: have the frontend send the user's message again as a new one (`sendMessage`) instead. To keep a [cancelled](../agent.md#cancelling-a-run) run, also save [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] in `on_cancel`. A client disconnect, as when the user stops `useChat`, is an external cancellation that triggers neither callback. A saved history that ends with a request no response answered, as a run cancelled before its first response leaves, gets that request again from the client, so the model sees it twice: until that's handled ([#11031](https://github.com/pydantic/pydantic-ai/issues/11031)), drop such a trailing request before saving, or don't save a cancelled run that produced no response.
+
+The default, `manage_message_history='client'`, treats the client's messages as the conversation and puts any `message_history` you pass in front of them, which suits server-only context such as a pinned preamble. If a client message's UI message id already appears in `message_history`, the adapter warns, because the model sees that message twice. Only a history that went through an adapter carries those ids, so for one built any other way, such as by hand or from `agent.run()`, the adapter can't tell: passing it as `message_history` while the client sends its whole conversation sends that conversation to the model twice, without a warning.
+
+The client needs no changes, but it can save bandwidth by sending only its new messages; see the [Vercel AI](./vercel-ai.md#keeping-the-history-on-the-server) and [AG-UI](./ag-ui.md#keeping-the-history-on-the-server) pages.

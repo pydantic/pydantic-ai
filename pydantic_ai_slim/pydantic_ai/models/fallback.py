@@ -21,6 +21,7 @@ from pydantic_ai._instrumentation import (
 from pydantic_ai._model_request_attempts import AttemptStart, carry_attempts
 from pydantic_ai._run_context import RunContext
 
+from .._canonical_system import stateless_artifact_system
 from .._fallback import (
     FALLBACK_MODEL_PIN_KEY,
     ExceptionHandler,
@@ -35,7 +36,11 @@ from .._fallback import (
 )
 from .._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from ..exceptions import ModelAPIError
-from ..messages import ModelResponse
+from ..messages import (
+    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
+    ModelResponse,
+    ModelResponsePart,
+)
 from ..profiles import ModelProfile
 from ..settings import merge_model_settings
 from . import (
@@ -63,7 +68,6 @@ if TYPE_CHECKING:
 # `ModelFallback` capability, and `from pydantic_ai.models.fallback import ...` must keep working.
 __all__ = 'FallbackModel', 'FallbackOn', 'ExceptionHandler', 'ResponseHandler', 'ResponseRejected'
 
-_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 # Must match `_continuation._REPLACE_PREVIOUS_RESPONSE_KEY`: the merge module reads this exact key
 # (under `__pydantic_ai__`) to fold a post-rewind response as a replace. Duplicated as a literal rather
 # than imported because that constant is module-private (importing it trips `reportPrivateUsage`).
@@ -169,6 +173,42 @@ class FallbackModel(Model):
     @property
     def base_url(self) -> str | None:
         return self.models[0].base_url
+
+    @property
+    def canonical_system(self) -> str:
+        """The first model's: each model decides for itself which history data it sends when it's tried."""
+        return self.models[0].canonical_system
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        """The first model's, like `canonical_system`."""
+        return self.models[0].compatible_systems
+
+    def accepts_stateless_artifacts(self, response: ModelResponse, part: ModelResponsePart | None = None) -> bool:
+        """The first model's answer, like `canonical_system`."""
+        return self.models[0].accepts_stateless_artifacts(response, part)
+
+    def _model_for_response(self, response: ModelResponse) -> Model:
+        # A model with the response's provider name and canonical system: two models can share a name and differ
+        # in system, like a `GoogleProvider` on the Gemini API and one on Google Cloud. The response doesn't say
+        # which of two matching models produced it, such as an `OpenAIChatModel` and an `OpenAIResponsesModel` on
+        # one provider, so one that trims before compaction parts is preferred: the window it gives tool dispatch
+        # errs toward refusing a call rather than admitting a tool the request didn't show.
+        candidates = [model._model_for_response(response) for model in self.models]
+        provider_name = response.provider_name
+        matching = [
+            candidate
+            for candidate in candidates
+            if provider_name is not None
+            and candidate.system == provider_name
+            # A response recorded before it carried `canonical_system` is judged as its stateless data would be.
+            and candidate.canonical_system
+            == (response.canonical_system or stateless_artifact_system(response, provider_name)[0])
+        ]
+        return next(
+            (candidate for candidate in matching if candidate._honors_compaction_boundaries),
+            matching[0] if matching else candidates[0],
+        )
 
     async def request(
         self,
@@ -566,7 +606,15 @@ class FallbackModel(Model):
         # Only under the `chat` span instrumentation opened for this request, and on its tracer provider.
         span = self._fallback_span()
         policy = open_request_policy() if span else None
-        chain.log.record(model, failure, start, parent=span, tracer=policy.tracer if policy else None)
+        chain.log.record(
+            model,
+            failure,
+            start,
+            parent=span,
+            tracer=policy.tracer if policy else None,
+            # Only a `fallback_on` response handler rejects a response here, unlike in the agent's attempt loop.
+            rejected_status='Response rejected by a `fallback_on` response handler',
+        )
 
 
 def _pinned_request_deadline(

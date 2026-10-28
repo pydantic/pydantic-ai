@@ -82,6 +82,7 @@ from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrde
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
+    FallbackExceptionGroup,
     ModelAPIError,
     ModelAuthenticationError,
     ModelContextWindowExceededError,
@@ -110,6 +111,7 @@ from pydantic_ai.models import (
     ModelRequestParameters,
     ModelResolutionContext,
     ModelSelectionContext,
+    StreamedResponse,
     infer_model,
 )
 from pydantic_ai.models._batch_model import BatchPool
@@ -123,6 +125,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings
 from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput, ResponseDone
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset
@@ -424,6 +427,149 @@ async def test_durability_fallback_attempts_run_as_activities(client: Client):
     assert output == 'from fallback'
     # The failed attempt on the agent's model and the one on the fallback model.
     assert _scheduled_activity_count(history) == 2
+
+
+exhausted_fallback_durable_agent = Agent(
+    FunctionModel(_failing_model_fn, model_name='failing'),
+    name='durability_exhausted_fallback_agent',
+    capabilities=[
+        ModelFallback('also_failing'),
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            models={'also_failing': FunctionModel(_failing_model_fn, model_name='also_failing')},
+        ),
+    ],
+)
+
+
+@workflow.defn
+class ExhaustedFallbackDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        return await exhausted_fallback_durable_agent.run(prompt)
+
+
+async def test_durability_exhausted_fallback_fails_the_workflow(client: Client):
+    """A `ModelFallback` chain that runs out raises its group in workflow code, which fails the workflow.
+
+    Failing only the workflow task instead would have Temporal retry it until the execution times out.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ExhaustedFallbackDurableAgentWorkflow],
+        plugins=[AgentPlugin(exhausted_fallback_durable_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ExhaustedFallbackDurableAgentWorkflow.run,
+                args=['hello'],
+                id=ExhaustedFallbackDurableAgentWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == FallbackExceptionGroup.__name__
+
+
+_backup_streamed: list[str] = []
+
+
+def _late_stream_failure_agent(name: str, *, fail_after_output: bool) -> Agent[object, str]:
+    """An agent whose model fails partway through a stream, or before it, with a `ModelFallback` to another model."""
+
+    async def primary(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        if fail_after_output:
+            yield 'partial'
+        raise ModelAPIError('primary', 'stream broke')
+
+    async def backup(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        _backup_streamed.append(name)
+        yield 'from backup'
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _event in stream:
+            pass
+
+    return Agent(
+        FunctionModel(stream_function=primary, model_name='primary'),
+        deps_type=object,
+        name=name,
+        capabilities=[
+            ModelFallback('backup'),
+            TemporalDurability(
+                activity_config=BASE_ACTIVITY_CONFIG,
+                models={'backup': FunctionModel(stream_function=backup, model_name='backup')},
+                event_stream_handler=handler,
+            ),
+        ],
+    )
+
+
+late_stream_failure_agent = _late_stream_failure_agent('durability_late_stream_failure', fail_after_output=True)
+early_stream_failure_agent = _late_stream_failure_agent('durability_early_stream_failure', fail_after_output=False)
+
+
+@workflow.defn
+class LateStreamFailureWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> tuple[str, int, int, int]:
+        usage = RunUsage()
+        try:
+            output = (await late_stream_failure_agent.run(prompt, usage=usage)).output
+        except ModelAPIError as error:
+            output = f'raised: {error.message}'
+        return output, usage.input_tokens, usage.output_tokens, usage.requests
+
+
+@workflow.defn
+class EarlyStreamFailureWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await early_stream_failure_agent.run(prompt)).output
+
+
+async def test_durability_stream_failing_after_output_does_not_fall_back(client: Client):
+    """A stream that fails after producing output in its activity is raised, not fallen back from, and its usage counts.
+
+    The activity delivers the output to the event handler before the workflow sees the stream, as outside durable
+    execution, where only a stream that fails before its first event falls back. The error crosses the activity
+    boundary with what the stream produced, so the interrupted response is committed with its usage.
+    """
+    _backup_streamed.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[LateStreamFailureWorkflow],
+        plugins=[AgentPlugin(late_stream_failure_agent)],
+    ):
+        result = await client.execute_workflow(
+            LateStreamFailureWorkflow.run,
+            args=['hello'],
+            id=LateStreamFailureWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert result == ('raised: stream broke', 50, 1, 1)
+    assert _backup_streamed == []
+
+
+async def test_durability_stream_failing_before_output_falls_back(client: Client):
+    """A stream that fails before producing any output still falls back to the next model."""
+    _backup_streamed.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[EarlyStreamFailureWorkflow],
+        plugins=[AgentPlugin(early_stream_failure_agent)],
+    ):
+        output = await client.execute_workflow(
+            EarlyStreamFailureWorkflow.run,
+            args=['hello'],
+            id=EarlyStreamFailureWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'from backup'
+    assert _backup_streamed == ['durability_early_stream_failure']
 
 
 @workflow.defn
@@ -3795,6 +3941,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
                     provider_details={
                         'finish_reason': 'tool_calls',
                         'service_tier': 'default',
@@ -3844,6 +3991,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
                     provider_details={
                         'finish_reason': 'tool_calls',
                         'service_tier': 'default',
@@ -3885,6 +4033,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
                     provider_details={
                         'finish_reason': 'stop',
                         'service_tier': 'default',
@@ -5572,6 +5721,87 @@ async def test_durability_continuation_delay_uses_durable_timer(client: Client):
     assert _continuation_delay_model.request_calls == 2
     assert _scheduled_activity_count(history) == 2
     assert any(event.HasField('timer_started_event_attributes') for event in history.events)
+
+
+class _ContinuationFailsToOpen(ScriptedContinuationModel):
+    """Fails to open the stream that would continue a suspended response."""
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        self.request_stream_calls += 1
+        raise ModelAPIError(model_name='scripted', message='continuation failed')
+        yield  # pragma: no cover
+
+
+async def _streamed_answer(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'from the backup'
+
+
+_resume_failing_model = _ContinuationFailsToOpen()
+
+_resume_fallback_agent = Agent(
+    _resume_failing_model,
+    deps_type=type(None),
+    name='durability_resume_fallback_agent',
+    capabilities=[
+        ModelFallback('resume_backup'),
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            models={'resume_backup': FunctionModel(stream_function=_streamed_answer, model_name='resume_backup')},
+            event_stream_handler=_drain_events,
+        ),
+    ],
+)
+
+
+@workflow.defn
+class DurabilityResumeFallbackWorkflow:
+    @workflow.run
+    async def run(self, history: list[ModelMessage]) -> AgentRunResult[str]:
+        return await _resume_fallback_agent.run(message_history=history)
+
+
+async def test_durability_resumed_step_falls_back_when_its_continuation_fails_to_open(client: Client):
+    """A step resumed from a suspended response, whose streamed continuation fails to open, falls back in the workflow.
+
+    The suspended response's job is cancelled, and the next model generates the turn in an activity of its own.
+    """
+    _resume_failing_model.reset()
+    history_messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        scripted_response(
+            texts=['The answer '], state='suspended', provider_response_id='job-1', input_tokens=5, output_tokens=2
+        ),
+    ]
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityResumeFallbackWorkflow],
+        plugins=[AgentPlugin(_resume_fallback_agent)],
+    ):
+        wf = await client.start_workflow(
+            DurabilityResumeFallbackWorkflow.run,
+            args=[history_messages],
+            id=DurabilityResumeFallbackWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+        history = await wf.fetch_history()
+
+    assert result.output == 'from the backup'
+    assert _resume_failing_model.request_stream_calls == 1
+    assert [response.provider_response_id for response in _resume_failing_model.cancelled] == ['job-1']
+    assert [(attempt.model_name, attempt.outcome) for attempt in result.response.failed_attempts or []] == [
+        ('scripted', 'error')
+    ]
+    # The failed continuation, the job cancellation, and the backup's request.
+    assert _scheduled_activity_count(history) == 3
 
 
 async def test_durability_continuation_resume_from_history(client: Client):
