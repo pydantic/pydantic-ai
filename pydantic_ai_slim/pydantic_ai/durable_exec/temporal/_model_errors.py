@@ -67,6 +67,11 @@ def _encode(error: ModelAPIError) -> dict[str, Any] | None:
         return None
     args = reduced[1]
     state = reduced[2] if len(reduced) > 2 else None
+    if isinstance(state, dict):
+        # What Pydantic AI attached to the error isn't JSON: what has to cross is carried separately below.
+        state = {
+            key: value for key, value in cast(dict[str, Any], state).items() if not key.startswith('_pydantic_ai_')
+        }
     encoded: dict[str, Any] = {
         'module': error_type.__module__,
         'qualname': error_type.__qualname__,
