@@ -21,6 +21,8 @@ from pydantic_ai.workspaces import (
     ReadOnlyWorkspace,
     Region,
     Scroll,
+    SupportsDisplay,
+    SupportsZoom,
     TypeText,
     UnavailableWorkspace,
     Workspace,
@@ -41,6 +43,12 @@ def test_keys_are_a_closed_set_with_x_keysyms_as_aliases() -> None:
         ValidationError, match=r"'Hyper_L' is not a key: use a single character or one of ctrl, .*, f1 to f24"
     ):
         PressKeys(keys=('Hyper_L',))
+
+
+def test_punctuation_keysyms_and_browser_key_names_are_aliases() -> None:
+    keys = PressKeys(keys=('ctrl+plus', 'minus', 'bracketleft', 'question', 'Meta_L', 'NumpadAdd', 'NumpadEnter')).keys
+    assert keys == ('ctrl', '+', '-', '[', '?', 'super', 'numpad_add', 'numpad_enter')
+    assert PressKeys(keys=('AudioVolumeUp', 'MediaPlayPause', 'ShiftLeft')).keys == ('volumeup', 'mediaplay', 'shift')
 
 
 def test_fields_an_action_does_not_have_are_refused() -> None:
@@ -161,12 +169,19 @@ async def test_a_display_without_zoom_or_cursor_position_refuses_them() -> None:
         await workspace.cursor_position()
 
 
-def test_has_display_follows_wrappers_without_io() -> None:
+async def test_wrappers_keep_their_policy_and_the_backend_display() -> None:
     provider = InMemoryProvider()
-    assert Workspace(provider.backend(None)).has_display is True
-    read_only = ReadOnlyWorkspace(Workspace(provider.backend(None)))
-    assert read_only.has_display is True and read_only.display is read_only
-    assert ReadOnlyWorkspace(Workspace(FakeWorkspace('no-display'))).display is None
+    backend = DisplayOnlyBackend(provider.backend(None))
+    read_only = Workspace(ReadOnlyWorkspace(Workspace(backend)))
+    assert read_only.has_display is True
+    assert await read_only.screenshot() == FAKE_SCREENSHOT
+    with pytest.raises(WorkspaceReadOnlyError):
+        await read_only.act(MouseUp())
+    assert provider.actions == []
+    # Capability and identity are the backend's: a workspace never poses as a display that can zoom.
+    assert not isinstance(read_only, SupportsDisplay)
+    assert read_only.backend is backend and not isinstance(backend.display, SupportsZoom)
+    assert ReadOnlyWorkspace(Workspace(FakeWorkspace('no-display'))).has_display is False
     assert Workspace(UnavailableWorkspace('no workspace here')).has_display is False
 
 

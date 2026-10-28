@@ -60,6 +60,9 @@ WORKSPACE_OPERATION_ID = CapabilityOperationId('workspace', operation='call')
 # Base64 for `bytes`: Temporal's payload converter serializes by runtime type, ignoring annotations.
 _BYTES_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64')
 # Calls and results refuse fields they don't have, so an older worker fails a newer call instead of dropping its options.
+# So that only records using a new field fail: a field added later is left out of serialized data while it holds its
+# default (`Field(exclude_if=...)`), and a new result field never changes what an existing one means (JPEG bytes
+# would get their own field, not `data`), since engines that pickle results skip the check.
 _JOURNAL_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64', extra='forbid')
 
 WorkspaceMethod: TypeAlias = Literal[
