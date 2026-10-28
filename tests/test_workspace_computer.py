@@ -13,6 +13,7 @@ from pydantic_ai.computer_use import ComputerToolAction
 from pydantic_ai.workspaces import (
     Click,
     ComputerAction,
+    Display,
     HoldKeys,
     MouseUp,
     Point,
@@ -33,13 +34,34 @@ from .workspace_fakes import FAKE_SCREENSHOT, DisplayOnlyBackend, FakeWorkspace,
 pytestmark = pytest.mark.anyio
 
 
+def test_keys_are_a_closed_set_with_x_keysyms_as_aliases() -> None:
+    keys = PressKeys(keys=('KP_Enter', 'XF86AudioMute', 'Caps_Lock', 'Print', 'Super_L', 'ctrl+Page_Down')).keys
+    assert keys == ('numpad_enter', 'volumemute', 'capslock', 'printscreen', 'super', 'ctrl', 'pagedown')
+    with pytest.raises(
+        ValidationError, match=r"'Hyper_L' is not a key: use a single character or one of ctrl, .*, f1 to f24"
+    ):
+        PressKeys(keys=('Hyper_L',))
+
+
+def test_fields_an_action_does_not_have_are_refused() -> None:
+    # Dropping one would act differently than asked: a `mouse_down` with a position would press at the pointer.
+    adapter = TypeAdapter(list[ComputerToolAction])
+    for invalid in (
+        {'type': 'mouse_down', 'x': 400, 'y': 300},
+        {'type': 'wait', 'ms': 200},
+        {'type': 'drag', 'path': [{'x': 0, 'y': 0}, {'x': 1, 'y': 1, 'pressure': 0.5}]},
+        {'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 1, 'bottom': 1, 'scale': 2}},
+    ):
+        with pytest.raises(ValidationError, match='Unexpected keyword argument'):
+            adapter.validate_python([invalid])
+
+
 def test_actions_normalize_key_names_and_validate_from_json() -> None:
     adapter = TypeAdapter(list[ComputerAction])
     actions = adapter.validate_python(
         [
             {'type': 'keypress', 'keys': ['CTRL', 'Return']},
-            # A field the action doesn't have, such as one a provider adds, is ignored.
-            {'type': 'click', 'x': 1, 'y': 2, 'modifiers': ['Control', 'cmd', 'Option'], 'scale': 0.5},
+            {'type': 'click', 'x': 1, 'y': 2, 'modifiers': ['Control', 'cmd', 'Option']},
             {'type': 'hold_key', 'keys': ['ESC'], 'seconds': 1},
             {'type': 'keypress', 'keys': ['ctrl+shift+T']},
             {'type': 'keypress', 'keys': ['+']},
@@ -142,9 +164,35 @@ async def test_a_display_without_zoom_or_cursor_position_refuses_them() -> None:
 def test_has_display_follows_wrappers_without_io() -> None:
     provider = InMemoryProvider()
     assert Workspace(provider.backend(None)).has_display is True
-    assert ReadOnlyWorkspace(Workspace(provider.backend(None))).has_display is True
-    assert ReadOnlyWorkspace(Workspace(FakeWorkspace('no-display'))).has_display is False
+    read_only = ReadOnlyWorkspace(Workspace(provider.backend(None)))
+    assert read_only.has_display is True and read_only.display is read_only
+    assert ReadOnlyWorkspace(Workspace(FakeWorkspace('no-display'))).display is None
     assert Workspace(UnavailableWorkspace('no workspace here')).has_display is False
+
+
+async def test_a_backend_can_take_its_display_from_another_object() -> None:
+    provider = InMemoryProvider()
+    screen = provider.backend(None)
+
+    class LocalFilesWithAScreen(FakeWorkspace):
+        @property
+        def display(self) -> Display:
+            return screen
+
+    workspace = Workspace(LocalFilesWithAScreen('local'))
+    await workspace.act(TypeText(text='hi'))
+    assert await workspace.cursor_position() == Point(x=640, y=400)
+    assert provider.actions == [TypeText(text='hi')]
+
+
+async def test_an_attribute_named_display_that_is_not_a_display_does_not_count() -> None:
+    class XServerBackend(FakeWorkspace):
+        display = ':1'
+
+    workspace = Workspace(XServerBackend('x-server'))
+    assert workspace.has_display is False
+    with pytest.raises(UserError, match='has no display to control'):
+        await workspace.screenshot()
 
 
 def test_the_computer_tool_schema_requires_type_first_and_only_declared_fields() -> None:

@@ -45,6 +45,7 @@ from .computer import ComputerAction, Point, Region
 # the display, like `SupportsZoom`, is a new protocol with its own `Workspace` and `DurableWorkspace` methods.
 __all__ = (
     'CommandResult',
+    'Display',
     'FileEntry',
     'WorkspaceBackend',
     'WorkspaceCommand',
@@ -88,7 +89,11 @@ class WorkspaceOutputLimitError(WorkspaceError):
 
 
 class WorkspaceUnavailableError(WorkspaceError):
-    """The environment is gone or unusable (terminated, expired, not found), so retrying can't succeed."""
+    """This backend can't reach its environment: it is gone, paused, stopped, or not permitted.
+
+    Retrying the same call can't succeed. Whether the environment can be resumed by its ref is the business of
+    whoever manages its lifecycle.
+    """
 
 
 class WorkspaceTimeoutError(WorkspaceError, TimeoutError):
@@ -108,7 +113,7 @@ class WorkspaceReadOnlyError(WorkspaceError, PermissionError):
 
 
 class WorkspaceUnsupportedActionError(WorkspaceError):
-    """A [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay] backend can't perform this kind of action."""
+    """A [`Display`][pydantic_ai.workspaces.Display] can't perform this kind of action."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -234,20 +239,14 @@ class SupportsRealpath(Protocol):
 
 
 @runtime_checkable
-class SupportsDisplay(Protocol):
-    """Optional control of a graphical display: screenshots, mouse, and keyboard.
+class Display(Protocol):
+    """A graphical display: screenshots, mouse, and keyboard.
 
-    Without it, the `Workspace` display methods raise `UserError`.
+    It can come from a different source than the backend's commands, such as this machine's screen beside a local
+    workspace, and may start on its first call. It can also implement
+    [`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom] and
+    [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition].
     """
-
-    @property
-    def has_display(self) -> bool:
-        """Whether this environment has a display, decided without I/O.
-
-        An implementation whose environments may lack one, such as a sandbox started without a desktop, returns
-        `False` for those.
-        """
-        ...
 
     async def display_size(self) -> tuple[int, int]:
         """The next screenshot's `(width, height)` in pixels: the coordinate space of every action.
@@ -264,15 +263,31 @@ class SupportsDisplay(Protocol):
         """Perform one action on the display.
 
         Raise [`WorkspaceUnsupportedActionError`][pydantic_ai.workspaces.WorkspaceUnsupportedActionError] for an
-        action kind, or a value, the backend can't perform exactly: new kinds can be added to
+        action kind, or a value, the display can't perform exactly: new kinds can be added to
         [`ComputerAction`][pydantic_ai.workspaces.ComputerAction] without changing this protocol.
         """
         ...
 
 
 @runtime_checkable
+class SupportsDisplay(Protocol):
+    """Optional: the environment's graphical [`Display`][pydantic_ai.workspaces.Display].
+
+    Without it, or when `display` is `None`, the `Workspace` display methods raise `UserError`.
+    """
+
+    @property
+    def display(self) -> Display | None:
+        """This environment's display, or `None` for an environment without one, decided without I/O.
+
+        It is the same object for the backend's lifetime, so callers can key per-screen state, such as a lock, on it.
+        """
+        ...
+
+
+@runtime_checkable
 class SupportsZoom(Protocol):
-    """Optional, alongside [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: a closer look at part of the display."""
+    """Optional on a [`Display`][pydantic_ai.workspaces.Display]: a closer look at part of the display."""
 
     async def zoom(self, region: Region) -> bytes:
         """Capture the region as PNG bytes, at the display's full resolution.
@@ -285,7 +300,7 @@ class SupportsZoom(Protocol):
 
 @runtime_checkable
 class SupportsCursorPosition(Protocol):
-    """Optional, alongside [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: where the pointer is."""
+    """Optional on a [`Display`][pydantic_ai.workspaces.Display]: where the pointer is."""
 
     async def cursor_position(self) -> Point:
         """The pointer's position in screenshot pixels."""
