@@ -15621,8 +15621,6 @@ async def test_anthropic_container_from_history_scoped_by_endpoint(allow_model_r
 
     https://github.com/pydantic/pydantic-ai/issues/11508
     """
-    from datetime import datetime
-
     producer_client = MockAnthropic.create_mock(
         completion_message(
             [BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
@@ -15637,8 +15635,6 @@ async def test_anthropic_container_from_history_scoped_by_endpoint(allow_model_r
     cast(MockAnthropic, mock_client).base_url = base_url
     agent = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)))
     await agent.run('follow up', message_history=history)
-
-    from anthropic import omit as OMIT
 
     container = get_mock_chat_completion_kwargs(mock_client)[0].get('container')
     assert container == ('container_a' if base_url == 'https://gateway-a.example' else OMIT)

@@ -3943,6 +3943,17 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_transports.py::<module>"
       ]
     },
+    "ModelResponse.provider_name": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.accepts_server_state"
+      ]
+    },
     "ModelResponse.state": {
       "engines": [
         "durable_exec"
@@ -4389,7 +4400,6 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._current_model",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._get_model_id",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._model_for_response",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.accepts_server_state",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.accepts_stateless_artifacts",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.resolve_model",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.using_model",

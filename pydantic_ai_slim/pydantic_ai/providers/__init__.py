@@ -46,12 +46,12 @@ _DEFAULT_PORTS = {'http': 80, 'https': 443}
 
 def _normalized_url(url: str) -> str:
     """`url` with a lowercase scheme and host, an explicit default port and no trailing `/`, for comparing endpoints."""
-    parts = urlsplit(url.strip())
-    scheme = parts.scheme.lower()
     try:
-        port = parts.port or _DEFAULT_PORTS.get(scheme)
-    except ValueError:  # an out-of-range port in a stored URL, compared as written
-        port = None
+        parts = urlsplit(url.strip())
+        port = parts.port or _DEFAULT_PORTS.get(parts.scheme.lower())
+    except ValueError:  # a malformed stored URL, such as an unclosed IPv6 bracket or an out-of-range port
+        return url
+    scheme = parts.scheme.lower()
     netloc = f'{parts.hostname or ""}:{port}' if port else parts.hostname or ''
     query = f'?{parts.query}' if parts.query else ''
     return f'{scheme}://{netloc}{parts.path.rstrip("/")}{query}'

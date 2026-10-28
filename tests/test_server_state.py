@@ -61,6 +61,7 @@ def gateway_model(provider_cls: type[OpenAIProvider] | None = None) -> OpenAIRes
         pytest.param(response(provider_url='https://gateway-a.example/v2'), False, id='other-path'),
         pytest.param(response(provider_url='https://gateway-a.example:8443/v1'), False, id='other-port'),
         pytest.param(response(provider_url='https://gateway-a.example:99999/v1'), False, id='invalid-port'),
+        pytest.param(response(provider_url='https://[broken/v1'), False, id='malformed'),
         pytest.param(response(provider_url='gateway-a.example/v1'), False, id='no-scheme'),
         pytest.param(response(provider_url='https://gateway-a.example/v1?tenant=b'), False, id='other-query'),
         pytest.param(response(provider_url=None), True, id='no-url-legacy'),
