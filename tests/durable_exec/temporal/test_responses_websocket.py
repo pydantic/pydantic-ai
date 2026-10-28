@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import importlib.util
-
 import pytest
 
-if importlib.util.find_spec('temporalio') is None:
-    pytest.skip('temporalio not installed', allow_module_level=True)
+pytest.importorskip('temporalio', reason='temporal not installed', exc_type=ImportError)
+pytest.importorskip('openai')
 pytest.importorskip('websockets')
 import json
 from collections import deque
@@ -92,7 +90,7 @@ class Network:
     http_frames: list[Frame] = field(default_factory=list[Frame])
 
     async def connect(self, uri: str, *, additional_headers: Mapping[str, str], **options: object) -> ObservedSocket:
-        assert uri.startswith('wss://api.openai.com/'), uri
+        assert uri == 'wss://api.openai.com/v1/responses'
         assert self.pending, 'unexpected socket creation'
         socket = self.pending.popleft()
         self.opened.append(socket)
