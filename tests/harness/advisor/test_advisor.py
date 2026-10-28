@@ -128,6 +128,7 @@ class TestAdvisor:
         [factory] = Advisor('anthropic:claude-opus-4-8').get_native_tools()
         assert callable(factory)
         ctx = RunContext(deps=None, model=_RealtimeLikeModel(), usage=RunUsage())
+        assert ctx.model.model_id == 'anthropic:voice'
         assert factory(ctx) == AdvisorTool(model='claude-opus-4-8')
 
     async def test_fallback_model_gets_the_advisor_for_its_own_provider(self) -> None:
