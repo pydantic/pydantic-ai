@@ -34,6 +34,7 @@ from pydantic_ai.capabilities import (
     DynamicCapability,
     FileUnderstanding,
     HandleDeferredToolCalls,
+    Hooks,
     LocalWorkspace,
     ModelFallback,
     NativeTool,
@@ -433,6 +434,27 @@ def _open_notes(agent: Agent[Any, Any], clock: Clock) -> None:
         return 'Opened.'
 
 
+def _notes_loaded_before_run() -> list[AbstractCapability[Any]]:
+    hooks = Hooks[Any]()
+
+    @hooks.on.before_run
+    async def load_notes(ctx: RunContext[Any]) -> None:
+        ctx.load_capability('notes')
+
+    return [*_notes(), hooks]
+
+
+def _notes_loaded_before_model_request() -> list[AbstractCapability[Any]]:
+    hooks = Hooks[Any]()
+
+    @hooks.on.before_model_request
+    async def load_notes(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        ctx.load_capability('notes')
+        return request_context
+
+    return [*_notes(), hooks]
+
+
 LOADED_CAPABILITY_CASES: dict[str, tuple[Callable[[], list[AbstractCapability[Any]]], Scenario]] = {
     # The clock moves on every request, so every request after the load records a change to its instructions.
     'deferred:dynamic_instructions': (
@@ -463,6 +485,25 @@ LOADED_CAPABILITY_CASES: dict[str, tuple[Callable[[], list[AbstractCapability[An
             serialize_history=True,
         ),
     ),
+    # A `before_run` or `before_model_request` hook loads the capability, which takes effect on that request.
+    **{
+        f'deferred:loaded_{hook}': (
+            capabilities,
+            Scenario(
+                turns=(
+                    Turn(calls=(('write_note', {'content': 'Weather is sunny.'}),)),
+                    Turn(text='Noted.'),
+                    Turn(calls=(('look_up', {'topic': 'sports'}),)),
+                    Turn(text='Here is more.'),
+                ),
+                serialize_history=True,
+            ),
+        )
+        for hook, capabilities in (
+            ('before_run', _notes_loaded_before_run),
+            ('before_model_request', _notes_loaded_before_model_request),
+        )
+    },
 }
 """Deferred capabilities loaded mid-conversation, by the model or from code, whose instructions may then change."""
 

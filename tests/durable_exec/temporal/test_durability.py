@@ -5207,6 +5207,86 @@ async def test_durability_load_capability_from_tool_raises(client: Client):
             )
 
 
+_load_before_run_hooks = Hooks[None]()
+
+
+@_load_before_run_hooks.on.before_run
+async def _load_billing_before_run(ctx: RunContext[None]) -> None:
+    ctx.load_capability('code-load-billing')
+
+
+_load_before_request_hooks = Hooks[None]()
+
+
+@_load_before_request_hooks.on.before_model_request
+async def _load_billing_before_request(
+    ctx: RunContext[None], request_context: ModelRequestContext
+) -> ModelRequestContext:
+    ctx.load_capability('code-load-billing')
+    return request_context
+
+
+_code_load_before_run_agent = Agent(
+    FunctionModel(_code_load_model),
+    name='code_load_before_run_agent',
+    deps_type=type(None),
+    capabilities=[
+        _code_load_billing(),
+        _load_before_run_hooks,
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+_code_load_before_request_agent = Agent(
+    FunctionModel(_code_load_model),
+    name='code_load_before_request_agent',
+    deps_type=type(None),
+    capabilities=[
+        _code_load_billing(),
+        _load_before_request_hooks,
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class CodeLoadBeforeRunWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _code_load_before_run_agent.run('Was my invoice paid?')).output
+
+
+@workflow.defn
+class CodeLoadBeforeRequestWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _code_load_before_request_agent.run('Was my invoice paid?')).output
+
+
+@pytest.mark.parametrize(
+    'agent, workflow_cls',
+    [
+        (_code_load_before_run_agent, CodeLoadBeforeRunWorkflow),
+        (_code_load_before_request_agent, CodeLoadBeforeRequestWorkflow),
+    ],
+    ids=['before_run', 'before_model_request'],
+)
+async def test_durability_load_capability_before_a_request(
+    client: Client, agent: Agent[None, str], workflow_cls: type[Any]
+):
+    """`before_run` and `before_model_request` run in the workflow, so a load there takes effect on that request and replays.
+
+    The model calls the capability's tool on the first request, which only has it because the hook loaded it.
+    """
+    async with Worker(client, task_queue=TASK_QUEUE, workflows=[workflow_cls], plugins=[AgentPlugin(agent)]):
+        handle = await client.start_workflow(workflow_cls.run, id=workflow_cls.__name__, task_queue=TASK_QUEUE)
+        output = await handle.result()
+        history = await handle.fetch_history()
+
+    replay = await Replayer(workflows=[workflow_cls], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+
+    assert (output, replay.replay_failure) == ('Invoice paid.', None)
+
+
 # --- Passing image (BinaryImage) input through to a workflow ---
 
 _durability_multimodal_agent = Agent(

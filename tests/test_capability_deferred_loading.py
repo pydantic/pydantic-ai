@@ -14,11 +14,13 @@ from typing import Any, cast
 import pytest
 
 from pydantic_ai import (
+    AgentRunResult,
     CapabilityInstructionSource,
     InstructionBaselinePart,
     InstructionDigest,
     InstructionId,
     InstructionPart,
+    ModelRequestNode,
 )
 from pydantic_ai._deferred_capabilities import LoadExchanges, parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
@@ -33,7 +35,13 @@ from pydantic_ai.capabilities import (
     WrapModelRequestHandler,
     WrapperCapability,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, CapabilityPosition
+from pydantic_ai.capabilities.abstract import (
+    AbstractCapability,
+    AgentNode,
+    CapabilityOrdering,
+    CapabilityPosition,
+    NodeResult,
+)
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks
 from pydantic_ai.exceptions import (
@@ -3437,9 +3445,8 @@ async def test_load_capability_of_unregistered_capability_raises(
     assert str(exc_info.value) == error
 
 
-@pytest.mark.parametrize('hook', ['before_run', 'after_model_request'])
-async def test_load_capability_outside_tool_call_raises(hook: str) -> None:
-    """Outside a tool call a load could force an extra model turn after a final answer, so it's refused."""
+def _load_refunds_from(hook: str) -> Hooks[object]:
+    """A `Hooks` capability that loads `refunds` from `hook`."""
     hooks = Hooks[object]()
     if hook == 'before_run':
 
@@ -3447,7 +3454,16 @@ async def test_load_capability_outside_tool_call_raises(hook: str) -> None:
         async def load_before_run(ctx: RunContext[object]) -> None:
             ctx.load_capability('refunds')
 
-    else:
+    elif hook == 'before_model_request':
+
+        @hooks.on.before_model_request
+        async def load_before_model_request(
+            ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.load_capability('refunds')
+            return request_context
+
+    elif hook == 'after_model_request':
 
         @hooks.on.after_model_request
         async def load_after_model_request(
@@ -3456,10 +3472,132 @@ async def test_load_capability_outside_tool_call_raises(hook: str) -> None:
             ctx.load_capability('refunds')
             return response  # pragma: no cover
 
-    agent = Agent(FunctionModel(_open_case_then_check_refund), capabilities=[_refunds(), hooks])
+    elif hook == 'after_node_run':
 
-    with pytest.raises(UserError, match=r'can currently only be called while a tool call is being handled'):
-        await agent.run('hi')
+        @hooks.on.after_node_run
+        async def load_after_node_run(
+            ctx: RunContext[object], *, node: AgentNode[object], result: NodeResult[object]
+        ) -> NodeResult[object]:
+            if isinstance(node, ModelRequestNode):
+                ctx.load_capability('refunds')
+            return result
+
+    else:
+
+        @hooks.on.after_run
+        async def load_after_run(ctx: RunContext[object], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            ctx.load_capability('refunds')
+            return result  # pragma: no cover
+
+    return hooks
+
+
+@pytest.mark.parametrize('mode', ['run', 'run_stream', 'iter'])
+@pytest.mark.parametrize('hook', ['before_run', 'before_model_request'])
+async def test_load_capability_before_a_request_takes_effect_on_it(hook: str, mode: str) -> None:
+    """A load from `before_run` or `before_model_request` is recorded on the request it precedes, which then has it.
+
+    That request carries the capability's tool and states its instructions, so loading before the first request
+    of a run (#10089) needs no extra model turn.
+    """
+    first_request: list[tuple[list[str], str]] = []
+
+    def record(messages: list[ModelMessage], info: AgentInfo) -> None:
+        if not first_request:
+            first_request.append(([tool.name for tool in info.function_tools], str(messages[-1])))
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        record(messages, info)
+        return make_text_response('done')
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        record(messages, info)
+        yield 'done'
+
+    agent = Agent(
+        FunctionModel(model_fn, stream_function=stream_fn), capabilities=[_refunds(), _load_refunds_from(hook)]
+    )
+
+    if mode == 'run':
+        messages = (await agent.run('Was I refunded?')).all_messages()
+    elif mode == 'run_stream':
+        async with agent.run_stream('Was I refunded?') as streamed:
+            await streamed.get_output()
+        messages = streamed.all_messages()
+    else:
+        async with agent.iter('Was I refunded?') as agent_run:
+            async for _ in agent_run:
+                pass
+        assert agent_run.result is not None
+        messages = agent_run.result.all_messages()
+
+    tools, sent = first_request[0]
+    assert ('refund_status' in tools, 'Quote the refund policy.' in sent) == (True, True)
+    assert [type(part).__name__ for part in messages[0].parts] == [
+        'UserPromptPart',
+        'CapabilityLoadDeltaPart',
+        'ToolAvailabilityDeltaPart',
+        'InstructionBaselinePart',
+        'InstructionDeltaPart',
+    ]
+    assert _load_records(messages) == [('refunds', None)]
+
+
+async def test_load_capability_without_tools_before_run() -> None:
+    """A capability without tools loaded from `before_run` is recorded with no tool reveal, and its instructions are stated."""
+    policy = Capability[object](
+        id='policy', description='Refund policy.', instructions='Refunds take 5 days.', defer_loading=True
+    )
+    hooks = Hooks[object]()
+
+    @hooks.on.before_run
+    async def load_policy(ctx: RunContext[object]) -> None:
+        ctx.load_capability('policy')
+
+    sent: list[str] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(str(messages[-1]))
+        return make_text_response('done')
+
+    result = await Agent(FunctionModel(model_fn), capabilities=[policy, hooks]).run('How long do refunds take?')
+
+    assert ('Refunds take 5 days.' in sent[0], _load_records(result.all_messages())) == (True, [('policy', None)])
+    assert not any(isinstance(part, ToolAvailabilityDeltaPart) for part in result.all_messages()[0].parts)
+
+
+@pytest.mark.parametrize(
+    'hook, mode',
+    [
+        ('after_model_request', 'run'),
+        ('after_model_request', 'run_stream'),
+        ('after_node_run', 'run'),
+        ('after_run', 'run'),
+        ('after_run', 'run_stream'),
+    ],
+)
+async def test_load_capability_after_the_final_answer_raises(hook: str, mode: str) -> None:
+    """After a final model response no request follows, so a load from code there is refused.
+
+    `run_stream` ends with the streamed request's node, which `after_node_run` doesn't see complete.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return make_text_response('done')
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'done'
+
+    agent = Agent(
+        FunctionModel(model_fn, stream_function=stream_fn), capabilities=[_refunds(), _load_refunds_from(hook)]
+    )
+
+    with pytest.raises(UserError, match=r'can only be called where a model request follows'):
+        if mode == 'run':
+            await agent.run('hi')
+        else:
+            async with agent.run_stream('hi') as streamed:
+                await streamed.get_output()
 
 
 async def test_load_capability_from_output_tool_raises() -> None:

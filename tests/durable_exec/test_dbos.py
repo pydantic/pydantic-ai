@@ -2512,6 +2512,39 @@ def _billing_capability() -> Capability[object]:
     return billing
 
 
+@pytest.mark.parametrize('hook', ['before_run', 'before_model_request'])
+async def test_dbos_durability_load_capability_before_a_request(dbos: DBOS, hook: str) -> None:
+    """`before_run` and `before_model_request` run in the workflow, so a load there takes effect on that request."""
+    hooks = Hooks[object]()
+    if hook == 'before_run':
+
+        @hooks.on.before_run
+        async def load_before_run(ctx: RunContext[object]) -> None:
+            ctx.load_capability('billing')
+
+    else:
+
+        @hooks.on.before_model_request
+        async def load_before_request(
+            ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.load_capability('billing')
+            return request_context
+
+    agent = Agent(
+        FunctionModel(_load_capability_model),
+        name=f'dbos_load_capability_{hook}',
+        capabilities=[_billing_capability(), hooks, DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('Was my invoice paid?')).output
+
+    # The first request already has `invoice_status`, so the model calls it without opening a case.
+    assert await run_workflow() == 'Invoice paid.'
+
+
 async def test_dbos_durability_load_capability_from_tool_hook(dbos: DBOS) -> None:
     """A tool hook runs in the workflow even around a tool that runs as a step, so it can load a capability.
 

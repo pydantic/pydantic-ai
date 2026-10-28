@@ -144,7 +144,7 @@ from .tools import (
     RunContext,
     ToolDefinition,
 )
-from .toolsets._deferred_capability_loader import resolve_loaded_capability_instructions
+from .toolsets._deferred_capability_loader import capability_load_phase, resolve_loaded_capability_instructions
 from .toolsets._instruction_collection import collect_toolset_instructions
 
 if TYPE_CHECKING:
@@ -2799,6 +2799,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Note: for_run_step may already have been called by UserPromptNode for the
         # resume-without-prompt path; ToolManager.for_run_step is a no-op for the same step.
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+        self._capability_load_records = _reveal_tools_of_loads_before_run(
+            ctx, self.request, self._capability_load_records
+        )
 
         _display_first_run_banner(ctx)
 
@@ -2935,7 +2938,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         mirrored_messages = HistoryMirroringMessages(request_context.messages, ctx.state.message_history)
         request_context.messages = mirrored_messages
         try:
-            processed_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
+            with capability_load_phase('before_model_request'):
+                processed_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
         finally:
             # Only the before-chain keeps the old write-back; wrap and after hooks get a request-only list.
             mirrored_messages.detach()
@@ -2980,6 +2984,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     conversation_id=ctx.state.conversation_id,
                 )
 
+            # Loads a `before_model_request` hook made from code go on this request, ahead of the instructions
+            # resolved below, so the request states the capabilities' instructions as after any other load.
+            if loads := _enqueue.run_queue(run_context).pop_capability_loads():
+                for target in _history_recording_targets(ctx, messages):
+                    target.parts = [*target.parts, *loads]
+                self._capability_load_records.extend(loads)
             self._emit_capability_load_records(ctx)
             # Diff the tools this request will actually carry — after the hooks, which may have changed them —
             # and record newcomers where both this request and the persisted history will carry them.
@@ -4322,6 +4332,52 @@ def _deliver_capability_loads(
     if loads := queue.pop_capability_loads():
         request.parts = [*request.parts, *loads]
     return loads
+
+
+def _reveal_tools_of_loads_before_run(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+    request: _messages.ModelRequest,
+    records: list[_enqueue.CapabilityLoadRecord],
+) -> list[_enqueue.CapabilityLoadRecord]:
+    """Reveal the tools of the loads delivered on `request` that were queued without a reveal, and return all records.
+
+    A load from `before_run` is queued before any step has resolved its tools, so it can't name them. Now that this
+    step has, each one's `ToolAvailabilityDeltaPart` goes right after its `CapabilityLoadDeltaPart`, as for any other
+    load from code.
+    """
+    tools = ctx.deps.tool_manager.tools or {}
+    reveals: dict[int, _messages.ToolAvailabilityDeltaPart] = {}
+    for index, record in enumerate(records):
+        if not isinstance(record, _messages.CapabilityLoadDeltaPart) or (
+            index + 1 < len(records) and isinstance(records[index + 1], _messages.ToolAvailabilityDeltaPart)
+        ):
+            continue
+        names = sorted(name for name, tool in tools.items() if tool.tool_def.capability_id in record.loaded)
+        if names:
+            reveals[id(record)] = _messages.ToolAvailabilityDeltaPart(
+                tools_added=names, tool_call_id=record.tool_call_id
+            )
+            ctx.deps.discovered_tool_names.update(names)
+    if not reveals:
+        return records
+
+    request.parts = _with_reveals(request.parts, reveals)
+    return _with_reveals(records, reveals)
+
+
+_PartT = TypeVar('_PartT', bound=_messages.ModelRequestPart)
+
+
+def _with_reveals(
+    parts: Sequence[_PartT], reveals: dict[int, _messages.ToolAvailabilityDeltaPart]
+) -> list[_PartT | _messages.ToolAvailabilityDeltaPart]:
+    """`parts` with each reveal in `reveals` right after the part it's keyed on by `id()`."""
+    result: list[_PartT | _messages.ToolAvailabilityDeltaPart] = []
+    for part in parts:
+        result.append(part)
+        if (reveal := reveals.get(id(part))) is not None:
+            result.append(reveal)
+    return result
 
 
 def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:

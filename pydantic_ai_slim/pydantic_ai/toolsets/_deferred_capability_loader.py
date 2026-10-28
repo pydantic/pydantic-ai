@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import TypeAdapter
 
@@ -154,22 +157,39 @@ async def resolve_loaded_capability_instructions(
     return [replace(part, id=InstructionId(source, name=part.name)) for part in parts]
 
 
+LoadPhase = Literal['before_run', 'before_model_request']
+"""A capability hook that runs before a model request, where a load from code takes effect on that request."""
+
+_load_phase: ContextVar[LoadPhase | None] = ContextVar('_load_phase', default=None)
+
+
+@contextmanager
+def capability_load_phase(phase: LoadPhase) -> Iterator[None]:
+    """Mark the `before_run` or `before_model_request` hooks running inside as a place `ctx.load_capability()` works."""
+    token = _load_phase.set(phase)
+    try:
+        yield
+    finally:
+        _load_phase.reset(token)
+
+
 def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:
     """Load a deferred capability from code; see [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability]."""
-    # Only while a tool call is handled, where the run normally continues with another model request
-    # that the load can ride along with. After a model response with no tool calls, it would have to force
-    # an extra model turn; loading before a run's first model request is tracked in #10089.
-    if ctx.tool_call_id is None:
+    # Only where a model request follows that the load can ride along with: from `before_run`, ahead of the
+    # first request; from `before_model_request`, on the request being prepared; or while a tool call is handled,
+    # on the next request. After a final model response, it would have to force an extra model turn.
+    phase = _load_phase.get()
+    in_tool_call = phase is None and ctx.tool_call_id is not None
+    if phase is None and not in_tool_call:
         raise UserError(
-            '`ctx.load_capability()` can currently only be called while a tool call is being handled: '
-            'from a tool function or a tool hook such as `after_tool_execute`. Loading before the first '
-            'model request of a run is tracked in https://github.com/pydantic/pydantic-ai/issues/10089.'
+            '`ctx.load_capability()` can only be called where a model request follows: from a `before_run` or '
+            '`before_model_request` hook, from a tool function, or from a tool hook such as `after_tool_execute`.'
         )
     tool_manager = ctx.tool_manager
     pending_messages = ctx.pending_messages
     # Durable engines swap the run's queue for a guard inside an activity, step, or task. Checked
     # first: a Temporal activity's context raises on most other fields, including `ctx.realtime`'s.
-    if tool_manager is None or not isinstance(pending_messages, PendingMessageQueue):
+    if (in_tool_call and tool_manager is None) or not isinstance(pending_messages, PendingMessageQueue):
         raise UserError(
             '`ctx.load_capability()` is not supported inside a durable execution activity, step, or task, '
             'whose recorded result is replayed without re-running your code. '
@@ -177,9 +197,11 @@ def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx: RunCo
         )
     if ctx.realtime:
         raise UserError('`ctx.load_capability()` is not supported in a realtime session.')
-    tool_def = tool_manager.get_tool_def(ctx.tool_name) if ctx.tool_name is not None else None
-    if tool_def is not None and tool_def.kind == 'output':
-        raise UserError('`ctx.load_capability()` cannot be called from an output tool, which ends the run.')
+    if in_tool_call:
+        assert tool_manager is not None
+        tool_def = tool_manager.get_tool_def(ctx.tool_name) if ctx.tool_name is not None else None
+        if tool_def is not None and tool_def.kind == 'output':
+            raise UserError('`ctx.load_capability()` cannot be called from an output tool, which ends the run.')
 
     if isinstance(capability, str):
         capability_id = capability
@@ -196,7 +218,9 @@ def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx: RunCo
     if capability_id not in ctx.capabilities:
         raise UserError(f'No capability with id {capability_id!r} is registered in this run.')
 
-    if _is_active_or_being_loaded_by_the_model(ctx, capability_id):
+    # The model's calls in the response being executed only count during a tool call: before a request, the
+    # last response's calls have already run.
+    if capability_id in ctx.active_capability_ids or (in_tool_call and _executing_load_calls(ctx, capability_id)):
         return False
     if ctx.capabilities[capability_id].defer_loading is not True:
         # Inactive without being deferred itself, so it sits inside a deferred capability that isn't loaded yet.
@@ -204,16 +228,16 @@ def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx: RunCo
 
     # Recorded without a `load_capability` call, which the request may have no tool for: a
     # `CapabilityLoadDeltaPart` naming the capability, then the same `ToolAvailabilityDeltaPart` a
-    # model's load leaves after its return, revealing its tools. The next request then states the
+    # model's load leaves after its return, revealing its tools. The request it's recorded on then states the
     # capability's instructions, as after a model's load.
     records: list[CapabilityLoadRecord] = [
         CapabilityLoadDeltaPart(loaded=[capability_id], tool_call_id=ctx.tool_call_id)
     ]
     if tools := _capability_tool_names(ctx, capability_id):
         records.append(ToolAvailabilityDeltaPart(tools_added=tools, tool_call_id=ctx.tool_call_id))
-    # Delivered with the next model request; if this step ends the run instead (a tool call needs
-    # approval or is deferred, or output is produced), the load is dropped rather than forcing one.
-    # `False` if an earlier or parallel call already queued it.
+    # Delivered with the request being prepared (from `before_model_request`) or the next one; if a tool call's step
+    # ends the run instead (a tool call needs approval or is deferred, or output is produced), the load is dropped
+    # rather than forcing a request. `False` if an earlier or parallel call already queued it.
     return pending_messages.append_capability_load(capability_id, records)
 
 
@@ -231,14 +255,6 @@ def _part_of_unloaded_group_message(ctx: RunContext[Any], capability_id: str) ->
     return (
         f'Capability {capability_id!r} is part of deferred capability {names} and loads with it. Load {names} instead.'
     )
-
-
-def _is_active_or_being_loaded_by_the_model(ctx: RunContext[Any], capability_id: str) -> bool:
-    """Whether `capability_id` is active, or a load of it is among the model's calls being executed.
-
-    A load queued from code is checked when queueing, under the queue's lock.
-    """
-    return capability_id in ctx.active_capability_ids or bool(_executing_load_calls(ctx, capability_id))
 
 
 def _is_duplicate_load_in_response(ctx: RunContext[Any], capability_id: str) -> bool:
