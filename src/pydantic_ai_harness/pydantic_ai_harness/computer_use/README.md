@@ -95,10 +95,15 @@ The actions in a call run in order, and one that fails stops the call: the actio
 result says which action failed and why, ends with a screenshot as usual, and has the error in its `metadata`, a
 `ComputerResult`. A position outside the screen fails the whole call before anything runs.
 When the environment is gone, the run ends with `WorkspaceUnavailableError`.
-When the display restarted since the model's last screenshot, such as after its sandbox was stopped, the next call
-runs none of its actions, which would land on whatever took the place of the windows the model saw, and its result
-tells the model those windows are gone. Under Temporal, Prefect and Render the tool runs in workflow code, which can't
-tell that the display restarted, so the model gets no such notice there.
+When the display restarted since the model's last screenshot, such as after its sandbox was stopped, the call stops
+before its next action that would change the screen, which would land on whatever took the place of the windows the
+model saw, and its result tells the model those windows are gone. Under Temporal, Prefect and Render the tool runs in
+workflow code, which can't tell that the display restarted, so the model gets no such notice there. A restart is
+known to the sandbox object that started the display again: a run attached to the same sandbox by its ref, through
+another object, isn't told.
+
+Agents in one process on one screen, such as parallel sub-agents, take turns at it a whole call at a time, so one's
+clicks and typing never land between another's. Agents in separate processes, or in separate durable workflows, don't.
 
 ## Watching a run
 

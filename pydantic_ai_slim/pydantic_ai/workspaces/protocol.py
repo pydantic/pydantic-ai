@@ -282,9 +282,7 @@ class SupportsDisplay(Protocol):
     def display(self) -> Display | None:
         """This environment's display, or `None` for an environment without one, decided without I/O.
 
-        It is the same object for the backend's lifetime, through restarts and reconnects. Two backends attached to
-        one environment may each have their own, so state shared per environment, such as a lock that makes runs on
-        one screen take turns, is keyed on the backend's `ref`, or on this object while `ref` is `None`.
+        It is the same object for the backend's lifetime, through restarts and reconnects.
         """
         ...
 
