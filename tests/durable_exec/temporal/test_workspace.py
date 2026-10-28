@@ -284,12 +284,9 @@ class WorkspaceCallsWorkflow:
         ).workspace
         if read:
             await workspace.read_bytes(read)
-            return
-        await workspace.exists('a.txt')
-        try:
+        else:
+            await workspace.exists('a.txt')
             await workspace.run(['sleep', '900'], timeout=900)
-        except TypeError:
-            pass  # The fake provider runs no commands; the activity was still scheduled.
 
 
 async def _execute_workspace_calls(client: Client, read: str = '') -> WorkflowHistory:
