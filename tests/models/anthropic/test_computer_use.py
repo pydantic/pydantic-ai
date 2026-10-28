@@ -615,6 +615,30 @@ async def test_a_result_without_metadata_or_screenshot_runs_every_call_and_ends_
     ]
 
 
+async def test_what_any_action_returned_answers_its_own_member_call() -> None:
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='unused'))
+    blocks: list[dict[str, Any]] = [
+        {'id': 'toolu_1', 'name': 'read_clipboard', 'input': {}},  # an action that returns something, added later
+        {'id': 'toolu_2', 'name': 'left_click', 'input': {}},
+    ]
+    part = ToolReturnPart(
+        'computer',
+        ['Ran 2 actions.', 'copied text', BinaryImage(data=b'png', media_type='image/png')],
+        tool_call_id='toolu_1',
+        metadata={'performed': 2},
+    )
+
+    results = await model._map_computer_results(part, blocks)  # pyright: ignore[reportPrivateUsage]
+
+    assert [list(r.get('content', []))[:2] for r in results] == [
+        [{'text': 'OK', 'type': 'text'}, {'text': 'copied text', 'type': 'text'}],
+        [
+            {'text': 'OK', 'type': 'text'},
+            {'source': {'data': 'cG5n', 'media_type': 'image/png', 'type': 'base64'}, 'type': 'image'},
+        ],
+    ]
+
+
 async def test_a_result_without_metadata_tells_the_last_call_what_happened() -> None:
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='unused'))
     blocks: list[dict[str, Any]] = [

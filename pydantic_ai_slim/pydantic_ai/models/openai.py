@@ -7630,11 +7630,43 @@ _BLANK_SCREENSHOT = (
 """A 1x1 PNG for a `computer_call_output` with no screenshot to send, since the API requires one."""
 
 
+_COMPUTER_ACTION_FIELDS: dict[str, frozenset[str]] = {
+    'click': frozenset({'type', 'x', 'y', 'button', 'keys'}),
+    'double_click': frozenset({'type', 'x', 'y', 'keys'}),
+    'drag': frozenset({'type', 'path', 'keys'}),
+    'move': frozenset({'type', 'x', 'y', 'keys'}),
+    'scroll': frozenset({'type', 'x', 'y', 'scroll_x', 'scroll_y', 'keys'}),
+    'keypress': frozenset({'type', 'keys'}),
+    'type': frozenset({'type', 'text'}),
+    'wait': frozenset({'type'}),
+    'screenshot': frozenset({'type'}),
+}
+"""The fields of each OpenAI computer action that map onto the `computer` tool."""
+
+
+def _unsupported_computer_fields(action: dict[str, Any]) -> list[str] | None:
+    """The fields of an OpenAI action that don't map onto the `computer` tool, or `None` when every one does."""
+    fields = _COMPUTER_ACTION_FIELDS.get(action.get('type', ''))
+    if fields is None:
+        return sorted(action.keys() - {'type'})
+    unsupported = action.keys() - fields
+    path: list[Any] = action.get('path') or []
+    if any(not isinstance(point, dict) or cast(dict[str, Any], point).keys() != {'x', 'y'} for point in path):
+        unsupported.add('path')
+    return sorted(unsupported) if unsupported else None
+
+
 def _map_computer_action(action: dict[str, Any]) -> list[dict[str, Any]]:
-    """One OpenAI computer action as `computer` tool actions; an unknown type fails validation, so the model retries."""
+    """One OpenAI computer action as `computer` tool actions, mapped field by field.
+
+    An action type or field that doesn't map fails validation, so the model retries; only the names of what didn't
+    map are kept, so the call never runs with part of what the model asked for.
+    """
+    if (unsupported := _unsupported_computer_fields(action)) is not None:
+        return [{'type': action.get('type'), 'unsupported_fields': unsupported}]
     modifiers: list[str] = action.get('keys') or []
     position = {'x': action.get('x'), 'y': action.get('y')}
-    match action.get('type'):
+    match action['type']:
         case 'click':
             button = action['button']
             return [
@@ -7648,7 +7680,8 @@ def _map_computer_action(action: dict[str, Any]) -> list[dict[str, Any]]:
         case 'double_click':
             return [{'type': 'click', **position, 'count': 2, 'modifiers': modifiers}]
         case 'drag':
-            return [{'type': 'drag', 'path': action['path'], 'modifiers': modifiers}]
+            path = [{'x': point['x'], 'y': point['y']} for point in action['path']]
+            return [{'type': 'drag', 'path': path, 'modifiers': modifiers}]
         case 'move':
             return [{'type': 'move', **position, 'modifiers': modifiers}]
         case 'scroll':
@@ -7665,8 +7698,14 @@ def _map_computer_action(action: dict[str, Any]) -> list[dict[str, Any]]:
                     )
             # A scroll by nothing only moves the pointer there.
             return scrolls or [{'type': 'move', **position, 'modifiers': modifiers}]
-        case _:  # `keypress`, `type` and `wait` have the tool's own shape; anything else fails validation.
-            return [action]
+        case 'keypress':
+            return [{'type': 'keypress', 'keys': action['keys']}]
+        case 'type':
+            return [{'type': 'type', 'text': action['text']}]
+        case 'wait':
+            return [{'type': 'wait'}]
+        case _:  # `screenshot`, the only type left
+            return [{'type': 'screenshot'}]
 
 
 def _map_computer_call(

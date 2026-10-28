@@ -295,6 +295,7 @@ try:
     from ._computer import (
         COMPUTER_NOT_EXECUTED,
         COMPUTER_TOOL_BETAS,
+        RETURN_NOTHING,
         NativeComputer,
         computer_member,
         map_computer_member,
@@ -3609,7 +3610,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
         """One result per toolset member call, as the toolset requires.
 
-        The calls that ran get `OK` and what they returned (a zoom's image, the pointer's position), and the last of
+        The calls that ran get `OK` and what their actions returned, such as a zoom's image, and the last of
         them the screenshot, since an error result can hold only text; the failed call gets its error and the rest
         Anthropic's not-executed text. A failed or denied result doesn't say which calls ran, so each gets its text.
         """
@@ -3643,8 +3644,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         metadata: ComputerResult = cast(ComputerResult, raw_metadata) if known else {'performed': ends[-1]}
         performed = metadata.get('performed', ends[-1])
         error = metadata.get('error')
-        # The content is a summary, what zoom and cursor-position actions returned, then the screen (or the note that
-        # replaced it in this request).
+        # The content is a summary, what each action that returns something returned, then the screen (or the note
+        # that replaced it in this request).
         content = part.content_items(mode='str')
         outputs = list(content[1:-1])
         screen = content[-1] if len(content) > 1 else None
@@ -3656,7 +3657,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 returned = [
                     await content_block(outputs.pop(0))
                     for action in actions
-                    if action['type'] in ('zoom', 'cursor_position') and outputs
+                    if action['type'] not in RETURN_NOTHING and outputs
                 ]
                 if index == last_ran and isinstance(screen, str):
                     # The screenshot was left out of this request: the call gets the text saying why.
