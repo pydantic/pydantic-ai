@@ -646,8 +646,10 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     max_summary_tokens: int | None = field(default=None, kw_only=True)
     """Token budget for the generated summary, stated in its prompt and applied as `max_tokens`.
 
-    After merging model defaults and `model_settings`, the smaller of the effective
-    `max_tokens` and this budget wins. `None` leaves existing output settings unchanged.
+    The smaller of this budget and the `max_tokens` in the summary agent's merged settings (the
+    summary model's defaults, `model_settings` and summarization capabilities) wins. Defaults on the
+    models inside a `FallbackModel` aren't considered, so a smaller limit there can be raised to the
+    budget. `None` leaves existing output settings unchanged.
     This limits the summary, not the recent messages preserved alongside it; a smaller
     budget can omit useful details.
     """
@@ -1153,9 +1155,14 @@ async def write_summary(
             'When updating a previous summary, rewrite it within this budget rather than appending to it.'
         )
 
-    def limit_summary(ctx: RunContext[None]) -> ModelSettings:
-        assert budget is not None
-        return {'max_tokens': min(budget, (ctx.model_settings or {}).get('max_tokens', budget))}
+    run_settings: Callable[[RunContext[None]], ModelSettings] | None = None
+    if budget is not None:
+        limit = budget
+
+        def limit_summary(ctx: RunContext[None]) -> ModelSettings:
+            return {'max_tokens': min(limit, (ctx.model_settings or {}).get('max_tokens', limit))}
+
+        run_settings = limit_summary
 
     # `isinstance` narrows the generic `Model` to `Model[Unknown]`; `cast` recovers
     # `Model[Any]`, mirroring core's own `reinject_system_prompt` idiom.
@@ -1170,7 +1177,7 @@ async def write_summary(
     )
     result = await agent.run(
         prompt,
-        model_settings=limit_summary if budget is not None else None,
+        model_settings=run_settings,
         conversation_id=ctx.conversation_id,
         usage=ctx.usage,
         usage_limits=reserved_usage_limits(ctx.usage_limits),

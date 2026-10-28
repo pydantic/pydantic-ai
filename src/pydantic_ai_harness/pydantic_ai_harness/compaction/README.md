@@ -645,7 +645,7 @@ when it falls outside the window. Pass `keep_tokens` to retain a minimum amount 
 instead of using `keep_messages`.
 `keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
 
-Setting a summary budget with `max_summary_tokens` is recommended to limit summary growth. It is stated in the prompt and caps the summary request's `max_tokens` after the effective model settings are merged, preserving a smaller limit without mutating the settings dictionary. The more specific summary budget wins over a larger explicit `max_tokens`, without a warning. With `max_summary_tokens=None` (the default), existing output settings are unchanged; a default budget needs benchmarking first.
+Setting a summary budget with `max_summary_tokens` is recommended to limit summary growth. It is stated in the prompt and caps the summary request's `max_tokens` against the `max_tokens` in the summary agent's merged settings (the summary model's defaults, `model_settings` and summarization capabilities), keeping the smaller of the two, without mutating the settings dictionary. Defaults on the individual models inside a `FallbackModel` aren't considered, so a smaller limit there can be raised to the budget. The more specific summary budget wins over a larger explicit `max_tokens`, without a warning. With `max_summary_tokens=None` (the default), existing output settings are unchanged; a default budget needs benchmarking first.
 
 ```python
 from pydantic_ai_harness import SummarizingCompaction

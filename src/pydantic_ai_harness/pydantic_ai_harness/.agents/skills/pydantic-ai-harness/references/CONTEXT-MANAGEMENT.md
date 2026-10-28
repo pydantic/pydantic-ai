@@ -142,8 +142,9 @@ and will raise `ValueError` in a future release), `instructions`, `bridge_prefix
 `event_stream_handler` (pass `drain_summary_events` for endpoints that reject non-streaming).
 
 `max_summary_tokens=None` leaves existing output limits unchanged. Setting a positive budget is
-recommended to limit summary growth: it is stated in the prompt and caps the summary request's
-effective `max_tokens` after settings merge. The smaller limit wins without a warning.
+recommended to limit summary growth: it is stated in the prompt and caps the `max_tokens` in the
+summary agent's merged settings; the smaller limit wins without a warning. Defaults on the models
+inside a `FallbackModel` aren't considered and can be raised to the budget.
 Incremental summaries are rewritten within the same budget. Smaller budgets can lose details;
 they do not cap retained recent messages. A length-stopped summary is retried once with its
 output budget restated; if that retry also hits the limit, it raises `UnexpectedModelBehavior`

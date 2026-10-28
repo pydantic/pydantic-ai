@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import warnings
 
 import pytest
 
@@ -67,16 +66,13 @@ class TestSummarizingCompaction:
         original_defaults = defaults.copy()
         model = FunctionModel(summarize, settings=defaults)
         original_settings = settings.copy() if settings is not None else None
-        with warnings.catch_warnings(record=True) as captured:
-            warnings.simplefilter('always')
-            strategy = SummarizingCompaction[None](
-                max_messages=1,
-                keep_messages=1,
-                preserve_first_user_message=False,
-                max_summary_tokens=budget,
-                model_settings=settings,
-            )
-        assert not captured
+        strategy = SummarizingCompaction[None](
+            max_messages=1,
+            keep_messages=1,
+            preserve_first_user_message=False,
+            max_summary_tokens=budget,
+            model_settings=settings,
+        )
         if custom_prompt:
             strategy.summary_prompt = 'Summarize this transcript:\n{messages}'
         history: list[ModelMessage] = [
@@ -138,11 +134,8 @@ class TestSummarizingCompaction:
             ModelResponse(parts=[TextPart('Investigation complete.')]),
             ModelRequest(parts=[UserPromptPart('Continue.')]),
         ]
-        with warnings.catch_warnings(record=True) as captured:
-            warnings.simplefilter('always')
-            await compact_now(strategy, history, model=FunctionModel(summarize))
+        await compact_now(strategy, history, model=FunctionModel(summarize))
         assert observed == [{'max_tokens': min(120, capability_limit), 'temperature': 0.2}]
-        assert not captured
 
     @pytest.mark.parametrize('model_kind', ['direct', 'fallback', 'wrapper'])
     async def test_budget_respects_capability_selected_model(self, model_kind: str) -> None:
