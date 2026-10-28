@@ -312,7 +312,7 @@ order = await get_order(order_id='ord_8Kq2Zp')
 final_result(order_id=order['id'], customer_id=order['customer'], total_cents=sum(order['lines']))
 ```
 
-With a union output type, there's one function per member, so the code picks the type it means by calling its function. The arguments are checked against the function's signature by the sandbox's type checker, and then go through [`RunContext.submit_output`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.submit_output), so they're validated and processed exactly like output from the model, and the run still only ends on output that matches `output_type`.
+With a union output type, there's one function per member, so the code picks the type it means by calling its function. On a fresh REPL's first snippet, the sandbox's type checker checks the arguments against the function's signature before the code runs. Either way, they then go through [`RunContext.submit_output`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.submit_output), which validates and processes them exactly like output from the model, so the run still only ends on output that matches `output_type`.
 
 Calling an output function stops the code there. If the output is accepted, `run_code` returns as usual with what the code printed before it, and the run ends without another model request. If it's rejected, `run_code` is answered with the validation errors, the rejection uses up one of the agent's output retries, and the REPL keeps the variables the code defined, so the model can fix the value and call the function again.
 
