@@ -20,6 +20,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
 )
+from pydantic_ai_harness._x11 import STARTED
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
 from ...workspace_fakes import FAKE_SCREENSHOT
@@ -42,7 +43,8 @@ class FakeDisplay:
             self.starts.append(command)
             if not self.up and not self.can_start:
                 return '', 'the X server did not start:\n(EE) Fatal server error', 1
-            self.up = True
+            started, self.up = not self.up, True
+            return (STARTED if started else ''), '', 0
         elif command.startswith('xdotool '):
             self.xdotool.append(command)
             if not self.up:
@@ -143,15 +145,18 @@ async def test_concurrent_first_uses_start_one_display(fake_e2b: FakeE2B, displa
 
 
 async def test_a_display_that_went_away_is_started_again(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    workspace = Workspace(E2BSandboxBackend(desktop=True))
+    backend = E2BSandboxBackend(desktop=True)
+    workspace = Workspace(backend)
     await workspace.display_size()
+    assert backend.display is not None and backend.display.take_fresh_start() is True
 
     display.up = False
-    with pytest.raises(WorkspaceError, match="Can't open display"):
+    with pytest.raises(WorkspaceError, match=r'^The display had stopped, so the action did not run'):
         await workspace.act(Click(x=1, y=1))
     await workspace.act(Click(x=1, y=1))
 
     assert len(display.starts) == 2
+    assert backend.display.take_fresh_start() is True
 
 
 async def test_a_look_at_a_display_that_went_away_starts_it_and_looks_again(

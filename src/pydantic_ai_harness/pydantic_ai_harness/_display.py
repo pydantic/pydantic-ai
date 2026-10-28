@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable
-from contextlib import AbstractAsyncContextManager, nullcontext
+from contextlib import AbstractAsyncContextManager, nullcontext, suppress
 from typing import Protocol, TypeVar
 
 import anyio
@@ -12,6 +12,7 @@ from pydantic_ai.workspaces import (
     ComputerAction,
     Point,
     Region,
+    WorkspaceError,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
@@ -27,6 +28,7 @@ class DisplayDriver(Protocol):
 
     async def display_size(self) -> tuple[int, int]: ...
     async def screenshot(self) -> bytes: ...
+    async def scaled_screenshot(self, width: int, height: int) -> bytes: ...
     async def act(self, action: ComputerAction) -> None: ...
     async def zoom(self, region: Region) -> bytes: ...
     async def cursor_position(self) -> Point: ...
@@ -39,7 +41,7 @@ class ManagedDisplay:
     call, start included, such as to map a provider's errors.
 
     A call that only looks, such as a screenshot, is retried once after a failure, which starts a display that was
-    lost; an action isn't, so nothing is done twice.
+    lost; an action isn't, so nothing is done twice. The backend calls `started_fresh` when a new display started.
     """
 
     def __init__(
@@ -52,6 +54,18 @@ class ManagedDisplay:
         self._scope = scope
         self._driver: DisplayDriver | None = None
         self._lock = anyio.Lock()
+        self._fresh = False
+        self._fresh_starts = 0
+
+    def started_fresh(self) -> None:
+        """Record that a new display started, without the windows that were open before."""
+        self._fresh = True
+        self._fresh_starts += 1
+
+    def take_fresh_start(self) -> bool:
+        """Whether a new display started since this was last asked."""
+        fresh, self._fresh = self._fresh, False
+        return fresh
 
     def reset(self) -> None:
         """Forget the running display, such as when the environment may have restarted: the next call starts it."""
@@ -80,15 +94,32 @@ class ManagedDisplay:
                 if driver is not None and self._driver is driver:
                     self._driver = None
                 # Retrying can't help an unavailable environment, and would double a timeout.
-                if not retry or isinstance(error, WorkspaceUnavailableError | WorkspaceTimeoutError):
+                if isinstance(error, WorkspaceUnavailableError | WorkspaceTimeoutError):
+                    raise
+                if not observe and driver is not None:
+                    await self._explain_failed_action(error)
+                if not retry:
                     raise
                 retry = False
+
+    async def _explain_failed_action(self, error: Exception) -> None:
+        """Start the display again after an action failed; if it had stopped, say so instead of the raw failure."""
+        starts = self._fresh_starts
+        with suppress(Exception):  # the action's own failure says what went wrong
+            async with self._scope():
+                await self.driver()
+        if self._fresh_starts != starts:
+            raise WorkspaceError('The display had stopped, so the action did not run; it was started again.') from error
 
     async def display_size(self) -> tuple[int, int]:
         return await self._call(lambda driver: driver.display_size(), observe=True)
 
     async def screenshot(self) -> bytes:
         return await self._call(lambda driver: driver.screenshot(), observe=True)
+
+    async def scaled_screenshot(self, width: int, height: int) -> bytes:
+        """The whole display scaled to `width` by `height`, for a model that can't take it at full size."""
+        return await self._call(lambda driver: driver.scaled_screenshot(width, height), observe=True)
 
     async def act(self, action: ComputerAction) -> None:
         await self._call(lambda driver: driver.act(action), observe=False)

@@ -521,5 +521,10 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         return self._display
 
     async def _start_display(self) -> X11Computer:
-        assert self._desktop_size is not None
-        return await start_x11(self, self._desktop_size, _START_DESKTOP, lambda: f'Docker workspace {self._name}')
+        assert self._desktop_size is not None and self._display is not None
+        computer, started = await start_x11(
+            self, self._desktop_size, _START_DESKTOP, lambda: f'Docker workspace {self._name}'
+        )
+        if started:
+            self._display.started_fresh()
+        return computer

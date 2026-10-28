@@ -16,6 +16,10 @@ on the sandbox's display. Re-check these before changing the mapping, by running
 - Its names for the numpad are `num0` to `num9`, `num_enter`, `num_plus`, `num_minus`, `num_asterisk`, `num_slash`,
   `num_decimal` and `num_lock` (checked 2026-10-28); `menu` is refused by the display.
 - Pressing `f13` to `f24` crashes the sandbox's computer-use process for good: nothing restarts it.
+- After the sandbox stops and starts, `computer_use.get_status()` says `inactive` and `start()` brings the desktop
+  back; an input request before that start answers 500 and breaks the desktop for good: every later request answers
+  503 until the sandbox stops and starts again (checked 2026-10-28).
+- `take_compressed` with a PNG `scale` from 0.1 to 1.0 returns the screen scaled (checked 2026-10-28).
 """
 
 from __future__ import annotations as _annotations
@@ -26,7 +30,7 @@ from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING
 
 import anyio
-from daytona import ScreenshotRegion
+from daytona import ScreenshotOptions, ScreenshotRegion
 
 from pydantic_ai.workspaces import (
     Click,
@@ -139,6 +143,18 @@ class DaytonaDesktop:
 
     def __init__(self, computer_use: AsyncComputerUse):
         self._computer_use = computer_use
+        # The sandbox may stop and start between a screenshot and the next action, such as while the model thinks,
+        # and input sent to its desktop before the desktop starts again breaks it for good.
+        self._check_before_acting = True
+
+    async def _check_running(self) -> None:
+        """Refuse the first action after a screenshot on a desktop that stopped, before sending it any input."""
+        if not self._check_before_acting:
+            return
+        status = await self._computer_use.get_status(request_timeout=_REQUEST_TIMEOUT)
+        if status.status != 'active':
+            raise WorkspaceError(f"Daytona's desktop is not running: its status is {status.status!r}.")
+        self._check_before_acting = False
 
     async def display_size(self) -> tuple[int, int]:
         displays = (await self._computer_use.display.get_info(request_timeout=_REQUEST_TIMEOUT)).displays or []
@@ -149,6 +165,14 @@ class DaytonaDesktop:
 
     async def screenshot(self) -> bytes:
         response = await self._computer_use.screenshot.take_full_screen(request_timeout=_REQUEST_TIMEOUT)
+        self._check_before_acting = True
+        return _png(response.screenshot)
+
+    async def scaled_screenshot(self, width: int, height: int) -> bytes:
+        screen_width, screen_height = await self.display_size()
+        options = ScreenshotOptions(fmt='png', scale=max(min(width / screen_width, height / screen_height, 1), 0.1))
+        response = await self._computer_use.screenshot.take_compressed(options, request_timeout=_REQUEST_TIMEOUT)
+        self._check_before_acting = True
         return _png(response.screenshot)
 
     async def zoom(self, region: Region) -> bytes:
@@ -192,6 +216,7 @@ class DaytonaDesktop:
             raise
 
     async def act(self, action: ComputerAction) -> None:
+        await self._check_running()
         mouse, keyboard = self._computer_use.mouse, self._computer_use.keyboard
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):

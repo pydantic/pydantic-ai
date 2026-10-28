@@ -32,6 +32,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceRef,
+    WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._workspace_provider import (
@@ -857,13 +858,32 @@ class DaytonaSandboxBackend(
     async def _display_scope(self) -> AsyncGenerator[None]:
         async with self._operation():
             sandbox = await self.get_sandbox()
-            async with _mapped_errors('The Daytona desktop failed', sandbox=sandbox):
-                yield
+            try:
+                async with _mapped_errors('The Daytona desktop failed', sandbox=sandbox):
+                    yield
+            except daytona.DaytonaTimeoutError as error:
+                raise WorkspaceTimeoutError(f'The Daytona desktop did not answer in time: {error}') from error
+            except daytona.DaytonaError as error:
+                # A server error, such as from a desktop that stopped with its sandbox, fails only this call: the
+                # display starts again on the next.
+                raise WorkspaceError(f'The Daytona desktop failed: {error}') from error
 
     async def _start_display(self) -> DaytonaDesktop:
+        assert self._display is not None
         sandbox = await self.get_sandbox()
-        await sandbox.computer_use.start(request_timeout=_REQUEST_TIMEOUT)
-        return DaytonaDesktop(sandbox.computer_use)
+        computer_use = sandbox.computer_use
+        try:
+            status = await computer_use.get_status(request_timeout=_REQUEST_TIMEOUT)
+            await computer_use.start(request_timeout=_REQUEST_TIMEOUT)
+        except daytona.DaytonaServiceUnavailableError as error:
+            # Checked live: once the desktop answers 503, only stopping and starting the sandbox brings it back.
+            raise WorkspaceUnavailableError(
+                f"The Daytona sandbox {sandbox.id!r}'s desktop stopped answering; stopping and starting the "
+                f'sandbox brings it back. ({error})'
+            ) from error
+        if status.status != 'active':
+            self._display.started_fresh()
+        return DaytonaDesktop(computer_use)
 
     async def live_view_url(self, *, expires_in: int = 3600) -> str:
         """A link to watch the desktop, and use it, in a browser, valid for `expires_in` seconds.
