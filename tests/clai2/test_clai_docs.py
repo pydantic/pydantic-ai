@@ -307,6 +307,7 @@ def test_docs_resolve_in_editable_and_wheel_installs(tmp_path: Path, monkeypatch
 def test_wheel_and_sdist_ship_every_doc_outside_the_package() -> None:
     build = tomllib.loads((PROJECT / 'pyproject.toml').read_text(encoding='utf-8'))['tool']['hatch']['build']['targets']
     outside = [source for source, _ in _CLAI_DOCS.values() if not source.startswith('pydantic_clai2/')]
+    assert len({Path(source).name for source in outside}) == len(outside), 'Bundled CLAI docs need unique basenames'
     assert build['wheel']['force-include'] == {
         source: f'pydantic_clai2/_docs/{Path(source).name}' for source in outside
     }
