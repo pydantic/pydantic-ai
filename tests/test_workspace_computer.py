@@ -113,6 +113,14 @@ def test_actions_are_validated_when_built_in_python(build: Any) -> None:
         build()
 
 
+def test_typed_text_refuses_control_characters_other_than_newline_and_tab() -> None:
+    assert TypeText(text='line 1\n\tline 2').text == 'line 1\n\tline 2'
+    # Each would press a key other than Enter or Tab (`\r` a second Enter, `\b` Backspace), or has no key at all.
+    for text in ('a\r\nb', 'a\x08b', 'a\x1bb', 'a\x7fb', 'a\x85b', 'a\x9fb'):
+        with pytest.raises(ValidationError, match=r'control character U\+00[0-9A-F]{2}: only `\\n` \(Enter\)'):
+            TypeText(text=text)
+
+
 async def test_workspace_display_methods_reach_a_backend_with_a_display() -> None:
     provider = InMemoryProvider()
     workspace = Workspace(provider.backend(None))

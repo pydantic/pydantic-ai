@@ -26,6 +26,7 @@ from pydantic_ai.workspaces import (
     CommandResult,
     ComputerAction,
     FileEntry,
+    MoveMouse,
     Point,
     ReadOnlyWorkspace,
     Region,
@@ -525,7 +526,8 @@ class ProviderBackend(
 
     async def cursor_position(self) -> Point:
         await self._files()
-        return Point(x=640, y=400)
+        moves = [action for action in self._provider.actions if isinstance(action, MoveMouse)]
+        return Point(x=moves[-1].x, y=moves[-1].y) if moves else Point(x=640, y=400)
 
 
 class ProviderWorkspaces(AbstractCapability[Any]):
