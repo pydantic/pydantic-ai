@@ -598,16 +598,13 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (documents, including those returned by tools, Web Fetch, and Web Search on models whose web tools
-      run from code execution by default, which the setting switches to direct calls unless the request needs code
-      execution; see
-      [`anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers])
+    * Anthropic (documents, including those returned by tools, and Web Fetch)
     * Bedrock (TXT and PDF documents, including those returned by tools, on Anthropic models)
     * xAI (inline citations)
 
     Only used when the output is text. On Anthropic models, a `tool_choice` that forces a tool call raises a
-    `UserError` when the request has a document or Web Fetch tool to cite. Providers that always cite ignore this
-    setting. See [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
+    `UserError` when the request has something to cite. Providers that always cite ignore this setting. See
+    [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
     """
 
     cache: CacheSetting

@@ -4432,17 +4432,10 @@ async def test_anthropic_citations_with_forced_tool_raises(
     assert get_mock_chat_completion_kwargs(mock_client) == []
 
 
-@pytest.mark.parametrize('web_search', [pytest.param(False, id='nothing'), pytest.param(True, id='web-search')])
-async def test_anthropic_citations_with_forced_tool_without_document_or_web_fetch(
-    allow_model_requests: None, web_search: bool
-) -> None:
-    """With no document or Web Fetch tool, a forced tool call is allowed.
+async def test_anthropic_citations_with_forced_tool_and_nothing_to_cite(allow_model_requests: None) -> None:
+    """With no document or Web Fetch tool, the setting doesn't change the request, so a forced tool call is allowed.
 
-    That includes web search, which the setting sends with direct calls on models with the `20260209` web tools: in
-    live runs on Claude Haiku 5.5, Sonnet 4.6 and Opus 4.8, the model searched directly and kept the markup out of the
-    forced tool's arguments, unlike with a document.
-
-    Unit test: it pins that the run goes ahead, and the callers sent.
+    Unit test: it pins that the run goes ahead.
     """
     mock_client = MockAnthropic.create_mock(
         [
@@ -4454,12 +4447,8 @@ async def test_anthropic_citations_with_forced_tool_without_document_or_web_fetc
         ]
     )
     agent = Agent(
-        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client)),
-        capabilities=[
-            Citations(),
-            _ForceToolOnFirstStep('required'),
-            *([NativeTool(WebSearchTool())] if web_search else []),
-        ],
+        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client)),
+        capabilities=[Citations(), _ForceToolOnFirstStep('required')],
     )
 
     @agent.tool_plain
@@ -4469,11 +4458,6 @@ async def test_anthropic_citations_with_forced_tool_without_document_or_web_fetc
     result = await agent.run('Save a summary of the returns policy.')
 
     assert result.output == 'Saved.'
-    assert [
-        tool.get('allowed_callers')
-        for tool in get_mock_chat_completion_kwargs(mock_client)[0]['tools']
-        if tool.get('name') == 'web_search'
-    ] == ([['direct']] if web_search else [])
 
 
 @pytest.mark.parametrize('citations', [pytest.param(False, id='off'), pytest.param(True, id='on')])
@@ -15400,11 +15384,11 @@ async def test_anthropic_container_setting_dict_with_skills_passed_through(allow
 
 
 async def test_anthropic_container_from_message_history(allow_model_requests: None):
-    """Test that container_id from message history is passed to subsequent requests with code execution."""
+    """Test that container_id from message history is passed to subsequent requests."""
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock([c, c])
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
+    agent = Agent(m)
 
     # Create a message history with a container_id in provider_details
     history: list[ModelMessage] = [
@@ -15428,7 +15412,7 @@ async def test_anthropic_container_setting_false_ignores_history(allow_model_req
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
+    agent = Agent(m)
 
     # Create a message history with a container_id
     history: list[ModelMessage] = [

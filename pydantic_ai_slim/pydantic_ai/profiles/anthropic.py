@@ -171,15 +171,6 @@ class AnthropicModelProfile(ModelProfile, total=False):
     model's limit, like on APIs where the output limit is optional.
     """
 
-    anthropic_rejects_container_without_code_execution: bool
-    """Whether the API rejects a `container` on a request without code execution. Default: `True`.
-
-    When True, the container id from message history isn't sent on a request without code execution, such as a
-    follow-up with no tools. [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] turns it off for
-    Vertex AI, Amazon Bedrock Messages API (`AsyncAnthropicBedrockMantle`) and Microsoft Foundry clients, where it
-    hasn't been verified.
-    """
-
     anthropic_rejects_max_tokens_beyond_context_window: bool
     """Whether the model rejects a request whose input plus `max_tokens` exceeds its context window. Default: `False`.
 

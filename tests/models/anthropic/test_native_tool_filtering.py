@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from types import MappingProxyType
 from typing import Literal
 
 import pytest
@@ -20,8 +18,6 @@ from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_co
 with try_import() as imports_successful:
     from anthropic.types.beta import (
         BetaCodeExecutionResultBlock,
-        BetaCodeExecutionTool20250825,
-        BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionToolResultBlock,
         BetaDirectCaller,
         BetaInputJSONDelta,
@@ -37,7 +33,6 @@ with try_import() as imports_successful:
         BetaServerToolUseBlock,
         BetaTextBlock,
         BetaUsage,
-        BetaWebSearchTool20250305,
     )
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
@@ -49,7 +44,6 @@ pytestmark = [
 ]
 
 _TOOL_CALL_ID = 'srvtoolu_test'
-_CODE_EXECUTION_WIRE_TOOL: dict[str, object] = {'type': 'code_execution_20250825', 'name': 'code_execution'}
 ServerToolName = Literal[
     'advisor',
     'web_search',
@@ -220,212 +214,40 @@ async def test_anthropic_filters_unconfigured_native_tool_calls(
             True,
             id='setting-code-execution',
         ),
-        pytest.param([WebSearchTool()], {'citations': True}, False, id='citations-web-search'),
-        pytest.param([WebFetchTool()], {'citations': True}, False, id='citations-web-fetch'),
-        pytest.param([WebFetchTool(enable_citations=True)], None, False, id='web-fetch-enable-citations'),
         pytest.param(
-            [WebSearchTool(), WebFetchTool(enable_citations=True)], None, True, id='uncited-web-search-keeps-default'
+            [WebSearchTool(), CodeExecutionTool()],
+            {'anthropic_web_tools_allowed_callers': ['direct']},
+            True,
+            id='setting-direct-with-code-execution-tool',
         ),
         pytest.param(
             [WebFetchTool()],
-            {'citations': True, 'anthropic_web_tools_allowed_callers': ['code_execution_20260120']},
+            {
+                'anthropic_web_tools_allowed_callers': ['direct'],
+                'extra_body': {'tools': [{'type': 'code_execution_20250825', 'name': 'code_execution'}]},
+            },
             True,
-            id='setting-takes-precedence-over-citations',
+            id='extra-body-tools-keep-main-filter',
         ),
-        pytest.param(
-            [WebSearchTool()],
-            {'citations': True, 'extra_body': {'tools': [_CODE_EXECUTION_WIRE_TOOL]}},
-            True,
-            id='extra-body-code-execution-with-cited-web-search',
-        ),
-        pytest.param(
-            [],
-            {'citations': True, 'extra_body': {'tools': [_CODE_EXECUTION_WIRE_TOOL]}},
-            True,
-            id='extra-body-code-execution-alone',
-        ),
-        pytest.param(
-            [WebSearchTool()],
-            {'extra_body': {'tools': [{'type': 'web_search_20250305', 'name': 'web_search'}]}},
-            False,
-            id='extra-body-replaces-code-execution',
-        ),
-        pytest.param([WebSearchTool()], {'extra_body': {'tools': None}}, False, id='extra-body-null-tools'),
     ],
 )
 async def test_anthropic_web_tool_callers_gate_implicit_code_execution(
     allow_model_requests: None,
     stream: bool,
     native_tools: list[AbstractNativeTool],
-    model_settings: AnthropicModelSettings | None,
+    model_settings: AnthropicModelSettings,
     expected_call: bool,
 ):
     """`code_execution` is implicitly enabled by the web tools only while one of them allows a code execution caller.
 
-    Tools in `extra_body` replace the built ones on the wire, so they decide instead.
+    `extra_body['tools']` replaces the built tools on the wire, so a request that has it keeps the filter it has
+    without the setting.
 
     Unit test because a sandbox `code_execution` call can't be requested reliably from the live API when the web tools
     only allow direct calls.
     """
     calls = await _server_tool_calls_kept(
         stream, 'code_execution', {'code': 'print(1)'}, '{"code":"print(1)"}', native_tools, model_settings
-    )
-    assert [call.tool_name for call in calls] == (['code_execution'] if expected_call else [])
-
-
-@pytest.mark.parametrize('stream', [False, True])
-@pytest.mark.parametrize(
-    ('native_tools', 'tool', 'expected_call'),
-    [
-        pytest.param(
-            [], {'type': 'code_execution_20250522', 'name': 'code_execution'}, True, id='code-execution-20250522'
-        ),
-        pytest.param([], _CODE_EXECUTION_WIRE_TOOL, True, id='code-execution-20250825'),
-        pytest.param(
-            [], {'type': 'code_execution_20260120', 'name': 'code_execution'}, True, id='code-execution-20260120'
-        ),
-        pytest.param(
-            [], {'type': 'code_execution_20260521', 'name': 'code_execution'}, True, id='code-execution-20260521'
-        ),
-        pytest.param([], {'type': 'web_search_20260209', 'name': 'web_search'}, True, id='web-search-20260209'),
-        pytest.param([], {'type': 'web_search_20260318', 'name': 'web_search'}, True, id='web-search-20260318'),
-        pytest.param([], {'type': 'web_fetch_20260209', 'name': 'web_fetch'}, True, id='web-fetch-20260209'),
-        pytest.param([], {'type': 'web_fetch_20260309', 'name': 'web_fetch'}, True, id='web-fetch-20260309'),
-        pytest.param([], {'type': 'web_fetch_20260318', 'name': 'web_fetch'}, True, id='web-fetch-20260318'),
-        pytest.param([], {'type': 'web_search_20250305', 'name': 'web_search'}, False, id='web-search-20250305'),
-        pytest.param([], {'type': 'web_fetch_20250910', 'name': 'web_fetch'}, False, id='web-fetch-20250910'),
-        pytest.param(
-            [],
-            {'type': 'web_fetch_20260209', 'name': 'web_fetch', 'allowed_callers': None},
-            True,
-            id='null-callers',
-        ),
-        pytest.param(
-            [],
-            {'type': 'web_search_20260318', 'name': 'web_search', 'allowed_callers': ['direct']},
-            False,
-            id='direct-callers',
-        ),
-        pytest.param(
-            [],
-            {'type': 'web_fetch_20260209', 'name': 'web_fetch', 'allowed_callers': 'direct'},
-            False,
-            id='callers-as-string',
-        ),
-        pytest.param(
-            [],
-            {'type': 'web_search_20250305', 'name': 'web_search', 'allowed_callers': ['code_execution_20260120']},
-            True,
-            id='previous-version-code-execution-caller',
-        ),
-        pytest.param(
-            [],
-            {'name': 'code_execution', 'input_schema': {'type': 'object'}},
-            False,
-            id='function-tool-named-code-execution',
-        ),
-        pytest.param([], {'type': ['code_execution_20250825'], 'name': 'odd'}, False, id='unhashable-type'),
-        pytest.param(
-            [CodeExecutionTool()],
-            {'type': 'code_execution_20260521', 'name': 'code_execution'},
-            True,
-            id='native-code-execution-newer-extra-body',
-        ),
-        pytest.param(
-            [WebSearchTool()],
-            {'type': 'web_search_20260318', 'name': 'web_search'},
-            True,
-            id='native-web-search-newer-extra-body',
-        ),
-    ],
-)
-async def test_anthropic_extra_body_tool_versions_gate_implicit_code_execution(
-    allow_model_requests: None,
-    stream: bool,
-    native_tools: list[AbstractNativeTool],
-    tool: dict[str, object],
-    expected_call: bool,
-):
-    """Code execution in `extra_body['tools']` is recognized by tool family, not by the versions Pydantic AI builds.
-
-    Any `code_execution_*` tool provisions it, and so does a web search or fetch tool newer than `web_search_20250305`
-    and `web_fetch_20250910` unless its `allowed_callers` only allow direct calls.
-
-    Unit test: a hand-rolled `extra_body['tools']` list can carry versions and shapes no recording has.
-    """
-    calls = await _server_tool_calls_kept(
-        stream,
-        'bash_code_execution',
-        {'command': 'ls'},
-        '{"command":"ls"}',
-        native_tools,
-        {'extra_body': {'tools': [tool]}},
-    )
-    assert [call.tool_name for call in calls] == (['code_execution'] if expected_call else [])
-
-
-@pytest.mark.parametrize('stream', [False, True])
-@pytest.mark.parametrize(
-    ('tools', 'expected_call'),
-    [
-        pytest.param(
-            lambda: [BetaCodeExecutionTool20250825Param(type='code_execution_20250825', name='code_execution')],
-            True,
-            id='typed-dict',
-        ),
-        pytest.param(
-            lambda: [BetaCodeExecutionTool20250825(type='code_execution_20250825', name='code_execution')],
-            True,
-            id='sdk-model',
-        ),
-        pytest.param(
-            lambda: [
-                BetaWebSearchTool20250305(
-                    type='web_search_20250305', name='web_search', allowed_callers=['code_execution_20260120']
-                )
-            ],
-            True,
-            id='sdk-model-code-execution-caller',
-        ),
-        pytest.param(lambda: {'tool': _CODE_EXECUTION_WIRE_TOOL}.values(), True, id='dict-values'),
-        pytest.param(lambda: [MappingProxyType(_CODE_EXECUTION_WIRE_TOOL)], True, id='mapping-proxy'),
-        pytest.param(
-            lambda: [
-                {
-                    'type': 'web_search_20250305',
-                    'name': 'web_search',
-                    'allowed_callers': frozenset({'code_execution_20260120'}),
-                }
-            ],
-            True,
-            id='frozenset-callers',
-        ),
-        pytest.param(
-            lambda: [{'type': 'web_search_20260209', 'name': 'web_search', 'allowed_callers': frozenset({'direct'})}],
-            False,
-            id='frozenset-direct-callers',
-        ),
-        pytest.param(lambda: (tool for tool in [_CODE_EXECUTION_WIRE_TOOL]), True, id='generator'),
-        pytest.param(lambda: [object()], True, id='unserializable'),
-    ],
-)
-async def test_anthropic_extra_body_tool_shapes_gate_implicit_code_execution(
-    allow_model_requests: None, stream: bool, tools: Callable[[], object], expected_call: bool
-):
-    """`extra_body['tools']` is read as the JSON the SDK sends, so every shape the SDK accepts is recognized.
-
-    A one-shot iterator can't be read without emptying it before the SDK sends it, and a value the SDK can't encode
-    fails the request anyway, so both are taken to provision code execution, as Pydantic AI did before it read them.
-
-    Unit test: these Python shapes never reach a recording, which holds the JSON.
-    """
-    calls = await _server_tool_calls_kept(
-        stream,
-        'bash_code_execution',
-        {'command': 'ls'},
-        '{"command":"ls"}',
-        [],
-        {'extra_body': {'tools': tools()}},
     )
     assert [call.tool_name for call in calls] == (['code_execution'] if expected_call else [])
 

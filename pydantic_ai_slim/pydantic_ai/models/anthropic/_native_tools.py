@@ -2,9 +2,9 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any, Literal, TypeAlias, TypeGuard, assert_never, cast
+from typing import Any, Literal, TypeAlias, assert_never, cast, get_args
 
 import pydantic_core
 from anthropic.types.beta import (
@@ -57,8 +57,6 @@ from pydantic import TypeAdapter
 
 from ... import _utils
 from ...messages import (
-    ModelMessage,
-    ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchCallPart,
@@ -91,57 +89,29 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
 _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 
 
-CODE_EXECUTING_WEB_TOOL_TYPES = frozenset({'web_search_20260209', 'web_fetch_20260209'})
+_CODE_EXECUTING_WEB_TOOL_TYPES = frozenset({'web_search_20260209', 'web_fetch_20260209'})
 """Web tool versions whose `allowed_callers` defaults to code execution, which Anthropic provisions server-side."""
 
-_DIRECT_DEFAULT_WEB_TOOL_TYPES = frozenset({'web_search_20250305', 'web_fetch_20250910'})
-"""Web tool versions the model calls directly unless `allowed_callers` says otherwise; later versions default to code
-execution."""
+_CODE_EXECUTION_TOOL_TYPES = frozenset(
+    f'code_execution_{version}' for version in get_args(AnthropicCodeExecutionToolVersion)
+)
 
 
-def is_str_sequence(value: object) -> TypeGuard[Sequence[str]]:
-    """Whether a value is a sequence of strings, as `allowed_callers` is on the wire, and not a bare string."""
-    if not isinstance(value, Sequence) or isinstance(value, str):
-        return False
-    return all(isinstance(item, str) for item in value)  # pyright: ignore[reportUnknownVariableType]
+def provisions_code_execution(tools: Sequence[BetaToolUnionParam]) -> bool:
+    """Whether Anthropic gives a request with these tools a code execution container.
 
-
-def provisions_code_execution(tools: Sequence[Mapping[str, object]]) -> bool:
-    """Whether Anthropic gives a request with these wire tools a code execution container.
-
-    Tools are recognized by family, not by the versions Pydantic AI builds, since a caller's `extra_body` can send any
-    version: a `code_execution_*` tool does, and so does a tool that code execution may call. That's one whose
-    `allowed_callers` names a code execution caller, or a web search or fetch tool newer than
-    `_DIRECT_DEFAULT_WEB_TOOL_TYPES` sent without `allowed_callers`. Tools are matched by wire type, since a function
-    tool can have any name, and each field is read as the JSON the API receives, where a `null` `allowed_callers` is
-    the default.
+    `CodeExecutionTool` does, and so does a tool that code execution may call: one whose `allowed_callers` names a
+    code execution caller, on any version, or one of `_CODE_EXECUTING_WEB_TOOL_TYPES` sent without `allowed_callers`.
+    Tools are matched by wire type, since a function tool can have any name.
     """
-    for tool in tools:
-        tool_type = tool.get('type')
-        if isinstance(tool_type, str) and tool_type.startswith('code_execution_'):
-            return True
-        if (callers := tool.get('allowed_callers')) is None:
-            if (
-                isinstance(tool_type, str)
-                and tool_type.startswith(('web_search_', 'web_fetch_'))
-                and tool_type not in _DIRECT_DEFAULT_WEB_TOOL_TYPES
-            ):
-                return True
-        elif is_str_sequence(callers) and any(caller != 'direct' for caller in callers):
-            return True
-    return False
-
-
-def ends_in_pending_code_execution(messages: Sequence[ModelMessage]) -> bool:
-    """Whether the history ends in a response with a code execution call that has no result yet, as a paused turn can."""
-    if not messages or not isinstance(last := messages[-1], ModelResponse):
-        return False
-    returned = {part.tool_call_id for part in last.parts if isinstance(part, NativeToolReturnPart)}
     return any(
-        isinstance(part, NativeToolCallPart)
-        and part.tool_name == CodeExecutionTool.kind
-        and part.tool_call_id not in returned
-        for part in last.parts
+        tool.get('type') in _CODE_EXECUTION_TOOL_TYPES
+        or (
+            any(caller != 'direct' for caller in tool['allowed_callers'])
+            if 'allowed_callers' in tool
+            else tool.get('type') in _CODE_EXECUTING_WEB_TOOL_TYPES
+        )
+        for tool in tools
     )
 
 
