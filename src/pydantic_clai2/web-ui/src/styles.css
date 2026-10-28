@@ -943,7 +943,8 @@ pre {
 
 .user-row {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
   margin-top: 6px;
 }
 
@@ -1104,13 +1105,23 @@ pre {
   font-size: 12px;
 }
 
-.code-head .copy {
-  margin-left: auto;
+.code-head .copy,
+.message-copy {
   color: var(--muted);
   font-size: 12px;
 }
 
-.code-head .copy:hover {
+.code-head .copy {
+  margin-left: auto;
+}
+
+.message-copy {
+  margin-top: 4px;
+  padding: 4px 0;
+}
+
+.code-head .copy:hover,
+.message-copy:hover {
   color: var(--text);
 }
 
