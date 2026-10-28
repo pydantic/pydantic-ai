@@ -16,9 +16,11 @@ loads the plugin again afterwards, so the next run uses it. Its first row runs t
 
 import os
 from collections.abc import Callable, Sequence
+from concurrent.futures import Future
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
+from threading import Thread
 from typing import Annotated, ClassVar, Literal, Self
 
 import logfire
@@ -545,9 +547,24 @@ def _variables_key(config: LogfireSettings, host: PluginHost[None]) -> str | Non
 
 
 def _shutdown(instance: logfire.Logfire) -> bool:
-    # SDK shutdown with flush=True can return on a flush timeout before stopping providers.
-    try:
-        flushed = instance.force_flush(timeout_millis=3000)
-    finally:
-        stopped = instance.shutdown(timeout_millis=3000, flush=False)
-    return flushed and stopped
+    result: Future[bool] = Future()
+
+    def shutdown() -> None:
+        try:
+            # SDK shutdown with flush=True can return on a flush timeout before stopping providers.
+            try:
+                flushed = instance.force_flush(timeout_millis=3000)
+            finally:
+                stopped = instance.shutdown(timeout_millis=3000, flush=False)
+            result.set_result(flushed and stopped)
+        except BaseException as exc:  # noqa: BLE001 -- transfer worker failures back to the caller.
+            result.set_exception(exc)
+
+    # OTel can ignore its flush timeout: https://github.com/open-telemetry/opentelemetry-python/issues/4568
+    # A daemon lets cleanup finish later without adding an interpreter-exit thread join.
+    worker = Thread(target=shutdown, name='clai2-logfire-shutdown', daemon=True)
+    worker.start()
+    worker.join(3)
+    if worker.is_alive():
+        return False
+    return result.result()

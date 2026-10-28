@@ -665,8 +665,10 @@ With `ui_events` on, the attributes that only hold names (`command`, `menu`,
 `OPENAI_API_KEY` or `sessions.naming` would otherwise be redacted. So is
 `prompt`, which agent spans already record unscrubbed.
 
-Unload flushes and shuts down only this plugin's providers. Reload creates a new
-instance. The supplied agent and global OpenTelemetry providers are unchanged, and the existing
+Unload flushes and shuts down only this plugin's providers. The plugin waits at
+most three seconds, then warns that some telemetry may not have been sent while
+cleanup continues in a daemon thread. OpenTelemetry's separate interpreter-exit
+cleanup can still wait for a stuck export. Reload creates a new instance. The supplied agent and global OpenTelemetry providers are unchanged, and the existing
 global propagator is preserved. The SDK may install shared executor propagation
 helpers; those hooks are not removed on unload. Core's normal
 instrumentation precedence applies: the plugin's explicit per-run capability
