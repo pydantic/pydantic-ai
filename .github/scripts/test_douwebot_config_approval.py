@@ -192,7 +192,7 @@ def test_workflow_routes_events_and_cancellation_without_relying_on_label_presen
     """Review, cancellation, cleanup, and label jobs follow their intended events."""
     workflow = _workflow()
     trigger = workflow[True]['pull_request_target']
-    assert trigger['types'] == ['opened', 'synchronize', 'labeled', 'unlabeled']
+    assert trigger['types'] == ['opened', 'synchronize', 'edited', 'labeled', 'unlabeled']
 
     jobs = workflow['jobs']
     review = jobs['review']
@@ -200,10 +200,13 @@ def test_workflow_routes_events_and_cancellation_without_relying_on_label_presen
         "github.event.action == 'labeled' && (github.event.label.name == 'douwebot' "
         "|| github.event.label.name == 'douwebot:review-agent-config')"
     )
-    assert jobs['size-label']['if'] == "github.event.action == 'opened' || github.event.action == 'synchronize'"
+    assert jobs['size-label']['if'] == (
+        "github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'edited'"
+    )
     assert jobs['category-classify']['if'] == "github.event.action == 'opened' || github.event.action == 'synchronize'"
     assert workflow['concurrency']['group'] == (
-        "pr-bots-${{ github.event.pull_request.number }}${{ ((github.event.action == 'labeled' "
+        "pr-bots-${{ github.event.pull_request.number }}${{ github.event.action == 'edited' && '-size' "
+        "|| ((github.event.action == 'labeled' "
         "&& github.event.label.name != 'douwebot' && github.event.label.name != 'douwebot:review-agent-config') "
         "|| (github.event.action == 'unlabeled' && github.event.label.name != 'douwebot:review-agent-config')) "
         "&& format('-noop-{0}', github.run_id) || '' }}"

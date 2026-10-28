@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -249,9 +250,9 @@ def test_review_failure_reports_distinguish_cancellation_from_failure():
     assert publisher.id == 'publish'
 
 
-@pytest.mark.parametrize(
-    ('scenario', 'outcome'),
-    [
+@pytest.mark.skipif(shutil.which('node') is None, reason='Node.js is required to execute the workflow JavaScript')
+def test_observer_cannot_choose_the_status_target():
+    scenarios: list[tuple[str, str]] = [
         ('forged-title', 'active'),
         ('empty-event-prs', 'active'),
         ('producer', 'active'),
@@ -267,16 +268,14 @@ def test_review_failure_reports_distinguish_cancellation_from_failure():
         ('moved-while-queued', 'stale'),
         ('repository-changed', 'stale'),
         ('closed-while-queued', 'stale'),
-    ],
-)
-def test_observer_cannot_choose_the_status_target(scenario: str, outcome: str):
+    ]
     workflow = _Workflow.model_validate(yaml.load(REVIEW_WORKFLOW.read_text(), Loader=yaml.BaseLoader))
     resolve = workflow.jobs['review-target'].steps[0].settings['script']
     pending = workflow.jobs['review-statuses'].steps[0].settings['script']
     # Execute the actual JavaScript host steps; Python cannot run these in-process.
     harness = (
         """
-const data = JSON.parse(process.argv[1]);
+async function runScenario(data) {
 const outputs = {};
 const writes = [];
 const calls = [];
@@ -346,54 +345,63 @@ async function pending() {
         + pending
         + """
 }
-resolve().then(pending).then(() => {
-  console.log(JSON.stringify({outputs, writes, calls}));
-}).catch(error => {
-  console.log(JSON.stringify({outputs, writes, calls, error: error.message}));
-  process.exitCode = 1;
-});
+try {
+  await resolve();
+  await pending();
+  return {outputs, writes, calls, returncode: 0};
+} catch(error) {
+  return {outputs, writes, calls, returncode: 1, error: error.message};
+}
+}
+const results = [];
+for (const data of JSON.parse(process.argv[1])) results.push(await runScenario(data));
+console.log(JSON.stringify(results));
 """
     )
-    data: dict[str, str] = {'scenario': scenario, 'head': OLD_HEAD, 'otherHead': HEAD}
+    data: list[dict[str, str]] = [
+        {'scenario': scenario, 'head': OLD_HEAD, 'otherHead': HEAD} for scenario, _ in scenarios
+    ]
     result = subprocess.run(
         ['node', '--input-type=module', '-e', harness, json.dumps(data)], capture_output=True, text=True
     )
-    output = json.loads(result.stdout)
-    if outcome == 'error':
-        assert result.returncode == 1
-        assert output['writes'] == []
-        assert output['outputs'] == {}
-        return
-    assert result.returncode == 0
-    if scenario == 'group':
-        assert output['outputs'] == {'group': OLD_HEAD, 'active': 'true'}
-        assert output['calls'] == []
-    else:
-        expected: dict[str, str | int] = {'number': 8, 'head': OLD_HEAD, 'repository': 888}
+    assert result.returncode == 0, result.stderr
+    outputs = json.loads(result.stdout)
+    for (scenario, outcome), output in zip(scenarios, outputs, strict=True):
+        if outcome == 'error':
+            assert output['returncode'] == 1
+            assert output['writes'] == []
+            assert output['outputs'] == {}
+            continue
+        assert output['returncode'] == 0
+        if scenario == 'group':
+            assert output['outputs'] == {'group': OLD_HEAD, 'active': 'true'}
+            assert output['calls'] == []
+        else:
+            expected: dict[str, str | int] = {'number': 8, 'head': OLD_HEAD, 'repository': 888}
+            if outcome == 'active':
+                expected['active'] = 'true'
+            assert output['outputs'] == expected
+            if scenario != 'native':
+                assert output['calls'][:2] == [
+                    ['run', {'owner': 'pydantic', 'repo': 'pydantic-ai', 'run_id': 900}],
+                    [
+                        'associations',
+                        {
+                            'owner': 'pydantic',
+                            'repo': 'pydantic-ai',
+                            'state': 'open',
+                            'head': 'attacker:attacker-branch',
+                            'per_page': 100,
+                        },
+                    ],
+                ]
+            assert output['calls'][-1] == ['live', {'owner': 'pydantic', 'repo': 'pydantic-ai', 'pull_number': 8}]
         if outcome == 'active':
-            expected['active'] = 'true'
-        assert output['outputs'] == expected
-        if scenario != 'native':
-            assert output['calls'][:2] == [
-                ['run', {'owner': 'pydantic', 'repo': 'pydantic-ai', 'run_id': 900}],
-                [
-                    'associations',
-                    {
-                        'owner': 'pydantic',
-                        'repo': 'pydantic-ai',
-                        'state': 'open',
-                        'head': 'attacker:attacker-branch',
-                        'per_page': 100,
-                    },
-                ],
+            assert [(write['sha'], write['context'], write['state']) for write in output['writes']] == [
+                (OLD_HEAD, context, 'pending') for context in review_gates.REVIEW_CONTEXTS.values()
             ]
-        assert output['calls'][-1] == ['live', {'owner': 'pydantic', 'repo': 'pydantic-ai', 'pull_number': 8}]
-    if outcome == 'active':
-        assert [(write['sha'], write['context'], write['state']) for write in output['writes']] == [
-            (OLD_HEAD, context, 'pending') for context in review_gates.REVIEW_CONTEXTS.values()
-        ]
-    else:
-        assert output['writes'] == []
+        else:
+            assert output['writes'] == []
 
 
 HEAD = 'a' * 40

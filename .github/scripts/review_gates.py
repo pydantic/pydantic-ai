@@ -154,7 +154,11 @@ def douwebot_approval(
     reviews: list[Review],
     comments: list[ReviewComment],
 ) -> Verdict:
-    """Verify review provenance, then associate findings with their immutable review head."""
+    """Verify provenance and associate findings with their immutable review head.
+
+    GitHub can move a comment's `commit_id` after a push. Use its parent's reviewed
+    commit, or `original_commit_id` when the parent is unavailable.
+    """
     verdict = Verdict()
     own_reviews: list[Review] = []
     marked_ids: set[int] = set()

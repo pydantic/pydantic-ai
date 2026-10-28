@@ -4,19 +4,19 @@ name: PR Bots
 on:
   # zizmor: ignore[dangerous-triggers] -- pull_request_target is needed for fork PRs; inputs are validated before use
   pull_request_target:
-    types: [opened, synchronize, labeled, unlabeled]
+    types: [opened, synchronize, edited, labeled, unlabeled]
 
 permissions: {}
 
 concurrency:
-  # No-op label events must not replace a pending review in the shared PR slot.
-  group: pr-bots-${{ github.event.pull_request.number }}${{ ((github.event.action == 'labeled' && github.event.label.name != 'douwebot' && github.event.label.name != 'douwebot:review-agent-config') || (github.event.action == 'unlabeled' && github.event.label.name != 'douwebot:review-agent-config')) && format('-noop-{0}', github.run_id) || '' }}
+  # Size-only edits and no-op labels must not replace a pending review in the shared PR slot.
+  group: pr-bots-${{ github.event.pull_request.number }}${{ github.event.action == 'edited' && '-size' || ((github.event.action == 'labeled' && github.event.label.name != 'douwebot' && github.event.label.name != 'douwebot:review-agent-config') || (github.event.action == 'unlabeled' && github.event.label.name != 'douwebot:review-agent-config')) && format('-noop-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event.action == 'synchronize' || (github.event.action == 'unlabeled' && github.event.label.name == 'douwebot:review-agent-config') }}
 
 jobs:
   size-label:
     name: Size Label
-    if: github.event.action == 'opened' || github.event.action == 'synchronize'
+    if: github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'edited'
     runs-on: ubuntu-latest
     permissions:
       contents: read

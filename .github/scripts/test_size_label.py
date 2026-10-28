@@ -379,6 +379,15 @@ def test_generated_paths_on_later_pages(tmp_path: Path, script: str):
     assert not (tmp_path / 'injected').exists()
 
 
+def test_base_edit_recalculates_the_size_label(tmp_path: Path, script: str):
+    """A changed base diff recovers its matching label without a push or manual edit."""
+    changes: list[ChangedFile] = [{'filename': 'src/code.py', 'additions': 101, 'deletions': 0}]
+    result = _run_step(tmp_path, script, ['size: S'], [changes])
+    assert result.process.returncode == 0, result.process.stderr
+    assert result.labels == ['size: M']
+    assert result.calls[-2:] == [f'DELETE {LABELS}/size: S', f'POST {LABELS}']
+
+
 def test_trusted_checkout():
     """Pin declarations to base code without persisting the privileged token."""
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding='utf-8'))
