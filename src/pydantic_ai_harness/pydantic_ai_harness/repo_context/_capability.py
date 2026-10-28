@@ -87,7 +87,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        invalidate the cached prefix. `nested_inject='pointer'` (default)
        enqueues a one-line pointer; `'contents'` inlines the file body. With it
        on, the instructions also gain one static sentence on how instruction
-       files relate: each applies to its subtree, and the deeper one wins.
+       files relate: each applies to its subtree, the deeper one wins, and the
+       user's direct instructions win over all of them.
 
     Cache note: injecting file contents into the system prompt costs prompt-cache
     stability. Strategy 1 is safe because its files are stable within a run, and a
