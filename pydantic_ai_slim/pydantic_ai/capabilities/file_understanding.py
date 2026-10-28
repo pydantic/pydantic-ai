@@ -53,8 +53,8 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     it does not accept is replaced by a text description of it, written by `fallback_subagent_model`. The model
     sees the description in the file's place; files it accepts are sent as they are. With
     [`ModelFallback`][pydantic_ai.capabilities.ModelFallback], each candidate is judged by its own profile, so
-    one that reads the file gets it and only one that can't gets the description. Without this capability, a file a tool returned
-    that the model cannot read is replaced by a note saying so instead.
+    one that reads the file gets it and only one that can't gets the description. Without this capability, a
+    file a tool returned that the model cannot read is replaced by a note saying so instead.
 
     ```python
     from pydantic_ai import Agent, DocumentUrl
