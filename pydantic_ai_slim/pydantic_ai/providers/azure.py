@@ -152,12 +152,6 @@ class AzureProvider(_OpenAISDKProvider):
             # single honest boundary to record. Users pass `retention=` to `prompt_cache_outlook`.
             # https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/prompt-caching
             base = openai_model_profile(model_name)
-            # The Azure OpenAI v1 API honors GPT-5.6's `prompt_cache_options` and explicit breakpoints, which the
-            # unified `cache` setting maps onto, so it's configurable here as on `OpenAIProvider`.
-            base = merge_profile(
-                base,
-                OpenAIModelProfile(supports_cache=bool(base.get('openai_supports_prompt_cache_breakpoints'))),
-            )
 
         # Azure Chat Completions API doesn't support document input.
         base = merge_profile(base, OpenAIModelProfile(openai_chat_supports_document_input=False))
@@ -175,6 +169,22 @@ class AzureProvider(_OpenAISDKProvider):
             base = merge_profile(base, OpenAIModelProfile(json_schema_transformer=_AzureGrokJsonSchemaTransformer))
 
         return base
+
+    def _configured_model_profile(self, model_name: str) -> ModelProfile | None:
+        """The model profile, with the unified `cache` setting turned on where this provider's API takes it.
+
+        The Azure OpenAI v1 API honors GPT-5.6's `prompt_cache_options` and explicit breakpoints, which the
+        unified `cache` setting maps onto, as on `OpenAIProvider`. A dated `api-version` deployment, reached
+        through an `AsyncAzureOpenAI` client, isn't verified to accept them, so `cache` stays off there.
+        """
+        profile = self.model_profile(model_name)
+        if (
+            profile is None
+            or isinstance(self._client, AsyncAzureOpenAI)
+            or not profile.get('openai_supports_prompt_cache_breakpoints')
+        ):
+            return profile
+        return merge_profile(profile, OpenAIModelProfile(supports_cache=True))
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:

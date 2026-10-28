@@ -2275,6 +2275,19 @@ async def test_azure_unified_cache(allow_model_requests: None):
     assert responses_request['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
 
 
+def test_azure_unified_cache_only_on_v1_api():
+    """The unified setting turns on with the Azure OpenAI v1 API, and stays off on a dated `api-version` deployment,
+    which isn't verified to accept GPT-5.6's prompt cache options."""
+    v1 = AzureProvider(azure_endpoint='https://example.openai.azure.com/openai/v1/', api_key='test')
+    dated = AzureProvider(
+        azure_endpoint='https://example.openai.azure.com', api_version='2025-04-01-preview', api_key='test'
+    )
+
+    assert OpenAIResponsesModel('gpt-5.6-sol', provider=v1).profile.get('supports_cache') is True
+    assert OpenAIResponsesModel('gpt-5.6-sol', provider=dated).profile.get('supports_cache', False) is False
+    assert OpenAIChatModel('gpt-5.6-sol', provider=dated).resolve_cache_retention({'cache': True}) is None
+
+
 async def test_azure_unified_cache_ignored_before_gpt_5_6(allow_model_requests: None):
     """Earlier Azure deployments cache implicitly with nothing to configure, so the unified setting sends nothing."""
     mock_client = MockOpenAIResponses.create_mock(responses_completion())
