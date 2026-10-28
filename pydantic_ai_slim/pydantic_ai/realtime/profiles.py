@@ -164,7 +164,7 @@ class RealtimeModelProfile(TypedDict, total=False):
     """How finely the model reports when its speech is heard, with the
     [`output_speech_timestamps`][pydantic_ai.realtime.RealtimeModelSettings.output_speech_timestamps] setting on:
     per `'word'`, per `'segment'` of one or more words, or `None` (the default) when it doesn't report it.
-    Azure AI Voice Live reports words."""
+    Azure AI Voice Live reports words, and xAI Grok Voice segments."""
     synthesizes_turn_boundary: bool
     """Whether [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] is inferred
     by Pydantic AI rather than reported by the provider.

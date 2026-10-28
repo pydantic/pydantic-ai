@@ -50,6 +50,7 @@ try:
         RealtimeConversationItemFunctionCall,
         RealtimeConversationItemFunctionCallOutput,
         RealtimeResponseUsage,
+        ResponseAudioDoneEvent,
         ResponseFunctionCallArgumentsDoneEvent,
     )
     from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
@@ -64,13 +65,13 @@ except ImportError as _import_error:  # pragma: no cover
 
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import UserError
-from ..messages import BinaryAudio, ModelMessage, RealtimeSessionErrorEvent
+from ..messages import BinaryAudio, ModelMessage, RealtimeSessionErrorEvent, SpeechTimestamp
 from ..models import ModelRequestParameters
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._lifecycle import InputId, LifecycleEvent, ResponseStarted
-from ._openai_lifecycle import AudioCommit, OpenAILifecycle
+from ._openai_lifecycle import AudioCommit, OpenAILifecycle, frame_response_id
 from ._openai_protocol import (
     INPUT_AUDIO_BUFFER_APPEND_EVENT,
     INPUT_AUDIO_BUFFER_CLEAR_EVENT,
@@ -96,6 +97,7 @@ from .codec import (
     ConversationItemCreated,
     CreateResponse,
     InputTranscript,
+    OutputSpeechTimestamps,
     RealtimeCodecEvent,
     RealtimeInput,
     ToolCall,
@@ -190,6 +192,96 @@ class _XaiSessionCreatedEvent(BaseModel):
     type: Literal['session.created']
     event_id: str
     session: _XaiSession
+
+
+class _OutputAudioDelta(BaseModel):
+    """The fields of xAI's `response.output_audio.delta` that time its speech."""
+
+    item_id: str
+    response_id: str | None = None
+    audio_duration_ms: int = 0
+    """How long the chunk's audio plays, which xAI adds to the OpenAI event."""
+
+
+class _OutputTranscriptDelta(BaseModel):
+    """The fields of xAI's `response.output_audio_transcript.delta` that time its speech."""
+
+    item_id: str
+    response_id: str | None = None
+    delta: str
+    start_time: float | None = None
+    """Where the delta starts in its item's audio, in seconds, which xAI adds to the OpenAI event."""
+
+
+@dataclass
+class _SpokenItem:
+    """An assistant audio item whose speech is being timed."""
+
+    response_id: str | None
+    audio_ms: int = 0
+    """How much of the item's audio has arrived."""
+    segment: tuple[str, int] | None = None
+    """The text and start of the segment whose end isn't known yet."""
+
+
+class _SpeechSegmentTimer:
+    """Times xAI's speech in segments, from the start each transcript delta reports in its item's audio.
+
+    A delta covers a few words to a sentence, so it times a `'segment'`. It ends where the next one starts, or else
+    where the item's audio ends, so it's reported once that is known: at the next delta, the end of the item's
+    audio, or the end of its response, which a barge-in cuts short.
+    """
+
+    def __init__(self) -> None:
+        self._items: dict[str, _SpokenItem] = {}
+
+    def frame(self, data: dict[str, Any]) -> list[OutputSpeechTimestamps]:
+        event_type = data.get('type')
+        if event_type == 'response.output_audio.delta':
+            audio = _OutputAudioDelta.model_validate(data)
+            self._item(audio.item_id, audio.response_id).audio_ms += audio.audio_duration_ms
+        elif event_type == 'response.output_audio_transcript.delta':
+            transcript = _OutputTranscriptDelta.model_validate(data)
+            item = self._item(transcript.item_id, transcript.response_id)
+            if transcript.start_time is None:
+                # Without a start of its own, the text goes on the segment before it.
+                if item.segment is not None:
+                    item.segment = (item.segment[0] + transcript.delta, item.segment[1])
+                return []
+            start_ms = round(transcript.start_time * 1000)
+            ended = self._end_segment(transcript.item_id, item, start_ms)
+            item.segment = (transcript.delta, start_ms)
+            return ended
+        elif event_type == 'response.output_audio.done':
+            item_id = ResponseAudioDoneEvent.model_validate(data).item_id
+            if (item := self._items.pop(item_id, None)) is not None:
+                return self._end_segment(item_id, item, item.audio_ms)
+        elif event_type == 'response.done':
+            # Items whose audio never got its `.done`, as when a barge-in cancels the response.
+            response_id = frame_response_id(event_type, data)
+            ended: list[OutputSpeechTimestamps] = []
+            for item_id, item in list(self._items.items()):
+                if item.response_id == response_id:
+                    del self._items[item_id]
+                    ended.extend(self._end_segment(item_id, item, item.audio_ms))
+            return ended
+        return []
+
+    def _item(self, item_id: str, response_id: str | None) -> _SpokenItem:
+        if (item := self._items.get(item_id)) is None:
+            item = self._items[item_id] = _SpokenItem(response_id)
+        return item
+
+    @staticmethod
+    def _end_segment(item_id: str, item: _SpokenItem, end_ms: int) -> list[OutputSpeechTimestamps]:
+        if item.segment is None:
+            return []
+        text, start_ms = item.segment
+        item.segment = None
+        timestamp = SpeechTimestamp(
+            text=text, start_ms=start_ms, duration_ms=max(end_ms - start_ms, 0), granularity='segment'
+        )
+        return [OutputSpeechTimestamps([timestamp], item_id=item_id, response_id=item.response_id)]
 
 
 __all__ = (
@@ -335,6 +427,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         conversation_id: str | None = None,
         replayed_items: list[ConversationItemCreated] | None = None,
         manual_turns: bool = False,
+        output_speech_timestamps: bool = False,
     ) -> None:
         if replayed_items is not None:
             warnings.warn(
@@ -392,6 +485,9 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         # so a request after it still goes out on its own and is dropped.
         self._audio_is_latest_input = False
         self._audio_uncommitted = False
+        self._speech_timer = _SpeechSegmentTimer() if output_speech_timestamps else None
+        self._timed_speech: list[OutputSpeechTimestamps] = []
+        """The timestamps of segments the frame being decoded ends, which go ahead of its own events."""
 
     async def send(self, content: RealtimeInput) -> None:
         if self._manual_turns and not isinstance(
@@ -523,7 +619,10 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         return await super()._attempt_reconnect()
 
     async def _decode_frame(self, raw: str) -> _DecodedFrame:
+        self._timed_speech.clear()
         events = await super()._decode_frame(raw)
+        # Ahead of the frame's own events, so a segment its response's end times lands before the response closes.
+        events.codec[:0] = self._timed_speech
         if any(_is_recoverable_max_duration(event) for event in events.codec):
             # Nothing more goes out on this socket: the re-dial replaces it.
             events.redial = 'the conversation reached its maximum duration'
@@ -590,6 +689,8 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
                 # Speech xAI reports only once a commit or request is on its way belongs to the audio that
                 # took with it.
                 self._speech_detected = False
+        if self._speech_timer is not None:
+            self._timed_speech.extend(self._speech_timer.frame(data))
         event = map_event(data)
         if isinstance(event, ConversationCreated):
             self._conversation_id = event.conversation_id
@@ -802,6 +903,7 @@ class XaiRealtimeModel(RealtimeModel):
                 model_name_getter=model_name_getter,
                 conversation_id=conversation_id,
                 manual_turns=session_config['turn_detection'] is None,
+                output_speech_timestamps=settings.get('output_speech_timestamps', False),
             )
             return connection
 

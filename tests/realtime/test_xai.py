@@ -34,6 +34,7 @@ from pydantic_ai.messages import (
     RealtimeInputSpeechStartEvent,
     RealtimeSessionErrorEvent,
     SpeechPart,
+    SpeechTimestamp,
     TextPart,
     UserPromptPart,
 )
@@ -53,6 +54,7 @@ from pydantic_ai.realtime.codec import (
     CreateResponse,
     InputRejected,
     InputTranscript,
+    OutputSpeechTimestamps,
     OutputTranscript,
     RealtimeInput,
     ResponseDone,
@@ -330,7 +332,7 @@ def test_profile() -> None:
         supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         supports_tool_return_schema=False,
         emits_input_speech_events=True,
-        output_speech_timestamp_granularity=None,
+        output_speech_timestamp_granularity='segment',
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
         response_usage_covers_context=False,
@@ -1227,6 +1229,85 @@ def _done_with_billed_seconds(total: int) -> str:
             'usage': {'input_tokens': 3, 'output_tokens': 40, 'billable_audio_seconds': total},
         }
     )
+
+
+def _speech_frame(event_type: str, response_id: str, item_id: str, **fields: Any) -> str:
+    return json.dumps(
+        {
+            'type': event_type,
+            'event_id': f'event-{event_type}',
+            'response_id': response_id,
+            'item_id': item_id,
+            'output_index': 0,
+            'content_index': 0,
+            **fields,
+        }
+    )
+
+
+def _audio_frame(response_id: str, item_id: str, duration_ms: int) -> str:
+    return _speech_frame(
+        'response.output_audio.delta',
+        response_id,
+        item_id,
+        delta=base64.b64encode(b'\x00\x00').decode(),
+        audio_duration_ms=duration_ms,
+    )
+
+
+def _transcript_frame(response_id: str, item_id: str, delta: str, start_time: float | None = None) -> str:
+    timing = {} if start_time is None else {'start_time': start_time}
+    return _speech_frame('response.output_audio_transcript.delta', response_id, item_id, delta=delta, **timing)
+
+
+def _segment(text: str, start_ms: int, duration_ms: int) -> SpeechTimestamp:
+    return SpeechTimestamp(text=text, start_ms=start_ms, duration_ms=duration_ms, granularity='segment')
+
+
+@pytest.mark.parametrize('output_speech_timestamps', [True, False])
+async def test_speech_segments_are_timed_once_they_end(output_speech_timestamps: bool) -> None:
+    """A segment is timed once its end is known: the next segment's start, or the end of its item's audio.
+
+    A response that ends without its item's `response.output_audio.done`, as a barge-in cancels it, ends the
+    item's last segment where its audio stopped. Nothing is timed with `output_speech_timestamps` off.
+    """
+    frames = [
+        # Text with no start of its own goes on the segment before it, so with none before it, it isn't timed.
+        _transcript_frame('resp-1', 'item-1', 'Um,', None),
+        _audio_frame('resp-1', 'item-1', 500),
+        _transcript_frame('resp-1', 'item-1', 'Hello', 0.0),
+        _transcript_frame('resp-1', 'item-1', ' there.', None),
+        _transcript_frame('resp-1', 'item-1', ' How are', 0.6),
+        _audio_frame('resp-1', 'item-1', 900),
+        _speech_frame('response.output_audio.done', 'resp-1', 'item-1'),
+        # The audio of an item that was never timed ends with nothing to time.
+        _speech_frame('response.output_audio.done', 'resp-1', 'item-untimed'),
+        _transcript_frame('resp-2', 'item-2', 'Cut', 0.0),
+        _audio_frame('resp-2', 'item-2', 300),
+        _transcript_frame('resp-3', 'item-3', 'Later', 0.0),
+        # An item with audio and no transcript has nothing to time either.
+        _audio_frame('resp-2', 'item-silent', 200),
+        json.dumps({'type': 'response.done', 'response': {'id': 'resp-2', 'status': 'cancelled', 'output': []}}),
+    ]
+    conn = XaiRealtimeConnection(
+        FakeWebSocket(frames),  # type: ignore[arg-type]
+        output_speech_timestamps=output_speech_timestamps,
+    )
+    events = await collect_codec_events(conn)
+
+    timed = [event for event in events if isinstance(event, OutputSpeechTimestamps)]
+    if not output_speech_timestamps:
+        assert timed == []
+        return
+    assert timed == [
+        OutputSpeechTimestamps([_segment('Hello there.', 0, 600)], item_id='item-1', response_id='resp-1'),
+        OutputSpeechTimestamps([_segment(' How are', 600, 800)], item_id='item-1', response_id='resp-1'),
+        # Timed by the end of its response, ahead of the events that close it; the other response's goes on.
+        OutputSpeechTimestamps([_segment('Cut', 0, 300)], item_id='item-2', response_id='resp-2'),
+    ]
+    assert events[events.index(timed[-1]) + 1 :] == [
+        ResponseDone(interrupted=True, provider_response_id='resp-2', provider_details={'status': 'cancelled'})
+    ]
 
 
 async def test_billable_audio_seconds_running_total_is_split_per_response() -> None:

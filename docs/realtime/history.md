@@ -30,7 +30,7 @@ A [system prompt sent mid-session](turns.md#system-prompts) is recorded where it
 its own, and a reconnect that replays the conversation replays it there as `<system>`-tagged text.
 
 With [`output_speech_timestamps`](audio.md#speech-timestamps) on, the model's speech parts also record
-when each word was heard, as [`SpeechPart.timestamps`][pydantic_ai.messages.SpeechPart.timestamps]. A
+when each word or segment was heard, as [`SpeechPart.timestamps`][pydantic_ai.messages.SpeechPart.timestamps]. A
 text agent the history is [handed off](#handing-off-to-a-text-agent) to sees only the transcript.
 
 ## Seeding a session
