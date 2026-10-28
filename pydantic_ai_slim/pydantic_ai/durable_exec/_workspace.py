@@ -59,6 +59,8 @@ WORKSPACE_OPERATION_ID = CapabilityOperationId('workspace', operation='call')
 
 # Base64 for `bytes`: Temporal's payload converter serializes by runtime type, ignoring annotations.
 _BYTES_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64')
+# Calls and results refuse fields they don't have, so an older worker fails a newer call instead of dropping its options.
+_JOURNAL_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64', extra='forbid')
 
 WorkspaceMethod: TypeAlias = Literal[
     'ensure',
@@ -85,6 +87,8 @@ class WorkspaceCallError:
 
     type: str
     message: str
+    bases: tuple[str, ...] = ()
+    """The names of `type`'s base classes, nearest first, so a version that doesn't know `type` raises a base."""
     stdout: str = ''
     stderr: str = ''
     limit: int | None = None
@@ -99,7 +103,7 @@ class WorkspaceCallError:
     reason: str | None = None
 
 
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
+@pydantic_dataclass(frozen=True, kw_only=True, config=_JOURNAL_CONFIG)
 class WorkspaceCallResult:
     """The journaled outcome of a call: the field for the method's return shape, or the error."""
 
@@ -114,7 +118,7 @@ class WorkspaceCallResult:
     error: WorkspaceCallError | None = None
 
 
-@pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
+@pydantic_dataclass(frozen=True, kw_only=True, config=_JOURNAL_CONFIG)
 class WorkspaceCall:
     """One `Workspace` method call: the method and the arguments it takes."""
 
@@ -227,10 +231,12 @@ def error_as_data(error: Exception) -> WorkspaceCallError | None:
     ):
         # Transient OS failures belong to the engine's retry path, not the journaled result.
         return None
+    bases = tuple(base.__name__ for base in error_type.__mro__[1:] if issubclass(base, Exception))
     if isinstance(error, OSError) and not isinstance(error, WorkspaceError):
         return WorkspaceCallError(
             type=error_type.__name__,
             message=str(error),
+            bases=bases,
             errno=error.errno,
             strerror=error.strerror,
             filename=error.filename,
@@ -240,6 +246,7 @@ def error_as_data(error: Exception) -> WorkspaceCallError | None:
         return WorkspaceCallError(
             type=error_type.__name__,
             message=str(error),
+            bases=bases,
             encoding=error.encoding,
             object=error.object,
             start=error.start,
@@ -248,18 +255,27 @@ def error_as_data(error: Exception) -> WorkspaceCallError | None:
         )
     if isinstance(error, WorkspaceOutputLimitError):
         return WorkspaceCallError(
-            type=error_type.__name__, message=str(error), limit=error.limit, stdout=error.stdout, stderr=error.stderr
+            type=error_type.__name__,
+            message=str(error),
+            bases=bases,
+            limit=error.limit,
+            stdout=error.stdout,
+            stderr=error.stderr,
         )
     if isinstance(error, WorkspaceTimeoutError):
         return WorkspaceCallError(
-            type=error_type.__name__, message=str(error), stdout=error.stdout, stderr=error.stderr
+            type=error_type.__name__, message=str(error), bases=bases, stdout=error.stdout, stderr=error.stderr
         )
-    return WorkspaceCallError(type=error_type.__name__, message=str(error))
+    return WorkspaceCallError(type=error_type.__name__, message=str(error), bases=bases)
 
 
 def raise_error(error: WorkspaceCallError) -> Never:
-    """Re-raise an error that crossed a durable boundary as data, with its original type."""
-    error_type = cast(type[Exception], _EXPECTED_ERRORS_BY_NAME[error.type])
+    """Re-raise an error that crossed a durable boundary as data, with its original type.
+
+    A type this version doesn't know, journaled by a newer one, is raised as its nearest base this version knows.
+    """
+    known = next((name for name in (error.type, *error.bases) if name in _EXPECTED_ERRORS_BY_NAME), None)
+    error_type = cast(type[Exception], _EXPECTED_ERRORS_BY_NAME[known] if known else WorkspaceError)
     if error_type is WorkspaceOutputLimitError:
         assert error.limit is not None
         raise WorkspaceOutputLimitError(error.message, limit=error.limit, stdout=error.stdout, stderr=error.stderr)

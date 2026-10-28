@@ -14,6 +14,7 @@
             - SupportsFilesystem
             - SupportsRealpath
             - SupportsDisplay
+            - Display
             - SupportsZoom
             - SupportsCursorPosition
             - ComputerAction

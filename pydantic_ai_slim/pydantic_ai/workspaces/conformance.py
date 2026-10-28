@@ -32,6 +32,7 @@ from .computer import (
     TypeText,
 )
 from .protocol import (
+    Display,
     SupportsCommands,
     SupportsCursorPosition,
     SupportsDisplay,
@@ -54,10 +55,11 @@ def _commands(backend: WorkspaceBackend) -> SupportsCommands:
     return backend
 
 
-def _display(backend: WorkspaceBackend) -> SupportsDisplay:
-    if not (isinstance(backend, SupportsDisplay) and backend.has_display):
+def _display(backend: WorkspaceBackend) -> Display:
+    display = backend.display if isinstance(backend, SupportsDisplay) else None
+    if not isinstance(display, Display):
         pytest.skip('backend has no display')
-    return backend
+    return display
 
 
 def _png_size(png: bytes) -> tuple[int, int]:
@@ -584,6 +586,10 @@ class WorkspaceBackendSuite:
         await destroy_environment(backend)
         with pytest.raises(WorkspaceUnavailableError):
             await attach_backend(backend.ref).working_dir()
+
+    async def test_display_is_the_same_object_each_time(self, backend: WorkspaceBackend) -> None:
+        display = _display(backend)
+        assert isinstance(backend, SupportsDisplay) and backend.display is display
 
     async def test_screenshot_is_a_png_of_the_display_size(self, backend: WorkspaceBackend) -> None:
         display = _display(backend)
