@@ -24,6 +24,7 @@ from typing_extensions import Unpack
 
 from pydantic_ai import (
     Agent,
+    CompactionPart,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
@@ -1610,6 +1611,58 @@ async def test_same_socket_continuation_replays_after_request_scoped_prompt(
         {'role': 'assistant', 'content': 'first answer'},
         {'role': 'user', 'content': 'follow up'},
     ]
+
+
+@pytest.mark.parametrize('transport', ['http', 'websocket'])
+@pytest.mark.parametrize('compaction_provider', ['openai', 'openai-codex', 'azure'])
+async def test_compatible_compaction_stops_older_response_chaining(
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    http: HTTPResponses,
+    transport: Literal['http', 'websocket'],
+    compaction_provider: str,
+):
+    history: list[ModelRequest | ModelResponse] = [
+        ModelRequest.user_text_prompt('before compaction'),
+        ModelResponse(
+            parts=[TextPart('old answer')],
+            provider_name='openai',
+            provider_response_id='resp_old',
+            provider_details={'store': True},
+        ),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    id='cmp_1',
+                    provider_name=compaction_provider,
+                    provider_details={'encrypted_content': 'encrypted'},
+                )
+            ],
+            provider_name=compaction_provider,
+            provider_details={'compaction': True},
+            canonical_system='azure' if compaction_provider == 'azure' else 'openai',
+        ),
+    ]
+    settings = OpenAIResponsesModelSettings(openai_transport=transport, openai_previous_response_id='auto')
+    model = OpenAIResponsesModel(
+        'gpt-4o',
+        provider=http.provider(),
+        settings=settings,
+        profile=OpenAIModelProfile(openai_responses_supports_prompt_cache_diagnostics=True),
+    )
+    await Agent(model).run('after compaction', message_history=history)
+
+    body = sockets.opened[0].sent[0] if transport == 'websocket' else http.bodies[0]
+    if compaction_provider == 'azure':
+        assert body['previous_response_id'] == 'resp_old'
+        assert body['prompt_cache_options'] == {'comparison_response_id': 'resp_old'}
+        assert body['input'] == [{'role': 'user', 'content': 'after compaction'}]
+    else:
+        assert {key: body[key] for key in ('previous_response_id', 'prompt_cache_options') if key in body} == {}
+        assert body['input'] == [
+            {'id': 'cmp_1', 'encrypted_content': 'encrypted', 'type': 'compaction'},
+            {'role': 'user', 'content': 'after compaction'},
+        ]
 
 
 async def test_token_counting_and_compaction_use_http(

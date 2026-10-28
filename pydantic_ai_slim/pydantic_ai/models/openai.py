@@ -5019,9 +5019,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         ):
             return None
         for message in reversed(messages):
+            if isinstance(message, ModelResponse) and self._is_compaction_boundary(message):
+                return None
             if isinstance(message, ModelResponse) and message.provider_name == self.system:
-                if message.provider_details and message.provider_details.get('compaction'):
-                    return None
                 response_id = message.provider_response_id
                 if not self._is_response_id_reachable(
                     message,
@@ -5031,6 +5031,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     return None
                 return response_id if response_id and response_id.startswith('resp_') else None
         return None
+
+    def _is_compaction_boundary(self, response: ModelResponse) -> bool:
+        return bool(
+            response.provider_details
+            and response.provider_details.get('compaction')
+            and (response.provider_name == self.system or self.accepts_stateless_artifacts(response))
+        )
 
     def _is_response_id_reachable(
         self, response: ModelResponse, store: bool | Omit | None, *, websocket_mode: bool = False
@@ -5064,19 +5071,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # provider, and return it along with the messages that came after it (which
         # still need to be sent as new input). When nothing suitable is found, returns
         # `(None, messages)` with the full list unchanged. The third element says whether
-        # the most recent response from this provider is a chain boundary (a compaction, or
-        # a changed history), which a concrete seed must not cross either.
+        # retained history has a chain boundary (an accepted compaction, or changed
+        # history from this provider), which a concrete seed must not cross either.
         previous_response_id = None
         trimmed_messages: list[ModelMessage] = []
         for index in range(len(messages) - 1, -1, -1):
             m = messages[index]
-            if isinstance(m, ModelResponse) and m.provider_name == self.system:
+            if isinstance(m, ModelResponse) and self._is_compaction_boundary(m):
                 # Responses from the stateless `/compact` endpoint can't be used as
                 # `previous_response_id`, so the compaction acts as a hard chain boundary:
                 # the next request must pass the `CompactionPart` via the `input` array
                 # (handled by `_map_messages`) without a `previous_response_id`.
-                if m.provider_details and m.provider_details.get('compaction'):
-                    return None, messages, True
+                return None, messages, True
+            if isinstance(m, ModelResponse) and m.provider_name == self.system:
                 # The server continues from this response and the history it was created with, so if
                 # either has changed since (a history processor redacted or trimmed them, say),
                 # continuing would silently drop the change: resend everything instead.
