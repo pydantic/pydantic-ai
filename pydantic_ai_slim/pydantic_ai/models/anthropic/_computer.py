@@ -130,6 +130,16 @@ _COMPUTER_MEMBER_FIELDS: dict[str, frozenset[str]] = {
 }
 """The input fields of each computer use member that map onto the `computer` tool."""
 
+_COMPUTER_MEMBER_TYPES: dict[str, str] = {
+    **dict.fromkeys(_COMPUTER_CLICKS, 'click'),
+    'mouse_move': 'move',
+    'left_click_drag': 'drag',
+    'left_mouse_down': 'mouse_down',
+    'left_mouse_up': 'mouse_up',
+    'key': 'keypress',
+}
+"""The `computer` tool action type of each member whose name differs from it."""
+
 
 def map_computer_member(name: str, input: dict[str, Any]) -> list[dict[str, Any]]:
     """One computer use call as `computer` tool actions, mapped field by field.
@@ -140,7 +150,8 @@ def map_computer_member(name: str, input: dict[str, Any]) -> list[dict[str, Any]
     fields = _COMPUTER_MEMBER_FIELDS.get(name)
     unsupported = sorted(input.keys() - fields) if fields is not None else sorted(input.keys())
     if fields is None or unsupported:
-        return [{'type': name, 'unsupported_fields': unsupported}]
+        # Under the tool's own type, so the retry names the fields rather than refusing the member.
+        return [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'unsupported_fields': unsupported}]
     position = _point(input.get('coordinate'))
     modifiers = [input['text']] if input.get('text') else []  # keys held during a click, move, scroll or drag
     if name in _COMPUTER_CLICKS:

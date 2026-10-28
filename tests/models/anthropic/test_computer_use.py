@@ -304,7 +304,11 @@ async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_
 
     assert provider.actions == []
     call = next(part for part in result.all_messages()[1].parts if isinstance(part, ToolCallPart))
-    assert call.args_as_dict() == {'actions': [{'type': 'left_mouse_down', 'unsupported_fields': ['coordinate']}]}
+    # Under the tool's own type, so the retry names the field rather than refusing the member.
+    assert call.args_as_dict() == {'actions': [{'type': 'mouse_down', 'unsupported_fields': ['coordinate']}]}
+    (retry,) = [part for part in result.all_messages()[2].parts if isinstance(part, ToolReturnPart)]
+    assert retry.outcome == 'retried'
+    assert '"loc":["actions",0,"mouse_down","unsupported_fields"]' in retry.model_response_str()
 
 
 async def test_a_deferred_computer_tool_stays_a_deferred_function(allow_model_requests: None) -> None:
@@ -545,7 +549,8 @@ async def test_member_calls_in_one_response_are_one_call_streamed_or_not(allow_m
     starts = [
         event.part for event in events if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart)
     ]
-    assert [len(part.args_as_dict()['actions']) for part in starts] == [1, 2, 3]
+    # Started once, with the whole batch, so a UI sees one call.
+    assert [len(part.args_as_dict()['actions']) for part in starts] == [3]
 
 
 async def test_each_computer_20251124_call_is_its_own_call_streamed_or_not(allow_model_requests: None) -> None:
@@ -631,6 +636,39 @@ async def test_a_result_without_metadata_or_screenshot_runs_every_call_and_ends_
     assert [(r['tool_use_id'], r.get('is_error'), r.get('content')) for r in results] == [
         ('toolu_1', False, [{'text': 'OK', 'type': 'text'}]),
         ('toolu_2', False, [{'text': 'Ran 2 actions. [Older screenshot removed.]', 'type': 'text'}]),
+    ]
+
+
+@pytest.mark.parametrize(
+    'content,metadata',
+    [
+        pytest.param(['Typing is not allowed here; nothing ran.'], None, id='a-guardrail-refusal'),
+        pytest.param(
+            [
+                'Before it ran, this call was changed to: [...]. Ran 1 action.',
+                BinaryImage(data=b'png', media_type='image/png'),
+            ],
+            {'performed': 1, 'changed': True},
+            id='changed-before-it-ran',
+        ),
+    ],
+)
+async def test_a_result_that_is_not_these_calls_outcome_gives_each_call_its_text(
+    content: list[Any], metadata: dict[str, Any] | None
+) -> None:
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='unused'))
+    blocks: list[dict[str, Any]] = [
+        {'id': 'toolu_1', 'name': 'left_click', 'input': {}},
+        {'id': 'toolu_2', 'name': 'type', 'input': {'text': 'hi'}},
+    ]
+    part = ToolReturnPart('computer', content, tool_call_id='toolu_1', metadata=metadata)
+
+    results = await model._map_computer_results(part, blocks)  # pyright: ignore[reportPrivateUsage]
+
+    # Rather than `OK`, which would tell Claude its own calls ran.
+    assert [(r['tool_use_id'], list(r.get('content', []))[0]) for r in results] == [
+        ('toolu_1', {'text': content[0], 'type': 'text'}),
+        ('toolu_2', {'text': content[0], 'type': 'text'}),
     ]
 
 

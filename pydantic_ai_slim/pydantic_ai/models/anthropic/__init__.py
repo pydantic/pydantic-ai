@@ -3649,6 +3649,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         content = part.content_items(mode='str')
         outputs = list(content[1:-1])
         screen = content[-1] if len(content) > 1 else None
+        if metadata.get('changed') or (screen is None and not known):
+            # Not an outcome of these calls, such as text a guardrail returned instead, or a call changed before it
+            # ran: each call gets the summary rather than `OK`, and the last one the rest.
+            summary = await content_block(content[0])
+            rest = [await content_block(item) for item in content[1:]]
+            return [
+                result(block, False, summary, *(rest if index == len(blocks) - 1 else []))
+                for index, block in enumerate(blocks)
+            ]
         last_ran = max((index for index, end in enumerate(ends) if end <= performed), default=-1)
         results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
         for index, (block, actions) in enumerate(zip(blocks, member_actions)):
