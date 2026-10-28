@@ -188,7 +188,7 @@ Two consequences of the trigger, both easy to get backwards:
   it reads as clean. Marking the check **required** is what closes that: a check that never
   ran stays pending and blocks the merge.
 
-# `PR Gates` answer merge questions from PR metadata
+# PR metadata gates enforce the merge bar
 
 Keep gate workflows and scripts owned in `.github/CODEOWNERS`.
 `pr-gates.yml` runs `pr_gates.py` with a read-only `pull_request` token and the PR's copy.
@@ -222,7 +222,7 @@ a comment does not. Ignore dismissed reviews, bots, and the PR author. Enable na
 dismissal in the ruleset to enforce human freshness when the diff changes.
 
 `pull_request_target` covers pushes, base edits, reopening, and label changes. Read-only
-`pr-gates-events.yml` observes review submissions, edits, dismissals and inline-comment changes,
+`pr-review-gates-events.yml` observes review submissions, edits, dismissals and inline-comment changes,
 including forks. Its completion wakes a privileged `workflow_run`. Fetch that run from GitHub;
 ignore run titles and artifacts. Resolve GitHub's open PR associations for the reported head
 repository and branch, requiring exactly one PR with the exact observed SHA and repository ID.

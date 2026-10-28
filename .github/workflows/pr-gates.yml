@@ -1,7 +1,7 @@
 name: PR Gates
 
 # Read-only compatibility gate, evaluated with the pull request copy of the script.
-# `.github/workflows/AGENTS.md` ("PR Gates") documents their rules and trust boundaries.
+# `.github/workflows/AGENTS.md` documents this gate and its trust boundary.
 # The logic and tests live in `.github/scripts/pr_gates.py`.
 #
 # No `paths:` filter: a required check that never runs stays pending and blocks the merge, so

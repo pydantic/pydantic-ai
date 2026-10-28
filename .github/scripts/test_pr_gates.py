@@ -180,7 +180,7 @@ def test_compatibility_workflow_has_no_privileged_triggers_or_duplicate_check_pr
 def test_review_workflow_uses_only_trusted_code_and_pinned_status_targets():
     workflow = _Workflow.model_validate(yaml.load(REVIEW_WORKFLOW.read_text(), Loader=yaml.BaseLoader))
     assert set(workflow.on) == {'pull_request_target', 'workflow_run', 'merge_group'}
-    assert workflow.on['workflow_run'].workflows == ['PR Bots', 'PR Gates Events']
+    assert workflow.on['workflow_run'].workflows == ['PR Bots', 'PR Review Gates Events']
     assert workflow.on['pull_request_target'].paths is None
     assert set(workflow.on['pull_request_target'].types) == {
         'opened',
@@ -206,7 +206,7 @@ def test_review_workflow_uses_only_trusted_code_and_pinned_status_targets():
 
 def test_review_observer_is_read_only_and_schema_matches_the_trusted_publisher():
     observer = _Workflow.model_validate(
-        yaml.load(WORKFLOW.with_name('pr-gates-events.yml').read_text(), Loader=yaml.BaseLoader)
+        yaml.load(WORKFLOW.with_name('pr-review-gates-events.yml').read_text(), Loader=yaml.BaseLoader)
     )
     assert set(observer.on) == {'pull_request_review', 'pull_request_review_comment'}
     assert observer.on['pull_request_review'].types == ['submitted', 'edited', 'dismissed']
@@ -284,8 +284,8 @@ const core = {setOutput: (name, value) => {outputs[name] = value;}};
 core.notice = () => {};
 const source = {number: 8, state: 'open', head: {sha: data.head, repo: {id: 888}}};
 const serverRun = {
-  name: 'PR Gates Events', event: 'pull_request_review',
-  path: '.github/workflows/pr-gates-events.yml',
+  name: 'PR Review Gates Events', event: 'pull_request_review',
+  path: '.github/workflows/pr-review-gates-events.yml',
   repository: {full_name: 'pydantic/pydantic-ai'},
   head_sha: data.head, head_branch: 'attacker-branch',
   head_repository: {id: 888, owner: {login: 'attacker'}},
@@ -312,7 +312,7 @@ const context = {
   eventName: 'workflow_run', serverUrl: 'https://github.com', runId: 1,
   repo: {owner: 'pydantic', repo: 'pydantic-ai'},
   payload: {workflow_run: {
-    ...serverRun, id: 900, display_title: 'PR Gates Events #7 @ ' + data.otherHead,
+    ...serverRun, id: 900, display_title: 'PR Review Gates Events #7 @ ' + data.otherHead,
     pull_requests: [{number: 7}], head_sha: data.otherHead,
     head_repository: {id: 777, owner: {login: 'victim'}}
   }, pull_request: source, merge_group: {head_sha: data.head}}

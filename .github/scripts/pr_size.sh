@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared PR Bots / PR Gates calculation. Read the files API JSON on stdin.
+# Shared PR Bots / PR Review Gates calculation. Read the files API JSON on stdin.
 set -euo pipefail
 
 FILES=$(cat)

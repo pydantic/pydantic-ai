@@ -8,7 +8,7 @@ on:
   pull_request_target: # zizmor: ignore[dangerous-triggers] -- executes only default-branch code and evaluates live metadata
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
   workflow_run: # zizmor: ignore[dangerous-triggers] -- no artifacts or upstream code are consumed; reevaluates live metadata
-    workflows: [PR Bots, PR Gates Events]
+    workflows: [PR Bots, PR Review Gates Events]
     types: [completed]
   # Review requirements are admission-only; report success on the merge-group SHA.
   merge_group:
@@ -45,11 +45,11 @@ jobs:
               });
               const paths = {
                 'PR Bots': '.github/workflows/bots.yml',
-                'PR Gates Events': '.github/workflows/pr-gates-events.yml'
+                'PR Review Gates Events': '.github/workflows/pr-review-gates-events.yml'
               };
               const events = {
                 'PR Bots': ['pull_request_target'],
-                'PR Gates Events': ['pull_request_review', 'pull_request_review_comment']
+                'PR Review Gates Events': ['pull_request_review', 'pull_request_review_comment']
               };
               if (run.path !== paths[run.name] || !events[run.name]?.includes(run.event) ||
                   run.repository.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
