@@ -349,6 +349,8 @@ include = [
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
     ".github/scripts/test_check_api_compatibility.py",
+    ".github/scripts/pr_gates.py",
+    ".github/scripts/test_pr_gates.py",
     ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/test_review_lifecycle.py",
@@ -448,6 +450,7 @@ quote-style = "single"
 ".github/scripts/check_api_compatibility.py" = ["D"]
 ".github/scripts/test_ci_duration.py" = ["D"]
 ".github/scripts/test_check_api_compatibility.py" = ["D"]
+".github/scripts/test_pr_gates.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_review_lifecycle.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]

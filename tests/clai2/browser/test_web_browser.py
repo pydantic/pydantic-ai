@@ -718,6 +718,30 @@ async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: 
     assert '\\n' not in await body.inner_text()
 
 
+async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) -> None:
+    """Settings > About in a session the browser opened refuses Update…; its row must not claim it saved anything."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    await page.evaluate("location.hash = '#settings/about'")
+    settings = page.get_by_role('dialog', name='Settings')
+    version = settings.locator('.setting').filter(has=page.locator('.setting-label', has_text='Version'))
+    async with page.expect_response(f'**/api/sessions/{web_ui.beta}/commands/update/fields/version/action') as acted:
+        await version.get_by_role('button', name='Update Version').click()
+    assert (await acted.value).status == 400
+    # Read with the toast in one page call: a badge renders with it, and a retry would pass once its timer clears it.
+    badge = await page.wait_for_function(
+        """() => {
+          if (!document.querySelector('.toast.error')?.textContent?.includes('/reload and /update restart CLAI.')) return null
+          const row = [...document.querySelectorAll('.setting')]
+            .find((setting) => setting.querySelector('.setting-label')?.textContent === 'Version')
+          return row.querySelector('.setting-state')?.textContent ?? 'none'
+        }"""
+    )
+    assert await badge.json_value() == 'none'
+
+
 async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     sidebar = page.locator('.sidebar')
@@ -864,6 +888,23 @@ async def test_at_mentions_pick_files_from_the_session_folder(page: Page, web_ui
     await expect(composer).to_have_value('@READM')
     await expect(options).to_have_count(0)
 
+    # A file typed in full is offered first, and Enter sends it instead of swapping it for another of that name.
+    await composer.fill('see @README.md')
+    await expect(names).to_have_text(['README.md', 'README.md'])
+    await expect(options.first.locator('.suggestion-meta')).to_have_count(0)
+    async with page.expect_request(f'**/api/sessions/{web_ui.lines}/input') as typed_in_full:
+        await composer.press('Enter')
+    assert (await typed_in_full.value).post_data_json == {'text': 'see @README.md'}
+    # The first message moves the composer from the new-session hero to the bottom bar; type there.
+    await expect(page.locator('.user-bubble').filter(has_text='see @README.md')).to_be_visible()
+    await expect(composer).to_have_value('')
+    # A longer word under the caret is not the file typed in full, so Enter takes the suggestion instead.
+    await composer.fill('@README.mdx')
+    await composer.press('ArrowLeft')
+    await expect(names.first).to_have_text('README.md')
+    await composer.press('Enter')
+    await expect(composer).to_have_value('@README.md ')
+
     # Esc closes the list, and Enter then sends the mention as typed, for the agent to read with its tools.
     await composer.fill('read @READ')
     await expect(names.first).to_have_text('README.md')
@@ -959,6 +1000,41 @@ async def test_a_row_that_says_it_opens_shows_read_only_when_it_no_longer_can(pa
     await expect(page.locator('.preview-banner')).to_contain_text('which no longer exists')
     await expect(page.locator('.topbar .title')).to_have_text('Browser Moved')
     await expect(page.get_by_role('alert')).to_have_count(0)
+
+
+async def test_a_pick_over_a_read_only_view_names_the_picked_session(page: Page, web_ui: WebUI) -> None:
+    """While a session opens over a read-only view, the header names the session picked, as the tab title does."""
+    await list_gamma_folder_as_openable(page, web_ui)
+    await page.route(
+        f'**/api/sessions/{web_ui.moved}/open',
+        lambda route: route.fulfill(status=400, json={'detail': 'The folder is gone.'}),
+    )
+    transcript: dict[str, object] = {
+        'id': web_ui.moved,
+        'title': 'Browser Moved',
+        'workspace': '/gone',
+        'items': [],
+        'openable': False,
+        'missing': True,
+        'owner_pid': None,
+    }
+    await page.route(f'**/api/sessions/{web_ui.moved}', lambda route: route.fulfill(json=transcript))
+    sidebar = page.locator('.sidebar')
+    await sidebar.get_by_text('Browser Moved', exact=True).click()
+    await expect(page.locator('.preview-banner')).to_contain_text('which no longer exists')
+    held: list[Route] = []
+
+    async def hold(route: Route) -> None:
+        held.append(route)
+
+    await page.route(f'**/api/sessions/{web_ui.saved}/open', hold)
+    async with page.expect_request(f'**/api/sessions/{web_ui.saved}/open'):
+        await sidebar.get_by_text('Browser Saved', exact=True).click()
+    await expect(page.locator('.topbar .title')).to_have_text('Browser Saved')
+    await expect(page).to_have_title('Browser Saved · CLAI')
+    [route] = held
+    await route.continue_()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Saved')
 
 
 async def test_the_websocket_opens_before_the_page_renders(page: Page, web_ui: WebUI) -> None:

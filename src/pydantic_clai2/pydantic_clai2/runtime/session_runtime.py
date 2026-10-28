@@ -430,7 +430,12 @@ def create_shell(
             handler=lambda args: shell.update(args),
             complete=lambda args: ('now',) if len(args) <= 1 else (),
             menu=lambda: update_menu(
-                context, updates, run=lambda text: shell.send_input(text), refusal=lambda: shell.restart_refusal()
+                context,
+                updates,
+                run=lambda text: shell.send_input(text),
+                refusal=lambda: shell.restart_refusal(),
+                # Every `host.command_menu('update')` caller is a remote UI; the terminal builds its own menu.
+                raise_refusal=True,
             ),
         )
     )

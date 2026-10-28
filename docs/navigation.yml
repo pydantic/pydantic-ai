@@ -21,6 +21,12 @@ navigation:
       - page: "Coding Agent Skills"
         path: "coding-agent-skills.md"
         slug: "overview/coding-agent-skills"
+      - page: "Built with Pydantic AI"
+        path: "built-with.md"
+        slug: "overview/built-with"
+        aliases:
+          - "built-with"
+          - "showcase"
       - page: "Getting Help"
         path: "help.md"
         slug: "overview/help"

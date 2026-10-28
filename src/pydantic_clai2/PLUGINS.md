@@ -54,6 +54,7 @@ separately.
  Server Type: http              | Type   http - Streamable HTTP endpoint ...
  URL: https://mcp.example.com   |
  OAuth sign-in: on              |
+ On demand: off                 |
  JSON Configuration (valid)     | {"type": "http", "url": "https://...", "auth": "oauth", "timeout": 330}
  Load example for http          |
  Save & Install                 | Configuration is valid
@@ -83,6 +84,9 @@ separately.
   or refreshes them instead of signing in again. Tokens belong to the URL they
   were issued for: after changing the URL, sign in again. OAuth needs `https`,
   except for loopback servers.
+- **On demand** sets `"defer_loading": true`, and a **Description** row appears
+  for the line the agent reads about the server; see
+  [Load a server's tools on demand](#load-a-servers-tools-on-demand).
 
 The dashboard shows each server as `running` (connected), `ready` (enabled;
 connects on the next prompt), `stopped`, or `error` (a failed connection, or a
@@ -92,7 +96,9 @@ connects now and lists the tools. Once connected, a server stays connected
 between prompts. A server that cannot connect is marked `error` and left out of
 the prompt instead of failing it; `/mcp logs NAME` shows why. `/mcp stop`
 disconnects the server and disables it until `/mcp start`. The model sees tools
-prefixed by server name, for example `local_search`.
+prefixed by server name, for example `local_search`. An on-demand server's
+status also says `on demand (not loaded)` or `on demand (loaded)`, and
+`/mcp status NAME` shows its `loading` and the `about` line the agent reads.
 
 In the web UI, the Settings window's **MCP servers** section (`#settings/mcp`, or bare
 `/mcp` typed in the composer) is the same command in the page. It lists each server with
@@ -126,10 +132,41 @@ unset shows as `error` until you set it. Stdio server stderr goes to `mcp_logs/N
 ```
 
 Stdio servers also accept `cwd`; `http` and `sse` servers accept `auth: "oauth"`;
-every server accepts `timeout` (seconds for the initialize handshake) and
-`enabled: false`. Names start with a letter and contain letters, digits, and
+every server accepts `timeout` (seconds for the initialize handshake),
+`enabled: false`, `defer_loading: true`, and `description`. Names start with a letter and contain letters, digits, and
 hyphens. Underscores are reserved for the separator so server/tool name pairs
 cannot produce the same name.
+
+### Load a server's tools on demand
+
+Every enabled server's tool definitions go into every prompt, which gets
+expensive with a few large servers and makes it harder for the model to pick the
+right tool. Set `defer_loading` to keep a server's tools out until the agent
+needs them:
+
+```json
+{"servers": {"tracker": {"type": "http", "url": "https://mcp.example.com",
+                         "defer_loading": true,
+                         "description": "Issue tracker: search, read and update tickets."}}}
+```
+
+The server becomes the
+[on-demand capability](../../docs/capabilities/on-demand.md)
+`mcp_NAME`: the agent sees one catalog line, `mcp_tracker: Issue tracker: ...`,
+and calls `load_capability` when the task needs it. Its tools then come with the
+same `tracker_` prefix, approvals, and hooks as an eager server's, and stay loaded for the
+conversation, also after `/resume`, until it is compacted; after that the agent loads it again
+when it needs it. The server connects only once the
+agent loads it, so an unused server costs one catalog line and no process.
+
+Without a `description`, the catalog shows the first line of the server's own
+instructions, or its title, once it has connected in this session (after
+`/mcp start`, `/mcp tools`, or a load), and `Tools from the NAME MCP server.`
+before that. A `description` you write is the better choice: the agent decides
+whether to load the server from it. `/mcp tools NAME` lists the tools either way.
+
+Keep a server eager (the default) when most prompts use it: loading it costs
+the agent an extra step.
 
 ### Project servers and trust
 
@@ -1519,7 +1556,7 @@ multi-line dialog (`Dialogs.text(multiline=True)`), a paragraph to append, and t
 prompt the model last received in a read-only one (`Dialogs.view`). **About** is `/update`'s
 menu, the one bare `/update` opens in the terminal: the running version with a note saying whether
 a newer CLAI is out, whose **Update…** asks before it enters `/update now`, and the
-`updates.channel` setting. `/usage` and `/cost`
+`updates.channel` setting. A refused **Update…** fails with an error and saves nothing. `/usage` and `/cost`
 results carry their figures (`Notice.usage`, from the `session_usage` the commands report), which
 the page shows as a card; the terminal prints them as before. The command palette (⌘⇧P, or bare
 `/help` in the composer) lists every command `host.complete('/')` offers, plugin and skill
@@ -1599,7 +1636,10 @@ The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment va
 you can read and CLAI removes before anything else runs, never on its command line, which `ps`
 shows every user. Like any command, `/update now` entered while a turn runs waits for the turn to end.
 In a terminal, `/update now` and `/reload` are refused while other live sessions run turns, which
-the restart would end; bare `/update` can still open its menu in the shown session.
+the restart would end; bare `/update` can still open its menu in the shown session, whose
+**Update…** then shows why and stays in the menu. In `host.command_menu('update')`, the menu the
+page's Settings > About shows, a refused **Update…** action raises `ValueError` with the reason
+instead, which the page shows as an error.
 Installing from another folder shown in the terminal is refused, as CLAI
 restarts in the folder it started in.
 
