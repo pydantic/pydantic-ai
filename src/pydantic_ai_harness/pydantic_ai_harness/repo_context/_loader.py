@@ -155,12 +155,8 @@ def context_file_label(path: Path, relative_to: Path) -> str:
     An ancestor's file is labeled `../AGENTS.md` rather than by its absolute path, so the label doesn't
     carry the host's directory layout into the instructions or vary between machines.
     """
-    try:
+    if path.is_relative_to(relative_to):
         return path.relative_to(relative_to).as_posix()
-    except ValueError:
-        pass
-    try:
-        steps = len(relative_to.relative_to(path.parent).parts)
-    except ValueError:
-        return path.as_posix()
-    return '../' * steps + path.name
+    if relative_to.is_relative_to(path.parent):
+        return '../' * len(relative_to.relative_to(path.parent).parts) + path.name
+    return path.as_posix()
