@@ -1304,6 +1304,19 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
       ]
     },
+    "durable_unit_scope": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "annotation_only",
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/__init__.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_operation_backend.py::<module>"
+      ]
+    },
     "get_current_run_context": {
       "engines": [
         "durable_exec",
@@ -1316,6 +1329,20 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>"
+      ]
+    },
+    "in_durable_unit": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "annotation_only",
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_operation_backend.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>"
       ]
     },
     "set_current_run_context": {
