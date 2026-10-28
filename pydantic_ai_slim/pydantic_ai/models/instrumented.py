@@ -304,19 +304,27 @@ class InstrumentationSettings:
         fragments: list[bytes] = []
         fresh_entries: MessageJsonCache = {}
         for index, message in enumerate(input_messages):
-            # A fragment cached while the message's request was current is rebuilt once it's been answered,
-            # so its request-scoped system prompts are marked as no longer visible. Only a message that holds
-            # one is affected, so every other fragment is serialized just once.
-            answered = index < current_request_start and _holds_request_scoped_prompt(message)
+            answered = index < current_request_start
             entry = message_json_cache.get(id(message))
-            if entry is None or entry.parts is not message.parts or entry.answered != answered:
+            # A fragment holding a request-scoped system prompt, cached while its request was current, is
+            # rebuilt once that request has been answered, so the prompt is marked as no longer visible.
+            if (
+                entry is None
+                or entry.parts is not message.parts
+                or (entry.request_scoped and entry.answered != answered)
+            ):
                 history_ids = mcp_telemetry_history_ids([message], frozenset())
+                request_scoped = isinstance(message, ModelRequest) and any(
+                    _is_request_scoped(part) for part in message.parts
+                )
+                answered = answered and request_scoped
                 entry = CachedMessageJson(
                     message,
                     message.parts,
                     message_json_fragment(self, message, history_ids, answered=answered),
                     history_ids,
-                    answered,
+                    request_scoped=request_scoped,
+                    answered=answered,
                 )
             fresh_entries[id(message)] = entry
             if entry.fragment:
@@ -482,11 +490,6 @@ class InstrumentedModel(WrapperModel):
                         response_stream.get(),
                         time_to_first_chunk=response_stream.time_to_first_chunk(request_start),
                     )
-
-
-def _holds_request_scoped_prompt(message: ModelMessage) -> bool:
-    """Whether `message` is a request holding a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt."""
-    return isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts)
 
 
 def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.Role:

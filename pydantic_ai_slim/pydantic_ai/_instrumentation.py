@@ -219,6 +219,9 @@ class CachedMessageJson:
     """The serialized fragment (see `message_json_fragment`)."""
     mcp_url_ids: frozenset[str] = frozenset()
     """MCP names withheld from the serialized historical message fragment."""
+    request_scoped: bool = False
+    """Whether the message holds a request-scoped system prompt, whose fragment changes once its request
+    has been answered."""
     answered: bool = False
     """Whether the fragment marks the message's request-scoped system prompts as no longer visible (see
     `message_json_fragment`)."""
