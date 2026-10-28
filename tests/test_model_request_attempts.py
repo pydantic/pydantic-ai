@@ -481,7 +481,19 @@ async def test_a_resumed_primed_stream_the_consumer_never_iterates_keeps_the_res
                     break
     response = messages[-1]
     assert isinstance(response, ModelResponse)
-    assert [part.content for part in response.parts if isinstance(part, TextPart)][0] == 'The answer '
+    # The continuation merged onto the response it resumes: unread, priming has only seen its part start.
+    assert (
+        [part.content for part in response.parts if isinstance(part, TextPart)],
+        response.provider_response_id,
+        response.state,
+        response.usage,
+    ) == (
+        ['The answer ', 'is 42.' if iterate else ''],
+        'job-2',
+        'complete' if iterate else 'incomplete',
+        RequestUsage(input_tokens=8, output_tokens=6),
+    )
+    # The resumed response's usage was counted by the run that suspended it.
     assert usage == RunUsage(input_tokens=3, output_tokens=4, requests=1)
 
 
