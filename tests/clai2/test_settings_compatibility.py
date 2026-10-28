@@ -1319,6 +1319,8 @@ def test_worktree_command_symlink_key_is_canonical_and_menu_is_json(tmp_path: Pa
     row = next(row for row in source.rows() if row.key == 'worktrees.remove_commands')
     assert source.current(row) == '{}'
     assert row.default == '{}'
+    assert 'absolute Git common directory' in row.description
+    assert 'confirmed removal on exit' in row.description.lower()
     assert source.problem(row, '{"/repo": ["remove"]}') is None
     assert context.set_setting(['worktrees.remove_commands', '{"/repo": ["remove"]}']).startswith('Saved')
     assert source.current(row) == '{"/repo": ["remove"]}'

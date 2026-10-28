@@ -115,7 +115,7 @@ class Settings(BaseModel):
     )
     worktree_remove_commands: dict[str, list[str]] = Field(
         default={},
-        description='Repository-specific argv commands offered when removing worktrees.',
+        description='Confirmed removal on exit: absolute Git common directory -> argv.',
     )
 
     @field_validator('worktree_remove_commands')
