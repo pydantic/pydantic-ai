@@ -1,6 +1,4 @@
 import importlib
-import importlib.util
-import re
 import sys
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -9,7 +7,6 @@ import json_repair
 import pytest
 from logfire.testing import CaptureLogfire
 
-import pydantic_ai_harness
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -190,18 +187,3 @@ def test_missing_json_repair_fails_at_import_with_install_hint(monkeypatch: pyte
         match=r'Install `pydantic-ai-harness\[coder\]` to use `Coder`, or `pydantic-ai-harness\[repair-tool-arguments\]`',
     ):
         importlib.import_module(module)
-
-
-def test_only_coder_enables_repair_by_default() -> None:
-    """Outside its own package, only `Coder` imports `RepairToolArguments` or `json-repair`, so only it repairs by default."""
-    clai2 = importlib.util.find_spec('pydantic_clai2')
-    assert clai2 is not None and clai2.origin is not None
-    roots = [Path(pydantic_ai_harness.__file__).parent, Path(clai2.origin).parent]
-    importer = re.compile(r'^\s*(?:from|import)\s+(?:json_repair\b|\S*repair_tool_arguments\b)', re.MULTILINE)
-    importers = sorted(
-        path.relative_to(root.parent).as_posix()
-        for root in roots
-        for path in root.rglob('*.py')
-        if path.parent.name != 'repair_tool_arguments' and importer.search(path.read_text())
-    )
-    assert importers == ['pydantic_ai_harness/coder/_capability.py']

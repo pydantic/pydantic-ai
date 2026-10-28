@@ -21,6 +21,7 @@ from mcp.server.fastmcp import FastMCP
 
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace, ToolSearch, Toolset
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.messages import ModelMessage, TextContent, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -69,6 +70,7 @@ from pydantic_ai_harness.github import GitHub
 from pydantic_ai_harness.linear import Linear
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
+from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.subagents import (
@@ -621,6 +623,21 @@ def test_every_capability_has_a_case():
     ) | OPTIONAL_DEPENDENCIES.keys()
     stale = (tables | CONVERSATIONS.keys()) - CAPABILITIES.keys() - VARIANTS.keys()
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
+
+
+@pytest.mark.parametrize('name', sorted(CAPABILITIES.keys() - EXEMPT.keys()))
+def test_only_coder_repairs_tool_arguments_by_default(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """`Coder` is the one capability that turns `RepairToolArguments` on; every other one leaves arguments as sent."""
+    skip_unless_installed(name, OPTIONAL_DEPENDENCIES)
+    for key, value in ENV.get(name, {}).items():
+        monkeypatch.setenv(key, value)
+    if name in CONVERSATIONS:
+        capabilities = CONVERSATIONS[name](tmp_path)[0]
+    else:
+        capabilities = build_capabilities(name, CAPABILITIES[name].load, FIXTURES.get(name), tmp_path)
+    leaves = [leaf for capability in capabilities for leaf in leaf_capabilities(capability)]
+    repairs = any(isinstance(leaf, RepairToolArguments) for leaf in leaves)
+    assert repairs == (name in {'Coder', 'RepairToolArguments'})
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
