@@ -20,7 +20,7 @@ pip:
 pip install "pydantic-ai-harness[coder,e2b,anthropic]"
 ```
 
-The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples.
+The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 

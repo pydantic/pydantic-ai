@@ -20,7 +20,7 @@ pip:
 pip install "pydantic-ai-harness[coder,anthropic]"
 ```
 
-No extra is needed for SSH itself: the capability runs the `ssh` client already on your machine. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra.
+No extra is needed for SSH itself: the capability runs the `ssh` client already on your machine. The `coder` extra is there because the examples use `Coder`; the workspace itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra.
 
 ## Quick start
 

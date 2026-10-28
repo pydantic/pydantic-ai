@@ -20,7 +20,7 @@ pip:
 pip install "pydantic-ai-harness[coder,smol,anthropic]"
 ```
 
-The `smol` extra installs [smolmachines](https://github.com/smol-machines/smol), the SDK that embeds the smolvm engine. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
+The `smol` extra installs [smolmachines](https://github.com/smol-machines/smol), the SDK that embeds the smolvm engine. The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
 
 smolmachines ships wheels for macOS on Apple silicon and for Linux on x86_64 and aarch64 (glibc 2.34 or newer). On Linux, the user running the agent needs read and write access to `/dev/kvm`. See [Platforms](#platforms).
 

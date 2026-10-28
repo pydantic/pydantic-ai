@@ -17,7 +17,7 @@ Run your agent's commands and file edits in an isolated [boxd](https://boxd.sh) 
 pip/uv-add "pydantic-ai-harness[coder,boxd,anthropic]"
 ```
 
-The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `BOXD_API_KEY` to an API key from `boxd auth keys create` (each key belongs to one boxd organization), and `ANTHROPIC_API_KEY` for the examples.
+The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `BOXD_API_KEY` to an API key from `boxd auth keys create` (each key belongs to one boxd organization), and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 

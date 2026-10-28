@@ -21,7 +21,7 @@ pip/uv-add "pydantic-ai-harness[coder,modal,anthropic]"
 py-cli modal token new
 ```
 
-This saves your Modal credentials; in CI, set `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` instead. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
+This saves your Modal credentials; in CI, set `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` instead. The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
