@@ -290,6 +290,7 @@ jobs:
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
+          .github/scripts/test_pr_gates.py
           .github/scripts/test_douwebot_config_approval.py
           .github/scripts/test_size_label.py
           .github/scripts/test_ci_content_classifier.py
@@ -1712,8 +1713,8 @@ jobs:
           detect mongodb "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
             tests/harness/step_persistence tests/harness/media "$H/integration_tests/mongodb"
           detect postgres "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
-            tests/harness/step_persistence tests/harness/media tests/harness/_postgres_sqlite.py \
-            "$H/integration_tests/postgres"
+            "$H/pydantic_ai_harness/spend" tests/harness/step_persistence tests/harness/media tests/harness/spend \
+            tests/harness/_postgres_sqlite.py "$H/integration_tests/postgres"
           detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
 
   harness-localstack-integration:
