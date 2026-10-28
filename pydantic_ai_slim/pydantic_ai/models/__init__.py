@@ -16,7 +16,6 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
-from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timedelta
@@ -39,7 +38,6 @@ from typing import (
     overload,
 )
 
-import anyio
 import httpx2
 from pydantic import Field
 from typing_extensions import TypeAliasType, TypedDict, deprecated
@@ -929,7 +927,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     def _context(self) -> AbstractAsyncContextManager[Model]:
         """Bind lifecycle calls to one scope, even when an exit stack closes it from another task."""
-        return _ModelContext(self)
+        from ._model_context import ModelContext
+
+        return ModelContext(self)
 
     def _run_scope(self) -> AbstractAsyncContextManager[None]:
         """The context an agent run holds around its requests to this model, unless it runs in a durable workflow.
@@ -2050,48 +2050,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 return [InstructionPart(content=second.instructions)]
 
         return None
-
-
-@dataclass(eq=False)
-class _ModelContext:
-    model: Model
-    task_id: int | None = field(default=None, init=False)
-
-    async def __aenter__(self) -> Model:
-        self.task_id = anyio.get_current_task().id
-        token = _current_model_context.set(self)
-        try:
-            return await self.model.__aenter__()
-        finally:
-            self.task_id = None
-            _current_model_context.reset(token)
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> bool | None:
-        self.task_id = anyio.get_current_task().id
-        token = _current_model_context.set(self)
-        try:
-            return await self.model.__aexit__(exc_type, exc_val, exc_tb)
-        finally:
-            self.task_id = None
-            _current_model_context.reset(token)
-
-
-_current_model_context: ContextVar[_ModelContext | None] = ContextVar('_current_model_context', default=None)
-
-
-def _model_context_key() -> object | None:  # pyright: ignore[reportUnusedFunction]
-    task_id = anyio.get_current_task().id
-    context = _current_model_context.get()
-    # A task spawned by a lifecycle hook inherits its ContextVar, but owns its own model contexts.
-    if context is not None and context.task_id == task_id:
-        return context
-    # Direct model contexts carry no scope identity: a task can close another task's exit stack.
-    return None
 
 
 @dataclass

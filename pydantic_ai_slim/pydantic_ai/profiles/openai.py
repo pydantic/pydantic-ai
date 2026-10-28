@@ -555,8 +555,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     over HTTP. Set by `AzureProvider`, and by `OpenAIResponsesModel` for an `AsyncAzureOpenAI` client and the
     Pydantic AI Gateway; a `True` in the model's `profile=` wins over these. It stays `False` whatever `profile=` says
     for providers that add OAuth credentials to HTTP requests only (`openai-chatgpt`, `openai-codex`),
-    `OpenAICodexModel`, and clients configured with an API key callback or Azure AD token provider. Their credentials
-    or session headers depend on each request, while a socket authenticates only at its handshake.
+    `OpenAICodexModel`, and clients configured with an API key callback, workload identity, Azure AD token provider
+    or HTTP client authentication. Their credentials or session headers depend on each request, while a socket
+    authenticates only at its handshake.
     """
 
     openai_responses_supports_websocket_stream_id: bool

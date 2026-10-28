@@ -149,7 +149,6 @@ from . import (
     StreamedResponse,
     ToolVisibility,
     _effort_window_baseline,  # pyright: ignore[reportPrivateUsage]
-    _model_context_key,  # pyright: ignore[reportPrivateUsage]
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
@@ -162,6 +161,8 @@ from . import (
     get_user_agent,
 )
 from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
+from ._model_context import model_context_key
+from ._openai_auth import non_static_auth_source
 from ._prompt_cache import split_cache_setting
 from ._sdk_retries import with_max_retries
 from ._tool_choice import (
@@ -3200,7 +3201,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # A Responses WebSocket a request opens stays open until the model exits, so later runs reuse it.
         from ..durable_exec._operation_backend import in_durable_unit
 
-        self._websocket.enter(_model_context_key(), external=not in_durable_unit())
+        self._websocket.enter(model_context_key(), external=not in_durable_unit())
         return self
 
     async def __aexit__(
@@ -3209,7 +3210,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> bool | None:
-        await self._websocket.exit(_model_context_key())
+        await self._websocket.exit(model_context_key())
         return await super().__aexit__(exc_type, exc_val, exc_tb)
 
     def _run_scope(self) -> AbstractAsyncContextManager[None]:
@@ -3532,11 +3533,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if profile.get('openai_responses_supports_json_schema_output', False):
             profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
         client = self._provider.client
-        if (
-            isinstance(self._provider, OAuthCredentialsProvider)
-            or callable(getattr(client, '_api_key_provider', None))
-            or (isinstance(client, AsyncAzureOpenAI) and callable(getattr(client, '_azure_ad_token_provider', None)))
-        ):
+        if isinstance(self._provider, OAuthCredentialsProvider) or non_static_auth_source(client) is not None:
             # Per-request credentials must be resolved again for each request; a socket keeps its handshake's
             # credentials, so `profile=` can't enable it for these clients.
             profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))

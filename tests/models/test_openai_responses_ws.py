@@ -79,6 +79,7 @@ with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
     from openai import APIError, AsyncAzureOpenAI, AsyncOpenAI
     from openai._base_client import platform_headers
+    from openai.auth import WorkloadIdentity
     from openai.types.websocket_connection_options import WebSocketConnectionOptions
     from websockets.asyncio.client import connect as websocket_connect
     from websockets.asyncio.server import ServerConnection, serve
@@ -2344,7 +2345,7 @@ async def test_sdk_api_errors_during_websocket_connection_are_mapped(
     assert sockets.connect_count == 1
 
 
-@pytest.mark.parametrize('setup', ['openai-key', 'azure-token'])
+@pytest.mark.parametrize('setup', ['openai-key', 'azure-token', 'http-auth'])
 @pytest.mark.parametrize('profile', [None, OpenAIModelProfile(openai_responses_supports_websocket=True)])
 async def test_credential_callbacks_keep_request_authentication(
     allow_model_requests: None,
@@ -2370,9 +2371,19 @@ async def test_credential_callbacks_keep_request_authentication(
             return httpx2.Response(401, json={'error': {'message': 'Invalid API key', 'type': 'invalid_api_key'}})
         return http.handle(request)
 
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as http_client:
+    def authenticate(request: httpx2.Request) -> httpx2.Request:
+        value = key.get()
+        resolved.append(value)
+        request.headers['authorization'] = f'Bearer {value}'
+        return request
+
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(respond), auth=authenticate if setup == 'http-auth' else None
+    ) as http_client:
         if setup == 'openai-key':
             client = AsyncOpenAI(api_key=credential, http_client=http_client, max_retries=0)
+        elif setup == 'http-auth':
+            client = AsyncOpenAI(api_key='placeholder', http_client=http_client, max_retries=0)
         else:
             assert setup == 'azure-token'
             client = AsyncAzureOpenAI(
@@ -3113,3 +3124,15 @@ async def test_nested_direct_model_contexts_keep_the_socket_until_the_outer_exit
     assert sockets.opened == [socket]
     assert len(socket.sent) == 2
     assert socket.close_count == 1
+
+
+@pytest.mark.parametrize('profile', [None, WEBSOCKET_PROFILE])
+async def test_workload_identity_cannot_enable_a_socket(http: HTTPResponses, profile: OpenAIModelProfile | None):
+    identity: WorkloadIdentity = {
+        'identity_provider_id': 'idp',
+        'service_account_id': 'tenant-a',
+        'provider': {'token_type': 'jwt', 'get_token': lambda: 'subject-token'},
+    }
+    client = AsyncOpenAI(workload_identity=identity, http_client=http.client)
+    model = websocket_model(OpenAIProvider(openai_client=client), profile=profile)
+    assert model.profile.get('openai_responses_supports_websocket') is False
