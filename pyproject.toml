@@ -344,12 +344,14 @@ include = [
     "docs/**/*.py",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/durable_exec_contract.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
     ".github/scripts/test_check_api_compatibility.py",
     ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
     ".github/scripts/test_pydantic_ai_runner.py",
+    ".github/scripts/test_review_lifecycle.py",
     ".github/scripts/issue_pr_attention_monitor.py",
     ".github/scripts/test_issue_pr_attention_monitor.py",
     ".github/scripts/semantic_owner_router.py",
@@ -369,6 +371,7 @@ include = [
     ".github/scripts/test_ci_content_classifier.py",
     ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
+    ".github/scripts/test_clai2_web_bundle.py",
 ]
 
 [tool.ruff.lint]
@@ -446,6 +449,7 @@ quote-style = "single"
 ".github/scripts/test_ci_duration.py" = ["D"]
 ".github/scripts/test_check_api_compatibility.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
+".github/scripts/test_review_lifecycle.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
 ".github/scripts/test_semantic_owner_router.py" = ["D"]
 ".github/scripts/test_community_demand.py" = ["D"]
@@ -458,6 +462,7 @@ quote-style = "single"
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
 ".github/scripts/test_ci_matrix.py" = ["D"]
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
+".github/scripts/test_clai2_web_bundle.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
 "!tests/**/*.py" = ["TID253"]
@@ -487,6 +492,7 @@ include = [
     "src/pydantic_clai2",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/durable_exec_contract.py",
 ]
 # Pyright always skips paths under a dot directory, even ones named here or on its command line, so
 # `.github/scripts` is its own project: `.github/scripts/pyrightconfig.json` extends this one, and
@@ -496,6 +502,10 @@ venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
 executionEnvironments = [
+    # These two import `scripts/durable_exec_contract.py` by name. Pyright applies the first entry whose
+    # root contains a file, so they precede `tests`.
+    { root = "tests/durable_exec/test_durable_exec_contract_manifest.py", extraPaths = ["scripts", "examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = "tests/durable_exec/test_durable_exec_contract_touched.py", extraPaths = ["scripts", "examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = "tests", extraPaths = ["examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     # `scripts/typecheck_changed.py` reads `tomllib`, which is 3.11+. These two are
     # developer tooling rather than shipped code, and the script falls back to the full
@@ -619,6 +629,7 @@ include = [
     "pydantic_graph/**/*.py",
     "src/pydantic_ai_harness/pydantic_ai_harness/**/*.py",
     "tests/**/*.py",
+    "scripts/durable_exec_contract.py",
 ]
 omit = [
     "tests/example_modules/*.py",

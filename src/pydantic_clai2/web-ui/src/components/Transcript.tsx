@@ -11,6 +11,7 @@ import type { TurnSummary } from '../state'
 import { ChevronIcon } from './icons'
 import { Markdown } from './Markdown'
 import { Thinking } from './Thinking'
+import { ForkResult, ForksCard } from './ForksCard'
 import { ToolCard, codeCalls, isWorkspaceTool } from './ToolCard'
 import { UsageCard } from './UsageCard'
 
@@ -63,13 +64,15 @@ const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live:
         </div>
       )
     case 'assistant':
-      return <Markdown className={`assistant ${live ? 'streaming' : ''}`} text={entry.text} />
+      return <Markdown className={`assistant ${live ? 'streaming' : ''}`} text={entry.text} live={live} />
     case 'thinking':
       return <Thinking text={entry.text} live={live} />
     case 'tool':
       return <ToolCard item={entry} />
     case 'notice':
       if (entry.usage && entry.level === 'info') return <UsageCard notice={entry} usage={entry.usage} />
+      if (entry.forks) return <ForksCard notice={entry} forks={entry.forks} />
+      if (entry.fork) return <ForkResult notice={entry} fork={entry.fork} />
       return (
         <div className={`notice ${entry.level}`}>
           {entry.command && <span className="notice-command">{entry.command}</span>}

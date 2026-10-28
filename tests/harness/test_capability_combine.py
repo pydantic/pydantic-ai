@@ -59,9 +59,11 @@ from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
     Coder,
+    CompactOnRequest,
     Planning,
     RelevanceCompaction,
     Researcher,
+    SlidingWindowCompaction,
     SpendLimits,
     SSHWorkspace,
     StepPersistence,
@@ -188,6 +190,10 @@ def _check_system_reminders(merged: Any) -> None:
     assert [r.content for r in merged.reminders] == ['first', 'second']
 
 
+def _check_compact_on_request(merged: Any) -> None:
+    assert merged.max_per_run == 2
+
+
 def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
@@ -254,10 +260,18 @@ COMBINE_POLICY: dict[str, Policy] = {
     'SystemReminders': Combines(
         'reminders are additive, so both sides keep firing',
         lambda: (
-            SystemReminders[Any](reminders=[Reminder('first')]),
-            SystemReminders[Any](reminders=[Reminder('second')]),
+            SystemReminders[Any](reminders=[Reminder('first', tag=None)]),
+            SystemReminders[Any](reminders=[Reminder('second', tag=None)]),
         ),
         _check_system_reminders,
+    ),
+    'CompactOnRequest': Combines(
+        'one `compact_context` tool per agent, and two strategies for one request would compact twice',
+        lambda: (
+            CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=1),
+            CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=2),
+        ),
+        _check_compact_on_request,
     ),
     'ToolOutputLimits': Combines(
         'one output-limit policy; `tool_filter`/`per_tool` are how one instance varies by tool',
@@ -292,6 +306,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
+    'ServingModelRecorder': Anonymous('one per sub-agent run, added by the delegating toolset'),
     '_Skill': Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name'),
     'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
@@ -340,6 +355,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'WarnNearLimits': Anonymous('a passive observer; several thresholds compose'),
     'WarnOnCacheBusts': Anonymous('a passive observer; several thresholds compose'),
     'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
+    'DetectLoops': Anonymous('only hooks; several detectors with their own thresholds and actions compose'),
     'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
@@ -415,6 +431,7 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'CodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
+    'IPythonCodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
     'SmartSearch': Collides(
         'its toolset registers `smart_search` under a fixed name, and its judge `model` decides which '
@@ -717,11 +734,14 @@ def test_system_reminders_keep_two_llm_reminders_whose_models_differ_only_in_set
 
     Not a VCR test: `combine` makes no request.
     """
-    first = LLMReminder[Any](model=TestModel(settings={'temperature': 0.0}))
-    second = LLMReminder[Any](model=TestModel(settings={'temperature': 1.0}))
+    first = LLMReminder[Any](interval=10, model=TestModel(settings={'temperature': 0.0}))
+    second = LLMReminder[Any](interval=10, model=TestModel(settings={'temperature': 1.0}))
 
     merged = SystemReminders.combine(
-        [SystemReminders[Any](dynamic_reminders=[first]), SystemReminders[Any](dynamic_reminders=[second])]
+        [
+            SystemReminders[Any](dynamic_reminders=[first]),
+            SystemReminders[Any](dynamic_reminders=[second]),
+        ]
     )
 
     assert isinstance(merged, SystemReminders)

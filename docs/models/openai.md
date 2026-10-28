@@ -40,7 +40,7 @@ agent = Agent('{{ openai:medium }}')
     For voice agents, use a GPT-Live or `gpt-realtime` model with a [realtime session](../realtime/openai.md) instead.
 
 To pin to the legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead, use the `'openai-chat:'` prefix, which resolves to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
-For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. Use the Responses API when you need reasoning and tools together. `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for function calling with them.
+For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. [OpenAI documents tool calling for `gpt-6.1-terra` through Responses only](https://developers.openai.com/api/docs/models/gpt-6.1-terra), so use Responses for its tool calls. Use Responses whenever you need reasoning and tools together. `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for function calling with them.
 
 Or initialise the model directly with just the model name:
 
@@ -171,6 +171,11 @@ class BoundingBox(BaseModel):
     coordinates: Annotated[list[int], Field(min_length=4, max_length=4)]
 ```
 
+OpenAI also limits how deeply objects can nest in a strict schema and how many object properties it can have, and
+rejects a strict schema over [these limits](https://developers.openai.com/api/docs/guides/structured-outputs#objects-have-limitations-on-nesting-depth-and-size).
+With [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], inferred strictness falls back to non-strict mode
+for a tool or output schema over them, which OpenAI accepts, and an explicit `strict=True` is sent as is.
+
 ## Model settings
 
 You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]:
@@ -253,7 +258,7 @@ agent = Agent(
 result = agent.run_sync('Where is order 1234?')
 ```
 
-The breakpoint is placed after the last static instruction, so dynamic [instructions](../agent.md#instructions) (from `@agent.instructions` functions or [toolsets](../toolsets.md)) stay outside the cached prefix and don't invalidate it when they change. They do invalidate the cached conversation after them, so for instructions that change mid-conversation use [`on_change='append'`](../agent.md#appending-instruction-changes), and [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text). With no static instructions, it goes on the last [system prompt](../agent.md#system-prompts) instead, which is just as stable. Leave `openai_prompt_cache_options` on its default `mode='implicit'` so OpenAI also keeps caching the growing conversation.
+The breakpoint is placed after the last static instruction, so dynamic [instructions](../agent.md#instructions) (from `@agent.instructions` functions or [toolsets](../toolsets.md)) stay outside the cached prefix and don't invalidate it when they change. They do invalidate the cached conversation after them, so for instructions that change mid-conversation use [`on_change='append'`](../agent.md#appending-instruction-changes), and [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text). With no static instructions, it goes on the last [system prompt](../agent.md#system-prompts) instead, which is just as stable. Unlike on [Anthropic](anthropic.md#smart-instruction-caching) and [Bedrock](bedrock.md#prompt-caching), the `on_change='append'` instructions after the static ones get no breakpoint of their own: OpenAI keeps only a request's last four, so a second instruction breakpoint would push out the one after the static instructions first, which is what a new conversation reads. Leave `openai_prompt_cache_options` on its default `mode='implicit'` so OpenAI also keeps caching the growing conversation.
 
 On the Responses API the top-level `instructions` field cannot carry a breakpoint, so the instructions are sent as leading input messages instead. Because a stored response keeps its input and replays it to the request that continues it, this has some limits:
 
@@ -487,7 +492,7 @@ agent = Agent(
 
 By default, `OpenAICompaction` runs in **stateful mode**: it configures OpenAI's server-side auto-compaction via the `context_management` field on the regular `/responses` request, and OpenAI triggers compaction whenever the input token count crosses a threshold it manages for you. This mode is compatible with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) and [`openai_conversation_id`](#using-durable-conversations).
 
-After compaction, subsequent requests send only the compacted window, from the latest compaction item onward. The Responses API processes and bills replayed items that precede a compaction item, so omitting them keeps the compacted context from growing again.
+After compaction, subsequent requests send only the compacted window, from the latest compaction item onward. The Responses API processes and bills replayed items that precede a compaction item, so omitting them keeps the compacted context from growing again. That includes a compaction item from the [Codex backend](openai-codex.md#continuing-on-the-openai-api) or the Pydantic AI Gateway, which share OpenAI's encryption keys, but not one from Azure OpenAI, which has its own: see [Sending history to another provider](../message-history.md#sending-history-to-another-provider).
 
 To override the threshold, pass [`token_threshold`][pydantic_ai.models.openai.OpenAICompaction]:
 
@@ -572,8 +577,36 @@ When the response comes back still pending (`'queued'` or `'in_progress'`), Pyda
 
 Because the request is queued server-side, the time to the first token is higher than for a synchronous request. While a background response is still pending, Pydantic AI polls for completion at a fixed interval.
 
+To end the run instead of waiting, add [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] to the agent's `output_type`: the run then ends with a `PendingModelResponse` as soon as the background response is queued (when streaming, the response streams until it's finished, unless the stream drops before then), and running the agent again with the run's message history checks on the same background response. See [Ending a run while it waits](../batch.md#ending-a-run-while-it-waits).
+
 !!! note
-    If a run is suspended mid-request (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) and persisted in message history, passing that history back resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired]. Abandoning or cancelling the run cancels the server-side background job.
+    A message history that ends in a pending response (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired]. Abandoning or cancelling a run that's waiting cancels the server-side background job.
+
+## Batch API
+
+`OpenAIResponsesModel` supports [batch processing](../batch.md) through OpenAI's
+[Batch API](https://platform.openai.com/docs/guides/batch), which charges 50% of the standard price. A batch
+targets one model and holds up to 50,000 requests, in an input file of up to 200 MB. When the process that submitted
+a batch collects its results, it deletes the input file. A batch collected from another process, for example from a
+stored [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits) history, leaves the file for OpenAI to delete
+after 30 days, since only the process that uploaded it knows it's safe to delete. Like requests on their own,
+batched responses are stored unless you set `openai_store=False`, so they can be continued with
+`openai_previous_response_id`.
+
+The Batch API is OpenAI's own: `OpenAIChatModel`, Azure OpenAI, and providers with a class of their own that implement
+the Responses API, like [OpenRouter](openrouter.md), don't use it by default. It isn't available through the
+[Pydantic AI Gateway](../gateway.md) yet: use `OpenAIProvider` with an OpenAI API key instead. Whether a model uses it is decided by the
+[`openai_supports_batch_api`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_batch_api] profile flag,
+which `OpenAIProvider` sets, also when you give it the `base_url` of an
+[OpenAI-compatible endpoint](compatible-apis.md#other-endpoints). For a provider that also serves the Batch API's
+`/v1/files` and `/v1/batches` endpoints for `/v1/responses` requests, set the flag in the model's
+[profile](compatible-apis.md#model-profile), as in `profile=OpenAIModelProfile(openai_supports_batch_api=True)`, or set
+it to `False` for an endpoint that doesn't serve them.
+
+Batch requests can't use [background mode](#background-mode), which raises a
+[`UserError`][pydantic_ai.exceptions.UserError] when the request is made, and per-request `timeout` and
+`extra_headers` are unsupported: configure them on the client instead. A streamed run gets the batch result's events
+all at once when it arrives.
 
 ## Chat Completions API
 

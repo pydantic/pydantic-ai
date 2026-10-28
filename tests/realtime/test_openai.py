@@ -1666,6 +1666,38 @@ async def test_connect_without_tools_omits_tools(monkeypatch: pytest.MonkeyPatch
     assert 'voice' not in session['audio']['output']
 
 
+class _OpenWebSocket(FakeWebSocket):
+    """A websocket that stays open after the handshake, as a server would until the session closes."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        await asyncio.Event().wait()
+        yield  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    ('profile', 'expected'),
+    [
+        (None, ('system', 'The caller is Jamie.')),
+        ({'supports_system_messages': False}, ('user', '<system>The caller is Jamie.</system>')),
+    ],
+)
+async def test_mid_session_system_prompt_channel_follows_the_profile(
+    monkeypatch: pytest.MonkeyPatch, profile: RealtimeModelProfile | None, expected: tuple[str, str]
+) -> None:
+    """A system prompt goes out as a `system` message where the profile says the model heeds one, else as tagged text."""
+    ws = _OpenWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'), profile=profile)
+    assert model.profile.get('supports_system_messages') is (profile is None)
+
+    async with Agent().realtime(model).session() as session:
+        await session.send(SystemPromptPart(content='The caller is Jamie.'), respond=False)
+
+    [item] = [json.loads(frame)['item'] for frame in ws.sent if json.loads(frame)['type'] == 'conversation.item.create']
+    assert (item['role'], item['content'][0]['text']) == expected
+    assert not any(json.loads(frame)['type'] == 'response.create' for frame in ws.sent)
+
+
 async def test_connect_sends_seeded_system_prompts(monkeypatch: pytest.MonkeyPatch) -> None:
     """The standing system prompt opens the session instructions; a later one is seeded in place as `<system>` text."""
     ws = FakeWebSocket([_created(), _updated()])
@@ -3050,7 +3082,7 @@ async def test_function_call_only_response_without_usage_finalizes_before_answer
     assert isinstance(tool_result, ModelRequest)
     assert isinstance(tool_result.parts[0], ToolReturnPart)
     assert isinstance(answer, ModelResponse)
-    assert answer.parts == [SpeechPart(speaker='assistant', transcript='Sunny')]
+    assert answer.parts == [SpeechPart(speaker='assistant', transcript='Sunny', id='answer-1', provider_name='openai')]
     assert answer.usage == RequestUsage(output_tokens=3)
 
 
@@ -3099,7 +3131,7 @@ async def test_session_stamps_openai_response_metadata(
     assert response.provider_details == expected_details
     speech = response.parts[0]
     assert isinstance(speech, SpeechPart)
-    assert (speech.id, speech.provider_name) == (None, None)
+    assert (speech.id, speech.provider_name) == ('item-1', 'openai')
 
 
 @pytest.mark.parametrize(

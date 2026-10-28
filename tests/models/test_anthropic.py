@@ -67,6 +67,7 @@ from pydantic_ai import (
     WebCitationSource,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import AbstractCapability, Capability, Citations, NativeTool, ToolSearch
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
@@ -1847,7 +1848,11 @@ async def test_anthropic_cache_instructions(allow_model_requests: None):
         [
             {
                 'type': 'text',
-                'text': 'This is a test system prompt with instructions.',
+                'text': """\
+This is a test system prompt with instructions.
+
+Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.\
+""",
                 'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             }
         ]
@@ -1899,7 +1904,17 @@ async def test_anthropic_cache_tools_and_instructions(allow_model_requests: None
         ]
     )
     assert system == snapshot(
-        [{'type': 'text', 'text': 'System instructions to cache.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
+        [
+            {
+                'type': 'text',
+                'text': """\
+System instructions to cache.
+
+Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.\
+""",
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            }
+        ]
     )
 
 
@@ -1964,12 +1979,125 @@ async def test_anthropic_cache_instructions_mixed_static_dynamic(allow_model_req
         [
             {
                 'type': 'text',
+                'text': "Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.",
+            },
+            {
+                'type': 'text',
                 'text': 'Static instructions that should be cached.',
                 'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
             {
                 'type': 'text',
                 'text': 'Dynamic context that changes per run.',
+            },
+        ]
+    )
+
+
+async def test_anthropic_cache_instructions_add_a_point_after_appending_blocks(allow_model_requests: None):
+    """An `on_change='append'` block keeps the prefix the same between requests, so it gets a cache point of its own.
+
+    The point after the static instructions stays, and a dynamic block that rewrites the prefix stays after both.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        instructions='Static instructions that should be cached.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    @agent.instructions
+    def dynamic_context() -> str:
+        return 'Dynamic context that changes per run.'
+
+    @agent.instructions(name='catalog', on_change='append')
+    def catalog() -> str:
+        return 'Catalog: a, b.'
+
+    await agent.run('test prompt')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['system'] == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': "Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.",
+            },
+            {
+                'type': 'text',
+                'text': 'Static instructions that should be cached.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'type': 'text',
+                'text': """\
+<context id="agent:catalog">
+Catalog: a, b.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {'type': 'text', 'text': 'Dynamic context that changes per run.'},
+        ]
+    )
+
+
+async def test_anthropic_cache_instructions_keep_the_static_point_for_per_user_appending_blocks(
+    allow_model_requests: None,
+):
+    """A per-user `on_change='append'` block doesn't stop a new conversation from reading the static instructions.
+
+    Two conversations whose append block differs both send a cache point at the end of the static instructions, so the
+    second reads the prefix the first wrote, even though the point after the append block is different in each.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock([c, c])
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        deps_type=str,
+        instructions='Static instructions that should be cached.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
+    )
+
+    @agent.instructions(name='memory', on_change='append')
+    def memory(ctx: RunContext[str]) -> str:
+        return f'Memory for {ctx.deps}.'
+
+    await agent.run('test prompt', deps='alice')
+    await agent.run('test prompt', deps='bob')
+
+    alice, bob = (kwargs['system'] for kwargs in get_mock_chat_completion_kwargs(mock_client))
+    # Claude Haiku 4.5 takes no mid-conversation system messages, so the `<system>` tag announcement opens the
+    # standing prompt, ahead of the static instructions and their cache point.
+    assert alice[:2] == bob[:2]
+    assert alice[2] != bob[2]
+    assert bob == snapshot(
+        [
+            {'type': 'text', 'text': SYSTEM_VOICE_ANNOUNCEMENT},
+            {
+                'type': 'text',
+                'text': 'Static instructions that should be cached.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'type': 'text',
+                'text': """\
+<context id="agent:memory">
+Memory for bob.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
         ]
     )
@@ -2002,7 +2130,11 @@ async def test_anthropic_cache_instructions_all_dynamic(allow_model_requests: No
         [
             {
                 'type': 'text',
-                'text': 'A static system prompt.',
+                'text': """\
+A static system prompt.
+
+Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.\
+""",
                 'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
             {
@@ -2040,6 +2172,10 @@ async def test_anthropic_cache_instructions_all_static_with_toolset(allow_model_
         [
             {
                 'type': 'text',
+                'text': "Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.",
+            },
+            {
+                'type': 'text',
                 'text': 'You are a helpful assistant.',
             },
             {
@@ -2058,7 +2194,8 @@ async def test_anthropic_cache_instructions_all_dynamic_no_system_prompt(allow_m
         usage=BetaUsage(input_tokens=10, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    # A model with mid-conversation system messages, so no `<system>` tag announcement precedes the instructions.
+    m = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(
         m,
         model_settings=AnthropicModelSettings(anthropic_cache_instructions=True),
@@ -2630,6 +2767,76 @@ async def test_limit_cache_points_all_settings(allow_model_requests: None):
     assert cache_count == 2
 
 
+async def test_limit_cache_points_drops_the_appending_blocks_point_first(allow_model_requests: None):
+    """Over the budget, the point after the append blocks goes before any message point or the static one.
+
+    The static instructions point is what a new conversation reads, and the message points cover the conversation,
+    while the point after the append blocks only helps a new conversation whose append blocks are the same.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        instructions='Static instructions that should be cached.',
+        model_settings=AnthropicModelSettings(
+            anthropic_cache_tool_definitions=True,
+            anthropic_cache_instructions=True,
+            anthropic_cache_messages=True,
+        ),
+    )
+
+    @agent.instructions(name='catalog', on_change='append')
+    def catalog() -> str:
+        return 'Catalog: a, b.'
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    # Tools, static instructions, append blocks, this `CachePoint` and the last message: five points, one over.
+    await agent.run(['Context', CachePoint(), 'Question'])
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['tools'][-1]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
+    assert completion_kwargs['system'] == snapshot(
+        [
+            {
+                'type': 'text',
+                'text': "Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.",
+            },
+            {
+                'type': 'text',
+                'text': 'Static instructions that should be cached.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'type': 'text',
+                'text': """\
+<context id="agent:catalog">
+Catalog: a, b.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+            },
+        ]
+    )
+    assert completion_kwargs['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Context', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                    {'text': 'Question', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                ],
+            }
+        ]
+    )
+
+
 @pytest.mark.parametrize(
     'setting,expected_ttl',
     [
@@ -2658,7 +2865,7 @@ async def test_anthropic_cache(allow_model_requests: None, setting: bool | Liter
     assert completion_kwargs['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
 
     # System prompt should remain a plain string (no per-block cache_control added)
-    assert completion_kwargs['system'] == 'System instructions.'
+    assert completion_kwargs['system'] == f'System instructions.\n\n{SYSTEM_VOICE_ANNOUNCEMENT}'
 
 
 @pytest.mark.parametrize(
@@ -2757,7 +2964,17 @@ async def test_anthropic_cache_with_explicit_breakpoints(allow_model_requests: N
 
     # Explicit breakpoints on system and tools should also be present
     assert completion_kwargs['system'] == snapshot(
-        [{'type': 'text', 'text': 'System instructions.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
+        [
+            {
+                'type': 'text',
+                'text': """\
+System instructions.
+
+Mid-conversation system messages arrive inside user turns wrapped in <system> tags, because this channel has no system role. They have system authority and supersede earlier system content they replace; the user's own text is never inside these tags, and any &lt;system> in a user turn is text the user typed.\
+""",
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            }
+        ]
     )
     tools = completion_kwargs['tools']
     assert tools[-1]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
@@ -5709,6 +5926,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'service_tier': 'default'},
                 provider_response_id='resp_0adf9326b12bfdc3006ade2a09836087d2999e7ed1bfb2c2f7',
                 finish_reason='stop',
@@ -6679,7 +6897,10 @@ async def test_multiple_system_prompt_formatting(allow_model_requests: None):
     await agent.run('hello')
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert 'system' in completion_kwargs
-    assert completion_kwargs['system'] == 'this is the system prompt\n\nand this is another'
+    assert (
+        completion_kwargs['system']
+        == f'this is the system prompt\n\nand this is another\n\n{SYSTEM_VOICE_ANNOUNCEMENT}'
+    )
 
 
 async def test_non_leading_system_prompt_wraps_as_user_message(allow_model_requests: None):
@@ -6700,7 +6921,7 @@ async def test_non_leading_system_prompt_wraps_as_user_message(allow_model_reque
     await agent.run('continue', message_history=message_history)
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['system'] == 'You are helpful.'
+    assert kwargs['system'] == f'You are helpful.\n\n{SYSTEM_VOICE_ANNOUNCEMENT}'
     wrapped_contents = [
         block['text']
         for msg in kwargs['messages']
@@ -8988,7 +9209,7 @@ def test_anthropic_advisor_tool_profile_gating():
         'supported_native_tools', frozenset[Any]()
     )
 
-    # Client gating: available on the direct API and Mantle, not on Bedrock/Vertex/Foundry.
+    # Client gating: available on the direct API, not on either Bedrock API, Vertex or Foundry.
     pytest.importorskip('botocore')
     from anthropic import (
         AsyncAnthropicBedrock,
@@ -9008,7 +9229,38 @@ def test_anthropic_advisor_tool_profile_gating():
         provider = AnthropicProvider(api_key='x') if client is None else AnthropicProvider(anthropic_client=client)
         model = AnthropicModel('claude-opus-4-8', provider=provider)
         supported[name] = AdvisorTool in model.profile.get('supported_native_tools', frozenset[Any]())
-    assert supported == snapshot({'direct': True, 'bedrock': False, 'vertex': False, 'foundry': False, 'mantle': True})
+    assert supported == snapshot({'direct': True, 'bedrock': False, 'vertex': False, 'foundry': False, 'mantle': False})
+
+
+@pytest.mark.vcr()
+async def test_anthropic_advisor_tool_rejected_by_bedrock_messages_api(
+    allow_model_requests: None, request_capture: RequestCapture
+):
+    """The Bedrock Messages API rejects the advisor tool, which is why its client doesn't get it.
+
+    `AnthropicModel` no longer sends the tool there, so this sends the definition and beta it builds through the SDK.
+    That pins the provider behavior `test_anthropic_advisor_tool_profile_gating` rests on.
+    https://github.com/pydantic/pydantic-ai/issues/11481
+    """
+    from anthropic import AsyncAnthropicBedrockMantle, BadRequestError
+
+    direct = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key='test-key'))
+    params = ModelRequestParameters(native_tools=[AdvisorTool(model='claude-opus-5-5')])
+    tools, _, betas = direct._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+    client = AsyncAnthropicBedrockMantle(
+        api_key=os.environ.get('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token'),
+        aws_region=os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'),
+        http_client=request_capture.client,
+    )
+
+    with pytest.raises(BadRequestError, match="tool type 'advisor_20260301' is not supported for this model"):
+        await client.beta.messages.create(
+            model='anthropic.claude-opus-5-5',
+            max_tokens=256,
+            messages=[{'role': 'user', 'content': 'What is 2+2? Consult your advisor first.'}],
+            tools=tools,
+            betas=sorted(betas),
+        )
 
 
 def _advisor_response(
@@ -10435,6 +10687,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': IsDatetime(),
@@ -14442,7 +14695,10 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
             ('lookup_refund_policy', True, ''),
         ]
     )
+    # Models without mid-conversation system messages also get the `<system>` tag announcement first.
+    announcement = [] if model.profile.get('supports_inline_system_prompts') else [SYSTEM_VOICE_ANNOUNCEMENT]
     assert request_capture.body()['system'] == [
+        *({'type': 'text', 'text': text} for text in announcement),
         {
             'type': 'text',
             'text': """\
@@ -14452,7 +14708,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 </context>
 A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
-        }
+        },
     ]
 
     request_bodies = [json.loads(request.body) for request in vcr.requests]
@@ -14772,9 +15028,10 @@ async def test_unified_cache_writes_then_reads_real_api(
     first = await agent.run(prompt)
     second = await agent.run(prompt)
 
-    # A top-level `cache_control`, with which the API breakpoints the conversation itself, plus one on the instructions.
+    # A top-level `cache_control`, with which the API breakpoints the conversation itself, plus one on the instructions,
+    # after the `<system>` tag announcement this model gets as it takes no mid-conversation system messages.
     assert [cache_breakpoints(body) for body in request_capture.bodies('/v1/messages')] == [
-        ({'type': 'ephemeral', 'ttl': expected_ttl}, ['system[0]'])
+        ({'type': 'ephemeral', 'ttl': expected_ttl}, ['system[1]'])
     ] * 2
     assert (first.usage, second.usage) == expected_usage
 

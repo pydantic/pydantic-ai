@@ -255,6 +255,8 @@ def test_anthropic_claude_sonnet_4_6():
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'anthropic_enforces_strict_schema_limits': True,
+            'anthropic_supports_on_demand_compaction': True,
             'supports_auto_cache': True,
         }
     )
@@ -294,6 +296,8 @@ def test_anthropic_claude_opus_4_7():
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'anthropic_enforces_strict_schema_limits': True,
+            'anthropic_supports_on_demand_compaction': True,
             'supports_auto_cache': True,
         }
     )
@@ -323,6 +327,8 @@ def test_anthropic_claude_haiku_4_5():
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'anthropic_enforces_strict_schema_limits': True,
+            'anthropic_supports_on_demand_compaction': False,
             'supports_auto_cache': True,
         }
     )
@@ -351,6 +357,8 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             ),
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'anthropic_enforces_strict_schema_limits': True,
+            'anthropic_supports_on_demand_compaction': False,
             'supports_auto_cache': True,
         }
     )
@@ -381,6 +389,7 @@ def test_openai_gpt_5_4():
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
+            'openai_supports_batch_api': True,
         }
     )
 
@@ -436,6 +445,7 @@ def test_openai_gpt_5_6():
             'supported_cache_retentions': ('30m',),
             'openai_responses_supports_prompt_cache_diagnostics': True,
             'openai_chat_supports_allowed_tools': True,
+            'openai_supports_batch_api': True,
         }
     )
 
@@ -481,6 +491,7 @@ def test_openai_gpt_6_astra():
             'openai_responses_supports_prompt_cache_diagnostics': True,
             'openai_chat_supports_allowed_tools': True,
             'supports_mid_conversation_effort': True,
+            'openai_supports_batch_api': True,
         }
     )
 
@@ -531,6 +542,13 @@ def test_openai_gpt_6_1_sol(model_name: str):
 
     profile = OpenAIProvider.model_profile(model_name)
     assert _normalize(profile) == _normalize(OpenAIProvider.model_profile('gpt-6-astra'))
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openai_gpt_6_1_terra():
+    """Terra retains GPT-6 Luna's capabilities, including disabling reasoning and Responses-only max effort."""
+    profile = OpenAIProvider.model_profile('gpt-6.1-terra')
+    assert _normalize(profile) == _normalize(OpenAIProvider.model_profile('gpt-6-luna'))
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -623,6 +641,7 @@ def test_openai_gpt_4o():
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
+            'openai_supports_batch_api': True,
         }
     )
 
@@ -653,6 +672,7 @@ def test_openai_o3_mini():
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
+            'openai_supports_batch_api': True,
         }
     )
 
@@ -689,6 +709,7 @@ def test_openai_codex_gpt_5_6():
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openai_chat_supports_allowed_tools': True,
+            'openai_supports_batch_api': False,
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
@@ -934,6 +955,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_thinking_variant': 'anthropic',
             'tool_deferral_mode': 'standalone',
             'json_schema_transformer': _BedrockAnthropicJsonSchemaTransformer,
+            'anthropic_enforces_strict_schema_limits': True,
             'bedrock_supports_strict_tool_definition': True,
         }
     )
@@ -1011,6 +1033,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_thinking_variant': 'anthropic',
             'tool_deferral_mode': 'standalone',
             'json_schema_transformer': _BedrockAnthropicJsonSchemaTransformer,
+            'anthropic_enforces_strict_schema_limits': True,
             'bedrock_supports_strict_tool_definition': True,
         }
     )
@@ -1051,6 +1074,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'anthropic_rejects_max_tokens_beyond_context_window': True,
             'bedrock_thinking_variant': 'anthropic',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'anthropic_enforces_strict_schema_limits': True,
             'bedrock_supports_strict_tool_definition': False,
         }
     )
@@ -2354,6 +2378,8 @@ def test_anthropic_unknown_model_returns_some_profile():
             ),
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'anthropic_enforces_strict_schema_limits': True,
+            'anthropic_supports_on_demand_compaction': False,
             'supports_auto_cache': True,
         }
     )

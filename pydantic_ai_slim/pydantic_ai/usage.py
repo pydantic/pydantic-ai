@@ -406,7 +406,9 @@ class RunUsage(UsageBase):
     """
 
     requests: int = 0
-    """Number of model responses the agent acted on, one per step of the agent loop.
+    """Number of model responses committed to the run's history, one per step of the agent loop.
+
+    That includes a response the run stopped on before acting on it, because it crossed a token or cost limit.
 
     This is what [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit] bounds. It can be
     lower than the number of requests sent to the provider: attempts a
@@ -524,7 +526,7 @@ class UsageLimits:
     cost_limit: Decimal | None = None
     """The maximum cost allowed in USD."""
     request_limit: int | None = 50
-    """The maximum number of model responses the agent acts on, as counted by [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests].
+    """The maximum number of model responses committed to the run's history, as counted by [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests].
 
     This bounds the number of turns of the agent loop, not the number of requests sent to the provider: attempts a
     [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] moved on from, continuation requests, and

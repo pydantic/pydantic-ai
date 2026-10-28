@@ -99,7 +99,7 @@ from ._openai_protocol import (
     config_interrupts_response_on_speech,
     connect_openai_protocol,
     expect_event,
-    is_user_message_item,
+    is_client_message_item,
     loads_obj,
     map_connect_errors,
     map_event,
@@ -130,6 +130,8 @@ from ._openai_webrtc import (
 )
 from ._utils import (
     DEFAULT_MAX_RECONNECTS,
+    SystemPromptContext,
+    SystemPromptText,
     inject_trace_context,
     reconnect_with_backoff,
     require_pcm_audio,
@@ -594,7 +596,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
 
     def _history_items_sent(self, items: Sequence[dict[str, Any]]) -> None:
         """Seeded or replayed history went out on the socket: the items that join the conversation place no input."""
-        self._lifecycle.foreign_messages_sent(sum(is_user_message_item(item) for item in items))
+        self._lifecycle.foreign_messages_sent(sum(is_client_message_item(item) for item in items))
 
     @property
     def _can_reconnect(self) -> bool:
@@ -641,9 +643,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     'audio': base64.b64encode(content.data).decode('ascii'),
                 }
             )
+        elif isinstance(content, (SystemPromptText, SystemPromptContext)):
+            await self._send_text(
+                content.system_prompt, role='system', respond=isinstance(content, str), input_index=input_index
+            )
         elif isinstance(content, (str, TextContext)):
             text = content if isinstance(content, str) else content.text
-            await self._send_text(text, respond=isinstance(content, str), input_index=input_index)
+            await self._send_text(text, role='user', respond=isinstance(content, str), input_index=input_index)
         elif isinstance(content, ToolResult):
             await self._send_tool_result(content, input_index=input_index)
         elif isinstance(content, BinaryImage):
@@ -817,7 +823,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             request = self._solicit_response if solicited else self._request_response
             await request((batch.inputs[-1],), answers=batch.inputs)
 
-    async def _send_text(self, text: str, *, respond: bool, input_index: int) -> None:
+    async def _send_text(self, text: str, *, role: Literal['user', 'system'], respond: bool, input_index: int) -> None:
         self._lifecycle.message_sent(input_index)
         await self._send_event(
             {
@@ -826,7 +832,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 'item': {
                     'id': client_item_id(input_index),
                     'type': 'message',
-                    'role': 'user',
+                    'role': role,
                     'content': [{'type': 'input_text', 'text': text}],
                 },
             }

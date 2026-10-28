@@ -62,6 +62,7 @@ from pydantic_ai import (
     VideoUrl,
     WebCitationSource,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool
 from pydantic_ai.exceptions import (
@@ -2634,6 +2635,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2673,6 +2675,7 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2764,6 +2767,7 @@ Is there a specific crossing situation you need help with?\
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2863,6 +2867,7 @@ What type of river crossing are you considering?\
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2938,6 +2943,7 @@ Would you like more specific advice for a particular situation?\
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3021,6 +3027,7 @@ Would you like more detail on any specific scenario?\
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3192,6 +3199,7 @@ Would you like more specific advice for a particular situation?\
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3272,6 +3280,7 @@ Would you like more detail on any specific crossing method?\
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3324,6 +3333,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3364,6 +3374,7 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3432,6 +3443,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3591,6 +3603,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 10, 22, 46, 57, tzinfo=UTC),
@@ -3643,6 +3656,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3962,6 +3976,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -6526,6 +6541,74 @@ async def test_bedrock_cache_instructions_mixed_static_dynamic(
     )
 
 
+async def test_bedrock_cache_instructions_add_a_point_after_appending_blocks(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """The append blocks between the static and dynamic instructions get a second cache point, which goes first.
+
+    Over the budget of four, `_limit_cache_points` drops the point after the append blocks before any message point,
+    and keeps the one after the static instructions that every conversation shares.
+    """
+    from pydantic_ai.messages import AgentInstructionSource, InstructionId, InstructionPart
+
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Context 1', CachePoint(), 'Context 2', CachePoint(), 'Question'])])
+    ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[
+            InstructionPart(content='Static instructions.', dynamic=False),
+            InstructionPart(
+                content='Catalog.',
+                dynamic=True,
+                on_change='append',
+                id=InstructionId(AgentInstructionSource(), name='catalog'),
+            ),
+            InstructionPart(content='Dynamic context.', dynamic=True),
+        ],
+    )
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_request_parameters,
+        BedrockModelSettings(bedrock_cache_instructions=True, bedrock_cache_messages=True),
+    )
+    assert system_prompt == snapshot(
+        [
+            {'text': 'Static instructions.'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Catalog.'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Dynamic context.'},
+        ]
+    )
+
+    model._limit_cache_points(system_prompt, bedrock_messages, [])  # pyright: ignore[reportPrivateUsage]
+
+    assert system_prompt == snapshot(
+        [
+            {'text': 'Static instructions.'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Catalog.'},
+            {'text': 'Dynamic context.'},
+        ]
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Context 1'},
+                    {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+                    {'text': 'Context 2'},
+                    {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+                    {'text': 'Question'},
+                    {'cachePoint': {'type': 'default'}},
+                ],
+            }
+        ]
+    )
+
+
 async def test_bedrock_cache_instructions_all_dynamic_no_system_prompt(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
@@ -7840,6 +7923,8 @@ async def test_bedrock_model_with_instructions_only(
     See: https://github.com/pydantic/pydantic-ai/issues/4495
     """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    # Claude's thinking is verified by the Anthropic API too, so its responses record that.
+    canonical_system = 'anthropic' if 'anthropic' in model_name else None
     agent = Agent(model=model, system_prompt='Generate a short greeting.')
 
     result = await agent.run()
@@ -7860,6 +7945,7 @@ async def test_bedrock_model_with_instructions_only(
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system=canonical_system,
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -7888,6 +7974,8 @@ async def test_bedrock_model_instructions_only_then_message_history(
     See: https://github.com/pydantic/pydantic-ai/issues/4495
     """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    # Claude's thinking is verified by the Anthropic API too, so its responses record that.
+    canonical_system = 'anthropic' if 'anthropic' in model_name else None
     agent = Agent(model=model, system_prompt='Generate a short greeting.')
 
     first_result = await agent.run()
@@ -7909,6 +7997,7 @@ async def test_bedrock_model_instructions_only_then_message_history(
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system=canonical_system,
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -7927,6 +8016,7 @@ async def test_bedrock_model_instructions_only_then_message_history(
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system=canonical_system,
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -7949,7 +8039,7 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
         prepared, ModelRequestParameters(), BedrockModelSettings()
     )
 
-    assert system_prompt == [{'text': 'You are helpful.'}]
+    assert system_prompt == [{'text': 'You are helpful.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}]
     text_blocks = [
         block['text']
         for msg in cast(list[Any], bedrock_messages)
@@ -8612,7 +8702,7 @@ async def test_bedrock_empty_history_prepended_for_anthropic(bedrock_provider: B
     system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         model.prepare_messages(messages), ModelRequestParameters(), BedrockModelSettings()
     )
-    assert system_prompt == [{'text': 'Generate a short greeting.'}]
+    assert system_prompt == [{'text': 'Generate a short greeting.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}]
     assert bedrock_messages == snapshot([{'role': 'user', 'content': [{'text': '.'}]}])
 
 
@@ -9008,6 +9098,7 @@ async def test_bedrock_anthropic_message_history_starting_with_response(
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),

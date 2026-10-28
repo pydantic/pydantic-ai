@@ -68,6 +68,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
+from ._inline_snapshot import snapshot
 from .append_only import (
     CLOCK,
     PROVIDERS,
@@ -88,6 +89,7 @@ from .append_only import (
     inject_clock,
     provider_imports_successful,
     run_conversation,
+    ui_imports_successful,
 )
 from .conftest import try_import
 
@@ -95,6 +97,10 @@ with try_import() as mcp_imports_successful:
     from fastmcp.server import FastMCP
 
     from pydantic_ai.mcp import MCPToolset
+
+# The module is skipped without the provider extras, so this needs no flag of its own.
+with try_import():
+    from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
 pytestmark = pytest.mark.skipif(not provider_imports_successful(), reason='anthropic or openai not installed')
 
@@ -146,6 +152,11 @@ FIXTURES: dict[str, Fixture] = {
 """Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
 
 EXEMPT: dict[str, Exempt] = {
+    'BatchModelRequests': Exempt(
+        "Sends each request through the provider's batch API, which the scenario doesn't serve. A batch item's body is "
+        "built by the same code as the model's own request, so it's the unbatched request's (see the providers' "
+        '`batch_encode` tests).'
+    ),
     'NativeOrLocalTool': Exempt(
         'Base class that needs a subclass; `WebSearch`, `WebFetch`, `XSearch` and `MCP` are its cases.'
     ),
@@ -261,6 +272,10 @@ AGENT_FEATURES: dict[str, Scenario] = {
         model_names={'openai-responses': 'gpt-6.1-sol', 'openai-chat': 'gpt-6.1-sol'},
         serialize_history=True,
     ),
+    # A UI endpoint that keeps the history on the server (#11372): the client sends its whole conversation back,
+    # and `manage_message_history='server'` must still only ever append to the requests the stored history built.
+    'ui:server_held_history_vercel': Scenario(ui_adapter='vercel', serialize_history=True),
+    'ui:server_held_history_agui': Scenario(ui_adapter='agui', serialize_history=True),
 }
 """Agent features, not capabilities, that render state into the prompt, run through the same checks."""
 
@@ -445,6 +460,8 @@ async def test_conversation_only_appends(
         pytest.skip(reason)
     if name == 'MCP' and not mcp_imports_successful():  # pragma: lax no cover
         pytest.skip('mcp not installed')
+    if name.startswith('ui:') and not ui_imports_successful():  # pragma: lax no cover
+        pytest.skip('ag-ui-protocol not installed')
     if name in AGENT_FEATURES:
         capabilities, scenario = [], AGENT_FEATURES[name]
     elif name in LOADED_CAPABILITY_CASES:
@@ -964,3 +981,29 @@ def test_a_request_scoped_prompt_left_visible_fails():
     result = ConversationResult('anthropic', bodies, (b'', b''), [])
     with pytest.raises(pytest.fail.Exception, match=re.escape('request 1 still shows')):
         check_conversation('example', result)
+
+
+@pytest.mark.parametrize('protocol', ['vercel', 'agui'])
+async def test_server_held_ui_history_keeps_openai_responses_chaining(
+    protocol: Literal['vercel', 'agui'], monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
+):
+    """A later turn through a server-held UI endpoint continues the OpenAI Responses chain.
+
+    With `openai_previous_response_id='auto'`, a request chains only when the history it continues is the one
+    the previous response answered (#10509, #10656, #11331). The stored history keeps each response's
+    `provider_response_id` and history digest through a JSON round trip, so the second run's first request sends
+    `previous_response_id` and only its new turn, though the client sent its whole conversation.
+    """
+    if not ui_imports_successful():  # pragma: lax no cover
+        pytest.skip('ag-ui-protocol not installed')
+    scenario = Scenario(
+        ui_adapter=protocol,
+        serialize_history=True,
+        run_kwargs={'model_settings': OpenAIResponsesModelSettings(openai_previous_response_id='auto')},
+    )
+    result = await run_conversation('openai-responses', [], scenario, inject_clock(monkeypatch))
+
+    # The first run makes three requests; the fourth is the second run's first.
+    continued = json.loads(result.conversation[3])
+    assert continued['previous_response_id'] == 'resp_3'
+    assert continued['input'] == snapshot([{'role': 'user', 'content': 'And what else?'}])

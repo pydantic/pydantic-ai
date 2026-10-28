@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from contextvars import ContextVar
 from typing import Literal, TypeAlias
 
 from ..native_tools import (
@@ -26,6 +27,13 @@ Models whose profile sets that flag reject these settings outright with a 400, s
 serving them has to drop and warn rather than forward. It lives here rather than beside either
 model because `models/bedrock.py` cannot import from `models/anthropic/` without pulling the
 `anthropic` SDK into the `bedrock` extra.
+"""
+
+_COUNTING_STRICT_SCHEMAS: ContextVar[bool] = ContextVar('pydantic_ai_counting_strict_schemas', default=False)
+"""Set while schemas are transformed only to count them against Anthropic's strict schema limits.
+
+The transformer then doesn't warn about a strict schema that may not be sent. It lives here, rather than beside either
+model, because `models/bedrock.py` cannot import from `models/anthropic/` without the `anthropic` SDK.
 """
 
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
@@ -140,6 +148,16 @@ class AnthropicModelProfile(ModelProfile, total=False):
     Anthropic currently documents task budgets as a Claude Opus 4.7 / 4.8 / 5 / 5.5 and Haiku 5.5 beta feature.
     """
 
+    anthropic_supports_on_demand_compaction: bool
+    """Whether the model accepts the `compaction` request parameter, and the signed block it returns. Default: `False`.
+
+    [`AnthropicModel.compact_messages`][pydantic_ai.models.anthropic.AnthropicModel.compact_messages] raises a
+    `UserError` for a model without it. It's a fact about the Messages API, which no `AnthropicModel` client narrows,
+    so `AnthropicProvider` sets it for Claude
+    Fable 5 and 5.1, Mythos 5, 5.1 and Preview, Opus 4.6, 4.7, 4.8, 5 and 5.5, Sonnet 4.6, 5 and 5.5, and Haiku 5.5;
+    see [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand).
+    """
+
     anthropic_supports_forced_tool_choice: bool
     """Deprecated: use [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] instead.
 
@@ -172,6 +190,37 @@ class AnthropicModelProfile(ModelProfile, total=False):
     rejects a stale block, it retries once with `thinking.block_binding.prefix_mismatch_behavior='drop_block'`
     and warns after the retry succeeds. See [Anthropic's thinking troubleshooting
     guide](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
+    """
+
+    anthropic_accepts_file_and_container_ids: bool
+    """Whether the API accepts Anthropic Files API file IDs and code execution container IDs. Default: `True`.
+
+    `AnthropicModel` sets it to `False` on the Bedrock, Vertex AI and Foundry clients. There, an
+    [`UploadedFile`][pydantic_ai.messages.UploadedFile] from Anthropic raises a `UserError`, a
+    [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]'s Anthropic files aren't uploaded to its
+    container, and no container from earlier in the history, including a paused turn's, is sent.
+    """
+
+    anthropic_enforces_strict_schema_limits: bool
+    """Whether the API rejects a request whose strict schemas exceed Anthropic's explicit complexity limits. Default: `False`.
+
+    Anthropic counts strict tools, optional parameters and union-typed parameters across all strict schemas in a
+    request, and rejects recursive schemas, as described under [schema complexity
+    limits](https://platform.claude.com/docs/en/build-with-claude/structured-outputs#schema-complexity-limits). When
+    True, an `output_type` that doesn't pick an output mode uses non-strict Tool Output instead of Native Output where
+    the Native Output schema wouldn't fit, and a request that explicitly asks for strict schemas over a limit raises a
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before it's sent.
+    """
+
+    anthropic_supports_message_batches: bool
+    """Whether the endpoint serves the Claude API's
+    [Message Batches](https://platform.claude.com/docs/en/build-with-claude/batch-processing). Default: `False`.
+
+    [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] and
+    [`model_request_batch`][pydantic_ai.direct.model_request_batch] use it. `AnthropicModel` sets it for an
+    `AsyncAnthropic` client, and not for the Bedrock, Vertex AI and Microsoft Foundry clients, whose platforms batch
+    through jobs of their own. Message Batches are sent through an `AsyncAnthropic` client, so setting this for another
+    client class raises a `UserError` when a request is batched.
     """
 
 
