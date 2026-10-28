@@ -14,6 +14,11 @@ from pydantic import BaseModel, Field
 APPROVAL_BODY = 'No blocking findings.'
 DOUWEBOT_MARKER = re.compile(r'\n\n<!-- douwebot:review run=([1-9][0-9]*) head=([a-f0-9]{40}) -->\Z')
 ReviewVerdict = Literal['APPROVE', 'REQUEST_CHANGES', 'INCOMPLETE']
+REVIEW_BODIES: dict[ReviewVerdict, str] = {
+    'APPROVE': APPROVAL_BODY,
+    'REQUEST_CHANGES': 'Blocking findings are recorded inline.',
+    'INCOMPLETE': 'Review incomplete.',
+}
 
 
 class Finding(BaseModel):
@@ -35,14 +40,9 @@ class ReviewResult(BaseModel):
 
 def publication(result: ReviewResult, head: str, run_id: int, *, inline: bool = True) -> str:
     """Bind the formal review and all findings to this run and reviewed head."""
-    bodies: dict[ReviewVerdict, str] = {
-        'APPROVE': APPROVAL_BODY,
-        'REQUEST_CHANGES': 'Blocking findings are recorded inline.'
-        if inline
-        else 'Blocking findings are recorded below.',
-        'INCOMPLETE': 'Review incomplete.',
-    }
-    body = bodies[result.verdict]
+    body = REVIEW_BODIES[result.verdict]
+    if result.verdict == 'REQUEST_CHANGES' and not inline:
+        body = 'Blocking findings are recorded below.'
     if result.discussion:
         body += '\n\n' + result.discussion
     if not inline:

@@ -190,9 +190,10 @@ Two consequences of the trigger, both easy to get backwards:
 
 # `PR Gates` answer merge questions from PR metadata
 
-`pr-gates.yml` runs `.github/scripts/pr_gates.py`. Keep the workflows and scripts owned in
-`.github/CODEOWNERS`. The compatibility job uses a read-only `pull_request` token and the PR's copy.
-The review publisher uses default-branch code and `statuses: write`; never execute PR code there.
+Both gate workflows run `.github/scripts/pr_gates.py`. Keep the workflows and scripts owned in `.github/CODEOWNERS`.
+`pr-gates.yml` runs the compatibility job with a read-only `pull_request` token and the PR's copy.
+`pr-review-gates.yml` uses default-branch code and `statuses: write`; never execute PR code there.
+Keep their job names distinct. Required-check matching ignores workflow names and event types.
 
 | Check | Fails when |
 |---|---|
@@ -205,6 +206,8 @@ PR Bots applies size labels on open and push. A manually changed label cannot lo
 Size S skips automated review enforcement; the manual trivial-S policy still applies.
 
 Clean means `APPROVE` with no inline or discussion findings, including optional or resolved findings.
+The latest completed douwebot verdict must approve. A clean retry can supersede an empty incomplete review.
+Findings from earlier reviews on the same head still make that head unclean.
 The trusted PR Bots publisher binds the review and its inline comments to a run/head marker.
 The model returns structured findings with a read-only token. The publisher supplies the marker.
 Validate the originating PR Bots run and both review jobs before accepting that marker.
@@ -228,7 +231,7 @@ PR Bots completion also wakes the gate because `GITHUB_TOKEN` writes do not trig
 label workflows. Fork observer runs may require contributor approval.
 Recheck the open PR's SHA and repository inside the per-PR lock before pending statuses or setup.
 Keep that head identity pinned during evaluation; a stale event cannot write to the newer head.
-Rerun an existing default-branch `PR Gates` run to retry after an API failure or delayed observer.
+Rerun an existing default-branch `PR Review Gates` run after an API failure or delayed observer.
 Do not add branch-selectable dispatch to this privileged workflow.
 
 Serialize publication per PR with `queue: max`. Re-read live head, labels and reviews before

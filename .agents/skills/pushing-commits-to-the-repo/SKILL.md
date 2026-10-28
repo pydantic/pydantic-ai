@@ -59,7 +59,7 @@ A human approval does not substitute for douwebot.
 Count the latest non-dismissed human approval from a `User` other than the author with current write/admin permission.
 A later change request supersedes that approval. A comment does not.
 The approval may precede the head; GitHub's stale-approval dismissal enforces freshness when the diff changes.
-`PR Gates` enforces M/L/XL against the shared size calculation and exactly one matching size label.
+`PR Review Gates` enforces M/L/XL against the shared size calculation and exactly one matching size label.
 Size S remains a manual policy judgment. The automated review gates skip merge groups after admission.
 
 ## When you open the PR

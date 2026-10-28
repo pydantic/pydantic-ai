@@ -1,7 +1,7 @@
 """Merge gates that a script answers from a pull request's metadata alone.
 
-`.github/workflows/pr-gates.yml` runs each subcommand as its own check. Everything a gate judges
-comes from the GitHub API. A gate fails closed, so anything it cannot read counts against the PR.
+`pr-gates.yml` runs the compatibility check; `pr-review-gates.yml` publishes review commit statuses.
+Everything a gate judges comes from the GitHub API. Unreadable metadata fails closed.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Literal, Protocol, TypeVar, assert_never
 
 from check_api_compatibility import Allowlist
-from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER
+from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER, REVIEW_BODIES
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 ALLOWLIST = '.github/api-compatibility-allowlist.json'
@@ -202,12 +202,15 @@ def douwebot_approval(
         marker = DOUWEBOT_MARKER.search(review.body)
         if marker and marker[2] == pull.head.sha:
             marked_ids.add(review.id)
-            if review.state == 'APPROVED' and review.body[: marker.start()] != APPROVAL_BODY:
+            body = review.body[: marker.start()]
+            if body not in REVIEW_BODIES.values() or (review.state == 'APPROVED' and body != APPROVAL_BODY):
                 verdict.failures.append('Douwebot has discussion findings on this head.')
             if github.verified_review_run(int(marker[1]), pull.head.sha):
                 own_reviews.append(review)
 
-    decisions: list[Review] = [review for review in own_reviews if review.state in ('APPROVED', 'CHANGES_REQUESTED')]
+    decisions: list[Review] = [
+        review for review in own_reviews if review.state in ('APPROVED', 'CHANGES_REQUESTED', 'COMMENTED')
+    ]
     if not decisions or max(decisions, key=review_order).state != 'APPROVED':
         verdict.failures.append('Requires a marked, successful douwebot approval on the current head.')
     by_id: dict[int, Review] = {review.id: review for review in reviews}
@@ -236,8 +239,6 @@ def douwebot_approval(
                 'Cannot attribute an unmarked bot comment on this head; obtain a fresh review/head.'
             )
         break
-    if any(review.state == 'COMMENTED' for review in own_reviews):
-        verdict.failures.append('Douwebot published an incomplete review on this head.')
     return verdict
 
 
@@ -283,8 +284,6 @@ def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
                 print('Observed PR head is no longer open/current; no new statuses written.')
                 return 0
             head = pull.head.sha
-            for gate in REVIEW_CONTEXTS:
-                github.status(head, gate, 'pending', 'Reading current size and reviews.', url)
             reviews = github.reviews()
             comments = github.review_comments()
             verdicts = review_verdicts(github, pull, reviews, comments)

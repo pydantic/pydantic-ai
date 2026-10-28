@@ -1,4 +1,4 @@
-"""Tests for the PR gates in `.github/workflows/pr-gates.yml`."""
+"""Tests for the compatibility and trusted review gate workflows."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from publish_douwebot_review import Finding, ReviewResult, publication
 from pydantic import BaseModel, Field
 
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'pr-gates.yml'
+REVIEW_WORKFLOW = WORKFLOW.with_name('pr-review-gates.yml')
 ALLOWLIST = '.github/api-compatibility-allowlist.json'
 WAIVER = {
     'against': 'v2.59.0',
@@ -146,6 +147,7 @@ class _Step(BaseModel):
 
 
 class _Job(BaseModel):
+    name: str = ''
     condition: str = Field(default='', alias='if')
     permissions: dict[str, str] = Field(default_factory=dict[str, str])
     steps: list[_Step]
@@ -156,23 +158,36 @@ class _Workflow(BaseModel):
     jobs: dict[str, _Job]
 
 
-def test_the_workflow_runs_every_gate_on_every_pr_event_and_skips_only_the_merge_queue():
+def test_compatibility_workflow_has_no_privileged_triggers_or_duplicate_check_producers():
     # `BaseLoader` keeps the `on` key a string; the default loader reads it as `True`.
     workflow = _Workflow.model_validate(yaml.load(WORKFLOW.read_text(encoding='utf-8'), Loader=yaml.BaseLoader))
 
-    assert set(workflow.on) == {
-        'pull_request',
-        'pull_request_target',
-        'workflow_run',
-        'merge_group',
-    }
+    assert set(workflow.on) == {'pull_request', 'merge_group'}
     assert workflow.on['pull_request'].paths is None
-    assert workflow.on['workflow_run'].workflows == ['PR Bots', 'PR Gates Events']
-    assert workflow.on['pull_request_target'].types == workflow.on['pull_request'].types
     assert {'opened', 'synchronize', 'reopened', 'labeled', 'unlabeled', 'edited'} <= set(
         workflow.on['pull_request'].types
     )
     assert workflow.jobs['compatibility-waiver'].condition == "github.event_name == 'pull_request'"
+    assert set(workflow.jobs) == {'compatibility-waiver'}
+    trusted = _Workflow.model_validate(yaml.load(REVIEW_WORKFLOW.read_text(), Loader=yaml.BaseLoader))
+    names = [job.name for item in (workflow, trusted) for job in item.jobs.values()]
+    assert len(names) == len(set(names))
+    assert not set(names) & set(pr_gates.REVIEW_CONTEXTS.values())
+
+
+def test_review_workflow_uses_only_trusted_code_and_pinned_status_targets():
+    workflow = _Workflow.model_validate(yaml.load(REVIEW_WORKFLOW.read_text(), Loader=yaml.BaseLoader))
+    assert set(workflow.on) == {'pull_request_target', 'workflow_run', 'merge_group'}
+    assert workflow.on['workflow_run'].workflows == ['PR Bots', 'PR Gates Events']
+    assert workflow.on['pull_request_target'].paths is None
+    assert set(workflow.on['pull_request_target'].types) == {
+        'opened',
+        'synchronize',
+        'reopened',
+        'labeled',
+        'unlabeled',
+        'edited',
+    }
     publisher = workflow.jobs['review-statuses']
     assert publisher.permissions['statuses'] == 'write'
     assert all(step.condition == "steps.pending.outputs.active == 'true'" for step in publisher.steps[1:])
@@ -303,7 +318,7 @@ console.log(JSON.stringify(results));
     ],
 )
 def test_observer_cannot_choose_the_status_target(scenario: str, outcome: str):
-    workflow = _Workflow.model_validate(yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader))
+    workflow = _Workflow.model_validate(yaml.load(REVIEW_WORKFLOW.read_text(), Loader=yaml.BaseLoader))
     resolve = workflow.jobs['review-target'].steps[0].settings['script']
     pending = workflow.jobs['review-statuses'].steps[0].settings['script']
     # Execute the actual JavaScript host steps; Python cannot run these in-process.
@@ -552,6 +567,34 @@ def test_run_marker_must_have_successful_trusted_workflow_provenance():
     assert verdicts(ReviewGitHub(verified=False))['douwebot'].failures
 
 
+@pytest.mark.parametrize('latest_incomplete', [False, True])
+def test_latest_douwebot_verdict_allows_a_retry_after_an_empty_incomplete_review(latest_incomplete: bool):
+    result = ReviewResult(verdict='INCOMPLETE', comments=[], discussion='')
+    body = json.loads(publication(result, HEAD, 20))['body']
+    incomplete = review(11 if latest_incomplete else 9, state='COMMENTED', body=body)
+    assert (
+        bool(verdicts(ReviewGitHub(current_reviews=[incomplete, review()]))['douwebot'].failures) is latest_incomplete
+    )
+
+
+@pytest.mark.parametrize('state', ['COMMENTED', 'CHANGES_REQUESTED'])
+@pytest.mark.parametrize('location', ['inline', 'body'])
+def test_findings_before_a_clean_retry_still_make_the_head_unclean(state: str, location: str):
+    finding = Finding(path='a.py', line=3, side='RIGHT', body='Finding to address')
+    result = ReviewResult(
+        verdict='INCOMPLETE' if state == 'COMMENTED' else 'REQUEST_CHANGES',
+        comments=[finding] if location == 'inline' else [],
+        discussion='Finding to address' if location == 'body' else '',
+    )
+    parent = review(9, state=state, body=json.loads(publication(result, HEAD, 20))['body'])
+    comments = (
+        [pr_gates.ReviewComment(pull_request_review_id=parent.id, user=BOT, original_commit_id=HEAD, body=finding.body)]
+        if location == 'inline'
+        else []
+    )
+    assert verdicts(ReviewGitHub(current_reviews=[parent, review()], comments=comments))['douwebot'].failures
+
+
 def test_failed_douwebot_publication_cannot_hide_a_finding_behind_another_receipt():
     class FailedRun(ReviewGitHub):
         def verified_review_run(self, run_id: int, head: str) -> bool:
@@ -636,7 +679,12 @@ def test_reevaluation_replaces_a_failure_with_success_on_the_live_head():
     assert pr_gates.reconcile_reviews(github, ENV) == 1
     github.current_reviews = [review()]
     assert pr_gates.reconcile_reviews(github, ENV) == 0
-    assert github.statuses[-2:] == [(HEAD, 'douwebot', 'success'), (HEAD, 'human', 'success')]
+    assert github.statuses == [
+        (HEAD, 'douwebot', 'failure'),
+        (HEAD, 'human', 'success'),
+        (HEAD, 'douwebot', 'success'),
+        (HEAD, 'human', 'success'),
+    ]
 
 
 def test_errors_and_changing_snapshots_fail_closed():
@@ -672,7 +720,7 @@ def test_reevaluation_does_not_follow_an_observer_to_a_different_head(change: st
 
     github = Superseded()
     assert pr_gates.reconcile_reviews(github, ENV) == 0
-    assert github.statuses == [(HEAD, 'douwebot', 'pending'), (HEAD, 'human', 'pending')]
+    assert github.statuses == []
 
 
 def test_no_snapshot_cannot_write_to_an_unverified_environment_head():
