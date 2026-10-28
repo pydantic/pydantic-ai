@@ -248,6 +248,7 @@ def _create_gateway_provider(
         # route can't fall back to one the way the OpenAI and Google routes still do.
         if http_client is not None and not _accepts_http_client(canonical, http_client):
             raise UserError('The Anthropic Gateway route requires an `httpx2.AsyncClient`.')
+        assert http_client is None or isinstance(http_client, httpx2.AsyncClient)  # what `_accepts_http_client` allows
 
         def build_anthropic_provider(client: httpx2.AsyncClient) -> AnthropicProvider:
             return AnthropicProvider(
@@ -263,6 +264,7 @@ def _create_gateway_provider(
 
     if http_client is not None and not _accepts_http_client(canonical, http_client):
         raise UserError('`httpx2.AsyncClient` is only supported for OpenAI, Google and Anthropic Gateway routes.')
+    assert not isinstance(http_client, httpx2.AsyncClient)  # what `_accepts_http_client` allows
 
     if canonical == 'groq':
         from .groq import GroqProvider
