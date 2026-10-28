@@ -179,8 +179,8 @@ class ReadFileCallPart(ToolCallPart[ReadFileArgs], kind=READ_FILE_KIND):
 class ReadFileReturnPart(ToolReturnPart, kind=READ_FILE_KIND):
     """A successful return of `FileSystem`'s `read_file` tool, under whatever name it was offered.
 
-    `content` is the numbered text with its header as a `str`, or `[header, BinaryContent]` for an
-    image or PDF. A return that failed or was denied stays a plain `ToolReturnPart` with this kind's
+    `content` is the numbered text with its header as a `str`, or `[header, BinaryContent]` for a
+    file `read_file` returns as itself (an image, PDF, office document, audio or video). A return that failed or was denied stays a plain `ToolReturnPart` with this kind's
     `tool_kind`, as its content is an error.
     """
 

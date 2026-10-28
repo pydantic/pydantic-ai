@@ -729,15 +729,15 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     ) -> str | list[str | BinaryContent]:
         """Read a file in `workspace` directly, outside an agent run.
 
-        An image or PDF comes back as its header followed by a `BinaryContent`;
-        everything else is text.
+        A file `sniff_media_type` recognizes (an image, PDF, office document, audio or
+        video) comes back as its header followed by a `BinaryContent`; everything else is text.
         """
         return await self._read_file(await self._scope(workspace), None, path, offset=offset, limit=limit)
 
     async def _read_file_tool(
         self, ctx: RunContext[AgentDepsT], path: str, *, offset: int = 0, limit: int | None = None
     ) -> str | list[str | BinaryContent]:
-        """Read a text file with line numbers, or view an image or PDF.
+        """Read a text file with line numbers, or view an image, PDF, document, audio or video file.
 
         Args:
             ctx: The current agent run context.
@@ -746,8 +746,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             limit: Maximum number of lines to return; defaults to, and is capped at, the configured read limit.
 
         Returns:
-            File content with line numbers, plus metadata header. An image or PDF
-            is returned as the file itself; other binary files as their size,
+            File content with line numbers, plus metadata header. An image, PDF,
+            document, audio or video file is returned as the file itself; other binary files as their size,
             media type and leading bytes in hex.
         """
         return await self._read_file(
@@ -783,7 +783,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if len(raw) > _MAX_READ_FILE_BYTES:
             return self._too_large_to_read(path, len(raw))
         content_hash = bytes_hash(raw)
-        media_type = sniff_media_type(raw)
+        media_type = sniff_media_type(raw, path)
         if media_type is not None or is_binary(raw):
             if ctx is not None:
                 await ctx.emit(FileReadEvent(**self._event_location(scope, resolved), content_hash=content_hash))
@@ -802,7 +802,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     def _read_binary(
         self, path: str, raw: bytes, media_type: str | None, content_hash: str
     ) -> str | list[str | BinaryContent]:
-        """An image or PDF as file content when it fits `MAX_MEDIA_BYTES`, anything else described in text."""
+        """A recognized file as file content when it fits `MAX_MEDIA_BYTES`, anything else described in text."""
         hash_suffix = f' | hash:{content_hash}' if self._content_hashes else ''
         shown_type = media_type or mimetypes.guess_type(path)[0] or 'application/octet-stream'
         header = f'[{self._path_label(path)} | {shown_type} | {len(raw)} bytes{hash_suffix}]\n'

@@ -49,7 +49,7 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 | Tool | Purpose |
 |---|---|
-| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
+| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP), PDF, Word or Excel document, audio file (WAV, MP3, OGG, FLAC, AIFF, AAC) or video (MP4, QuickTime, WebM, Matroska, FLV, MPEG, WMV, 3GP) up to 5 MB is returned as the file itself, so a model that takes that kind of file sees it, and a model that doesn't gets a note in its place; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
@@ -153,8 +153,8 @@ def paths_read(messages: list[ModelMessage]) -> list[str]:
 `read_file` also has a typed return part, `ReadFileReturnPart`, for a return
 whose outcome is `'success'`, which includes a `Path not found: <path>` result and the
 description `read_file` returns for a file over 64 MiB, so neither means the file's content was read.
-Its `content` is the text with its header, or `[header, BinaryContent]` for an
-image or PDF. The kind declares no content shape, since `ToolKind` takes a class
+Its `content` is the text with its header, or `[header, BinaryContent]` for a
+file `read_file` returns as itself. The kind declares no content shape, since `ToolKind` takes a class
 and not a union, so `typed_content` is untyped. The other tools return text
 written for the model rather than a format to parse, so their returns stay plain
 `ToolReturnPart`s that carry the kind as `tool_kind`; the [events](#events)
@@ -328,15 +328,16 @@ applies the same rule to absolute symlink targets.
   directories or 100,000 entries and end their result with a
   `[... walk cut short ...]` line.
 - **Binary detection.** `read_file` does not decode binary bytes into the model
-  context. It returns an image (PNG, JPEG, GIF, WebP) or PDF as `BinaryContent`,
-  recognized by its leading bytes rather than its extension, which Pydantic AI
-  sends [inside the tool result or on the user channel](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-return-file-provenance)
-  depending on the model. If the model can't take that kind of file (an image on
-  a model without vision, or a PDF on Groq), Pydantic AI raises when it builds
-  the next request, which ends the run
-  ([input support by model](https://pydantic.dev/docs/ai/core-concepts/input/)).
-  A file over 5 MB, the strictest mainstream per-image limit, is described
-  instead, as is any other binary file.
+  context. It returns an image, PDF, Word or Excel document, audio file or video
+  as `BinaryContent`, recognized by its leading bytes rather than its extension
+  (a legacy `.doc` or `.xls`, whose container Word and Excel share, is told apart
+  by its extension). Pydantic AI sends it [inside the tool result or on the user channel](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-return-file-provenance)
+  depending on the model. If the model can't take that kind of file, as its
+  profile's file-input flags say, the file is replaced by a note naming it, or
+  described first by [`FileUnderstanding`](https://pydantic.dev/docs/ai/capabilities/file-understanding/)
+  when that is on the agent ([input support by model](https://pydantic.dev/docs/ai/core-concepts/input/)). A file over
+  5 MB, the strictest mainstream per-image limit, is described instead, as is any
+  other binary file.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than silently overwriting newer content.

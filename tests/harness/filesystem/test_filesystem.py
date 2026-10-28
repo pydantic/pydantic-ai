@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import errno
 import hashlib
+import io
 import os
 import posixpath
 import re
 import socket
 import stat
+import zipfile
 from collections.abc import Sequence
 from dataclasses import replace
 from functools import partial
@@ -32,6 +34,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
@@ -62,6 +65,7 @@ from pydantic_ai_harness.filesystem._toolset import (
     _sanitize_recoverable_error,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.shell._toolset import ShellToolset
+from tests.harness.conftest import IsStr
 
 from ...workspace_fakes import RunOnlyWorkspaceBackend
 from .._tool_calls import call_tool, call_tools
@@ -310,6 +314,13 @@ def toolset(fs_root: Path) -> FileSystemToolset[None]:
         max_search_results=1000,
         max_find_results=1000,
     )
+
+
+def _zip_with(name: str) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w') as archive:
+        archive.writestr(name, '<x/>')
+    return buffer.getvalue()
 
 
 def _unhashed_toolset() -> FileSystemToolset[None]:
@@ -788,9 +799,28 @@ class TestReadFile:
             (b'RIFF\x24\x00\x00\x00WEBPVP8 ', 'image/webp'),
             # A PDF often has no null byte near the start, so it is recognized by its signature, not as binary.
             (b'%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n', 'application/pdf'),
+            (_zip_with('word/document.xml'), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+            (_zip_with('xl/workbook.xml'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+            (b'RIFF\x24\x00\x00\x00WAVEfmt ', 'audio/wav'),
+            (b'FORM\x00\x00\x00\x00AIFFCOMM', 'audio/aiff'),
+            (b'OggS\x00\x02\x00\x00', 'audio/ogg'),
+            (b'fLaC\x00\x00\x00\x22', 'audio/flac'),
+            (b'ID3\x04\x00\x00\x00\x00', 'audio/mpeg'),
+            (b'\xff\xfb\x90\x64\x00', 'audio/mpeg'),
+            (b'\xff\xf1\x50\x80\x00', 'audio/aac'),
+            (b'\x00\x00\x00\x18ftypisom', 'video/mp4'),
+            (b'\x00\x00\x00\x14ftypqt  ', 'video/quicktime'),
+            (b'\x00\x00\x00\x14ftyp3gp4', 'video/3gpp'),
+            (b'\x1a\x45\xdf\xa3\x9fB\x86\x81\x01B\x82\x84webm', 'video/webm'),
+            (b'\x1a\x45\xdf\xa3\x9fB\x82\x88matroska', 'video/x-matroska'),
+            (b'FLV\x01\x05\x00', 'video/x-flv'),
+            (b'\x00\x00\x01\xba\x44\x00', 'video/mpeg'),
+            (bytes.fromhex('3026b2758e66cf11a6d900aa0062ce6c'), 'video/x-ms-wmv'),
         ],
     )
-    async def test_read_image_or_pdf_returns_the_file(self, tmp_path: Path, data: bytes, media_type: str) -> None:
+    async def test_read_a_file_the_model_can_be_sent_returns_the_file(
+        self, tmp_path: Path, data: bytes, media_type: str
+    ) -> None:
         # The bytes decide the media type, not the extension.
         (tmp_path / 'upload.bin').write_bytes(data)
         toolset = _unhashed_toolset()
@@ -799,6 +829,50 @@ class TestReadFile:
             f'[upload.bin | {media_type} | {len(data)} bytes]\n',
             BinaryContent(data=data, media_type=media_type),
         ]
+
+    @pytest.mark.parametrize(
+        ('name', 'media_type'),
+        [('report.doc', 'application/msword'), ('budget.XLS', 'application/vnd.ms-excel'), ('mail.msg', None)],
+    )
+    async def test_legacy_office_file_is_named_by_its_extension(
+        self, tmp_path: Path, name: str, media_type: str | None
+    ) -> None:
+        # Word and Excel share the legacy container, whose bytes don't say which it holds.
+        data = bytes.fromhex('d0cf11e0a1b11ae1') + bytes(8)
+        (tmp_path / name).write_bytes(data)
+        result = await _unhashed_toolset().read_file(name, workspace=LocalWorkspaceBackend(tmp_path))
+        if media_type is None:
+            assert isinstance(result, str)
+            assert 'Binary file; the first bytes in hex:' in result
+        else:
+            assert result == [
+                f'[{name} | {media_type} | {len(data)} bytes]\n',
+                BinaryContent(data=data, media_type=media_type),
+            ]
+
+    @pytest.mark.parametrize(
+        'data',
+        [
+            _zip_with('notes.txt'),
+            b'PK\x03\x04 not really a zip\x00',
+            b'\x00\x00\x00\x20ftypM4A \x00\x00',
+            b'\xff\xfa\xf0\x00',  # MPEG audio sync with a reserved bitrate
+            b'\xff\x00\x00\x00',
+        ],
+    )
+    async def test_a_container_no_media_type_names_is_described(self, tmp_path: Path, data: bytes) -> None:
+        # A plain or broken ZIP is no office document, MPEG-4 audio has no `AudioMediaType`, and a stray 0xFF is no
+        # audio frame.
+        (tmp_path / 'blob').write_bytes(data)
+        result = await _unhashed_toolset().read_file('blob', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, str)
+        assert 'Binary file; the first bytes in hex:' in result
+
+    @pytest.mark.parametrize('text', ['ID3 tags hold the title.\n', 'fLaCcid notes\n', 'OggS is a container.\n'])
+    async def test_text_that_starts_like_a_signature_is_read_as_text(self, tmp_path: Path, text: str) -> None:
+        (tmp_path / 'notes.md').write_text(text)
+        result = await _unhashed_toolset().read_file('notes.md', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == f'[notes.md | 1 lines]\n     1\t{text}'
 
     async def test_read_oversized_image_is_described(self, tmp_path: Path) -> None:
         (tmp_path / 'big.png').write_bytes(b'\x89PNG\r\n\x1a\n' + bytes(5_000_000))
@@ -2950,6 +3024,31 @@ class TestUsedAsAToolset:
 
 
 class TestReadFileInARun:
+    async def test_a_file_the_model_cannot_read_becomes_a_note(self, tmp_path: Path) -> None:
+        wav = b'RIFF\x24\x00\x00\x00WAVEfmt '
+        (tmp_path / 'memo.wav').write_bytes(wav)
+        sent: list[object] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'memo.wav'})])
+            request = messages[-1]
+            assert isinstance(request, ModelRequest)
+            sent.extend(part.content for part in request.parts if isinstance(part, ToolReturnPart))
+            return ModelResponse(parts=[TextPart('noted')])
+
+        agent = Agent(
+            FunctionModel(model, profile=ModelProfile(supports_audio_file_input=False)),
+            capabilities=[LocalWorkspace(tmp_path), FileSystem[object]()],
+        )
+        result = await agent.run('play the memo')
+        assert result.output == 'noted'
+        [content] = sent
+        assert content == [
+            IsStr(regex=r'\[memo\.wav \| audio/wav \| 16 bytes.*\]\n'),
+            IsStr(regex=r'File .* \(audio/wav, 16 bytes\) was not sent: this model cannot read audio files\.'),
+        ]
+
     async def test_an_image_reaches_the_model_in_the_tool_result(self, tmp_path: Path) -> None:
         png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR'
         (tmp_path / 'chart.png').write_bytes(png)

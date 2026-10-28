@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import io
+import posixpath
+import zipfile
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 
@@ -69,7 +72,7 @@ def is_binary(data: bytes, sample_size: int = 8192) -> bool:
 
 
 MAX_MEDIA_BYTES = 5_000_000
-"""Largest image or PDF `read_file` returns as file content.
+"""Largest file `read_file` returns as file content.
 
 File content bypasses the textual `max_read_chars` budget, and 5 MB is the
 strictest per-image limit among mainstream providers. A larger file gets the
@@ -80,18 +83,24 @@ _HEX_PREVIEW_BYTES = 64
 """Leading bytes of a non-media binary file shown as hex."""
 
 
-def sniff_media_type(data: bytes) -> str | None:
-    """The media type of an image or PDF, read from its leading bytes.
+def sniff_media_type(data: bytes, path: str = '') -> str | None:
+    """The media type of a file `BinaryContent` can send, read from its leading bytes.
 
-    Only images and PDFs are returned as files: most models with file input take
-    them, while audio, video and office documents fail on several default
-    providers until a model can report which files it accepts. The bytes decide,
-    not the extension, so a misnamed file is not sent under the wrong media type.
+    Images, PDFs, office documents, audio and video are returned as files. A model
+    that can't take one gets a note in its place, or a description from
+    `FileUnderstanding`, rather than a failed request. The bytes decide, not the
+    extension, so a misnamed file is not sent under the wrong media type. The one
+    exception is the legacy Office container, which Word and Excel files share:
+    its bytes say it is one, and `path`'s extension says which.
 
     The image signatures duplicate core's `image_media_type_from_bytes`
     (`pydantic_ai/images/_media_type.py`), which is private and covers neither GIF
     nor PDF. Change both together until core offers a public helper to use here.
     """
+    return _image_or_document(data, path) or _audio(data) or _video(data)
+
+
+def _image_or_document(data: bytes, path: str) -> str | None:
     if data.startswith(b'\x89PNG\r\n\x1a\n'):
         return 'image/png'
     if data.startswith(b'\xff\xd8\xff'):
@@ -102,6 +111,74 @@ def sniff_media_type(data: bytes) -> str | None:
         return 'image/webp'
     if data.startswith(b'%PDF-'):
         return 'application/pdf'
+    if data.startswith(b'PK\x03\x04'):
+        return _office_open_xml(data)
+    if data.startswith(b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'):
+        return _LEGACY_OFFICE.get(posixpath.splitext(path)[1].lower())
+    return None
+
+
+_LEGACY_OFFICE = {'.doc': 'application/msword', '.xls': 'application/vnd.ms-excel'}
+"""The legacy Office formats Pydantic AI can send, by extension: their shared container doesn't say which it holds."""
+
+
+def _office_open_xml(data: bytes) -> str | None:
+    """A Word or Excel document by the part its ZIP archive holds, or `None` for any other ZIP."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = set(archive.namelist())
+    except zipfile.BadZipFile:
+        return None
+    if 'word/document.xml' in names:
+        return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    if 'xl/workbook.xml' in names:
+        return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    return None
+
+
+def _audio(data: bytes) -> str | None:
+    if data.startswith(b'RIFF') and data[8:12] == b'WAVE':
+        return 'audio/wav'
+    if data.startswith(b'FORM') and data[8:12] in (b'AIFF', b'AIFC'):
+        return 'audio/aiff'
+    # These signatures are plain ASCII, so each is checked with the binary byte that follows it in a real file:
+    # a text file that happens to start with the same letters is read as text.
+    if data.startswith(b'OggS\x00'):
+        return 'audio/ogg'
+    if data.startswith(b'fLaC') and len(data) > 4 and data[4] & 0x7F == 0:
+        return 'audio/flac'
+    if data.startswith(b'ID3') and len(data) > 3 and data[3] in (2, 3, 4):
+        return 'audio/mpeg'
+    if len(data) >= 3 and data[0] == 0xFF:
+        # An MPEG audio frame header: sync bits, then a layer, bitrate and sample rate that aren't reserved.
+        # ADTS (raw AAC) has the same sync and layer 0, which MP3 never uses.
+        if data[1] & 0xF6 == 0xF0:
+            return 'audio/aac'
+        if data[1] & 0xE0 == 0xE0 and data[1] & 0x06 and data[2] >> 4 not in (0, 15) and (data[2] >> 2) & 3 != 3:
+            return 'audio/mpeg'
+    return None
+
+
+def _video(data: bytes) -> str | None:
+    if data[4:8] == b'ftyp':
+        brand = data[8:12]
+        if brand == b'qt  ':
+            return 'video/quicktime'
+        if brand.startswith((b'3gp', b'3g2')):
+            return 'video/3gpp'
+        if brand.startswith((b'M4A', b'M4B')):
+            # MPEG-4 audio, which no `AudioMediaType` names.
+            return None
+        return 'video/mp4'
+    if data.startswith(b'\x1a\x45\xdf\xa3'):
+        # Matroska and WebM share the EBML header; its DocType, near the start, tells them apart.
+        return 'video/webm' if b'webm' in data[:64] else 'video/x-matroska'
+    if data.startswith(b'FLV\x01'):
+        return 'video/x-flv'
+    if data.startswith((b'\x00\x00\x01\xba', b'\x00\x00\x01\xb3')):
+        return 'video/mpeg'
+    if data.startswith(b'\x30\x26\xb2\x75\x8e\x66\xcf\x11\xa6\xd9\x00\xaa\x00\x62\xce\x6c'):
+        return 'video/x-ms-wmv'
     return None
 
 
