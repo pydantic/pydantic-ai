@@ -868,15 +868,11 @@ async def test_tool_availability_delta_raises_on_a_model_that_cannot_render_it(a
         )
 
 
-def _map(
-    history: list[ModelMessage],
-    model_name: str = 'claude-opus-4-8',
-    parameters: ModelRequestParameters | None = None,
-) -> list[dict[str, Any]]:
+def _map(history: list[ModelMessage], model_name: str = 'claude-opus-4-8') -> list[dict[str, Any]]:
     """The `messages` array `model_name` renders for `history`."""
     model = AnthropicModel(model_name, provider=AnthropicProvider(api_key='not-used'))
     _, anthropic_messages = asyncio.run(
-        model._map_message(history, parameters or ModelRequestParameters(), AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+        model._map_message(history, ModelRequestParameters(), AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
     )
     return cast('list[dict[str, Any]]', anthropic_messages)
 
@@ -1386,8 +1382,8 @@ async def test_haiku_follows_a_withdrawn_instruction_after_a_tool_result(
     """Claude Haiku 5.5 drops a sign-off whose instruction is withdrawn during a tool loop.
 
     The tool flips the state the instruction reads, so the withdrawal arrives in a `system` entry right after the
-    tool result. Without the block ending the tool results, Haiku 5.5 kept signing off in 33 of 64 live runs, and
-    often said the tool result had asked it to stop; with it, 0 of 64.
+    tool result. Without the block ending the tool results, Haiku 5.5 followed the withdrawal in 31 of 64 live runs,
+    often saying the tool result had asked it to stop; with it, run on this code, in 64 of 64.
     """
     withdrawn = False
     agent = Agent(

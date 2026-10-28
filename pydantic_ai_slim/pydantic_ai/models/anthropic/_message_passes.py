@@ -33,7 +33,9 @@ END_OF_TOOL_RESULTS_TEXT = (
 
 See `AnthropicModelProfile.anthropic_distrusts_system_after_tool_result`. Anthropic recommends a text block after the
 last `tool_result` for the user's own words; this one asserts nothing on the user's behalf, it only says where the
-tool output stops. A shorter `(End of tool results.)` measured worse on withdrawing a rule (54/64 against 62/64).
+tool output stops. When a loaded capability withdrew a rule, Haiku 5.5 dropped the rule 54 times in 64 with a
+shorter `(End of tool results.)` and 62 with this text, both patched into the same probe run, and 64 times with
+this text on the shipped code.
 """
 
 
