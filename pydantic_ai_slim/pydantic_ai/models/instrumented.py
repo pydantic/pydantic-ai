@@ -49,11 +49,19 @@ from ..messages import (
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
+    _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
 )
 from ..settings import ModelSettings
 from ..usage import UsageBase
-from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
+from . import (
+    KnownModelName,
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    StreamedResponse,
+    _current_request_start,  # pyright: ignore[reportPrivateUsage]
+)
 from .wrapper import WrapperModel
 
 __all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
@@ -216,11 +224,25 @@ class InstrumentationSettings:
             )
 
     def messages_to_otel_messages(
-        self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str] = frozenset()
+        self,
+        messages: list[ModelMessage],
+        *,
+        mcp_url_ids: frozenset[str] = frozenset(),
+        current_request_start: int = 0,
     ) -> list[_otel_messages.ChatMessage]:
+        """Convert messages to OTel GenAI chat messages.
+
+        Args:
+            messages: The messages to convert.
+            mcp_url_ids: MCP server identities whose names are redacted from native tool parts.
+            current_request_start: The index of the first message of the request being sent. A
+                [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt in a message
+                before it was sent with an earlier request and isn't seen by the model on this one, so its
+                part is marked `visible: false`.
+        """
         result: list[_otel_messages.ChatMessage] = []
         sensitive_names = {f'mcp_server:{identity}' for identity in mcp_url_ids}
-        for message in messages:
+        for index, message in enumerate(messages):
             if sensitive_names and isinstance(message, ModelResponse):
                 projected_parts: list[ModelResponsePart] = [
                     replace(part, tool_name='mcp_server:[REDACTED]')
@@ -239,7 +261,12 @@ class InstrumentationSettings:
                     message_parts: list[_otel_messages.MessagePart] = []
                     for part in group:
                         if hasattr(part, 'otel_message_parts'):
-                            message_parts.extend(part.otel_message_parts(self))
+                            otel_parts = part.otel_message_parts(self)
+                            if index < current_request_start and _is_request_scoped(part):
+                                for otel_part in otel_parts:
+                                    if otel_part['type'] == 'text':  # pragma: no branch
+                                        otel_part['visible'] = False
+                            message_parts.extend(otel_parts)
 
                     result.append(_otel_messages.ChatMessage(role=role, parts=message_parts))
             elif isinstance(message, ModelResponse):  # pragma: no branch
@@ -265,18 +292,31 @@ class InstrumentationSettings:
         Historical MCP names lack their original request provenance, so each cached fragment
         withholds those names without rescanning every part on subsequent requests.
         """
+        current_request_start = _current_request_start(input_messages)
         if message_json_cache is None:
             history_ids = mcp_telemetry_history_ids(input_messages, frozenset())
-            return safe_to_json(self.messages_to_otel_messages(input_messages, mcp_url_ids=history_ids))
+            return safe_to_json(
+                self.messages_to_otel_messages(
+                    input_messages, mcp_url_ids=history_ids, current_request_start=current_request_start
+                )
+            )
 
         fragments: list[bytes] = []
         fresh_entries: MessageJsonCache = {}
-        for message in input_messages:
+        for index, message in enumerate(input_messages):
+            # A fragment cached while the message's request was current is rebuilt once it's been answered,
+            # so its request-scoped system prompts are marked as no longer visible. Only a message that holds
+            # one is affected, so every other fragment is serialized just once.
+            answered = index < current_request_start and _holds_request_scoped_prompt(message)
             entry = message_json_cache.get(id(message))
-            if entry is None or entry.parts is not message.parts:
+            if entry is None or entry.parts is not message.parts or entry.answered != answered:
                 history_ids = mcp_telemetry_history_ids([message], frozenset())
                 entry = CachedMessageJson(
-                    message, message.parts, message_json_fragment(self, message, history_ids), history_ids
+                    message,
+                    message.parts,
+                    message_json_fragment(self, message, history_ids, answered=answered),
+                    history_ids,
+                    answered,
                 )
             fresh_entries[id(message)] = entry
             if entry.fragment:
@@ -442,6 +482,11 @@ class InstrumentedModel(WrapperModel):
                         response_stream.get(),
                         time_to_first_chunk=response_stream.time_to_first_chunk(request_start),
                     )
+
+
+def _holds_request_scoped_prompt(message: ModelMessage) -> bool:
+    """Whether `message` is a request holding a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt."""
+    return isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts)
 
 
 def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.Role:

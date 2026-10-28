@@ -14,6 +14,9 @@ from typing_extensions import TypedDict
 class TextPart(TypedDict):
     type: Literal['text']
     content: NotRequired[str]
+    # Not (currently?) part of the spec: `False` on a request-scoped system prompt an earlier request was
+    # sent with, which the model doesn't see on this one
+    visible: NotRequired[bool]
 
 
 class ToolCallPartOtelMetadata(TypedDict, total=False):
