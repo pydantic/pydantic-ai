@@ -9,9 +9,14 @@ in `tests/models/test_openai_responses.py`, `tests/models/test_anthropic.py` and
 
 from __future__ import annotations as _annotations
 
+from typing import Any, cast
+
+import httpx2
 import pytest
 
-from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ModelFallback
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
@@ -19,8 +24,13 @@ from pydantic_ai.models.test import TestModel
 from .conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from openai import APIStatusError
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
     class AliasedOpenAIProvider(OpenAIProvider):
         """A provider that knows another URL reaches the same stored state, like a proxy alias."""
@@ -82,3 +92,56 @@ def test_wrapper_and_fallback_models_delegate():
     assert not InstrumentedModel(gateway).accepts_server_state(other_endpoint)
     assert FallbackModel(gateway, TestModel()).accepts_server_state(response())
     assert not FallbackModel(TestModel(), gateway).accepts_server_state(response())
+
+
+def mock_endpoint_model(base_url: str, response: Any) -> tuple[OpenAIResponsesModel, MockOpenAIResponses]:
+    mock = cast(MockOpenAIResponses, MockOpenAIResponses.create_mock(response))
+    mock.base_url = base_url
+    return OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=cast(Any, mock))), mock
+
+
+def text_response(text: str) -> Any:
+    return response_message(
+        [
+            ResponseOutputMessage(
+                id=f'msg_{text}',
+                content=[ResponseOutputText(text=text, type='output_text', annotations=[])],
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+
+
+@pytest.mark.parametrize('route', ['fallback-model', 'model-fallback-capability'])
+async def test_fallback_to_another_endpoint_drops_server_state(allow_model_requests: None, route: str):
+    """A fallback attempt at another endpoint with the same `provider_name` gets none of the first endpoint's IDs."""
+    producer, _ = mock_endpoint_model(GATEWAY_URL, text_response('first'))
+    history: list[ModelMessage] = (await Agent(producer).run('q')).all_messages()
+
+    unavailable = APIStatusError(
+        'unavailable',
+        response=httpx2.Response(503, request=httpx2.Request('POST', f'{GATEWAY_URL}/responses')),
+        body=None,
+    )
+    primary, primary_mock = mock_endpoint_model(GATEWAY_URL, unavailable)
+    fallback, fallback_mock = mock_endpoint_model('https://gateway-b.example/v1', text_response('second'))
+    agent = (
+        Agent(FallbackModel(primary, fallback))
+        if route == 'fallback-model'
+        else Agent(primary, capabilities=[ModelFallback(fallback)])
+    )
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto', openai_send_reasoning_ids=True)
+    result = await agent.run('again', message_history=history, model_settings=settings)
+
+    assert result.output == 'second'
+    [primary_kwargs] = get_mock_responses_kwargs(cast(Any, primary_mock))
+    assert primary_kwargs['previous_response_id'] == '123'
+    [fallback_kwargs] = get_mock_responses_kwargs(cast(Any, fallback_mock))
+    assert 'previous_response_id' not in fallback_kwargs
+    assert fallback_kwargs['input'] == [
+        {'role': 'user', 'content': 'q'},
+        {'role': 'assistant', 'content': 'first'},
+        {'role': 'user', 'content': 'again'},
+    ]
