@@ -4304,6 +4304,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._current_model",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._get_model_id",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._model_for_response",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.accepts_server_state",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.accepts_stateless_artifacts",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.resolve_model",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.using_model",
@@ -4392,6 +4393,18 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::DBOSModel._with_serving_wrapper",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel._with_serving_wrapper",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._with_serving_wrapper"
+      ]
+    },
+    "Model.accepts_server_state": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read",
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.accepts_server_state"
       ]
     },
     "Model.accepts_stateless_artifacts": {
@@ -5132,6 +5145,17 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._refresh_http_client"
+      ]
+    },
+    "WrapperModel.accepts_server_state": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.accepts_server_state"
       ]
     },
     "WrapperModel.accepts_stateless_artifacts": {

@@ -5125,9 +5125,12 @@ async def test_openai_responses_server_state_scoped_by_endpoint(allow_model_requ
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=client))
     tool_return = ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='ok', tool_call_id='call_a')])
     history: list[ModelMessage] = [first_request, response, tool_return]
-    settings = OpenAIResponsesModelSettings(openai_send_reasoning_ids=True)
-    await model.request(history, OpenAIResponsesModelSettings(openai_previous_response_id='auto', **settings), params)
-    await model.request(history, settings, params)
+    await model.request(
+        history,
+        OpenAIResponsesModelSettings(openai_previous_response_id='auto', openai_send_reasoning_ids=True),
+        params,
+    )
+    await model.request(history, OpenAIResponsesModelSettings(openai_send_reasoning_ids=True), params)
     chained, replayed = get_mock_responses_kwargs(client)
 
     if base_url == 'https://gateway-a.example/v1':
