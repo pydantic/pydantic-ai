@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import struct
+from collections.abc import Callable
 from typing import Any, cast
 
 import anyio
@@ -14,19 +15,22 @@ from pydantic_ai import (
     DeferredToolRequests,
     DeferredToolResults,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     RunContext,
     TextPart,
+    ToolApproved,
     ToolCallPart,
     ToolReturnPart,
     UserError,
 )
-from pydantic_ai.capabilities import AbstractCapability, SelectModel
+from pydantic_ai.capabilities import AbstractCapability, ProcessHistory, SelectModel
 from pydantic_ai.computer_use import SAFETY_CHECKS
 from pydantic_ai.messages import BinaryContent, BinaryImage
 from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import (
@@ -42,6 +46,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness.compaction import ClampOversizedMessages
 from pydantic_ai_harness.computer_use import ComputerUse
 
 from ...workspace_fakes import FAKE_SCREENSHOT, InMemoryProvider, ProviderBackend, WorkspaceCapability
@@ -130,12 +135,16 @@ class TestComputerUse:
         [
             pytest.param([{'type': 'click', 'x': 1, 'y': 1}], [0.5], id='settles-after-acting'),
             pytest.param(
-                [{'type': 'click', 'x': 1, 'y': 1}, {'type': 'wait', 'seconds': 2}], [2], id='a-final-wait-is-enough'
+                [{'type': 'click', 'x': 1, 'y': 1}, {'type': 'wait', 'seconds': 2}], [2, 0.5], id='a-wait-adds-to-it'
             ),
             pytest.param(
-                [{'type': 'click', 'x': 1, 'y': 1}, {'type': 'wait', 'seconds': 2}, {'type': 'screenshot'}],
-                [2],
-                id='a-wait-before-looking-is-enough',
+                [
+                    {'type': 'click', 'x': 1, 'y': 1},
+                    {'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 10, 'bottom': 10}},
+                    {'type': 'click', 'x': 1, 'y': 1},
+                ],
+                [0.5, 0.5],
+                id='settles-before-a-zoom-after-acting',
             ),
             pytest.param(
                 [{'type': 'wait', 'seconds': 1}, {'type': 'click', 'x': 1, 'y': 1}], [1, 0.5], id='acting-after-a-wait'
@@ -372,9 +381,16 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             [Click(x=2, y=1), TypeText(text='second'), Click(x=1, y=1), TypeText(text='first')],
         )
 
-    async def test_compaction_listed_after_it_does_not_bring_dropped_screenshots_back(self) -> None:
-        from pydantic_ai_harness.compaction import ClampOversizedMessages
-
+    @pytest.mark.parametrize(
+        'after',
+        [
+            pytest.param(lambda: ClampOversizedMessages(max_part_chars=10**6), id='compaction'),
+            pytest.param(lambda: ProcessHistory[Any](_unchanged), id='history-processor'),
+        ],
+    )
+    async def test_capabilities_listed_after_it_neither_bring_screenshots_back_nor_drop_them_from_history(
+        self, after: Callable[[], AbstractCapability[Any]]
+    ) -> None:
         sent: list[int] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -384,27 +400,25 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                 return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
             return ModelResponse(parts=[TextPart('done')])
 
-        # Compaction rebuilds each request from the history, so it has to run before the screenshots are dropped.
         agent = Agent(
             FunctionModel(respond),
-            capabilities=[
-                InMemoryProvider().capability(),
-                ComputerUse(keep_screenshots=2, settle_seconds=0),
-                ClampOversizedMessages(max_part_chars=10**6),
-            ],
+            capabilities=[InMemoryProvider().capability(), ComputerUse(keep_screenshots=2, settle_seconds=0), after()],
         )
-        await agent.run('Look.')
+        result = await agent.run('Look.')
         assert sent[-1] == 2
+        assert all(part.content_items()[1] == SCREENSHOT for part in _returns(result.all_messages()))
 
     @pytest.mark.parametrize(
-        'padding,calls,first_drop',
+        'padding,calls,last_requests',
         [
-            pytest.param(0, 101, 101, id='100-screenshots'),
-            pytest.param(1_000_000 - len(FAKE_SCREENSHOT), 16, 16, id='15-mb-of-screenshots'),
+            # The oldest 25 go at once.
+            pytest.param(0, 101, [100, 76], id='100-screenshots'),
+            # Down to a quarter of the cap at once, then the request grows again from there.
+            pytest.param(1_000_000 - len(FAKE_SCREENSHOT), 17, [15, 5, 6], id='15-mb-of-screenshots'),
         ],
     )
     async def test_without_keep_screenshots_a_request_stays_within_provider_limits(
-        self, padding: int, calls: int, first_drop: int
+        self, padding: int, calls: int, last_requests: list[int]
     ) -> None:
         screen = FAKE_SCREENSHOT + b'\x00' * padding
 
@@ -428,9 +442,8 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         agent = Agent(FunctionModel(respond), capabilities=[Provider().capability(), ComputerUse(settle_seconds=0)])
         await agent.run('Look.', usage_limits=UsageLimits(request_limit=None))
 
-        # Every screenshot is sent until one more would pass the limit; then the oldest go, 25 at a time.
-        assert sent[first_drop - 1] == first_drop - 1
-        assert sent[first_drop] == max(1, first_drop - 25)
+        # Every screenshot is sent until one more would pass the limit.
+        assert sent[-len(last_requests) :] == last_requests
 
     async def test_a_batch_over_20_actions_is_sent_back_to_the_model(self) -> None:
         agent = Agent(
@@ -455,7 +468,12 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert (tool.name, tool.sequential, tool.tool_kind) == ('computer', True, 'computer')
         # Under durable execution, each workspace call is its own activity or task rather than the whole call one.
         # The display size is for providers whose native tool declares it.
-        assert tool.metadata == {'temporal': False, 'prefect': False, 'display_size': (1280, 800)}
+        assert tool.metadata == {
+            'temporal': False,
+            'prefect': False,
+            'render_workflows': False,
+            'display_size': (1280, 800),
+        }
 
     @pytest.mark.parametrize(
         'workspace',
@@ -467,14 +485,15 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             await agent.run('Go.')
 
     @pytest.mark.parametrize(
-        'fallback_grid,click',
+        'fallback_grid,wrapped,click',
         [
-            pytest.param(1000, Click(x=640, y=400), id='models-on-one-grid-use-it'),
-            pytest.param(None, Click(x=500, y=500), id='models-that-differ-use-pixels'),
+            pytest.param(1000, False, Click(x=640, y=400), id='models-on-one-grid-use-it'),
+            pytest.param(1000, True, Click(x=640, y=400), id='also-when-wrapped'),
+            pytest.param(None, False, Click(x=500, y=500), id='models-that-differ-use-pixels'),
         ],
     )
     async def test_a_fallback_model_points_on_a_grid_only_when_all_its_models_do(
-        self, fallback_grid: int | None, click: Click
+        self, fallback_grid: int | None, wrapped: bool, click: Click
     ) -> None:
         provider = InMemoryProvider()
         grid = ModelProfile(computer_use_coordinate_grid=1000)
@@ -482,8 +501,10 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         fallback = _scripted(
             [], profile=ModelProfile(computer_use_coordinate_grid=fallback_grid) if fallback_grid else None
         )
+        model: Model = FallbackModel(scripted, fallback)
         agent = Agent(
-            FallbackModel(scripted, fallback), capabilities=[provider.capability(), ComputerUse(settle_seconds=0)]
+            WrapperModel(model) if wrapped else model,
+            capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
         )
         assert (await agent.run('Go.')).output == 'done'
         assert provider.actions == [click]
@@ -625,6 +646,10 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         with pytest.raises(UserError, match='`keep_screenshots` must be at least 1'):
             ComputerUse(keep_screenshots=0)
 
+    def test_requires_approval_takes_only_a_bool(self) -> None:
+        with pytest.raises(UserError, match='`requires_approval` must be `True` or `False`'):
+            ComputerUse(requires_approval=cast(Any, {'click'}))
+
     @pytest.mark.parametrize(
         'settings,cache',
         [
@@ -672,3 +697,194 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         )
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
         assert tool_return.content == ['Ran 1 action. Screenshot attached (1280x800).', big]
+
+    async def test_runs_attached_to_one_environment_take_turns_on_its_screen(self) -> None:
+        class Slow(ProviderBackend):
+            async def act(self, action: ComputerAction) -> None:
+                await anyio.sleep(0.01)  # long enough for the other run's call to start
+                await super().act(action)
+
+        class Provider(InMemoryProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
+                return Slow(self, ref)
+
+        provider = Provider()
+        backend = provider.backend(None)
+        await backend.display_size()
+        assert backend.ref is not None
+        agents = [
+            Agent(
+                _scripted([{'type': 'click', 'x': x, 'y': 1}, {'type': 'type', 'text': text}]),
+                capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
+            )
+            for x, text in [(1, 'first'), (2, 'second')]
+        ]
+
+        async def run(agent: Agent[None, str]) -> None:
+            # Each run builds its own backend, with its own display object, for the one environment.
+            await agent.run('Go.', workspace=backend.ref)
+
+        async with anyio.create_task_group() as tg:
+            for agent in agents:
+                tg.start_soon(run, agent)
+
+        assert provider.actions in (
+            [Click(x=1, y=1), TypeText(text='first'), Click(x=2, y=1), TypeText(text='second')],
+            [Click(x=2, y=1), TypeText(text='second'), Click(x=1, y=1), TypeText(text='first')],
+        )
+
+    async def test_an_approved_call_runs_on_the_grid_it_was_made_on_whichever_model_resumes(self) -> None:
+        provider = InMemoryProvider()
+        agent = Agent(
+            _scripted([{'type': 'click', 'x': 500, 'y': 500}], profile=ModelProfile(computer_use_coordinate_grid=1000)),
+            capabilities=[provider.capability(), ComputerUse(requires_approval=True, settle_seconds=0)],
+            output_type=[str, DeferredToolRequests],
+        )
+        paused = await agent.run('Go.')
+        assert isinstance(paused.output, DeferredToolRequests)
+        (call,) = paused.output.approvals
+
+        await agent.run(
+            model=_scripted(),  # points in pixels
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
+        )
+        assert provider.actions == [Click(x=640, y=400)]
+
+    async def test_a_call_changed_before_it_ran_says_what_ran(self) -> None:
+        provider = InMemoryProvider()
+        agent = Agent(
+            _scripted([{'type': 'click', 'x': 1, 'y': 1}, {'type': 'type', 'text': 'rm -rf /'}]),
+            capabilities=[provider.capability(), ComputerUse(requires_approval=True, settle_seconds=0)],
+            output_type=[str, DeferredToolRequests],
+        )
+        paused = await agent.run('Go.')
+        assert isinstance(paused.output, DeferredToolRequests)
+        (call,) = paused.output.approvals
+
+        only_the_click = ToolApproved(override_args={'actions': [{'type': 'click', 'x': 1, 'y': 1}]})
+        resumed = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: only_the_click}),
+        )
+        assert provider.actions == [Click(x=1, y=1)]
+        (tool_return,) = _returns(resumed.all_messages())
+        assert tool_return.content_items()[0] == snapshot(
+            'Before it ran, this call was changed to: [{"type":"click","x":1,"y":1,"button":"left","count":1,"modifiers":[]}]. Ran 1 action. Screenshot attached (1280x800).'
+        )
+        assert tool_return.metadata == {'performed': 1, 'changed': True, 'screenshot_size': (1280, 800)}
+
+    async def test_the_declared_display_size_is_the_live_one_not_the_last_seen(self) -> None:
+        seen: list[Any] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.extend((tool.metadata or {}).get('display_size') for tool in info.function_tools)
+            return ModelResponse(parts=[TextPart('done')])
+
+        earlier_screen = [
+            ModelRequest.user_text_prompt('Look.'),
+            ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]}, 'c1')]),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        'computer',
+                        'Ran 1 action.',
+                        'c1',
+                        metadata={'screenshot_size': (1920, 1080)},
+                        tool_kind='computer',
+                    )
+                ]
+            ),
+        ]
+        agent = Agent(FunctionModel(respond), capabilities=[InMemoryProvider().capability(), ComputerUse()])
+        await agent.run('Go on.', message_history=earlier_screen)
+        assert seen == [(1280, 800)]
+
+    async def test_a_screen_larger_than_the_model_takes_is_sent_scaled_down_and_its_positions_scaled_up(
+        self,
+    ) -> None:
+        provider = InMemoryProvider()
+        scaled: list[tuple[int, int]] = []
+
+        class Scales(ProviderBackend):
+            async def scaled_screenshot(self, width: int, height: int) -> bytes:
+                scaled.append((width, height))
+                return _png_header(width, height)
+
+        class Provider(InMemoryProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
+                return Scales(self, ref)
+
+        provider = Provider()
+        model = _scripted(
+            [{'type': 'screenshot'}],
+            [
+                {'type': 'click', 'x': 500, 'y': 300},
+                # The whole screen, as the model sees it, is too large to zoom into at full size.
+                {'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 1000, 'bottom': 625}},
+            ],
+            profile=ModelProfile(computer_use_screenshot_limit=(1000, 1_000_000)),
+        )
+        agent = Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
+        first, second = _returns((await agent.run('Go.')).all_messages())
+
+        assert first.metadata == {'performed': 1, 'screenshot_size': (1000, 625)}
+        assert provider.actions == [Click(x=640, y=384)]
+        assert second.content_items()[0] == (
+            'Action 2 of 2 (zoom) failed: the region is 1280x800 pixels, larger than the model can see; zoom into a '
+            'smaller one. Screenshot attached (1000x625).'
+        )
+        assert scaled == [(1000, 625), (1000, 625)]
+
+    async def test_a_screen_larger_than_the_model_takes_ends_the_run_when_the_display_cannot_scale_it(self) -> None:
+        model = _scripted(
+            [{'type': 'screenshot'}], profile=ModelProfile(computer_use_screenshot_limit=(1000, 1_000_000))
+        )
+        agent = Agent(model, capabilities=[InMemoryProvider().capability(), ComputerUse(settle_seconds=0)])
+        with pytest.raises(UserError, match=r'The screen is 1280x800, larger than .* Start the display at 1000x625'):
+            await agent.run('Go.')
+
+    async def test_the_model_is_told_once_when_the_display_restarted_since_its_last_screenshot(self) -> None:
+        class Restarts(ProviderBackend):
+            fresh = True  # the first call starts the display
+
+            async def act(self, action: ComputerAction) -> None:
+                Restarts.fresh = True  # the display restarted during the action
+                await super().act(action)
+
+            def take_fresh_start(self) -> bool:
+                fresh, Restarts.fresh = Restarts.fresh, False
+                return fresh
+
+        class Provider(InMemoryProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
+                return Restarts(self, ref)
+
+        model = _scripted([{'type': 'screenshot'}], [{'type': 'keypress', 'keys': ['a']}], [{'type': 'screenshot'}])
+        agent = Agent(model, capabilities=[Provider().capability(), ComputerUse(settle_seconds=0)])
+        summaries = [part.content_items()[0] for part in _returns((await agent.run('Go.')).all_messages())]
+        assert summaries == [
+            'Ran 1 action. Screenshot attached (1280x800).',
+            'Ran 1 action. The display restarted since your last screenshot, so the windows that were open are gone. '
+            'Screenshot attached (1280x800).',
+            'Ran 1 action. Screenshot attached (1280x800).',
+        ]
+
+    async def test_a_thin_zoom_on_the_grid_still_covers_a_pixel(self) -> None:
+        model = _scripted(
+            [{'type': 'zoom', 'region': {'left': 0, 'top': 500, 'right': 10, 'bottom': 501}}],
+            profile=ModelProfile(computer_use_coordinate_grid=1000),
+        )
+        agent = Agent(model, capabilities=[InMemoryProvider().capability(), ComputerUse(settle_seconds=0)])
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+        zoomed = cast(BinaryContent, tool_return.content_items()[1])
+        assert struct.unpack('>II', zoomed.data[16:24]) == (13, 1)
+
+
+def _unchanged(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return messages
+
+
+def _png_header(width: int, height: int) -> bytes:
+    """The start of a PNG of that size: enough for its size to be read."""
+    return b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + struct.pack('>II', width, height)
