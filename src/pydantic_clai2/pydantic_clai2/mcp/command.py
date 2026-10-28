@@ -1,15 +1,17 @@
 """The `/mcp` command family, routed like Code Puppy's `MCPCommandHandler`."""
 
 from collections import deque
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
 from anyio import to_thread
 
+from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
+from pydantic_ai.messages import ModelMessage
 from pydantic_clai2.mcp.form import Editor, edit_form, edit_in_editor, install_form
-from pydantic_clai2.mcp.runtime import MCPServers, ServerEntry, State, not_owned, sign_in
+from pydantic_clai2.mcp.runtime import MCPServers, ServerEntry, State, capability_id, not_owned, sign_in
 from pydantic_clai2.mcp.settings import references, target
 from pydantic_clai2.plugins.menus import Dialogs
 from pydantic_clai2.plugins.sign_in import sign_in_now, sign_out_now
@@ -82,6 +84,8 @@ class MCPCommand:
     servers: MCPServers
     runners: Runners = TERMINAL
     editor: Editor = edit_in_editor
+    history: Callable[[], Sequence[ModelMessage]] = tuple
+    """The current conversation, which says which on-demand servers the agent has loaded."""
 
     async def __call__(self, args: list[str]) -> str:
         """Bare `/mcp` shows the dashboard, like Code Puppy; forms and sign-ins open in the terminal."""
@@ -161,6 +165,8 @@ class MCPCommand:
                 f'  state    {state}' + (f' for {_uptime(self.servers.uptime(entry))}' if state == 'running' else ''),
                 f'  type     {entry.server.type}',
                 f'  target   {target(entry.server)}',
+                f'  loading  {self.loading(entry) or "eager (tools in every prompt)"}',
+                *([f'  about    {self.servers.description(entry)}'] if entry.server.defer_loading else []),
                 f'  source   {entry.source} ({source})',
                 f'  env      {", ".join(variables) if variables else "none referenced"}',
                 *self._oauth_line(entry),
@@ -182,13 +188,21 @@ class MCPCommand:
         }[state]
         return [f'  oauth    {status} (/mcp auth {entry.name} [logout])']
 
+    def loading(self, entry: ServerEntry) -> str | None:
+        """`on demand (loaded)` or `on demand (not loaded)` for an on-demand server; `None` for an eager one."""
+        if not entry.server.defer_loading:
+            return None
+        loaded = capability_id(entry.name) in parse_loaded_capabilities(self.history())
+        return f'on demand ({"loaded" if loaded else "not loaded"})'
+
     def _summary(self, entry: ServerEntry, state: State) -> str:
+        loading = self.loading(entry)
         if state == 'running':
-            return f'{len(self.servers.tools(entry))} tools'
+            return ', '.join([f'{len(self.servers.tools(entry))} tools', *([loading] if loading else [])])
         if state == 'error':
             return self.servers.problem(entry) or 'error'
         if state == 'ready':
-            return 'connects on next prompt'
+            return loading or 'connects on next prompt'
         return f'/mcp start {entry.name}'
 
     def _trust_notice(self) -> str | None:

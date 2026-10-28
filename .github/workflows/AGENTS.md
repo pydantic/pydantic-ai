@@ -184,6 +184,30 @@ Two consequences of the trigger, both easy to get backwards:
   it reads as clean. Marking the check **required** is what closes that: a check that never
   ran stays pending and blocks the merge.
 
+# `PR Gates` answer merge questions from PR metadata
+
+`pr-gates.yml` runs one job per gate, and each job's check is the gate. The logic lives in
+`.github/scripts/pr_gates.py`. The workflow runs on `pull_request` with a read-only token, so a
+PR that changes either runs its own copy. `.github/CODEOWNERS` owns both, so that change needs a
+code owner's approval; keep them owned.
+
+| Check | Fails when |
+|---|---|
+| `Gate: compatibility waiver labeled` | the PR adds a waiver to `.github/api-compatibility-allowlist.json` without `compatibility impact` |
+
+# Code owners approve dependency and CI config changes
+
+`.github/CODEOWNERS` owns every `pyproject.toml` and `uv.lock`, `.github/workflows/`,
+`.github/actions/`, `.github/scripts/`, `.pre-commit-config.yaml`, `Makefile`, and itself. The
+`main` ruleset requires an approving review from a code owner on a PR that changes any of them, and
+dismisses it when a later push changes the diff. GitHub enforces both, so no workflow keeps the
+approval current.
+
+- A PR's author cannot approve it, so an owner's own PR needs another owner. An owner who pushes
+  to someone else's PR can still approve that push.
+- GitHub reads `CODEOWNERS` from the PR's base branch. A PR that edits it is judged by the
+  current owners.
+
 # Agentic workflows (`gh-aw`)
 
 The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://github.com/githubnext/gh-aw) authored as human-editable `<name>.md` sources (frontmatter + prompt) that **compile** to a generated `<name>.lock.yml`. GitHub Actions runs the `.lock.yml`, never the `.md`.

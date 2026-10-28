@@ -378,7 +378,7 @@ _Placement: TypeAlias = Literal['native', 'sandboxed', 'hidden']
 """Where `CodeModeToolset.get_tools` puts a wrapped tool: on the wire, inside `run_code`, or nowhere yet."""
 
 
-def _place_hidden_tools(placements: dict[str, _Placement], tools: Mapping[str, ToolsetTool[Any]]) -> None:
+def _place_hidden_tools(placements: dict[str, _Placement], tools: Mapping[str, ToolsetTool[Any]]) -> set[str]:
     """Decide which not-yet-revealed tools `run_code` will take over stay off the wire until they're revealed.
 
     With `dynamic_catalog`, a deferred tool that will be sandboxed once revealed is never declared natively:
@@ -386,22 +386,26 @@ def _place_hidden_tools(placements: dict[str, _Placement], tools: Mapping[str, T
     appears only in the catalog, whose change is appended to history. Declaring it natively first and
     dropping the declaration on reveal would change the request's tools prefix.
 
-    A tool in the native tool search's corpus still has to be declared when that search has to find it:
-    when there's no local `search_tools` (the `'bm25'` and `'regex'` strategies), or when another corpus
-    member stays native, which keeps the native search on the wire and drops `search_tools` with it.
+    Without a local `search_tools` (the `'bm25'` and `'regex'` strategies), only the native tool search can
+    find a corpus member, so a hidden one is declared for it.
+
+    Returns the corpus members that stay native but are searched locally instead: when the selector sandboxes
+    some of the Tool Search corpus and keeps the rest native, the native search would take `search_tools` off
+    the wire and could only find the tools it declares. Taking the native ones out of its corpus drops the
+    native search instead, so `search_tools` finds every corpus member, and a native one is revealed by
+    appending it like any locally found tool. The answer depends only on the selector, not on what's been
+    revealed, so it holds for the whole run.
     """
-    hidden = [name for name, where in placements.items() if where == 'hidden']
-    in_native_corpus = [name for name in hidden if tools[name].tool_def.with_native == _TOOL_SEARCH_NATIVE_ID]
+    corpus = [name for name, tool in tools.items() if tool.tool_def.with_native == _TOOL_SEARCH_NATIVE_ID]
     local_search = any(
         tool.tool_def.tool_kind == 'tool-search' and placements[name] == 'native' for name, tool in tools.items()
     )
-    corpus_stays_native = any(
-        tool.tool_def.with_native == _TOOL_SEARCH_NATIVE_ID and placements[name] == 'native'
-        for name, tool in tools.items()
-    )
-    if in_native_corpus and (not local_search or corpus_stays_native):
-        for name in in_native_corpus:
-            placements[name] = 'native'
+    if not local_search:
+        placements.update({name: 'native' for name in corpus if placements[name] == 'hidden'})
+        return set()
+    native = {name for name in corpus if placements[name] == 'native'}
+    sandboxes_corpus = any(placements[name] != 'native' for name in corpus)
+    return native if sandboxes_corpus else set()
 
 
 _RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
@@ -993,9 +997,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 placements[name] = 'sandboxed'
             else:
                 placements[name] = 'native'
-        _place_hidden_tools(placements, wrapped_tools)
+        searched_locally = _place_hidden_tools(placements, wrapped_tools) if self.dynamic_catalog else set[str]()
         sandboxed_tools = {name: wrapped_tools[name] for name, where in placements.items() if where == 'sandboxed'}
-        native_tools = {name: wrapped_tools[name] for name, where in placements.items() if where == 'native'}
+        native_tools = {
+            name: replace(tool, tool_def=replace(tool.tool_def, with_native=None)) if name in searched_locally else tool
+            for name, tool in ((name, wrapped_tools[name]) for name, where in placements.items() if where == 'native')
+        }
 
         callable_defs, sanitized_to_original = self._partition_callable_tools(sandboxed_tools)
 
