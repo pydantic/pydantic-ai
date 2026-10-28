@@ -52,6 +52,17 @@ class BaseGoogleProvider(Provider[Client], ABC):
     @abstractmethod
     def name(self) -> str: ...
 
+    _canonical_system_follows_client = True
+
+    @property
+    def canonical_system(self) -> str:
+        """`'google-cloud'` with a Google Cloud (Vertex AI) client, `'google'` with a Gemini API client.
+
+        Read off the client rather than `name`, as either provider accepts either client. The two transports
+        reject each other's thought signatures.
+        """
+        return 'google-cloud' if self._client.vertexai else 'google'
+
     @property
     def base_url(self) -> str:
         return str(self._client._api_client._http_options.base_url)  # pyright: ignore[reportPrivateUsage]
