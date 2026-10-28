@@ -379,13 +379,13 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11454"
     },
     {
-      "against": "v2.62.0",
+      "against": "v2.63.0",
       "fingerprint": "96caddef4bb1a1395bd143f856d4401b28773ed32c37572d61c23056329a2d11",
       "reason": "Adds the `supports_compaction_on_demand`, `compaction_instructions` and `compaction_result_readable` defaults to `DEFAULT_PROFILE`; every existing entry is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11581"
     },
     {
-      "against": "v2.62.0",
+      "against": "v2.63.0",
       "fingerprint": "15c4905c465989ed63703dbec21766186e37e5504d8f570ba369adc833ccc759",
       "reason": "Adds `NativeCompaction` to the agent-spec capability registry; every existing entry is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11581"
