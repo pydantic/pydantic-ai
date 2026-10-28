@@ -905,9 +905,16 @@ class TestAnswerNotes:
                 AskUserResponse(answers=(AskUserAnswer(header='Approach', selected=('A',), note=note),)),
             )
 
-    @pytest.mark.parametrize('note', ['not a tuple', (123,), ({'image': 'not UserContent'},)])
-    def test_malformed_notes_fail_before_reaching_a_provider(self, note: object) -> None:
-        with pytest.raises(ValueError, match=r'must be a tuple|must be a `UserContent` item'):
+    @pytest.mark.parametrize(
+        ('note', 'message'),
+        [
+            ('not a tuple', 'an answer note must be a tuple of `UserContent` items'),
+            ((123,), "answer note for 'Approach' must contain only `UserContent` items"),
+            (({'image': 'not UserContent'},), "answer note for 'Approach' must contain only `UserContent` items"),
+        ],
+    )
+    def test_malformed_notes_fail_before_reaching_a_provider(self, note: object, message: str) -> None:
+        with pytest.raises(ValueError, match=re.escape(message)):
             ask_user_result(
                 AskUserRequest(questions=(question(),)),
                 AskUserResponse(

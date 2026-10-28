@@ -203,13 +203,16 @@ class Answerer(Protocol):
         ...  # pragma: no cover
 
 
-def _check_note(note: tuple[UserContent, ...]) -> None:
+def _check_note(note: tuple[UserContent, ...], *, header: str) -> None:
     if not isinstance(note, tuple):
         raise ValueError('an answer note must be a tuple of `UserContent` items')
     if not note:
         return
     # Reuse core's content-type guard before notes reach a model adapter.
-    UserPromptPart(content=note)
+    try:
+        UserPromptPart(content=note)
+    except ValueError as exc:
+        raise ValueError(f'answer note for {header!r} must contain only `UserContent` items') from exc
     has_content = False
     for item in note:
         if isinstance(item, FileUrl):
@@ -247,7 +250,7 @@ def check_response(request: AskUserRequest, response: AskUserResponse) -> None:
         question = questions.pop(answer.header, None)
         if question is None:
             raise ValueError(f'answer for unknown or repeated question {answer.header!r}')
-        _check_note(answer.note)
+        _check_note(answer.note, header=answer.header)
         if answer.custom_answer is not None:
             if answer.selected:
                 raise ValueError('a custom answer cannot also select options')

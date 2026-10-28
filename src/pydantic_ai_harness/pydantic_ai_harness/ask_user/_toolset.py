@@ -59,11 +59,10 @@ def ask_user_result(request: AskUserRequest, response: AskUserResponse) -> AskUs
         metadata = {'origin': _ANSWER_NOTE_ORIGIN, 'request_id': request.id, 'header': answer.header}
         content.append(TextContent(open_tag(_ANSWER_NOTE_TAG, header=answer.header), metadata=metadata))
         for item in answer.note:
-            if isinstance(item, str):
-                content.append(neutralize_tags(item))
-            elif isinstance(item, TextContent):
+            if isinstance(item, str | TextContent):
                 # Neither a structured value nor user-supplied provenance metadata may bypass this text.
-                content.append(neutralize_tags(item.content))
+                text = item if isinstance(item, str) else item.content
+                content.append(neutralize_tags(text))
             else:
                 content.append(item)
         content.append(TextContent(close_tag(_ANSWER_NOTE_TAG), metadata=metadata))
