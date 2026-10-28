@@ -51,6 +51,7 @@ if [ "$1 $2" = "auth token" ]; then
 fi
 if [ "$1 $2" = "pr create" ]; then
   cat > "$FAKE_GH_STATE/body"
+  env > "$FAKE_GH_STATE/gh-env"
   [ -f "$FAKE_GH_STATE/fail" ] && cat "$FAKE_GH_STATE/fail" >&2 && exit 1
   [ -f "$FAKE_GH_STATE/silent" ] && exit 0
   echo "Creating pull request for feature into main in octo/repo"
@@ -160,11 +161,14 @@ async def test_a_conflict_is_unmerged(repo: Path) -> None:
     (repo / 'notes.txt').write_text('both\n')
     git(repo, 'add', 'notes.txt')
     (repo / 'extra.txt').write_text('extra\n')
+    # Deleted in the working tree only: the merge commit records it too.
+    (repo / 'old.txt').unlink()
     with pytest.raises(ValueError, match='A merge is in progress'):
         await commit(repo, message='Merge other', files=['notes.txt'])
     await commit(repo, message='Merge other')
     assert len(git(repo, 'log', '-1', '--format=%P').split()) == 2
     assert git(repo, 'show', 'HEAD:extra.txt') == 'extra\n'
+    assert 'old.txt' not in git(repo, 'ls-tree', '--name-only', 'HEAD').split()
 
 
 async def test_commit_only_the_chosen_files_then_the_chip_counts_the_commit(repo: Path) -> None:
@@ -299,6 +303,15 @@ async def test_git_and_its_hooks_never_see_api_keys(repo: Path, monkeypatch: pyt
     assert 'sk-secret' not in seen
 
 
+async def test_gh_never_sees_api_keys(repo: Path, gh_state: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'sk-secret')
+    git(repo, 'checkout', '-q', '-b', 'feature')
+    assert await open_pull_request(repo, title='Feature', body='') == PR_URL
+    seen = (gh_state / 'gh-env').read_text()
+    assert 'FAKE_GH_STATE=' in seen
+    assert 'sk-secret' not in seen
+
+
 async def test_push_confirms_the_default_branch_and_sets_the_upstream(repo: Path) -> None:
     (repo / 'notes.txt').write_text('changed\n')
     await commit(repo, message='Change the notes')
@@ -350,7 +363,8 @@ async def test_pull_requests_need_github_and_a_signed_in_gh(
     status = await git_status(repo)
     assert status is not None
     assert status.pull_request == (
-        'The GitHub CLI is not signed in to gitlab.example.com; it opens pull requests on GitHub hosts only.'
+        'The GitHub CLI is not signed in to gitlab.example.com; '
+        'if gitlab.example.com is a GitHub host, run gh auth login --hostname gitlab.example.com.'
     )
     git(repo, 'remote', 'set-url', 'origin', GITHUB)
 
@@ -553,6 +567,8 @@ async def test_commands(repo: Path, gh_state: Path) -> None:
     commands = {command.name: command for command in git_commands(workspace=lambda: repo, model=drafter.resolved)}
     assert commands['push'].complete([]) == ('confirm',)
     assert commands['push'].complete(['confirm', 'x']) == ()
+    assert commands['pr'].complete([]) == ('confirm',)
+    assert commands['pr'].complete(['confirm', 'x']) == ()
 
     async def run(name: str, *args: str) -> str:
         result = commands[name].handler(list(args))

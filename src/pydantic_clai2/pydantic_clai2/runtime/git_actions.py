@@ -322,8 +322,8 @@ async def _pull_request_problem(remote: str | None, *, branch: str | None, on_de
     if token is None and host == 'github.com':
         return f'The GitHub CLI is not signed in to {host}: run gh auth login --hostname {host}.'
     if token is None:
-        # Any host may be GitHub Enterprise, so it cannot tell GitLab from GitHub by name.
-        return f'The GitHub CLI is not signed in to {host}; it opens pull requests on GitHub hosts only.'
+        # Any host may be GitHub Enterprise: its name cannot tell GitLab from GitHub.
+        return f'The GitHub CLI is not signed in to {host}; if {host} is a GitHub host, run gh auth login --hostname {host}.'
     return None
 
 
@@ -352,8 +352,9 @@ async def commit(workspace: Path, *, message: str, files: Sequence[str] | None =
     """Stage and commit `files` (every changed file when `None`) with `message`; what was committed.
 
     Only these files are committed, whatever else is staged. Paths are relative to the repository's top
-    directory, as `git_status` lists them. Raises `ValueError` for an empty message or nothing to commit,
-    and `GitError` when Git refuses, as when a hook fails.
+    directory, as `git_status` lists them. Raises `ValueError` for an empty message, for nothing to
+    commit, and for only some files while a merge is in progress, which Git finishes only with every
+    change; and `GitError` when Git refuses, as when a hook fails.
     """
     message = message.strip()
     if not message:
@@ -362,18 +363,19 @@ async def commit(workspace: Path, *, message: str, files: Sequence[str] | None =
     chosen = _selected(status, files)
     if not chosen:
         raise ValueError('There is nothing to commit.')
-    # Git finishes a merge only with every change, never with paths named.
     merging = await _try_git(root, 'rev-parse', '--quiet', '--verify', 'MERGE_HEAD') is not None
-    if merging and len(chosen) < len(status.files):
-        raise ValueError('A merge is in progress: commit every changed file to finish it.')
-    # New files must be known to Git before `commit PATHS` takes them; a deleted or renamed-away one is
-    # known already, and `add` would refuse it.
-    present = [file.path for file in chosen if (root / file.path).is_symlink() or (root / file.path).exists()]
-    if present:
-        await _git(root, 'add', '--all', '--pathspec-from-file=-', '--pathspec-file-nul', input=_pathspecs(present))
     if merging:
+        if len(chosen) < len(status.files):
+            raise ValueError('A merge is in progress: commit every changed file to finish it.')
+        # Every change, deletions included, staged as it is; Git takes no paths to finish a merge.
+        await _git(root, 'add', '--all')
         await _git(root, 'commit', '--quiet', f'--message={message}', timeout=LONG_TIMEOUT)
     else:
+        # New files must be known to Git before `commit PATHS` takes them; a deleted or renamed-away one
+        # is known already, and `add` would refuse one no longer in the index.
+        present = [file.path for file in chosen if (root / file.path).is_symlink() or (root / file.path).exists()]
+        if present:
+            await _git(root, 'add', '--all', '--pathspec-from-file=-', '--pathspec-file-nul', input=_pathspecs(present))
         paths = [path for file in chosen for path in (file.path, file.original) if path is not None]
         await _git(
             root,
@@ -627,6 +629,7 @@ def git_commands(*, workspace: Callable[[], Path], model: ModelSource) -> tuple[
             name='pr',
             description='Draft a GitHub pull request for this branch; /pr confirm (or /pr TITLE) pushes and opens it with gh',
             handler=pull_request_command,
+            complete=lambda args: ('confirm',) if len(args) <= 1 else (),
             raw=True,
             live=True,
             # A plugin's own command of this name takes over instead of failing to load.
