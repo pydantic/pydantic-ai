@@ -257,7 +257,7 @@ async def test_a_refused_action_does_not_restart_the_desktop(fake_daytona: FakeD
     backend, sandbox = await _started(fake_daytona)
 
     with pytest.raises(WorkspaceUnsupportedActionError):
-        await backend.act(PressKeys(keys=('NoSuchKey',)))
+        await backend.act(PressKeys(keys=('numpad_enter',)))
     await backend.act(Click(x=1, y=1))
 
     assert sandbox.computer_use.start_calls == 1
