@@ -230,7 +230,7 @@ result = agent.run_sync('Find recent papers on AI safety', deps=UserContext(user
 
 Template strings are part of the spec flow, so route template-string questions here too.
 
-A spec has the same authority as the code that builds the agent: it picks the model, the capabilities, and the endpoints they connect to, such as an `MCP` server URL, `localhost` and private addresses included. Load specs only from trusted sources; if users supply them, validate the capabilities and endpoints each one allows first.
+A spec has the same authority as the code that builds the agent: it picks the model, the capabilities, and the endpoints they connect to, such as an `MCP` server URL, `localhost` and private addresses included. Load specs only from trusted sources; if users supply them, check each spec's capabilities (`name` and `kwargs`, such as an `MCP` `url`) against what that user may use before building the agent.
 
 ## Choose or Configure Models
 
