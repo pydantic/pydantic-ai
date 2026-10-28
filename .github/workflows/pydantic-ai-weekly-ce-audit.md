@@ -247,7 +247,10 @@ This is the mandatory candidate gate, not an optional second opinion.
 Do not use an audit delegate that already studied the proposed change as the reviewer.
 
 Write `.ce-audit/review/task.md` with the task and settled constraints, excluding author rationale and audit notes.
-Write `.ce-audit/review/proposal.json` with the exact PR tool arguments: `title`, `body`, and `branch`.
+Write `.ce-audit/review/proposal.json` with the exact PR `title`, `body`, and `branch`.
+For a trivial template exemption, include `issue_exemption` (`typo`, `broken-link`, or `small-doc-improvement`) and `exemption_reason`.
+Otherwise include `issue_number` and `alignment_url` citing the existing agreeing maintainer issue or comment.
+These local justification fields are review evidence; send only the PR tool's supported arguments when publishing.
 Run the trusted root utility:
 
 ```sh
@@ -262,9 +265,11 @@ The shim starts that Task with fresh history and read-only tools, without shell,
 The reviewer reads stable root policies and the staged diff, never the candidate worktree or continuity state.
 Do not mutate the candidate or root checkout during review.
 Keep one candidate review attempt per run; findings, timeout, unavailable tools, or incomplete review mean `noop`.
-Preserve the actual Task JSON response verbatim in `.ce-audit/review/result.json`.
+Preserve the actual Task response verbatim in `.ce-audit/review/result.txt`.
 Do not synthesize an approval or treat an audit report as independent review.
-Only a `current` report for the unchanged candidate head and tree permits the PR safe output.
+Only `current DIGEST` for the unchanged frozen bundle permits the PR safe output.
+The trusted utility reconstructs the prompt and Git diff and verifies hashes of the task, proposal, and issue evidence.
+The compact approval fits the shim's existing streamed Task-result preview without changing its limit.
 Use the exact title and body the independent reviewer assessed.
 
 Leave protected-file review enabled; a human must approve protected instruction edits.

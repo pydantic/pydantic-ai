@@ -260,34 +260,22 @@ def validate_policy_checkout(root: Path, source: str, directory: Path) -> None:
             raise ValueError('Review bundle must not introduce instruction overlays')
 
 
-def prepare_review(root: Path, source: str, branch: str, default_branch: str, directory: Path) -> None:
-    """Freeze a review bundle while the reviewer workspace remains the policy checkout."""
-    if not branch.startswith(BRANCH_PREFIX):
-        raise ValueError('Invalid weekly audit branch')
-    validate_policy_checkout(root, source, directory)
-    git(root, 'fetch', '--no-tags', 'origin', default_branch)
-    if git(root, 'rev-parse', 'FETCH_HEAD').decode().strip() != source:
-        raise ValueError('Default branch moved; preserve findings and noop')
-    revision = f'refs/heads/{branch}'
+def review_material(root: Path, source: str, revision: str, directory: Path) -> tuple[dict[str, str], bytes, str]:
+    """Reconstruct the review prompt, diff and digest from git objects and supplied evidence."""
     git(root, 'merge-base', '--is-ancestor', source, revision)
     head = git(root, 'rev-parse', revision).decode().strip()
     tree = git(root, 'rev-parse', f'{revision}^{{tree}}').decode().strip()
-    if git(directory / 'candidate', 'rev-parse', 'HEAD').decode().strip() != head or git(
-        directory / 'candidate', 'status', '--porcelain'
-    ):
-        raise ValueError('Commit the exact candidate and leave its worktree clean before review')
-    entries = inventory(root, source)
-    receipt: object = json.loads((directory / 'receipt.json').read_text())
-    if reconcile(entries, receipt, source):
-        raise ValueError('Finish audit coverage before independent review')
-    validate_edits(root, source, entries, revision)
-    git(root, 'diff', '--check', source, revision, '--')
     review = directory / 'review'
-    review.mkdir(exist_ok=True)
-    (review / 'candidate.diff').write_bytes(git(root, 'diff', '--no-ext-diff', '--no-textconv', source, revision, '--'))
+    diff = git(root, 'diff', '--no-ext-diff', '--no-textconv', source, revision, '--')
     metadata: dict[str, str] = {'policy': source, 'merge_base': source, 'head': head, 'tree': tree}
-    (review / 'candidate.json').write_text(json.dumps(metadata, indent=2) + '\n')
-    (review / 'instructions.md').write_text(
+    metadata['diff_sha256'] = hashlib.sha256(diff).hexdigest()
+    for name in ('task.md', 'proposal.json'):
+        metadata[name] = hashlib.sha256((review / name).read_bytes()).hexdigest()
+    for name in ('issue.json', 'issue-comments.json', 'issue-permissions.json'):
+        path = directory / name
+        metadata[name] = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ''
+    metadata['digest'] = hashlib.sha256(json.dumps(metadata, sort_keys=True).encode()).hexdigest()
+    prompt = (
         'Review this candidate independently under .agents/skills/pre-push-review/SKILL.md.\n'
         f'Policy-base and merge-base: {source}. Candidate head: {head}. Candidate tree: {tree}.\n'
         'This is the candidate PR mandatory pre-push review, call 1 of 3, not an optional second opinion.\n'
@@ -303,18 +291,47 @@ def prepare_review(root: Path, source: str, branch: str, default_branch: str, di
         'Trivial typos, broken links and small documentation improvements may omit an issue under the PR template.\n'
         'Behavioral instruction changes require an existing issue, explicit maintainer agreement and assignment to the actor.\n'
         'Do not infer alignment from a related issue number. Verify the exact proposed scope and the cited agreement.\n'
-        'Return JSON repeating policy, merge_base, head and tree from candidate.json.\n'
-        f'With no actionable findings, set report to exactly "current at {head}". Otherwise report actionable findings.\n'
-        'For a template-exempt change, include issue_exemption as typo, broken-link or small-doc-improvement, and exemption_reason.\n'
-        'Otherwise include issue_number and alignment_url pointing to the agreeing maintainer issue or comment.\n'
+        'Review the issue_exemption and exemption_reason declared in proposal.json; only template exemptions apply.\n'
+        'For a nontrivial change, verify proposal.json issue_number and alignment_url against the supplied evidence.\n'
+        f'With no actionable findings, return exactly: current {metadata["digest"]}\n'
+        'This compact approval binds every bundle input and fits the existing Task stream preview.\n'
+        'Otherwise return actionable findings; do not emit a current approval.\n'
         'Return the independent report only; do not publish, select reviewers or request optional review.\n'
     )
+    return metadata, diff, prompt
 
 
-def task_review(log: Path, prompt: str) -> dict[str, object]:
+def prepare_review(root: Path, source: str, branch: str, default_branch: str, directory: Path) -> None:
+    """Freeze a review bundle while the reviewer workspace remains the policy checkout."""
+    if not branch.startswith(BRANCH_PREFIX):
+        raise ValueError('Invalid weekly audit branch')
+    validate_policy_checkout(root, source, directory)
+    git(root, 'fetch', '--no-tags', 'origin', default_branch)
+    if git(root, 'rev-parse', 'FETCH_HEAD').decode().strip() != source:
+        raise ValueError('Default branch moved; preserve findings and noop')
+    revision = f'refs/heads/{branch}'
+    head = git(root, 'rev-parse', revision).decode().strip()
+    if git(directory / 'candidate', 'rev-parse', 'HEAD').decode().strip() != head or git(
+        directory / 'candidate', 'status', '--porcelain'
+    ):
+        raise ValueError('Commit the exact candidate and leave its worktree clean before review')
+    entries = inventory(root, source)
+    receipt: object = json.loads((directory / 'receipt.json').read_text())
+    if reconcile(entries, receipt, source):
+        raise ValueError('Finish audit coverage before independent review')
+    validate_edits(root, source, entries, revision)
+    git(root, 'diff', '--check', source, revision, '--')
+    metadata, diff, prompt = review_material(root, source, revision, directory)
+    review = directory / 'review'
+    (review / 'candidate.diff').write_bytes(diff)
+    (review / 'candidate.json').write_text(json.dumps(metadata, indent=2) + '\n')
+    (review / 'instructions.md').write_text(prompt)
+
+
+def task_review(log: Path, prompt: str) -> str:
     """Require a completed Task with the frozen review prompt, not an author-written approval."""
     calls: set[str] = set()
-    reports: list[dict[str, object]] = []
+    reports: list[str] = []
     for line in log.read_text(encoding='utf-8').splitlines():
         try:
             payload: object = json.loads(line)
@@ -342,9 +359,8 @@ def task_review(log: Path, prompt: str) -> dict[str, object]:
             elif part.get('type') == 'tool_result' and part.get('tool_use_id') in calls and not part.get('is_error'):
                 result = part.get('content')
                 if not isinstance(result, str):
-                    raise ValueError('Independent Task result must be JSON text')
-                report: object = json.loads(result)
-                reports.append(mapping(report))
+                    raise ValueError('Independent Task result must be text')
+                reports.append(result.strip())
     if len(calls) != 1 or len(reports) != 1:
         raise ValueError('Missing or incomplete independent Task review in the agent log')
     return reports[0]
@@ -355,17 +371,18 @@ def validate_review(
 ) -> None:
     """Bind the independent review and issue contract to the exact published tree."""
     validate_policy_checkout(root, source, directory)
-    head = git(root, 'rev-parse', revision).decode().strip()
-    tree = git(root, 'rev-parse', f'{revision}^{{tree}}').decode().strip()
-    expected: dict[str, str] = {'policy': source, 'merge_base': source, 'head': head, 'tree': tree}
+    expected, diff, prompt = review_material(root, source, revision, directory)
     prepared: object = json.loads((directory / 'review/candidate.json').read_text())
     if mapping(prepared) != expected:
         raise ValueError('Prepared candidate changed after review')
-    payload: object = json.loads((directory / 'review/result.json').read_text())
-    review = mapping(payload)
-    if review != task_review(log, (directory / 'review/instructions.md').read_text()):
+    if (directory / 'review/candidate.diff').read_bytes() != diff or (
+        directory / 'review/instructions.md'
+    ).read_text() != prompt:
+        raise ValueError('Prepared review prompt or diff differs from immutable inputs')
+    review = (directory / 'review/result.txt').read_text().strip()
+    if review != task_review(log, prompt):
         raise ValueError('Saved report differs from the independent Task result')
-    if any(review.get(key) != value for key, value in expected.items()) or review.get('report') != f'current at {head}':
+    if review != f'current {expected["digest"]}':
         raise ValueError('Missing, incomplete, stale, or non-current independent pre-push review')
     body = proposal.get('body')
     proposal_payload: object = json.loads((directory / 'review/proposal.json').read_text())
@@ -376,14 +393,14 @@ def validate_review(
         or any(reviewed_proposal.get(key) != proposal.get(key) for key in ('title', 'body', 'branch'))
     ):
         raise ValueError('Published PR metadata differs from the reviewed proposal')
-    if review.get('issue_exemption') in {'typo', 'broken-link', 'small-doc-improvement'}:
-        if not isinstance(review.get('exemption_reason'), str) or not review['exemption_reason']:
+    if reviewed_proposal.get('issue_exemption') in {'typo', 'broken-link', 'small-doc-improvement'}:
+        if not isinstance(reviewed_proposal.get('exemption_reason'), str) or not reviewed_proposal['exemption_reason']:
             raise ValueError('Missing independent rationale for the template issue exemption')
         return
     issue_payload: object = json.loads((directory / 'issue.json').read_text())
     issue = mapping(issue_payload)
     number = issue.get('number')
-    if issue.get('state') != 'open' or 'pull_request' in issue or review.get('issue_number') != number:
+    if issue.get('state') != 'open' or 'pull_request' in issue or reviewed_proposal.get('issue_number') != number:
         raise ValueError('Nontrivial change needs its existing open issue')
     assignees = issue.get('assignees')
     if not is_container(assignees) or isinstance(assignees, dict):
@@ -406,7 +423,7 @@ def validate_review(
         (
             mapping(item)
             for item in [issue, *comments_payload]
-            if mapping(item).get('html_url') == review.get('alignment_url')
+            if mapping(item).get('html_url') == reviewed_proposal.get('alignment_url')
         ),
         None,
     )
