@@ -2496,8 +2496,13 @@ queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
 `.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
 asks which folder, offering every worktree of the repositories it has sessions in,
-and completing a typed path to any directory, with every worktree of each repository it finds;
-with `/web`, it starts in the folder of the session you are looking at.
+and completing a typed path to any directory, with every worktree of each repository it finds.
+**New worktree of …** checks out a new branch of the highlighted folder's repository
+first, from the base you name (by default its `HEAD`), in `.worktrees/` as
+[`--worktree`](#git-worktrees) does, and starts the session there; without a branch
+name, it makes `clai-NAME` with a generated NAME. The worktree stays when the
+session closes. With `/web`, New session starts in the folder of the session you are
+looking at.
 CLAI never changes its own working directory to do this. There is no limit on how
 many sessions run at once.
 
