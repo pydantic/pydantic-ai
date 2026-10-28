@@ -45,8 +45,8 @@ with try_import() as imports_successful:
     from pydantic_ai.profiles import merge_profile
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.gateway import (
+        _accepts_http_client,  # pyright: ignore[reportPrivateUsage]
         _fallback_provider,  # pyright: ignore[reportPrivateUsage]
-        _shareable_http_client,  # pyright: ignore[reportPrivateUsage]
         gateway_provider,
         normalize_gateway_provider,
     )
@@ -482,7 +482,7 @@ async def test_the_callers_http_client_is_shared_where_the_sdk_accepts_it(
 ):
     """Which SDK takes which client is checked directly: the fake gateway only serves clients it gave the provider."""
     async with client_type() as client:
-        assert (_shareable_http_client(normalize_gateway_provider(upstream), client) is client) is shared
+        assert _accepts_http_client(normalize_gateway_provider(upstream), client) is shared
 
 
 def test_the_next_provider_is_created_once_per_format():
