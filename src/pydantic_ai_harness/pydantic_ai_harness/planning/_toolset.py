@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -10,9 +9,9 @@ from typing import TYPE_CHECKING, Any, Generic
 
 from pydantic import BaseModel
 
-from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.durable_exec import BaseDurabilityCapability
+from pydantic_ai.framing import register_tag, wrap
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
@@ -145,22 +144,17 @@ records on the user channel is a `TextContent` with `{'origin': PLAN_ORIGIN}`. `
 the conversation by this metadata, never by text.
 """
 
-# TODO: switch to `wrap()` with `plan_reminder` registered through `register_tag` from the public `pydantic_ai.framing`
-# module once it lands (#10957), keeping the old `plan-reminder` spelling escaped.
-# The `<` of an opening or closing `plan_reminder` tag, or of the `plan-reminder` spelling earlier releases framed the
-# plan in, in any case, spacing or with attributes, or cut off at the end of the plan, where the frame's own end tag
-# would complete it. Core's own framing tags are left to `neutralize_tags`.
-_PLAN_REMINDER_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?plan[-_]reminder(?=[\s/>]|$))', re.IGNORECASE)
+_PLAN_REMINDER_TAG = register_tag('plan_reminder')
+"""The frame the plan is shown in. Registered, so core's own data frames escape it too."""
 
 
 def framed_plan(items: list[PlanItem]) -> str:
     """The plan rendered in its `<plan_reminder>` frame.
 
-    The steps are written by the model, so the `<` of every opening or closing `plan_reminder` tag (and of the old
-    `plan-reminder` spelling) and of every framing tag core writes is escaped as `&lt;`.
+    The steps are written by the model, so the `<` of every opening or closing `plan_reminder` tag and of every other
+    framing tag is escaped as `&lt;`.
     """
-    body = _PLAN_REMINDER_TAG_OPENER.sub('&lt;', neutralize_tags(render_plan(items)))
-    return f'<plan_reminder>\n{body}\n</plan_reminder>'
+    return wrap(_PLAN_REMINDER_TAG, f'\n{render_plan(items)}\n')
 
 
 class _PlanReply(str):

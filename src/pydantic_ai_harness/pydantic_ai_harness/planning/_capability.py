@@ -105,9 +105,9 @@ class Planning(AbstractCapability[AgentDepsT]):
     cache_ttl: Literal['5m', '1h'] | None = None
     """Deprecated, and has no effect; configure caching on the model instead.
 
-    The plan reminder used to bring a cache breakpoint of its own, with a `'5m'` TTL by default. It's
-    recorded in the message history now, and the breakpoints the model's caching settings place (such as
-    `anthropic_cache`) land before it. Set to `'5m'` or `'1h'`, it warns that it's ignored.
+    `Planning` used to place a cache breakpoint of its own before the plan reminder, with a `'5m'` TTL by
+    default. It no longer places one: configure caching on the model instead (such as
+    `anthropic_cache_messages`). Set to `'5m'` or `'1h'`, it warns that it's ignored.
     """
 
     store: PlanStore | None = None
@@ -154,8 +154,8 @@ class Planning(AbstractCapability[AgentDepsT]):
             warn_argument_ignored(
                 'Planning',
                 'cache_ttl',
-                'configure caching on the model instead (such as `anthropic_cache`); its breakpoint lands before '
-                'the plan reminder.',
+                '`Planning` no longer places a cache breakpoint of its own: configure caching on the model instead '
+                '(such as `anthropic_cache_messages`).',
             )
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Planning[AgentDepsT]:
