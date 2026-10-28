@@ -238,18 +238,22 @@ class PendingMessageQueue(list[PendingMessage]):
         with self._lock:
             return self._pop_priority(priority)
 
-    @property
-    def capability_loads(self) -> tuple[CapabilityLoadRecord, ...]:
-        """The records of the capability loads `RunContext.load_capability` queued that haven't been delivered yet."""
-        with self._lock:
-            return tuple(self._capability_loads)
+    def append_capability_load(self, capability_id: str, records: Sequence[CapabilityLoadRecord]) -> bool:
+        """Queue the records of a load of `capability_id`, delivered together with the next model request.
 
-    def append_capability_load(self, records: Sequence[CapabilityLoadRecord]) -> None:
-        """Queue the records of one capability load, delivered together with the next model request."""
+        Returns `False`, queueing nothing, if a load of `capability_id` is already queued. The check and the append
+        happen under one lock, so parallel tool calls in worker threads can't both queue the same load.
+        """
         with self._lock:
             if self._closed:
                 raise UserError('`load_capability` is not available because the agent run has ended.')
+            if any(
+                isinstance(record, CapabilityLoadDeltaPart) and capability_id in record.loaded
+                for record in self._capability_loads
+            ):
+                return False
             self._capability_loads.extend(records)
+            return True
 
     def pop_capability_loads(self) -> list[CapabilityLoadRecord]:
         with self._lock:

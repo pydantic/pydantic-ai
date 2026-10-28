@@ -6,6 +6,7 @@ Split out of `test_capabilities.py` per #7304.
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
@@ -76,7 +77,7 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ParallelExecutionMode
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.toolsets import FunctionToolset, _deferred_capability_loader
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE,
@@ -3150,6 +3151,49 @@ async def test_parallel_tools_loading_one_capability_load_it_once() -> None:
     result = await agent.run('Open two cases.')
 
     assert (sorted(results), len(_load_records(result.all_messages()))) == ([False, True], 1)
+
+
+async def test_parallel_sync_tools_loading_one_capability_load_it_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two sync tools, which run in worker threads, loading the same capability at once queue one load between them.
+
+    A barrier holds both threads after they've checked for a queued load and before either queues one, so without
+    an atomic check-and-queue both would queue it.
+    """
+    barrier = threading.Barrier(2, timeout=5)
+    executing_load_calls = _deferred_capability_loader._executing_load_calls  # pyright: ignore[reportPrivateUsage]
+
+    def executing_load_calls_after_both_checked(
+        ctx: RunContext[Any], capability_id: str
+    ) -> list[LoadCapabilityCallPart]:
+        barrier.wait()
+        return executing_load_calls(ctx, capability_id)
+
+    monkeypatch.setattr(_deferred_capability_loader, '_executing_load_calls', executing_load_calls_after_both_checked)
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart('open_case', {}, tool_call_id='a'), ToolCallPart('open_case', {}, tool_call_id='b')]
+            )
+        return make_text_response('done')
+
+    results: list[bool] = []
+    agent = Agent(FunctionModel(model_fn), capabilities=[_refunds()])
+
+    @agent.tool
+    def open_case(ctx: RunContext[object]) -> str:
+        results.append(ctx.load_capability('refunds'))
+        return 'Case opened.'
+
+    result = await agent.run('Open two cases.')
+
+    records = [
+        type(part).__name__
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, CapabilityLoadDeltaPart | ToolAvailabilityDeltaPart)
+    ]
+    assert (sorted(results), records) == ([False, True], ['CapabilityLoadDeltaPart', 'ToolAvailabilityDeltaPart'])
 
 
 @dataclass

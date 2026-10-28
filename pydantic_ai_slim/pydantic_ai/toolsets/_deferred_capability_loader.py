@@ -196,7 +196,7 @@ def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx: RunCo
     if capability_id not in ctx.capabilities:
         raise UserError(f'No capability with id {capability_id!r} is registered in this run.')
 
-    if _is_active_or_loading(ctx, pending_messages, capability_id):
+    if _is_active_or_being_loaded_by_the_model(ctx, capability_id):
         return False
     if ctx.capabilities[capability_id].defer_loading is not True:
         # Inactive without being deferred itself, so it sits inside a deferred capability that isn't loaded yet.
@@ -213,8 +213,8 @@ def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx: RunCo
         records.append(ToolAvailabilityDeltaPart(tools_added=tools, tool_call_id=ctx.tool_call_id))
     # Delivered with the next model request; if this step ends the run instead (a tool call needs
     # approval or is deferred, or output is produced), the load is dropped rather than forcing one.
-    pending_messages.append_capability_load(records)
-    return True
+    # `False` if an earlier or parallel call already queued it.
+    return pending_messages.append_capability_load(capability_id, records)
 
 
 def _part_of_unloaded_group_message(ctx: RunContext[Any], capability_id: str) -> str:
@@ -233,14 +233,12 @@ def _part_of_unloaded_group_message(ctx: RunContext[Any], capability_id: str) ->
     )
 
 
-def _is_active_or_loading(ctx: RunContext[Any], queue: PendingMessageQueue, capability_id: str) -> bool:
-    """Whether `capability_id` is active, or a load of it is queued or among the model's calls being executed."""
-    if capability_id in ctx.active_capability_ids or any(
-        isinstance(record, CapabilityLoadDeltaPart) and capability_id in record.loaded
-        for record in queue.capability_loads
-    ):
-        return True
-    return bool(_executing_load_calls(ctx, capability_id))
+def _is_active_or_being_loaded_by_the_model(ctx: RunContext[Any], capability_id: str) -> bool:
+    """Whether `capability_id` is active, or a load of it is among the model's calls being executed.
+
+    A load queued from code is checked when queueing, under the queue's lock.
+    """
+    return capability_id in ctx.active_capability_ids or bool(_executing_load_calls(ctx, capability_id))
 
 
 def _is_duplicate_load_in_response(ctx: RunContext[Any], capability_id: str) -> bool:
