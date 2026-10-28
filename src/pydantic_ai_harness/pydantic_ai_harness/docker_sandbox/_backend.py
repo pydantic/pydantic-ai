@@ -51,7 +51,7 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness._display import ManagedDisplay
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
 
-from ._x11 import DISPLAY, X11Computer, start_x11
+from ._x11 import DISPLAY, STARTED, X11Computer, start_x11
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerSandboxBackend', 'remove_container')
 
@@ -248,14 +248,15 @@ _X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY[1:]}'
 _START_DESKTOP = (
     'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
     # A lock left by an X server that's gone, such as after `docker stop`, stops Xvfb starting when its PID now
-    # belongs to another process.
-    f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in Xvfb) ;; '
+    # belongs to another process. A running X server's lock stays, whichever server it is, such as `Xvnc`.
+    f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
     f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
     f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{_PID_DIR}/xvfb.log & xvfb=$!; i=0; '
     'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
     'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
     f"echo 'the X server did not start:' >&2; tail -n 5 {_PID_DIR}/xvfb.log >&2; exit 1; fi; "
-    'sleep 0.1; i=$((i+1)); done; setsid tint2 >/dev/null 2>&1 & fi; '
+    'sleep 0.1; i=$((i+1)); done; '
+    f'echo {STARTED}; setsid tint2 >/dev/null 2>&1 & fi; '
     'setsid fluxbox >/dev/null 2>&1 &'
 )
 """Starts an X display of the size `$1` names, such as `1280x800`, and its panel, unless one is running, and a window
@@ -535,5 +536,10 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         return self._display
 
     async def _start_display(self) -> X11Computer:
-        assert self._desktop_size is not None
-        return await start_x11(self, self._desktop_size, _START_DESKTOP, lambda: f'Docker workspace {self._name}')
+        assert self._desktop_size is not None and self._display is not None
+        computer, started = await start_x11(
+            self, self._desktop_size, _START_DESKTOP, lambda: f'Docker workspace {self._name}'
+        )
+        if started:
+            self._display.started_fresh()
+        return computer

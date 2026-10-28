@@ -3,7 +3,6 @@
 from __future__ import annotations as _annotations
 
 import base64
-import itertools
 import re
 from collections.abc import Callable, Sequence
 from contextlib import suppress
@@ -88,6 +87,9 @@ _KEYSYMS = {
 
 _KEYSYM_PATTERN = re.compile(r'[A-Za-z0-9_]+')
 
+_OUTSIDE_ASCII = re.compile(r'U(?!00[0-7])[0-9A-F]{4,}')
+"""A keysym `_character` gives a character outside ASCII, which has no key until it's mapped to one."""
+
 _XDOTOOL_COMMANDS = frozenset(
     {
         'behave',
@@ -151,10 +153,11 @@ _PRESS_MAPPED = (
     'while [ "$1" != -- ]; do '
     'while case "$mods" in *" $code "*) true;; *) false;; esac; do code=$((code - 1)); done; '
     'map="$map -e \'keycode $code = $1 $1\'"; code=$((code - 1)); shift; done; shift; '
-    'eval xmodmap "$map" && sleep 0.2 && xdotool key --delay 20 -- "$@"'
+    'eval xmodmap "$map" && sleep 0.2 && xdotool key "$@"'
 )
-"""Runs as `sh -c PRESS_MAPPED sh <keysym>... -- <keysym>...`: maps each keysym before `--` to a keycode of its own,
-counting down from 255 past the modifier keys, then presses the keysyms after `--`.
+"""Runs as `sh -c PRESS_MAPPED sh <keysym>... -- <xdotool key arguments>...`: maps each keysym before `--` to a
+keycode of its own, counting down from 255 past the modifier keys, then runs `xdotool key` with the arguments after
+`--`.
 
 `xdotool` alone types a character that has no key by remapping one spare keycode for each keystroke, and an
 application that reads the keymap after the keystroke, such as Chrome, then sees a later character, or none when
@@ -165,25 +168,58 @@ rarely used keys such as media keys, stay mapped."""
 _MAPPED_PER_COMMAND = 50
 """The most distinct characters one command maps, well within the keycodes there are."""
 
+_TYPING_DELAY_MS = '12'
+"""Milliseconds between typed characters, `xdotool type`'s default."""
+
+_LEVEL_SHIFTS = ('Shift_L', 'ISO_Level3_Shift')
+"""The modifiers `xdotool` presses to reach a character on a key's other levels, released after a failed typing."""
+
 _SCROLL_TICK_DELAY_MS = '20'
 """Milliseconds between scroll wheel clicks, instead of `xdotool`'s 100 ms between clicks."""
 
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
 
-_CAPTURE = 'd=$(mktemp -d) && scrot "$@" "$d/s.png" && base64 "$d/s.png"; status=$?; rm -rf "$d"; exit $status'
+_CAPTURE = 'd=$(mktemp -d) && scrot "$@" "$d/s.png" && base64 < "$d/s.png"; status=$?; rm -rf "$d"; exit $status'
 """Captures into a fresh directory (scrot picks the format from the `.png` name) and prints it as base64; arguments
 go to scrot, such as `-a x,y,width,height` for a region."""
+
+_CAPTURE_SCALED = (
+    'd=$(mktemp -d) && scrot -t "$1" "$d/s.png" && base64 < "$d/s-thumb.png"; status=$?; rm -rf "$d"; exit $status'
+)
+"""Captures the whole screen and prints a copy scaled to the `WIDTHxHEIGHT` in `$1`, which scrot writes beside it."""
+
+STARTED = 'pydantic-ai-display-started'
+"""What a start script prints when it started a new X server, rather than finding one running."""
 
 _PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 
 
 def _keysym(key: str) -> str:
-    keysym = _KEYSYMS.get(key, key)
+    if key in _KEYSYMS:
+        return _KEYSYMS[key]
+    if len(key) == 1 and not (key.isascii() and key.isalnum()):
+        # A character such as `!` or `é`: xdotool presses shift or AltGr when the layout needs it.
+        return _character(key)
     # xdotool reads any argument that names one of its commands, in any case, as that command.
-    if not _KEYSYM_PATTERN.fullmatch(keysym) or keysym.lower() in _XDOTOOL_COMMANDS:
+    if not _KEYSYM_PATTERN.fullmatch(key) or key.lower() in _XDOTOOL_COMMANDS:
         raise WorkspaceUnsupportedActionError(f'The display cannot press the key {key!r}.')
-    return keysym
+    return key
+
+
+def _character(character: str) -> str:
+    """The keysym that types `character`; `xdotool` needs one outside ASCII mapped to a key first."""
+    if character == '\n':
+        return 'Return'  # `xdotool type` sends Linefeed, which browsers ignore
+    if character == '\t':
+        return 'Tab'
+    return f'U{ord(character):04X}'
+
+
+def _press(keysyms: Sequence[str], args: list[str]) -> list[str]:
+    """`xdotool key` with `args`, after mapping the characters outside ASCII among `keysyms` to keys of their own."""
+    mapped = [keysym for keysym in dict.fromkeys(keysyms) if _OUTSIDE_ASCII.fullmatch(keysym)]
+    return ['sh', '-c', _PRESS_MAPPED, 'sh', *mapped, '--', *args] if mapped else ['xdotool', 'key', *args]
 
 
 def _png(output: str) -> bytes:
@@ -202,32 +238,21 @@ def _drag_moves(path: Sequence[Point]) -> list[str]:
 
 
 def _typing(text: str) -> list[list[str]]:
-    """The commands that type `text`.
+    """The keysyms that type `text`, split into one command for each 50 distinct characters outside ASCII it maps.
 
-    `xdotool type` types ASCII. It sends a newline as Linefeed, which browsers ignore, so each one is pressed as Enter
-    instead, and characters outside ASCII are pressed by `_PRESS_MAPPED`.
+    Most text is one command, so typing it costs one round trip and one wait for the new keymap.
     """
-    commands: list[list[str]] = []
-    for index, line in enumerate(text.split('\n')):
-        if index:
-            commands.append(['xdotool', 'key', 'Return'])
-        for is_ascii, run in itertools.groupby(line, key=str.isascii):
-            if is_ascii:
-                commands.append(['xdotool', 'type', '--', ''.join(run)])
-                continue
-            pending: list[str] = []
-            for character in run:
-                if character not in pending and len(set(pending)) == _MAPPED_PER_COMMAND:
-                    commands.append(_press_mapped(pending))
-                    pending = []
-                pending.append(character)
-            commands.append(_press_mapped(pending))
-    return commands
-
-
-def _press_mapped(characters: list[str]) -> list[str]:
-    keysyms = [f'U{ord(c):04X}' for c in characters]
-    return ['sh', '-c', _PRESS_MAPPED, 'sh', *dict.fromkeys(keysyms), '--', *keysyms]
+    chunks: list[list[str]] = [[]]
+    mapped: set[str] = set()
+    for character in text:
+        keysym = _character(character)
+        if not character.isascii() and keysym not in mapped:
+            if len(mapped) == _MAPPED_PER_COMMAND:
+                chunks.append([])
+                mapped = set()
+            mapped.add(keysym)
+        chunks[-1].append(keysym)
+    return [chunk for chunk in chunks if chunk]
 
 
 def _move(x: int | None, y: int | None) -> list[str]:
@@ -244,10 +269,11 @@ POSIX locale, which is what an environment without one set, such as E2B's, has."
 
 async def start_x11(
     backend: SupportsCommands, size: tuple[int, int], script: str, where: Callable[[], str]
-) -> X11Computer:
+) -> tuple[X11Computer, bool]:
     """Run `script`, which starts an X display of the size `$1` names unless one answers, and control that display.
 
-    `where` names the environment in errors.
+    Returns its controller and whether a new X server started, which `script` says by printing `STARTED`. `where`
+    names the environment in errors.
     """
     width, height = size
     result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], env={'DISPLAY': DISPLAY}, timeout=30)
@@ -256,7 +282,7 @@ async def start_x11(
             f'could not start the display in {where()}: it needs Xvfb, xdotool, xmodmap, scrot and setsid '
             f'({(result.stderr or result.stdout).strip()})'
         )
-    return X11Computer(backend)
+    return X11Computer(backend), STARTED in result.stdout.split()
 
 
 class X11Computer:
@@ -286,12 +312,16 @@ class X11Computer:
         """Run one `xdotool` command chain with `hold` held down; if it fails or is cancelled, let go of everything."""
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
+        await self._input(['xdotool', *(['keydown', *keysyms] if keysyms else []), *args, *keyup], [*release, *keyup])
+
+    async def _input(self, command: list[str], release: list[str]) -> None:
+        """Run an input command; if it fails or is cancelled, let go of what it may hold with `xdotool <release>`."""
         try:
-            result = await self._run(['xdotool', *(['keydown', *keysyms] if keysyms else []), *args, *keyup])
+            result = await self._run(command)
         except BaseException:
-            if release or keyup:
+            if release:
                 with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
-                    await self._run(['xdotool', *release, *keyup])
+                    await self._run(['xdotool', *release])
             raise
         # xdotool skips a key name the display doesn't know and still succeeds.
         if 'No such key name' in result.stderr:
@@ -307,6 +337,10 @@ class X11Computer:
 
     async def screenshot(self) -> bytes:
         return _png((await self._run(['sh', '-c', _CAPTURE, 'sh'])).stdout)
+
+    async def scaled_screenshot(self, width: int, height: int) -> bytes:
+        """The whole display scaled to `width` by `height`."""
+        return _png((await self._run(['sh', '-c', _CAPTURE_SCALED, 'sh', f'{width}x{height}'])).stdout)
 
     async def zoom(self, region: Region) -> bytes:
         geometry = f'{region.left},{region.top},{region.right - region.left},{region.bottom - region.top}'
@@ -345,13 +379,15 @@ class X11Computer:
                     hold=modifiers,
                 )
             case TypeText(text=text):
-                for command in _typing(text):
-                    await self._run(command)
+                for keysyms in _typing(text):
+                    # A cancel can land between a key's press and release, and X then repeats the key without end.
+                    release = ['keyup', *_LEVEL_SHIFTS, *dict.fromkeys(keysyms)]
+                    await self._input(_press(keysyms, ['--delay', _TYPING_DELAY_MS, '--', *keysyms]), release)
             case PressKeys(keys=keys, repeat=repeat):
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.
-                release = ('keyup', *reversed(keysyms))
-                await self._xdotool(['key', '--repeat', str(repeat), '--', '+'.join(keysyms)], release=release)
+                release = ['keyup', *reversed(keysyms)]
+                await self._input(_press(keysyms, ['--repeat', str(repeat), '--', '+'.join(keysyms)]), release)
             case HoldKeys(keys=keys, seconds=seconds):
                 await self._xdotool(['sleep', str(seconds)], hold=keys)
             case _:

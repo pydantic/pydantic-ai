@@ -93,8 +93,9 @@ exec)
         export FAKE_TMP="$tmp"
         for arg; do
             shift
-            case $arg in */run/pydantic-ai/* | */tmp/.X*)
-                arg=$(printf '%s' "$arg" | sed -e "s#/run/pydantic-ai/#$tmp/#g" -e "s#/tmp/\\.X#$tmp/.X#g") ;;
+            case $arg in */run/pydantic-ai/* | */tmp/.X* | */proc/*)
+                arg=$(printf '%s' "$arg" | sed -e "s#/run/pydantic-ai/#$tmp/#g" -e "s#/tmp/\\.X#$tmp/.X#g" \
+                    -e "s#/proc/#$tmp/proc/#g") ;;
             esac
             set -- "$@" "$arg"
         done
@@ -154,8 +155,10 @@ case " $* " in *' NoSuchKey '*) echo "(symbol) No such key name 'NoSuchKey'. Ign
 _FAKE_SCROT = """#!/bin/sh
 for last; do :; done
 cp "$(dirname "$0")/screen.png" "$last"
+[ "$1" != -t ] || cp "$(dirname "$0")/screen.png" "${last%.png}-thumb.png"
 """
-"""Stands in for `scrot`: writes the fake screenshot, whatever region it is asked for, to the path it is given."""
+"""Stands in for `scrot`: writes the fake screenshot, whatever region or thumbnail it is asked for, to the path it is
+given, and with `-t` as the thumbnail beside it."""
 
 _FAKE_XVFB = """#!/bin/sh
 bin=$(dirname "$0")
@@ -233,9 +236,16 @@ class FakeDocker:
         if not can_start:
             (self.bin_dir / 'xvfb-fails').touch()
 
-    def leave_x_lock(self, name: str) -> None:
-        """Leave the lock of an X server that's gone in the container `name`, as `docker stop` does."""
-        (self.bin_dir / 'containers' / f'{name}.tmp' / '.X1-lock').write_text('        25\n')
+    def leave_x_lock(self, name: str, *, owner: str = 'sleep') -> None:
+        """Leave a lock naming PID 25 in the container `name`, which runs `owner`: an X server that's gone, as after
+        `docker stop`, leaves one whose PID another program now has."""
+        tmp = self.bin_dir / 'containers' / f'{name}.tmp'
+        (tmp / '.X1-lock').write_text('        25\n')
+        (tmp / 'proc' / '25').mkdir(parents=True)
+        (tmp / 'proc' / '25' / 'comm').write_text(f'{owner}\n')
+
+    def x_lock_exists(self, name: str) -> bool:
+        return (self.bin_dir / 'containers' / f'{name}.tmp' / '.X1-lock').exists()
 
     @property
     def xvfb_starts(self) -> int:
