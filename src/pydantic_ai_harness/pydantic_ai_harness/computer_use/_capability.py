@@ -51,6 +51,7 @@ from pydantic_ai.workspaces import (
     SupportsDisplay,
     WorkspaceError,
     WorkspaceUnavailableError,
+    WorkspaceUnsupportedActionError,
 )
 
 if TYPE_CHECKING:
@@ -104,7 +105,7 @@ _DISPLAY_LOCKS: weakref.WeakValueDictionary[object, anyio.Lock] = weakref.WeakVa
 it a whole call at a time, so one's clicks and typing never land between another's. A lock goes once no call holds or
 waits for it."""
 
-_CALL_SPACE = 'computer_use'
+_CALL_SPACE = 'pydantic-ai-harness.computer-use.v1'
 """The `ModelResponse.metadata` key that records the coordinates of the response's `computer` calls: the grid the
 model pointed on and the size of the latest screenshot it saw, so each call is scaled as it was meant, whichever model
 runs it."""
@@ -115,11 +116,12 @@ _FRESH_SCREEN = 'The display restarted since your last screenshot, so the window
 
 
 @runtime_checkable
-class _ScalesScreenshots(Protocol):
-    """A display that can capture the whole screen scaled down, for a model that can't take it at full size."""
+class _HasScreenKey(Protocol):
+    """A display that names the screen it shows, so every display object on one screen shares its lock."""
 
-    async def scaled_screenshot(self, width: int, height: int) -> bytes:
-        """The whole display as PNG bytes, scaled to `width` by `height`."""
+    @property
+    def screen_key(self) -> object | None:
+        """A hashable name for the screen, such as its X `DISPLAY`, or `None` to key on the workspace's ref."""
         ...
 
 
@@ -195,16 +197,42 @@ def _off_screen(actions: list[ComputerToolAction], width: int, height: int, spac
     return None
 
 
+def _scale(value: int, to: int, scale_from: int) -> int:
+    """A position along a side of `scale_from` units, on a side of `to`: rounded to nearest, and kept inside it."""
+    return min(to - 1, (2 * value * to + scale_from) // (2 * scale_from))
+
+
+def _too_large_zoom(
+    actions: list[ComputerToolAction], pixels: list[ComputerToolAction], call: _Call, limit: tuple[int, int] | None
+) -> str | None:
+    """Why the first zoom into more than the model can see at full resolution is refused, if there is one."""
+    assert call.space is not None and call.display is not None
+    for index, (action, scaled) in enumerate(zip(actions, pixels), 1):
+        if not (isinstance(action, Zoom) and isinstance(scaled, Zoom)):
+            continue
+        region = scaled.region
+        size = (region.right - region.left, region.bottom - region.top)
+        if (fitted := _fit(size, limit)) != size:
+            # The largest region of this shape that fits, in the model's coordinates.
+            width = max(1, fitted[0] * call.space[0] // call.display[0])
+            height = max(1, fitted[1] * call.space[1] // call.display[1])
+            asked = action.region
+            return (
+                f'Action {index} (zoom) is {asked.right - asked.left}x{asked.bottom - asked.top}, larger than can be '
+                f'shown at full resolution, so no action ran. Zoom into {width}x{height} or smaller.'
+            )
+    return None
+
+
 def _to_pixels(action: ComputerToolAction, display: tuple[int, int], space: tuple[int, int]) -> ComputerToolAction:
     """Scale an action's positions from the model's `space`, a grid or a scaled-down screenshot, to display pixels."""
     (width, height), (space_width, space_height) = display, space
 
     def x(value: int) -> int:
-        # Rounds down, so a position inside the space stays inside the display.
-        return value * width // space_width
+        return _scale(value, width, space_width)
 
     def y(value: int) -> int:
-        return value * height // space_height
+        return _scale(value, height, space_height)
 
     match action:
         case Click(x=px, y=py) | Scroll(x=px, y=py) | MoveMouse(x=px, y=py) if px is not None and py is not None:
@@ -213,8 +241,8 @@ def _to_pixels(action: ComputerToolAction, display: tuple[int, int], space: tupl
             return replace(action, path=tuple(Point(x=x(p.x), y=y(p.y)) for p in path))
         case Zoom(region=r):
             # The far edges round up, so even a region one unit across covers a pixel.
-            right = max(-(-r.right * width // space_width), x(r.left) + 1)
-            bottom = max(-(-r.bottom * height // space_height), y(r.top) + 1)
+            right = max(min(width, -(-r.right * width // space_width)), x(r.left) + 1)
+            bottom = max(min(height, -(-r.bottom * height // space_height)), y(r.top) + 1)
             return replace(action, region=Region(left=x(r.left), top=y(r.top), right=right, bottom=bottom))
         case _:
             return action
@@ -243,7 +271,9 @@ class _Call:
     def to_model(self, point: Point) -> Point:
         if self.space is None or self.display is None:
             return point
-        return Point(x=point.x * self.space[0] // self.display[0], y=point.y * self.space[1] // self.display[1])
+        return Point(
+            x=_scale(point.x, self.space[0], self.display[0]), y=_scale(point.y, self.space[1], self.display[1])
+        )
 
 
 async def _perform(
@@ -251,7 +281,6 @@ async def _perform(
     actions: list[ComputerToolAction],
     call: _Call,
     settle_seconds: float,
-    limit: tuple[int, int] | None,
 ) -> tuple[int, str | None, list[str | BinaryImage]]:
     """Run the actions in order until one fails: how many ran, why the next one failed, and what they returned.
 
@@ -274,10 +303,6 @@ async def _perform(
                 case Wait(seconds=seconds):
                     await anyio.sleep(seconds)
                 case Zoom(region=region):
-                    size = (region.right - region.left, region.bottom - region.top)
-                    if _fit(size, limit) != size:
-                        error = f'the region is {size[0]}x{size[1]} pixels, larger than the model can see; zoom into a smaller one'
-                        break
                     await settle()
                     outputs.append(BinaryImage(data=await ctx.workspace.zoom(region), media_type='image/png'))
                 case CursorPosition():
@@ -371,11 +396,15 @@ async def _with_display_size(ctx: RunContext[Any], tool_def: ToolDefinition) -> 
 
 
 def _display_lock(ctx: RunContext[Any]) -> anyio.Lock:
-    # Backends attached to one environment share its ref, and backends on one screen share its display, the same
-    # object for each backend's lifetime.
+    # A display names its screen when it can, such as an X `DISPLAY` that several workspaces may show. Otherwise
+    # backends attached to one environment share its ref, and backends on one screen share its display, the same
+    # object for each backend's lifetime. In durable workflow code, which can't reach the display, it is the ref.
     display = _display(ctx)
-    ref = ctx.workspace.ref
-    key: object = ref if ref is not None else id(display if isinstance(display, Display) else ctx.workspace)
+    key: object = display.screen_key if isinstance(display, _HasScreenKey) else None
+    if key is None:
+        key = ctx.workspace.ref
+    if key is None:
+        key = id(display if isinstance(display, Display) else ctx.workspace)
     if (lock := _DISPLAY_LOCKS.get(key)) is None:
         lock = _DISPLAY_LOCKS[key] = anyio.Lock()
     return lock
@@ -480,24 +509,49 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         # Scaled the way the model meant it, even when another model runs the call, such as after an approval.
         grid, seen = (made and _recorded_space(made[0])) or (_grid(ctx.model), None)
         call = _Call(grid, changed=actions if made and _changed(made[1], actions) else None)
-        if any(_points(action) or action.type == 'cursor_position' for action in actions):
+        limit = _screenshot_limit(ctx.model)
+        if acts or any(_points(action) or action.type == 'cursor_position' for action in actions):
+            # Also starts a display that stopped, so a restart is known before anything acts.
             call.display = await _display_size(ctx)
             # A screenshot the model saw, or the next one, may be scaled down from the display.
-            call.space = (grid, grid) if grid else seen or _fit(call.display, _screenshot_limit(ctx.model))
+            call.space = (grid, grid) if grid else seen or _fit(call.display, limit)
             # The backend would move a position outside the screen to its edge and act there.
             if refused := _off_screen(actions, *call.space, 'grid' if grid else 'screen'):
                 raise ToolFailed(refused)
-            if call.space != call.display:
-                actions = [_to_pixels(action, call.display, call.space) for action in actions]
+            pixels = (
+                actions if call.space == call.display else [_to_pixels(a, call.display, call.space) for a in actions]
+            )
+            if refused := _too_large_zoom(actions, pixels, call, limit):
+                raise ToolFailed(refused)
+            actions = pixels
 
         async with _display_lock(ctx):
-            return await self._run_on_display(ctx, actions, call)
+            return await self._run_on_display(ctx, actions, call, acts=acts, limit=limit)
 
     async def _run_on_display(
-        self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], call: _Call
+        self,
+        ctx: RunContext[AgentDepsT],
+        actions: list[ComputerToolAction],
+        call: _Call,
+        *,
+        acts: bool,
+        limit: tuple[int, int] | None,
     ) -> ToolReturn:
-        limit = _screenshot_limit(ctx.model)
-        performed, error, outputs = await _perform(ctx, actions, call, self.settle_seconds, limit)
+        display = _display(ctx)
+        # Durable workflow code can't reach the display, so it can't tell; the screenshot still shows the screen.
+        seen_before = _last_screenshot_size(ctx.messages) is not None
+
+        def restarted() -> bool:
+            return isinstance(display, _ReportsFreshStart) and display.take_fresh_start() and seen_before
+
+        fresh = restarted()
+        # The windows the model meant to act on are gone: acting now would land on whatever took their place.
+        held = fresh and acts
+        if held:
+            performed, error, outputs = 0, None, []
+        else:
+            performed, error, outputs = await _perform(ctx, actions, call, self.settle_seconds)
+            fresh = restarted() or fresh
 
         result = ComputerResult(performed=performed)
         summary: list[str] = []
@@ -506,7 +560,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if call.changed is not None:
             result['changed'] = True
             summary.append(f'Before it ran, this call was changed to: {_ACTIONS.dump_json(call.changed).decode()}.')
-        if error is None:
+        if held:
+            summary.append(f'{_FRESH_SCREEN} No action ran, so check this screenshot before acting.')
+        elif error is None:
             summary.append(f'Ran {_plural(len(actions), "action")}.')
         else:
             result['error'] = error
@@ -526,12 +582,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if size is None:
             raise ToolFailed(' '.join([*summary, 'The screenshot was not a PNG.']))
         result['screenshot_size'] = size
-        display = _display(ctx)
-        if (
-            isinstance(display, _ReportsFreshStart)
-            and display.take_fresh_start()
-            and _last_screenshot_size(ctx.messages)
-        ):
+        if fresh and not held:
             summary.append(_FRESH_SCREEN)
         # A grid model points on its grid, so the size in pixels would only invite pixel coordinates.
         summary.append('Screenshot attached.' if call.grid else f'Screenshot attached ({size[0]}x{size[1]}).')
@@ -615,6 +666,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             record['coordinate_grid'] = grid
         if (seen := _last_screenshot_size(request_context.messages)) is not None:
             record['screenshot_size'] = seen
+        if not record:
+            return response
         return replace(response, metadata={**(response.metadata or {}), _CALL_SPACE: record})
 
 
@@ -623,13 +676,13 @@ async def _screenshot(ctx: RunContext[Any], limit: tuple[int, int] | None) -> by
     if limit is not None:
         size = await ctx.workspace.display_size()
         if (fitted := _fit(size, limit)) != size:
-            display = _display(ctx)
-            if not isinstance(display, _ScalesScreenshots):
+            try:
+                return await ctx.workspace.scaled_screenshot(*fitted)
+            except WorkspaceUnsupportedActionError:
                 raise UserError(
                     f'The screen is {size[0]}x{size[1]}, larger than {ctx.model.model_name!r} can see, and its '
                     f'display cannot scale screenshots down. Start the display at {fitted[0]}x{fitted[1]} or smaller.'
-                )
-            return await display.scaled_screenshot(*fitted)
+                ) from None
     return await ctx.workspace.screenshot()
 
 
