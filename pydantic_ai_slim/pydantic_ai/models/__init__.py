@@ -6,7 +6,6 @@ specific LLM being used.
 
 from __future__ import annotations as _annotations
 
-import asyncio
 import base64
 import hashlib
 import json
@@ -2085,17 +2084,14 @@ class _ModelContext:
 _current_model_context: ContextVar[_ModelContext | None] = ContextVar('_current_model_context', default=None)
 
 
-def _model_context_key() -> object:  # pyright: ignore[reportUnusedFunction]
+def _model_context_key() -> object | None:  # pyright: ignore[reportUnusedFunction]
     task_id = anyio.get_current_task().id
     context = _current_model_context.get()
     # A task spawned by a lifecycle hook inherits its ContextVar, but owns its own model contexts.
     if context is not None and context.task_id == task_id:
         return context
-    try:
-        # Retain the task object: its numeric ID can be reused after fixture setup has finished.
-        return asyncio.current_task()
-    except RuntimeError:
-        return task_id
+    # Direct model contexts carry no scope identity: a task can close another task's exit stack.
+    return None
 
 
 @dataclass

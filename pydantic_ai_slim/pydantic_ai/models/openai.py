@@ -3079,8 +3079,8 @@ class _ResponsesWebSocketHolder:
     states: dict[asyncio.AbstractEventLoop, _ResponsesWebSocketState] = field(
         default_factory=dict[asyncio.AbstractEventLoop, _ResponsesWebSocketState]
     )
-    contexts: dict[object, list[_ResponsesWebSocketLease | None]] = field(
-        default_factory=dict[object, list['_ResponsesWebSocketLease | None']]
+    contexts: dict[object | None, list[_ResponsesWebSocketLease | None]] = field(
+        default_factory=dict[object | None, list['_ResponsesWebSocketLease | None']]
     )
     active_contexts: int = 0
 
@@ -3096,22 +3096,23 @@ class _ResponsesWebSocketHolder:
             state.external_leases += external
             return state, external
 
-    def enter(self, key: object, *, external: bool) -> None:
+    def enter(self, key: object | None, *, external: bool) -> None:
         with _WEBSOCKET_LIFECYCLE_LOCK:
             self.contexts.setdefault(key, []).append(self.acquire(external=external))
             self.active_contexts += 1
 
-    async def exit(self, key: object) -> None:
+    async def exit(self, key: object | None) -> None:
         with _WEBSOCKET_LIFECYCLE_LOCK:
             self.active_contexts -= 1
             acquired: list[_ResponsesWebSocketLease | None] = []
-            if contexts := self.contexts.get(key):
+            contexts = self.contexts.get(key)
+            if contexts and (key is not None or len(set(contexts)) == 1):
                 acquired.append(contexts.pop())
                 if not contexts:
                     self.contexts.pop(key)
             elif self.active_contexts:
-                # A raw context moved tasks without an identity. Retain its receipts until the last exit;
-                # the remaining contexts cannot prove which external owner is still alive.
+                # Direct contexts can close in any task/order. Distinct receipts cannot identify the exiting
+                # owner, so retain them until the last exit and suspend borrowing in the meantime.
                 for state in self.states.values():
                     state.external_ownership_known = False
             if not self.active_contexts:
@@ -3408,8 +3409,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         extra_body = settings.get('extra_body')
         with _WEBSOCKET_LIFECYCLE_LOCK:
             state = holder.states.get(loop)
-            if state is not None and (
-                not in_durable_unit() or (state.external_leases and state.external_ownership_known)
+            if (
+                state is not None
+                and state.external_ownership_known
+                and (not in_durable_unit() or state.external_leases)
             ):
                 state.in_flight += 1
             else:

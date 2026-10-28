@@ -2761,7 +2761,7 @@ async def test_model_exit_uses_the_captured_lease_kind(allow_model_requests: Non
         # Enter inside a durable unit and exit after its ambient flag has changed.
         async with AsyncExitStack() as nested:
             with durable_unit_scope():
-                await nested.enter_async_context(model)
+                await nested.enter_async_context(Agent(model))
         with durable_unit_scope():
             assert (await model.request(user_prompt('borrowed'), None, ModelRequestParameters())).text == 'borrowed'
         assert socket.close_count == 0
@@ -3041,25 +3041,32 @@ async def test_http_model_context_can_exit_from_another_task(
     assert sockets.opened[0].close_count == 1
 
 
+@pytest.mark.parametrize('closer', ['unrelated', 'borrower'])
 async def test_unidentified_context_exit_does_not_preserve_durable_borrowing(
-    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, closer: str
 ):
     model = websocket_model(http.provider())
     internal, external = AsyncExitStack(), AsyncExitStack()
+    sockets.pending[0].responses.append(text_events('unexpected socket'))
 
     async def enter_internal() -> None:
         with durable_unit_scope():
             await internal.enter_async_context(model)
+            if closer == 'borrower':
+                await external.aclose()
+                assert (await model.request(user_prompt('durable'), None, ModelRequestParameters())).text == 'from HTTP'
 
     async def enter_external() -> None:
         await external.enter_async_context(model)
         await model.request(user_prompt('external'), None, ModelRequestParameters())
 
-    await asyncio.create_task(enter_internal())
     await asyncio.create_task(enter_external())
-    await external.aclose()
-    with durable_unit_scope():
-        assert (await model.request(user_prompt('durable'), None, ModelRequestParameters())).text == 'from HTTP'
+    await asyncio.create_task(enter_internal())
+    if closer == 'unrelated':
+        await external.aclose()
+        with durable_unit_scope():
+            assert (await model.request(user_prompt('durable'), None, ModelRequestParameters())).text == 'from HTTP'
+    assert (await model.request(user_prompt('unowned'), None, ModelRequestParameters())).text == 'from HTTP'
     await internal.aclose()
     assert len(sockets.opened[0].sent) == 1
     assert sockets.opened[0].close_count == 1
