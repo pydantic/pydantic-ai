@@ -4,7 +4,7 @@ import posixpath
 import struct
 import zlib
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Protocol
+from typing import Any, Protocol, Self
 
 import anyio
 
@@ -366,8 +366,8 @@ class DisplayOnlyBackend(FilesystemOnlyWorkspaceBackend, SupportsDisplay):
         self._display = inner
 
     @property
-    def has_display(self) -> bool:
-        return True
+    def display(self) -> Self:
+        return self
 
     async def display_size(self) -> tuple[int, int]:
         return await self._display.display_size()
@@ -501,8 +501,8 @@ class ProviderBackend(
         return posixpath.normpath(path)
 
     @property
-    def has_display(self) -> bool:
-        return True
+    def display(self) -> Self:
+        return self
 
     async def display_size(self) -> tuple[int, int]:
         await self._files()

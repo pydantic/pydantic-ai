@@ -32,7 +32,7 @@ import tempfile
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
 import anyio
 
@@ -531,8 +531,9 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay, 
         await stop_shielded(lambda: self._runner.run(argv), grace=_STOP_TIMEOUT)
 
     @property
-    def has_display(self) -> bool:
-        return self._desktop_size is not None
+    def display(self) -> Self | None:
+        """This backend, when created with `desktop=True`."""
+        return self if self._desktop_size is not None else None
 
     @asynccontextmanager
     async def _display(self) -> AsyncGenerator[X11Computer]:

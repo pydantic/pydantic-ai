@@ -18,6 +18,7 @@ from .computer import (
 from .local import LocalWorkspaceBackend
 from .protocol import (
     CommandResult,
+    Display,
     FileEntry,
     SupportsCommands,
     SupportsCursorPosition,
@@ -43,6 +44,7 @@ __all__ = (
     'Click',
     'CommandResult',
     'ComputerAction',
+    'Display',
     'Drag',
     'FileEntry',
     'HoldKeys',
