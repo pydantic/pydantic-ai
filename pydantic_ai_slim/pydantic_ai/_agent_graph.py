@@ -1422,7 +1422,7 @@ async def _prepare_request_parameters(
     instruction_parts: list[_messages.InstructionPart] | None,
     loaded_instruction_parts: Sequence[_messages.InstructionPart] = (),
     *,
-    native_tool_factories: list[_NativeToolFactoryResult[DepsT]] | None = None,
+    native_tool_factories: list[_NativeToolFactoryResult[DepsT]],
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model.
 
@@ -1459,8 +1459,7 @@ async def _prepare_request_parameters(
                 native_tools.append(tool)
             else:
                 t = await _resolve_native_tool_factory(tool, run_context)
-                if native_tool_factories is not None:
-                    native_tool_factories.append((tool, t))
+                native_tool_factories.append((tool, t))
                 if t is not None:
                     native_tools.append(t)
 
@@ -3299,7 +3298,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                 )
                 opened = sr
-                if ctx.deps.root_capability._handles_model_request_error(request_context):  # pyright: ignore[reportPrivateUsage]
+                if ctx.deps.root_capability._handles_model_request_error(run_context, request_context):  # pyright: ignore[reportPrivateUsage]
                     # Only worth opening early when a hook can act on a failure to open: otherwise the
                     # stream keeps opening lazily, once the consumer starts iterating it.
                     outcome: asyncio.Future[Exception | None] = asyncio.get_running_loop().create_future()
@@ -3460,7 +3459,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             request_context._usage_response_ledger.attempts.extend(error.attempts)  # pyright: ignore[reportPrivateUsage]
         root_capability = ctx.deps.root_capability
         try:
-            if not root_capability._handles_model_request_error(request_context):  # pyright: ignore[reportPrivateUsage]
+            if not root_capability._handles_model_request_error(run_context, request_context):  # pyright: ignore[reportPrivateUsage]
                 raise error
             return await root_capability.on_model_request_error(
                 run_context, request_context=request_context, error=error

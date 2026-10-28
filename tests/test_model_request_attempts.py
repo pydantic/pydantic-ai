@@ -21,6 +21,7 @@ from pydantic_ai.capabilities import (
     Hooks,
     ModelFallback,
     WrapModelRequestHandler,
+    WrapperCapability,
 )
 from pydantic_ai.exceptions import ModelAPIError, ModelRetry, RetryModelRequest, UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelRequestAttempt
@@ -418,6 +419,123 @@ async def test_open_failure_is_raised_when_the_consumer_never_iterates_the_strea
                 if Agent.is_model_request_node(node):
                     async with node.stream(run.ctx):
                         pass
+
+
+class _HandlesSomeErrors(AbstractCapability[None]):
+    """Recovers from a failed request only for the model it handles, like an always-present provider capability."""
+
+    def __init__(self, handled_model: str) -> None:
+        self.handled_model = handled_model
+        self.recovered: list[str] = []
+
+    def _handles_model_request_error(self, ctx: RunContext[None], request_context: ModelRequestContext) -> bool:
+        return request_context.model.model_name == self.handled_model
+
+    async def on_model_request_error(
+        self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        self.recovered.append(request_context.model.model_name)
+        return ModelResponse(parts=[TextPart('recovered')])
+
+
+def _error_capability(capability: _HandlesSomeErrors, kind: str) -> AbstractCapability[None]:
+    return WrapperCapability(capability) if kind == 'wrapped' else capability
+
+
+@pytest.mark.parametrize('kind', ['direct', 'wrapped'])
+@pytest.mark.parametrize('handles', [True, False])
+async def test_a_stream_is_only_primed_for_a_request_an_error_hook_handles(kind: str, handles: bool):
+    """A stream is opened before it's handed over only when a capability handles a failure of that request."""
+    opened: list[str] = []
+
+    async def fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        opened.append('opened')
+        yield 'hello'
+
+    capability = _HandlesSomeErrors('streamer' if handles else 'other')
+    agent = Agent(
+        FunctionModel(stream_function=fn, model_name='streamer'),
+        deps_type=type(None),
+        capabilities=[_error_capability(capability, kind)],
+    )
+    async with agent.iter('x') as run:
+        async for node in run:  # pragma: no branch
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx):
+                    pass
+                break
+    # Primed, it was opened before the consumer could iterate it; lazily, it never was.
+    assert opened == (['opened'] if handles else [])
+
+
+@pytest.mark.parametrize('kind', ['direct', 'wrapped'])
+@pytest.mark.parametrize('streaming', [False, True])
+@pytest.mark.parametrize('handles', [True, False])
+async def test_an_error_hook_is_only_called_for_a_request_it_handles(kind: str, streaming: bool, handles: bool):
+    """`on_model_request_error` is only called for a request its capability says it handles."""
+
+    def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError(model_name='failing', message='boom')
+
+    capability = _HandlesSomeErrors('failing' if handles else 'other')
+    agent = Agent(
+        FunctionModel(fail, stream_function=failure_stream, model_name='failing'),
+        deps_type=type(None),
+        capabilities=[_error_capability(capability, kind)],
+    )
+    if handles:
+        if streaming:
+            async with agent.run_stream('x') as result:
+                assert await result.get_output() == 'recovered'
+        else:
+            assert (await agent.run('x')).output == 'recovered'
+        assert capability.recovered == ['failing']
+    else:
+        with pytest.raises(ModelAPIError, match='boom'):
+            if streaming:
+                async with agent.run_stream('x') as result:
+                    await result.get_output()
+            else:
+                await agent.run('x')
+        assert capability.recovered == []
+
+
+async def test_a_wrapper_with_its_own_error_hook_handles_every_request_error():
+    """A wrapper that overrides `on_model_request_error` itself answers for every request, whatever it wraps."""
+
+    class RecoveringWrapper(WrapperCapability[None]):
+        async def on_model_request_error(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('recovered by the wrapper')])
+
+    agent = Agent(
+        FunctionModel(stream_function=failure_stream, model_name='failing'),
+        deps_type=type(None),
+        capabilities=[RecoveringWrapper(_HandlesSomeErrors('other'))],
+    )
+    async with agent.run_stream('x') as result:
+        assert await result.get_output() == 'recovered by the wrapper'
+
+
+async def test_hooks_handle_every_request_error():
+    """A `Hooks` error handler answers for every request, as it did before requests could be told apart."""
+    hooks = Hooks[None]()
+
+    @hooks.on.model_request_error
+    async def recover(
+        ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('recovered')])
+
+    model = FunctionModel(stream_function=failure_stream, model_name='any')
+    request_context = ModelRequestContext(
+        model=model, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    )
+    agent = Agent(model, deps_type=type(None), capabilities=[hooks])
+    assert hooks._handles_model_request_error(cast(RunContext[None], None), request_context)  # pyright: ignore[reportPrivateUsage]
+    async with agent.run_stream('x') as result:
+        assert await result.get_output() == 'recovered'
 
 
 class RetryFromBeforeModelRequest(AbstractCapability[None]):

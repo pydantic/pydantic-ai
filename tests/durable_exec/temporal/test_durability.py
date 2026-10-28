@@ -443,9 +443,8 @@ exhausted_fallback_durable_agent = Agent(
 @workflow.defn
 class ExhaustedFallbackDurableAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await exhausted_fallback_durable_agent.run(prompt)
-        return result.output
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        return await exhausted_fallback_durable_agent.run(prompt)
 
 
 async def test_durability_exhausted_fallback_fails_the_workflow(client: Client):

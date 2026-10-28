@@ -63,7 +63,7 @@ class GatewayFallback(AbstractCapability[Any]):
         # A realtime session makes no model requests for the gateway to hand back, so there's nothing to warn about.
         return ()
 
-    def _handles_model_request_error(self, request_context: ModelRequestContext) -> bool:
+    def _handles_model_request_error(self, ctx: RunContext[Any], request_context: ModelRequestContext) -> bool:
         return _advertising_model(request_context.model) is not None
 
     def get_wrapper_model(self, model: Model) -> Model | None:

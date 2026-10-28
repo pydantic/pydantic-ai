@@ -185,11 +185,17 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             or self.wrapped._has_wrap_model_request
         )
 
-    def _handles_model_request_error(self, request_context: ModelRequestContext) -> bool:
+    @property
+    def _has_on_model_request_error(self) -> bool:
         return (
             type(self).on_model_request_error is not WrapperCapability.on_model_request_error
-            or self.wrapped._handles_model_request_error(request_context)
+            or self.wrapped._has_on_model_request_error
         )
+
+    def _handles_model_request_error(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> bool:
+        if type(self).on_model_request_error is not WrapperCapability.on_model_request_error:
+            return True
+        return self.wrapped._handles_model_request_error(ctx, request_context)
 
     @property
     def _has_prepare_model_request(self) -> bool:

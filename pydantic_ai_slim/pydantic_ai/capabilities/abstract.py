@@ -404,11 +404,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def _has_on_model_request_error(self) -> bool:
         return type(self).on_model_request_error is not AbstractCapability.on_model_request_error
 
-    def _handles_model_request_error(self, request_context: ModelRequestContext) -> bool:
-        """Whether `on_model_request_error` can act on a failed attempt at this request.
+    def _handles_model_request_error(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> bool:
+        """Whether `on_model_request_error` acts on a failure of this attempt.
 
-        Decides, per attempt, whether a streamed request is opened before it's handed over and whether the error
-        hooks run at all, so a capability whose hook only applies to some models doesn't change either for the rest.
+        The agent only opens a streamed request before handing it over, so a failure to open it can still be
+        recovered, and only calls `on_model_request_error`, when a capability answers `True`. An always-present
+        capability that only handles some requests answers `False` for the others, so they keep their lazily
+        opened streams. Defaults to whether the capability overrides `on_model_request_error` at all.
         """
         return self._has_on_model_request_error
 
