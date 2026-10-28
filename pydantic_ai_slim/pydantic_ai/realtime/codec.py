@@ -710,6 +710,7 @@ __all__ = (
     # Codec events a connection yields.
     'AudioDelta',
     'OutputTranscript',
+    'OutputSpeechTimestamps',
     'InputTranscript',
     'ToolCall',
     'ToolResult',
