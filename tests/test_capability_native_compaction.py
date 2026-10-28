@@ -385,6 +385,7 @@ async def test_run_compact_with_a_focus_reaches_the_handler():
     ('compact', 'reason'),
     [
         pytest.param(True, 'manual', id='true'),
+        pytest.param({}, 'manual', id='empty'),
         pytest.param({'reason': 'threshold'}, 'threshold', id='reason'),
     ],
 )
@@ -440,6 +441,17 @@ def test_run_sync_compact():
     result = agent.run_sync('hi', message_history=history(), compact={'focus': 'the name'})
 
     assert model.compacted == [(history(), 'the name')]
+    assert len(result.compactions) == 1
+
+
+def test_run_stream_sync_compact():
+    model = CompactingModel('primary')
+    agent = Agent(model, capabilities=[NativeCompaction()])
+
+    result = agent.run_stream_sync('hi', message_history=history(), compact=True)
+    result.get_output()
+
+    assert model.compacted == [(history(), None)]
     assert len(result.compactions) == 1
 
 

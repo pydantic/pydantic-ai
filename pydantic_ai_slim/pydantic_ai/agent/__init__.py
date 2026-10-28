@@ -1814,7 +1814,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 default=bootstrap_capability.get_default_conversation_id(resolved_run_id),
             ),
         )
-        if compact:
+        if compact is not None and compact is not False:
             options: CompactionOptions = {} if compact is True else compact
             # Served by the run's first model request attempt, like `RunContext.request_compaction` from a
             # `before_run` hook.
