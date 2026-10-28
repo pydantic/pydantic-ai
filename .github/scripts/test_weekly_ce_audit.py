@@ -217,6 +217,8 @@ def test_receipt_rejects_invalid_coverage(row: dict[str, object]):
         reconcile(entries, {'source': 'source', 'reviewed': [row]}, 'source')
     with pytest.raises(ValueError, match='source'):
         reconcile(entries, {'source': 'wrong', 'reviewed': []}, 'source')
+    with pytest.raises(ValueError, match='Receipt reviewed must be a list'):
+        reconcile(entries, {'source': 'source', 'reviewed': {}}, 'source')
 
 
 def test_duplicate_guard_recognizes_only_this_workflows_open_same_repo_pr():
@@ -278,20 +280,36 @@ def test_incomplete_audit_cannot_publish_edits(repository: tuple[Path, str], mon
     )
     main()
     assert 'incomplete' in (directory / 'summary.md').read_text()
+    assert 'No findings reported.' in (directory / 'summary.md').read_text()
+    finding = 'Report-only workflow instructions contain duplicate guidance.'
+    receipt: dict[str, object] = {'source': source, 'reviewed': [], 'findings': [finding]}
+    (directory / 'receipt.json').write_text(json.dumps(receipt))
+    main()
+    summary = (directory / 'summary.md').read_text()
+    assert 'Reported canonical coverage: incomplete.' in summary
+    assert f'## Findings\n- {finding}' in summary
     (root / 'AGENTS.md').write_text('A focused trim\n')
     with pytest.raises(ValueError, match='Incomplete audit'):
         main()
-    receipt = {
-        'source': source,
-        'reviewed': [
-            {'path': entry['path'], 'sha256': entry['sha256'], 'ranges': [[1, entry['lines']]]}
-            for entry in manifest['entries']
-            if entry['scope'] in {'editable', 'report-only'}
-        ],
-    }
+    receipt['reviewed'] = [
+        {'path': entry['path'], 'sha256': entry['sha256'], 'ranges': [[1, entry['lines']]]}
+        for entry in manifest['entries']
+        if entry['scope'] in {'editable', 'report-only'}
+    ]
     (directory / 'receipt.json').write_text(json.dumps(receipt))
     main()
-    assert 'Reported canonical coverage: complete.' in (directory / 'summary.md').read_text()
+    summary = (directory / 'summary.md').read_text()
+    assert 'Reported canonical coverage: complete.' in summary
+    assert f'## Findings\n- {finding}' in summary
+    invalid_cases: list[tuple[object, str]] = [
+        ({}, 'Receipt findings must be a list'),
+        ([123], 'Receipt findings must contain text'),
+    ]
+    for findings, message in invalid_cases:
+        receipt['findings'] = findings
+        (directory / 'receipt.json').write_text(json.dumps(receipt))
+        with pytest.raises(ValueError, match=message):
+            main()
 
 
 def test_workflow_retains_separate_pr_sink_and_protected_review():

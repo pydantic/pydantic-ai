@@ -134,11 +134,16 @@ def mapping(value: object) -> dict[str, object]:
     return {key: item for key, item in items.items() if isinstance(key, str)}
 
 
+def sequence(value: object, message: str) -> list[object]:
+    """Validate an untrusted JSON list while retaining the caller's error context."""
+    if not is_container(value) or isinstance(value, dict):
+        raise ValueError(message)
+    return value
+
+
 def existing_pr(payload: object, repository: str) -> int | None:
     """Match the workflow's open same-repository PR without claiming other owners."""
-    if not is_container(payload) or isinstance(payload, dict):
-        raise ValueError('Expected a complete open-PR list')
-    items: list[object] = payload
+    items = sequence(payload, 'Expected a complete open-PR list')
     for item in items:
         pr = mapping(item)
         head = mapping(pr.get('head'))
@@ -162,14 +167,11 @@ def reconcile(entries: list[Entry], receipt: object, source: str) -> list[str]:
     data = mapping(receipt)
     if data.get('source') != source:
         raise ValueError('Receipt source does not match audited commit')
-    reviewed = data.get('reviewed')
-    if not is_container(reviewed) or isinstance(reviewed, dict):
-        raise ValueError('Receipt reviewed must be a list')
+    reviewed = sequence(data.get('reviewed'), 'Receipt reviewed must be a list')
     expected = {entry.path: entry for entry in entries if entry.scope in {'editable', 'report-only'}}
     seen: set[str] = set()
     complete: set[str] = set()
-    rows: list[object] = reviewed
-    for item in rows:
+    for item in reviewed:
         row = mapping(item)
         path = row.get('path')
         if not isinstance(path, str) or path not in expected or path in seen:
@@ -178,15 +180,10 @@ def reconcile(entries: list[Entry], receipt: object, source: str) -> list[str]:
         entry = expected[path]
         if row.get('sha256') != entry.sha256:
             raise ValueError(f'Receipt hash mismatch: {path}')
-        ranges = row.get('ranges')
-        if not is_container(ranges) or isinstance(ranges, dict):
-            raise ValueError(f'Missing read ranges: {path}')
+        ranges = sequence(row.get('ranges'), f'Missing read ranges: {path}')
         next_line = 1
-        spans: list[object] = ranges
-        for span in spans:
-            if not is_container(span) or isinstance(span, dict):
-                raise ValueError(f'Invalid read range: {path}')
-            bounds: list[object] = span
+        for span in ranges:
+            bounds = sequence(span, f'Invalid read range: {path}')
             if len(bounds) != 2:
                 raise ValueError(f'Invalid read range: {path}')
             start, end = bounds
@@ -243,9 +240,7 @@ def validate_edits(root: Path, source: str, entries: list[Entry], revision: str 
 
 def submitted_proposal(output: object) -> tuple[str, dict[str, object]] | None:
     """Validate the sole PR proposal independently of the final checkout."""
-    items = mapping(output).get('items')
-    if not is_container(items) or isinstance(items, dict):
-        raise ValueError('Invalid agent output items')
+    items = sequence(mapping(output).get('items'), 'Invalid agent output items')
     proposal: tuple[str, dict[str, object]] | None = None
     for item in items:
         row = mapping(item)
@@ -426,18 +421,14 @@ def validate_review(
     number = issue.get('number')
     if issue.get('state') != 'open' or 'pull_request' in issue or reviewed_proposal.get('issue_number') != number:
         raise ValueError('Nontrivial change needs its existing open issue')
-    assignees = issue.get('assignees')
-    if not is_container(assignees) or isinstance(assignees, dict):
-        raise ValueError('Missing issue assignment')
+    assignees = sequence(issue.get('assignees'), 'Missing issue assignment')
     actor = os.environ.get('GITHUB_ACTOR')
     if not actor or not any(mapping(person).get('login') == actor for person in assignees):
         raise ValueError('Existing issue must be assigned to the workflow actor')
     comments_payload: object = json.loads((issue_directory / 'issue-comments.json').read_text())
     permissions_payload: object = json.loads((issue_directory / 'issue-permissions.json').read_text())
-    if not is_container(comments_payload) or isinstance(comments_payload, dict):
-        raise ValueError('Missing issue discussion')
-    if not is_container(permissions_payload) or isinstance(permissions_payload, dict):
-        raise ValueError('Missing maintainer permission evidence')
+    comments_payload = sequence(comments_payload, 'Missing issue discussion')
+    permissions_payload = sequence(permissions_payload, 'Missing maintainer permission evidence')
     maintainers = {
         mapping(person).get('login')
         for person in permissions_payload
@@ -510,16 +501,23 @@ def main() -> None:
             )
     receipt_path = args.directory / 'receipt.json'
     unread = sorted(entry.path for entry in entries if entry.scope in {'editable', 'report-only'})
+    findings: list[str] = []
     if receipt_path.is_file():
         receipt: object = json.loads(receipt_path.read_text())
         unread = reconcile(entries, receipt, args.source)
-    summary = [
+        for finding in sequence(mapping(receipt).get('findings', []), 'Receipt findings must be a list'):
+            if not isinstance(finding, str):
+                raise ValueError('Receipt findings must contain text')
+            findings.append(finding)
+    summary: list[str] = [
         '# Weekly CE audit coverage',
         f'Source: `{args.source}`',
         f'Reported canonical coverage: {"incomplete" if unread else "complete"}.',
         'A receipt attests reads; structural validation does not prove comprehension.',
         f'Canonical files: {sum(entry.scope in {"editable", "report-only"} for entry in entries)}.',
         f'Alias loading paths: {sum(entry.scope == "alias" for entry in entries)}.',
+        '## Findings',
+        *([f'- {finding}' for finding in findings] or ['No findings reported.']),
         '## Report-only paths',
         *[f'- `{entry.path}`' for entry in entries if entry.scope == 'report-only'],
         '## Unread or incompletely reported paths',
