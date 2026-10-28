@@ -50,9 +50,9 @@ Incoming text is framed as untrusted peer data on the user channel, with typed p
 
 [MAX_MESSAGE_BYTES][pydantic_ai_harness.peers.MAX_MESSAGE_BYTES] (16384 UTF-8 bytes) and [MAX_PENDING][pydantic_ai_harness.peers.MAX_PENDING] (50) are public transport contract defaults. A host transport can use them to reject oversized wire messages and bound incoming queues before messages reach [PeerInbox.receive()][pydantic_ai_harness.peers.PeerInbox.receive]. [Peers][pydantic_ai_harness.peers.Peers] also defaults to `max_messages_per_run=10` and `max_listed=30`. Only delivered or queued messages count toward `max_messages_per_run`. Sending the same text to the same peer twice in one run, or exceeding the limit, tells the model without sending the message. All limits must be positive. See the [peer API reference](#api-reference) for the host-facing transport types and helpers.
 
-Unlike [Subagents](subagents.md), [Peers][pydantic_ai_harness.peers.Peers] does not create a child run, forward dependencies or usage, or wait for another agent's result. Its tools run as ordinary function tools, so core's tool-call spans cover them; the capability adds no dedicated telemetry spans.
+Unlike [Subagents](subagents.md), [Peers][pydantic_ai_harness.peers.Peers] does not create a child run, forward dependencies or usage, or wait for another agent's result. Its tools use core's tool-call spans. Delivered peer content is part of the conversation and follows core's content-capture setting. Delivery is observable through [EnqueuedMessagesEvent][pydantic_ai.messages.EnqueuedMessagesEvent]; the host can inspect [PeerInbox.pending()][pydantic_ai_harness.peers.PeerInbox.pending] for outstanding messages. The capability adds no per-message or persistence spans, leaving transport admission and inbox telemetry to the host instead of duplicating message records.
 
-`Peers` uses live host state and does not support durable execution. Combining it with a Temporal, DBOS, or Prefect durability capability raises [UserError][pydantic_ai.exceptions.UserError] when the agent is constructed.
+`Peers` uses live host state and does not support durable execution. Combining it with any [durable execution](../durable_execution/overview.md) capability raises [UserError][pydantic_ai.exceptions.UserError] when the agent is constructed.
 
 ## API reference
 
