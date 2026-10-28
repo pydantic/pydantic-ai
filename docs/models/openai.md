@@ -171,6 +171,11 @@ class BoundingBox(BaseModel):
     coordinates: Annotated[list[int], Field(min_length=4, max_length=4)]
 ```
 
+OpenAI also limits how deeply objects can nest in a strict schema and how many object properties it can have, and
+rejects a strict schema over [these limits](https://developers.openai.com/api/docs/guides/structured-outputs#objects-have-limitations-on-nesting-depth-and-size).
+With [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], inferred strictness falls back to non-strict mode
+for a tool or output schema over them, which OpenAI accepts, and an explicit `strict=True` is sent as is.
+
 ## Model settings
 
 You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]:
@@ -487,7 +492,7 @@ agent = Agent(
 
 By default, `OpenAICompaction` runs in **stateful mode**: it configures OpenAI's server-side auto-compaction via the `context_management` field on the regular `/responses` request, and OpenAI triggers compaction whenever the input token count crosses a threshold it manages for you. This mode is compatible with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) and [`openai_conversation_id`](#using-durable-conversations).
 
-After compaction, subsequent requests send only the compacted window, from the latest compaction item onward. The Responses API processes and bills replayed items that precede a compaction item, so omitting them keeps the compacted context from growing again.
+After compaction, subsequent requests send only the compacted window, from the latest compaction item onward. The Responses API processes and bills replayed items that precede a compaction item, so omitting them keeps the compacted context from growing again. That includes a compaction item from the [Codex backend](openai-codex.md#continuing-on-the-openai-api) or the Pydantic AI Gateway, which share OpenAI's encryption keys, but not one from Azure OpenAI, which has its own: see [Sending history to another provider](../message-history.md#sending-history-to-another-provider).
 
 To override the threshold, pass [`token_threshold`][pydantic_ai.models.openai.OpenAICompaction]:
 

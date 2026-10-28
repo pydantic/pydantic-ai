@@ -1,8 +1,10 @@
 """The composer's `@` picker: a session folder's files, matched as the user types after `@`."""
 
 import subprocess
+import sys
 from pathlib import Path
 
+import anyio
 import pytest
 from anyio.from_thread import start_blocking_portal
 
@@ -74,6 +76,10 @@ def test_best_ranks_names_then_paths_then_scattered_letters() -> None:
         'r/e/a/d.py',
     ]
     assert best(paths, 'readers/') == ['readers/a.py'], 'a folder typed in full offers what it holds'
+    assert best(paths, 'readme.md')[:2] == ['README.md', 'docs/readme-extra.md'], 'a file typed in full comes first'
+    assert best(('readme.mdown', 'docs/readme.md', 'readme.md'), 'readme.md')[0] == 'readme.md', (
+        'before longer or deeper'
+    )
     assert best(paths, '')[:4] == ['docs/', 'readers/', 'README.md', 'unrelated.py'], 'the top level first'
     assert best(tuple(f'file{n}.py' for n in range(100)), 'file') == [f'file{n}.py' for n in range(50)]
 
@@ -86,6 +92,28 @@ async def test_a_folder_outside_git_is_walked(tmp_path: Path, monkeypatch: pytes
     assert await list_paths(tmp_path) == ('.env', 'README.md', 'src/app.py', 'src/')
     monkeypatch.setattr(files, 'FILE_LIMIT', 2)
     assert await list_paths(tmp_path) == ('.env', 'README.md')
+
+
+async def test_a_git_listing_is_sorted_and_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    write(tmp_path, 'a.py', 'b.py', 'c.py', 'big/d.py')
+    assert await list_paths(tmp_path) == ('a.py', 'b.py', 'big/d.py', 'c.py', 'big/')
+    monkeypatch.setattr(files, 'FILE_LIMIT', 2)
+    assert await list_paths(tmp_path) == ('a.py', 'b.py')
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='the endless `git` is a shell script')
+async def test_git_is_stopped_at_the_file_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `git` that would list files forever is stopped once `FILE_LIMIT` are read, not read to the end."""
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    git = bin_dir / 'git'
+    git.write_text('#!/bin/sh\ni=0\nwhile :; do printf \'f%d\\000\' "$i"; i=$((i+1)); done\n')
+    git.chmod(0o755)
+    monkeypatch.setenv('PATH', str(bin_dir))
+    monkeypatch.setattr(files, 'FILE_LIMIT', 3)
+    with anyio.fail_after(10):
+        assert await list_paths(tmp_path) == ('f0', 'f1', 'f2')
 
 
 async def test_a_listing_is_reused_until_it_goes_stale(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

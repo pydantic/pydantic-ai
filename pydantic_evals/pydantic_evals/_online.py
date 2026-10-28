@@ -220,6 +220,17 @@ def _should_evaluate(
     return random.random() < resolved
 
 
+def may_sample(online_eval: OnlineEvaluator, config: OnlineEvalConfig) -> bool:
+    """Whether the evaluator's sample rate leaves any chance of it being sampled."""
+    rate = _resolve_sample_rate_field(online_eval, config)
+    return callable(rate) or rate > 0
+
+
+def evaluation_allowed(config: OnlineEvalConfig) -> bool:
+    """Whether `config` allows evaluation here, apart from the check for an enclosing task run."""
+    return config.enabled and not EVALUATION_DISABLED.get()
+
+
 def sample_evaluators(
     online_evals: Sequence[OnlineEvaluator],
     config: OnlineEvalConfig,

@@ -46,7 +46,8 @@ STATED_INSTRUCTIONS = f'<system><context id="capability:weather">\n{INSTRUCTIONS
 """The capability's instructions in the system voice, as `FunctionModel` receives them."""
 STYLE_INSTRUCTIONS = 'Answer in one sentence.'
 STATED_STYLE_INSTRUCTIONS = f'<system><context id="capability:style">\n{STYLE_INSTRUCTIONS}\n</context></system>'
-SUMMARY = 'The user asked for the weather in Athens; I loaded `weather` and it was sunny.'
+SUMMARY = 'Athens was sunny.'
+"""Short enough that the compacted history, the unloaded-capability note included, is smaller than the original."""
 RECORDED = {'pydantic-ai-harness.compaction.recorded-load.v1': True}
 UNLOADED_NOTE = (
     "Compacting the conversation unloaded these capabilities: 'weather'. Their instructions and tools are "

@@ -134,7 +134,14 @@ from ._toolset import (
     validate_dynamic_tool_args,
     wrap_tool_call_result,
 )
-from ._utils import DurableModel, StreamedModelRequestResult, consume_event_stream, managed_model_scope, unwrap_model
+from ._utils import (
+    DurableModel,
+    StreamedModelRequestResult,
+    consume_event_stream,
+    managed_model_scope,
+    mark_streamed_before_failing,
+    unwrap_model,
+)
 from ._workspace import (
     WORKSPACE_OPERATION_ID,
     DurableWorkspace,
@@ -1776,6 +1783,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     async def _model_request_stream_operation(self, params: ModelRequestParams) -> ModelResponse:
         response: ModelResponse | None = None
         streamed: StreamedResponse | None = None
+        produced_output = False
+
+        async def events(stream: StreamedResponse) -> AsyncIterator[ModelResponseStreamEvent]:
+            nonlocal produced_output
+            async for event in stream:
+                produced_output = True
+                yield event
+
         try:
             async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (
                 model,
@@ -1786,19 +1801,23 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 ) as streamed:
                     await consume_event_stream(
                         run_context=durable_ctx,
-                        stream=streamed,
+                        stream=events(streamed),
                         handler=self._model_stream_event_handler(),
                     )
                     # Before the stream is closed, so the request is still withdrawn if closing it fails.
                     response = streamed.get()
                 # Read again, for what closing the stream filled in.
                 response = streamed.get()
-        except BaseException:
+        except BaseException as error:
             if response is None and streamed is not None:
                 # The stream failed while it was consumed: its request may already have been submitted.
                 with suppress(Exception):
                     response = streamed.get()
             await self._withdraw_unreturned_response(params, response)
+            if produced_output and response is not None and isinstance(error, Exception):
+                # Its events may already have reached an event handler in the unit, so the run mustn't retry or fall
+                # back from it as from a stream that failed to open, and should count the usage of what it produced.
+                mark_streamed_before_failing(error, response)
             raise
         self._stamp_response(response, params.messages)
         return response

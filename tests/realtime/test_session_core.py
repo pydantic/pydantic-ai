@@ -881,7 +881,7 @@ def test_an_output_items_details_go_on_its_part() -> None:
     [response] = session_core.all_messages()
     assert isinstance(response, ModelResponse)
     assert [(part.provider_name, part.provider_details) for part in response.parts] == snapshot(
-        [('openai', {'phase': 'commentary'}), ('openai', {'phase': 'final_answer'}), (None, None)]
+        [('openai', {'phase': 'commentary'}), ('openai', {'phase': 'final_answer'}), ('openai', None)]
     )
 
 

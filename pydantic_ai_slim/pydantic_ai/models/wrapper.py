@@ -14,7 +14,7 @@ import anyio
 
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
-from ..messages import ModelMessage, ModelResponse
+from ..messages import ModelMessage, ModelResponse, ModelResponsePart
 from ..native_tools import AbstractNativeTool
 from ..profiles import ModelProfile
 from ..providers import Provider
@@ -251,6 +251,22 @@ class WrapperModel(Model):
     @property
     def system(self) -> str:
         return self.wrapped.system
+
+    @property
+    def canonical_system(self) -> str:
+        return self.wrapped.canonical_system
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        return self.wrapped.compatible_systems
+
+    def accepts_stateless_artifacts(self, response: ModelResponse, part: ModelResponsePart | None = None) -> bool:
+        # Forwarded rather than derived from the two properties above, so a wrapped model that overrides the
+        # predicate keeps deciding.
+        return self.wrapped.accepts_stateless_artifacts(response, part)
+
+    def _model_for_response(self, response: ModelResponse) -> Model:
+        return self.wrapped._model_for_response(response)
 
     @property
     def model_id(self) -> str:

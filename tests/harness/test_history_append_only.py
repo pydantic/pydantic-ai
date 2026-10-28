@@ -356,11 +356,20 @@ VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
         ],
         _code_mode_discoveries(_SEARCH_TIDES, ('tides', {'port': 'Brest'})),
     ),
-    # One deferred tool sandboxed, another kept native: the native one keeps the native search on the wire.
+    # One deferred tool sandboxed, another kept native: `search_tools` searches both, and the native search isn't sent.
     'CodeMode(tools=not-tides)+ToolSearch': (
         lambda _: [
             CodeMode(tools=lambda ctx, td: td.name != 'tides'),
             ToolSearch(strategy='keywords'),
+            _deferred_forecast_and_tides(),
+        ],
+        _code_mode_discoveries(_SEARCH_TIDES, ('tides', {'port': 'Brest'})),
+    ),
+    # The same with the default strategy, which uses the provider's native tool search where there is one.
+    'CodeMode(tools=not-tides)+ToolSearch()': (
+        lambda _: [
+            CodeMode(tools=lambda ctx, td: td.name != 'tides'),
+            ToolSearch(),
             _deferred_forecast_and_tides(),
         ],
         _code_mode_discoveries(_SEARCH_TIDES, ('tides', {'port': 'Brest'})),
@@ -447,13 +456,6 @@ ALLOWED: dict[str, Allowed] = {
     # With a 10-token target every request is over it, so the tier clears each tool result as it ages out of
     # `keep_pairs`: one on the third request and one on the fifth.
     'TieredCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
-    'Planning': Allowed(
-        f'Request-only plan reminder at the end of each request, behind a cache breakpoint ({_PULLS}10257)',
-        # Anthropic adds it to the last tool result message; the OpenAI APIs send it as a user message.
-        (('messages', 'tool-return'), ('messages', 'user-prompt')),
-        tail=True,
-        records=('request-only user prompt',),
-    ),
     'WarnNearLimits': Allowed(
         f'Request-scoped system prompt ({_PULLS}10561): sent for one request, then left out. Anthropic clears it '
         'natively with `clear_at`; elsewhere it is a request-only tail',
@@ -493,20 +495,17 @@ ALLOWED: dict[str, Allowed] = {
         (('tools', 'tool:run_code'), ('deferred-tools', 'tool:forecast'), ('deferred-tools', 'tool:tides')),
         max_moves=2,
     ),
-    # docs/harness/code-mode.md#tool-search-interaction: a `tools` selector that keeps another deferred tool native
-    # keeps the native search on the wire, so the sandboxed deferred tool is declared to it and dropped once found.
-    # On Chat Completions there is no native search: the native tool's reveal adds it to `tools`, as below.
-    'CodeMode(tools=not-tides)+ToolSearch': Allowed(
-        'A deferred tool kept native keeps the native tool search, as documented',
-        (
-            ('deferred-tools', 'tool:forecast'),
-            ('deferred-tools', 'tool:tides'),
-            ('tools', 'tool:forecast'),
-            ('tools', 'tool:tides'),
-            ('tools', 'tool:run_code'),
-            ('tools', 'tool:search_tools'),
-        ),
-    ),
+    # docs/harness/code-mode.md#tool-search-interaction: a selector that sandboxes one deferred tool and keeps
+    # another native has `search_tools` search both, so neither is declared before it's found. Chat Completions
+    # has no deferred-tool channel, so the native `tides` is added to `tools` when it's found (docs/tools-advanced.md).
+    **{
+        name: Allowed(
+            'Chat Completions has no native tool search, so a native reveal adds the tool to `tools`, as documented',
+            (('tools', 'tool:search_tools'), ('tools', 'tool:run_code')),
+            providers=('openai-chat',),
+        )
+        for name in ('CodeMode(tools=not-tides)+ToolSearch', 'CodeMode(tools=not-tides)+ToolSearch()')
+    },
     # docs/tools-advanced.md: the local `search_tools` fallback reveals a tool by adding it to `tools`.
     'CodeMode(tools=not-in-corpus)+ToolSearch': Allowed(
         'Chat Completions has no native tool search, so each native reveal adds the tool to `tools`, as documented',
@@ -518,6 +517,7 @@ ALLOWED: dict[str, Allowed] = {
 """Documented prefix movers, checked exactly."""
 
 OPTIONAL_DEPENDENCIES: dict[str, str] = {
+    'BoxdSandbox': 'boxd',
     'BoxLiteSandbox': 'boxlite',
     'BrowserUse': 'browser_use',
     'DaytonaSandbox': 'daytona',

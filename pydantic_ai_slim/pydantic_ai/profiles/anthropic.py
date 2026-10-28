@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from contextvars import ContextVar
 from typing import Literal, TypeAlias
 
 from ..native_tools import (
@@ -26,6 +27,13 @@ Models whose profile sets that flag reject these settings outright with a 400, s
 serving them has to drop and warn rather than forward. It lives here rather than beside either
 model because `models/bedrock.py` cannot import from `models/anthropic/` without pulling the
 `anthropic` SDK into the `bedrock` extra.
+"""
+
+_COUNTING_STRICT_SCHEMAS: ContextVar[bool] = ContextVar('pydantic_ai_counting_strict_schemas', default=False)
+"""Set while schemas are transformed only to count them against Anthropic's strict schema limits.
+
+The transformer then doesn't warn about a strict schema that may not be sent. It lives here, rather than beside either
+model, because `models/bedrock.py` cannot import from `models/anthropic/` without the `anthropic` SDK.
 """
 
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
@@ -180,6 +188,26 @@ class AnthropicModelProfile(ModelProfile, total=False):
     guide](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
     """
 
+    anthropic_accepts_file_and_container_ids: bool
+    """Whether the API accepts Anthropic Files API file IDs and code execution container IDs. Default: `True`.
+
+    `AnthropicModel` sets it to `False` on the Bedrock, Vertex AI and Foundry clients. There, an
+    [`UploadedFile`][pydantic_ai.messages.UploadedFile] from Anthropic raises a `UserError`, a
+    [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]'s Anthropic files aren't uploaded to its
+    container, and no container from earlier in the history, including a paused turn's, is sent.
+    """
+
+    anthropic_enforces_strict_schema_limits: bool
+    """Whether the API rejects a request whose strict schemas exceed Anthropic's explicit complexity limits. Default: `False`.
+
+    Anthropic counts strict tools, optional parameters and union-typed parameters across all strict schemas in a
+    request, and rejects recursive schemas, as described under [schema complexity
+    limits](https://platform.claude.com/docs/en/build-with-claude/structured-outputs#schema-complexity-limits). When
+    True, an `output_type` that doesn't pick an output mode uses non-strict Tool Output instead of Native Output where
+    the Native Output schema wouldn't fit, and a request that explicitly asks for strict schemas over a limit raises a
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] before it's sent.
+    """
+
     anthropic_supports_message_batches: bool
     """Whether the endpoint serves the Claude API's
     [Message Batches](https://platform.claude.com/docs/en/build-with-claude/batch-processing). Default: `False`.
@@ -189,6 +217,19 @@ class AnthropicModelProfile(ModelProfile, total=False):
     `AsyncAnthropic` client, and not for the Bedrock, Vertex AI and Microsoft Foundry clients, whose platforms batch
     through jobs of their own. Message Batches are sent through an `AsyncAnthropic` client, so setting this for another
     client class raises a `UserError` when a request is batched.
+    """
+
+    anthropic_count_tokens_accepts_server_tools: bool
+    """Whether the `count_tokens` endpoint accepts the web search, web fetch, code execution, tool search and advisor
+    tools. Default: `False`.
+
+    When True, `AnthropicModel.count_tokens` sends those tools, and the advisor's history blocks, as the real request
+    does, so the count matches its `input_tokens`. Without them, the count leaves out their definitions, and the
+    Anthropic API rejects a count whose function tools are all deferred with a 400. When the provider's profile doesn't
+    set it, `AnthropicModel` turns it on for the `AsyncAnthropic` client and leaves it off for the Bedrock, Vertex AI
+    and Foundry clients, whose count endpoints haven't been verified to accept them. Of the endpoints an
+    `AsyncAnthropic` client reaches, the Anthropic API's and Pydantic AI Gateway's are verified: set it to `False` if
+    your client's `base_url` points at a proxy whose count endpoint rejects server tools.
     """
 
 

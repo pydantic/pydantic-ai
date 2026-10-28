@@ -255,6 +255,7 @@ def test_anthropic_claude_sonnet_4_6():
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'anthropic_enforces_strict_schema_limits': True,
             'supports_compaction_on_demand': True,
             'compaction_instructions': 'replaces_prompt',
             'compaction_result_readable': True,
@@ -297,6 +298,7 @@ def test_anthropic_claude_opus_4_7():
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'anthropic_enforces_strict_schema_limits': True,
             'supports_compaction_on_demand': True,
             'compaction_instructions': 'replaces_prompt',
             'compaction_result_readable': True,
@@ -329,6 +331,7 @@ def test_anthropic_claude_haiku_4_5():
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'anthropic_enforces_strict_schema_limits': True,
             'supports_compaction_on_demand': False,
             'supports_auto_cache': True,
         }
@@ -358,6 +361,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             ),
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'anthropic_enforces_strict_schema_limits': True,
             'supports_compaction_on_demand': False,
             'supports_auto_cache': True,
         }
@@ -973,6 +977,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_thinking_variant': 'anthropic',
             'tool_deferral_mode': 'standalone',
             'json_schema_transformer': _BedrockAnthropicJsonSchemaTransformer,
+            'anthropic_enforces_strict_schema_limits': True,
             'bedrock_supports_strict_tool_definition': True,
         }
     )
@@ -1050,6 +1055,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_thinking_variant': 'anthropic',
             'tool_deferral_mode': 'standalone',
             'json_schema_transformer': _BedrockAnthropicJsonSchemaTransformer,
+            'anthropic_enforces_strict_schema_limits': True,
             'bedrock_supports_strict_tool_definition': True,
         }
     )
@@ -1090,6 +1096,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'anthropic_rejects_max_tokens_beyond_context_window': True,
             'bedrock_thinking_variant': 'anthropic',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'anthropic_enforces_strict_schema_limits': True,
             'bedrock_supports_strict_tool_definition': False,
         }
     )
@@ -2396,6 +2403,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             ),
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
+            'anthropic_enforces_strict_schema_limits': True,
             'supports_compaction_on_demand': False,
             'supports_auto_cache': True,
         }
