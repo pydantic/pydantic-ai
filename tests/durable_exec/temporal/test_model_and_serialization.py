@@ -8,7 +8,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 from unittest.mock import Mock, patch
 
@@ -55,6 +55,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request_stream
+from pydantic_ai.durable_exec._utils import mark_streamed_before_failing, streamed_before_failing
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelAuthenticationError,
@@ -73,6 +74,7 @@ from pydantic_ai.messages import (
     CustomEvent,
     InstructionId,
     InstructionPart,
+    ModelRequestAttempt,
     ThinkingPart,
     ToolsetInstructionSource,
     UnknownCustomEvent,
@@ -3502,6 +3504,50 @@ def _crossed(error: ModelAPIError) -> BaseException:
         with rebuilt_model_errors():
             raise _activity_error(raised.value)
     return rebuilt.value
+
+
+def test_what_a_stream_produced_before_failing_crosses_with_its_error():
+    """The partial response of a stream that failed after producing output reaches the workflow unchanged.
+
+    Through JSON, as the details of the activity's failure are stored, so the run commits it with its usage.
+    """
+    partial = ModelResponse(
+        parts=[
+            ThinkingPart(content='thinking', id='rs_1', signature='sig', provider_name='openai'),
+            TextPart('partial answer'),
+            ToolCallPart('lookup', {'q': 'x'}, tool_call_id='call_1'),
+        ],
+        usage=RequestUsage(input_tokens=10, output_tokens=3),
+        model_name='primary',
+        provider_name='openai',
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        state='interrupted',
+        failed_attempts=[
+            ModelRequestAttempt(
+                model_name='earlier',
+                provider_name='anthropic',
+                outcome='error',
+                error='ModelAPIError: boom',
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                duration=timedelta(seconds=1),
+            )
+        ],
+    )
+    error = ModelAPIError('primary', 'stream broke')
+    mark_streamed_before_failing(error, partial)
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    wire = ApplicationError(
+        raised.value.message,
+        *json.loads(json.dumps(list(raised.value.details))),
+        type=raised.value.type,
+        non_retryable=raised.value.non_retryable,
+    )
+    with pytest.raises(ModelAPIError) as rebuilt:
+        with rebuilt_model_errors():
+            raise _activity_error(wire)
+    assert streamed_before_failing(rebuilt.value) == partial
 
 
 def test_model_http_error_crosses_with_its_fields():
