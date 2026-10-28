@@ -78,7 +78,7 @@ class ReviewRun(BaseModel):
     name: str
     path: str
     event: str
-    display_title: str
+    head_sha: str
     conclusion: str | None
 
 
@@ -328,12 +328,11 @@ class ReviewGhCli(GhCli):
     def verified_review_run(self, run_id: int, head: str) -> bool:
         """Only the trusted PR Bots publisher can supply a qualifying marker."""
         run = ReviewRun.model_validate_json(self._api(f'{self._repo}/actions/runs/{run_id}'))
-        number = self._pull.rsplit('/', 1)[1]
         if not (
             run.path == '.github/workflows/bots.yml'
             and run.event == 'pull_request_target'
             and run.name == 'PR Bots'
-            and run.display_title == f'PR Bots #{number} @ {head}'
+            and run.head_sha == head
             and run.conclusion == 'success'
         ):
             return False

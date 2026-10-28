@@ -155,6 +155,7 @@ class _Job(BaseModel):
 
 
 class _Workflow(BaseModel):
+    run_name: str | None = Field(default=None, alias='run-name')
     on: dict[str, _Trigger]
     jobs: dict[str, _Job]
 
@@ -214,6 +215,7 @@ def test_review_observer_is_read_only_and_schema_matches_the_trusted_publisher()
         assert not job.permissions
         assert all(not step.uses for step in job.steps)
     bots = _Workflow.model_validate(yaml.load(WORKFLOW.with_name('bots.yml').read_text(), Loader=yaml.BaseLoader))
+    assert bots.run_name is None
     reviewer = bots.jobs['review']
     assert set(reviewer.permissions.values()) == {'read'}
     args = shlex.split(
@@ -231,69 +233,19 @@ def test_review_failure_reports_distinguish_cancellation_from_failure():
     steps = workflow.jobs['publish-review'].steps
     report = next(step.condition for step in steps if step.name == 'Report review failure')
     config_report = next(step.condition for step in steps if step.name == 'Report approval request failure')
-    # An explicit status function avoids GitHub's implicit success() guard after a failed step.
-    assert all(condition.startswith('always() &&') for condition in [report, config_report])
     cleanup = next(step.condition for step in steps if step.name == 'Remove douwebot label')
     publisher = next(
         step for step in steps if step.name == 'Publish structured review from trusted default-branch code'
     )
-    # Evaluate the checked-in workflow conditions with the runner's terminal states.
-    harness = (
-        """
-let needs, steps, github;
-const always = () => true;
-const report = () => (
-"""
-        + report
-        + """
-);
-const configReport = () => (
-"""
-        + config_report
-        + """
-);
-const cleanup = () => (
-"""
-        + cleanup
-        + """
-);
-const results = [];
-for (const [result, outcome] of JSON.parse(process.argv[1])) {
-  needs = {review: {result}};
-  steps = {publish: {outcome}};
-  for (const label of ['douwebot', 'douwebot:review-agent-config']) {
-    github = {event: {action: 'labeled', label: {name: label}}};
-    results.push([report(), configReport(), cleanup()]);
-  }
-}
-console.log(JSON.stringify(results));
-"""
+    assert report == (
+        "always() && (needs.review.result == 'failure' || steps.publish.outcome == 'failure') && "
+        "github.event.action == 'labeled' && github.event.label.name == 'douwebot'"
     )
-    states: list[tuple[str, str]] = [
-        ('success', 'success'),
-        ('failure', 'skipped'),
-        ('cancelled', 'skipped'),
-        ('success', 'failure'),
-        ('success', 'cancelled'),
-        ('skipped', 'skipped'),
-    ]
-    result = subprocess.run(
-        ['node', '--input-type=module', '-e', harness, json.dumps(states)], check=True, capture_output=True, text=True
+    assert config_report == (
+        "always() && (needs.review.result == 'failure' || steps.publish.outcome == 'failure') && "
+        "github.event.action == 'labeled' && github.event.label.name == 'douwebot:review-agent-config'"
     )
-    assert json.loads(result.stdout) == [
-        [False, False, True],
-        [False, False, False],
-        [True, False, True],
-        [False, True, False],
-        [False, False, True],
-        [False, False, False],
-        [True, False, True],
-        [False, True, False],
-        [False, False, True],
-        [False, False, False],
-        [False, False, True],
-        [False, False, False],
-    ]
+    assert cleanup == "always() && github.event.action == 'labeled' && github.event.label.name == 'douwebot'"
     assert publisher.id == 'publish'
 
 
@@ -870,19 +822,18 @@ def test_review_publication_errors_fail_closed(
 
 
 @pytest.mark.parametrize(
-    ('path', 'event', 'title', 'conclusion', 'job_conclusion', 'valid'),
+    ('path', 'event', 'run_head', 'conclusion', 'job_conclusion', 'valid'),
     [
-        ('.github/workflows/bots.yml', 'pull_request_target', f'PR Bots #7 @ {HEAD}', 'success', 'success', True),
-        ('.github/workflows/other.yml', 'pull_request_target', f'PR Bots #7 @ {HEAD}', 'success', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request', f'PR Bots #7 @ {HEAD}', 'success', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request_target', f'PR Bots #8 @ {HEAD}', 'success', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request_target', f'PR Bots #7 @ {OLD_HEAD}', 'success', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request_target', f'PR Bots #7 @ {HEAD}', 'failure', 'success', False),
-        ('.github/workflows/bots.yml', 'pull_request_target', f'PR Bots #7 @ {HEAD}', 'success', 'failure', False),
+        ('.github/workflows/bots.yml', 'pull_request_target', HEAD, 'success', 'success', True),
+        ('.github/workflows/other.yml', 'pull_request_target', HEAD, 'success', 'success', False),
+        ('.github/workflows/bots.yml', 'pull_request', HEAD, 'success', 'success', False),
+        ('.github/workflows/bots.yml', 'pull_request_target', OLD_HEAD, 'success', 'success', False),
+        ('.github/workflows/bots.yml', 'pull_request_target', HEAD, 'failure', 'success', False),
+        ('.github/workflows/bots.yml', 'pull_request_target', HEAD, 'success', 'failure', False),
     ],
 )
 def test_gh_cli_verifies_both_jobs_and_originating_run(
-    path: str, event: str, title: str, conclusion: str, job_conclusion: str, valid: bool
+    path: str, event: str, run_head: str, conclusion: str, job_conclusion: str, valid: bool
 ):
     class Metadata(review_gates.ReviewGhCli):
         def _api(self, *args: str, input: str | None = None) -> str:
@@ -896,7 +847,14 @@ def test_gh_cli_verifies_both_jobs_and_originating_run(
                 )
             assert args[-1] == 'repos/o/r/actions/runs/20'
             return json.dumps(
-                {'name': 'PR Bots', 'path': path, 'event': event, 'display_title': title, 'conclusion': conclusion}
+                {
+                    'name': 'PR Bots',
+                    'path': path,
+                    'event': event,
+                    'head_sha': run_head,
+                    'display_title': f'Untrusted title at {OLD_HEAD}',
+                    'conclusion': conclusion,
+                }
             )
 
     assert Metadata('o/r', 7).verified_review_run(20, HEAD) is valid
