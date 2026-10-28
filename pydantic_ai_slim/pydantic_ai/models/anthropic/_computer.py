@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import Any, TypeGuard, cast
+from typing import Any, TypeGuard, cast, get_args
 
 from anthropic.types.beta import (
     BetaComputerToolset20260801Param,
@@ -18,6 +18,7 @@ from ...computer_use import DISPLAY_SIZE
 from ...messages import ToolCallPart
 from ...profiles.anthropic import AnthropicComputerToolVersion
 from ...tools import ToolDefinition
+from ...workspaces import ComputerAction
 
 COMPUTER_TOOL_BETAS: dict[str, str] = {
     'computer_20251124': 'computer-use-2025-11-24',
@@ -82,6 +83,10 @@ def computer_member(block: dict[str, Any], version: AnthropicComputerToolVersion
     input = {key: value for key, value in block['input'].items() if key != 'action'}
     return block['input'].get('action', ''), input
 
+
+RETURN_NOTHING = frozenset({*(action.type for action in get_args(get_args(ComputerAction)[0])), 'wait', 'screenshot'})
+"""Action types whose result content has nothing of their own: every display action, which only acts, plus waiting
+and the screenshot every result ends with. Any other action, such as a zoom, returned something."""
 
 COMPUTER_NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
 """The result Anthropic asks for on each member call after one that failed."""
