@@ -14,27 +14,28 @@ from pr_gates import ChangedFile, GateError, GhCli, compatibility_waiver, run
 from pydantic import BaseModel, Field
 
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'pr-gates.yml'
-ALLOWLIST = '.github/api-compatibility-allowlist.json'
+PATH = f'.github/api-compatibility-waivers/{"a" * 64}.json'
+OTHER_PATH = f'.github/api-compatibility-waivers/{"b" * 64}.json'
 WAIVER = {
     'against': 'v2.59.0',
-    'fingerprint': 'a' * 64,
     'reason': 'Deprecated in v2.40, removed on schedule.',
     'pull_request': 'https://github.com/pydantic/pydantic-ai/pull/1',
 }
 
 
-def _allowlist(*waivers: dict[str, str]) -> str:
-    return json.dumps({'allowed_breakages': list(waivers)})
+def _waiver(**changes: str) -> str:
+    return json.dumps(WAIVER | changes)
 
 
 @dataclass
 class FakeGitHub:
-    files: list[str]
+    files: list[ChangedFile]
     current_labels: set[str] = field(default_factory=set[str])
-    texts: dict[str, str | None] = field(default_factory=dict[str, str | None])
+    # The text of each file at each ref; a file missing from a ref doesn't exist there.
+    texts: dict[tuple[str, str], str] = field(default_factory=dict[tuple[str, str], str])
 
     def changed_files(self) -> list[ChangedFile]:
-        return [ChangedFile(filename=path) for path in self.files]
+        return self.files
 
     def labels(self) -> set[str]:
         return set(self.current_labels)
@@ -43,37 +44,74 @@ class FakeGitHub:
         return 'merge-base'
 
     def file_text(self, path: str, ref: str) -> str | None:
-        assert path == ALLOWLIST
-        return self.texts.get(ref)
+        return self.texts.get((path, ref))
 
 
 @pytest.mark.parametrize(
-    ('head', 'base', 'labels', 'fails'),
+    ('file', 'texts', 'labels', 'fails'),
     [
-        pytest.param(_allowlist(WAIVER), _allowlist(), set[str](), True, id='new-waiver-unlabeled'),
-        pytest.param(_allowlist(WAIVER), _allowlist(), {'compatibility impact'}, False, id='new-waiver-labeled'),
-        # A file added by the PR has no version at the merge base.
-        pytest.param(_allowlist(WAIVER), None, set[str](), True, id='new-file'),
-        pytest.param(_allowlist(), _allowlist(WAIVER), set[str](), False, id='waiver-removed'),
-        pytest.param(_allowlist(WAIVER), _allowlist(WAIVER), set[str](), False, id='reformatted'),
-        pytest.param('{"allowed_breakages": [{}]}', _allowlist(), {'compatibility impact'}, True, id='invalid'),
+        pytest.param(ChangedFile(filename=PATH), {(PATH, 'head'): _waiver()}, set[str](), True, id='added-unlabeled'),
+        pytest.param(
+            ChangedFile(filename=PATH),
+            {(PATH, 'head'): _waiver()},
+            {'compatibility impact'},
+            False,
+            id='added-labeled',
+        ),
+        pytest.param(ChangedFile(filename=PATH), {(PATH, 'merge-base'): _waiver()}, set[str](), False, id='removed'),
+        pytest.param(
+            ChangedFile(filename=PATH),
+            {(PATH, 'head'): _waiver(reason='Reworded.'), (PATH, 'merge-base'): _waiver()},
+            set[str](),
+            False,
+            id='reworded',
+        ),
+        # Waiving the same finding against a newer release is a new waiver.
+        pytest.param(
+            ChangedFile(filename=PATH),
+            {(PATH, 'head'): _waiver(against='v2.60.0'), (PATH, 'merge-base'): _waiver()},
+            set[str](),
+            True,
+            id='rebased',
+        ),
+        pytest.param(
+            ChangedFile(filename=OTHER_PATH, previous_filename=PATH),
+            {(OTHER_PATH, 'head'): _waiver(), (PATH, 'merge-base'): _waiver()},
+            set[str](),
+            True,
+            id='renamed',
+        ),
+        pytest.param(
+            ChangedFile(filename=PATH),
+            {(PATH, 'head'): '{}'},
+            {'compatibility impact'},
+            True,
+            id='invalid',
+        ),
+        pytest.param(
+            ChangedFile(filename='.github/api-compatibility-waivers/bad.json'),
+            {('.github/api-compatibility-waivers/bad.json', 'head'): _waiver()},
+            {'compatibility impact'},
+            True,
+            id='misnamed',
+        ),
     ],
 )
-def test_compatibility_waiver(head: str, base: str | None, labels: set[str], fails: bool):
-    github = FakeGitHub(files=[ALLOWLIST], current_labels=labels, texts={'head': head, 'merge-base': base})
+def test_compatibility_waiver(file: ChangedFile, texts: dict[tuple[str, str], str], labels: set[str], fails: bool):
+    github = FakeGitHub(files=[file], current_labels=labels, texts=texts)
 
     assert bool(compatibility_waiver(github, base_sha='base', head_sha='head').failures) is fails
 
 
-def test_an_untouched_allowlist_passes_without_reading_it():
-    github = FakeGitHub(files=['pydantic_ai_slim/pydantic_ai/agent.py'])
+def test_untouched_waivers_pass_without_reading_them():
+    github = FakeGitHub(files=[ChangedFile(filename='.github/api-compatibility-allowlist.json')])
 
     assert compatibility_waiver(github, base_sha='base', head_sha='head').failures == []
 
 
 def test_run_reports_failures_as_annotations_and_a_summary(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     summary = tmp_path / 'summary.md'
-    github = FakeGitHub(files=[ALLOWLIST], texts={'head': _allowlist(WAIVER), 'merge-base': _allowlist()})
+    github = FakeGitHub(files=[ChangedFile(filename=PATH)], texts={(PATH, 'head'): _waiver()})
 
     status = run(
         'compatibility-waiver', github, {'BASE_SHA': 'base', 'HEAD_SHA': 'head', 'GITHUB_STEP_SUMMARY': str(summary)}
@@ -99,8 +137,8 @@ def test_gh_cli_parses_github_responses(monkeypatch: pytest.MonkeyPatch):
         'repos/o/r/pulls/7/files?per_page=100': '[[{"filename": "a"}], [{"filename": "b", "previous_filename": "c"}]]',
         'repos/o/r/compare/x...y': '{"merge_base_commit": {"sha": "m"}}',
         'repos/o/r/issues/7/labels?per_page=100': '[[{"name": "compatibility impact"}]]',
-        f'repos/o/r/contents/{ALLOWLIST}?ref=y': '{}',
-        f'repos/o/r/contents/{ALLOWLIST}?ref=m': None,
+        f'repos/o/r/contents/{PATH}?ref=y': '{}',
+        f'repos/o/r/contents/{PATH}?ref=m': None,
     }
 
     def fake_run(args: list[str], **_: bool) -> subprocess.CompletedProcess[str]:
@@ -115,8 +153,8 @@ def test_gh_cli_parses_github_responses(monkeypatch: pytest.MonkeyPatch):
     assert github.changed_files() == [ChangedFile(filename='a'), ChangedFile(filename='b', previous_filename='c')]
     assert github.merge_base('x', 'y') == 'm'
     assert github.labels() == {'compatibility impact'}
-    assert github.file_text(ALLOWLIST, 'y') == '{}'
-    assert github.file_text(ALLOWLIST, 'm') is None
+    assert github.file_text(PATH, 'y') == '{}'
+    assert github.file_text(PATH, 'm') is None
 
     responses['repos/o/r/pulls/7'] = '{"changed_files": 3}'
     with pytest.raises(GateError, match='Retrieved only 2 of 3'):

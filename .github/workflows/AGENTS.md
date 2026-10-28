@@ -193,7 +193,7 @@ code owner's approval; keep them owned.
 
 | Check | Fails when |
 |---|---|
-| `Gate: compatibility waiver labeled` | the PR adds a waiver to `.github/api-compatibility-allowlist.json` without `compatibility impact` |
+| `Gate: compatibility waiver labeled` | the PR adds a waiver to `.github/api-compatibility-waivers/` without `compatibility impact` |
 
 # Code owners approve dependency and CI config changes
 

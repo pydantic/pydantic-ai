@@ -12,12 +12,12 @@ import subprocess
 import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 from typing import Literal, Protocol, assert_never
 
-from check_api_compatibility import Allowlist
+from check_api_compatibility import WAIVERS, read_waiver
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-ALLOWLIST = '.github/api-compatibility-allowlist.json'
 COMPATIBILITY_LABEL = 'compatibility impact'
 Gate = Literal['compatibility-waiver']
 TITLES: dict[Gate, str] = {'compatibility-waiver': 'Compatibility waiver labeled'}
@@ -80,15 +80,18 @@ def _paths(files: Iterable[ChangedFile]) -> set[str]:
 def compatibility_waiver(github: GitHub, *, base_sha: str, head_sha: str) -> Verdict:
     """Require `compatibility impact` on a PR that adds an API compatibility waiver."""
     verdict = Verdict()
-    if ALLOWLIST not in _paths(github.changed_files()):
-        verdict.summary.append(f'`{ALLOWLIST}` is unchanged.')
+    paths = sorted(
+        path for path in _paths(github.changed_files()) if PurePosixPath(path).parent == PurePosixPath(WAIVERS)
+    )
+    if not paths:
+        verdict.summary.append(f'`{WAIVERS}` is unchanged.')
         return verdict
 
     merge_base = github.merge_base(base_sha, head_sha)
     try:
-        added = _waivers(github.file_text(ALLOWLIST, head_sha)) - _waivers(github.file_text(ALLOWLIST, merge_base))
-    except ValidationError as error:
-        verdict.failures.append(f'Cannot read `{ALLOWLIST}`: {error.error_count()} validation error(s).')
+        added = _waivers(github, paths, head_sha) - _waivers(github, paths, merge_base)
+    except ValueError as error:
+        verdict.failures.append(f'Cannot read a waiver: {error}')
         return verdict
 
     if not added:
@@ -103,10 +106,14 @@ def compatibility_waiver(github: GitHub, *, base_sha: str, head_sha: str) -> Ver
     return verdict
 
 
-def _waivers(text: str | None) -> set[tuple[str, str]]:
-    if text is None:
-        return set()
-    return {(waiver.against, waiver.fingerprint) for waiver in Allowlist.model_validate_json(text).allowed_breakages}
+def _waivers(github: GitHub, paths: Iterable[str], ref: str) -> set[tuple[str, str]]:
+    """The `(against, fingerprint)` of each waiver among `paths` that exists at `ref`."""
+    waivers: set[tuple[str, str]] = set()
+    for path in paths:
+        if (text := github.file_text(path, ref)) is not None:
+            fingerprint, waiver = read_waiver(PurePosixPath(path), text)
+            waivers.add((waiver.against, fingerprint))
+    return waivers
 
 
 _FILE_PAGES = TypeAdapter(list[list[ChangedFile]])
