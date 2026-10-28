@@ -50,7 +50,6 @@ safe-outputs:
   create-pull-request:
     max: 1
     draft: false
-    title-prefix: '[weekly-ce-audit] '
     allowed-branches: ['gh-aw/weekly-ce-audit-*']
     fallback-as-issue: false
     auto-close-issue: false

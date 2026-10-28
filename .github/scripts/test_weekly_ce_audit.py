@@ -224,7 +224,7 @@ def test_duplicate_guard_recognizes_only_this_workflows_open_same_repo_pr():
     pr = {
         'number': 123,
         'state': 'open',
-        'title': '[weekly-ce-audit] Trim duplicate instructions',
+        'title': 'Trim duplicate instructions',
         'head': {'ref': 'gh-aw/weekly-ce-audit-123', 'repo': {'full_name': 'pydantic/pydantic-ai'}},
     }
     assert existing_pr([pr], 'pydantic/pydantic-ai') == 123
@@ -325,7 +325,7 @@ def test_preflight_writes_noop_before_inference(repository: tuple[Path, str], mo
                 {
                     'number': 123,
                     'state': 'open',
-                    'title': '[weekly-ce-audit] Trim duplicate instructions',
+                    'title': 'Trim duplicate instructions',
                     'head': {'ref': 'gh-aw/weekly-ce-audit-123', 'repo': {'full_name': 'pydantic/pydantic-ai'}},
                 }
             ]
@@ -444,6 +444,8 @@ def test_compiled_publication_gate_and_health_dependencies():
     )
     handler = next(i for i, step in enumerate(steps) if step.get('name') == 'Process Safe Outputs')
     assert gate < handler
+    publication: dict[str, dict[str, object]] = json.loads(steps[handler]['env']['GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG'])
+    assert 'title_prefix' not in publication['create_pull_request']
     detection = next(step for step in jobs['detection']['steps'] if step.get('id') == 'detection_agentic_execution')
     assert str(detection['env']['GH_AW_HARNESS_MAX_RETRIES']) == '3'
 
@@ -534,7 +536,7 @@ def reviewed_candidate(
     (directory / 'review').mkdir()
     (directory / 'review/task.md').write_text('Remove duplicate wording while preserving policy.')
     proposal: dict[str, object] = {
-        'title': '[weekly-ce-audit] Trim duplicate wording',
+        'title': 'Trim duplicate wording',
         'body': 'A small documentation improvement.',
         'branch': branch,
         'issue_exemption': 'small-doc-improvement',
