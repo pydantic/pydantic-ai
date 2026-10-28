@@ -606,7 +606,15 @@ class FallbackModel(Model):
         # Only under the `chat` span instrumentation opened for this request, and on its tracer provider.
         span = self._fallback_span()
         policy = open_request_policy() if span else None
-        chain.log.record(model, failure, start, parent=span, tracer=policy.tracer if policy else None)
+        chain.log.record(
+            model,
+            failure,
+            start,
+            parent=span,
+            tracer=policy.tracer if policy else None,
+            # Only a `fallback_on` response handler rejects a response here, unlike in the agent's attempt loop.
+            rejected_status='Response rejected by a `fallback_on` response handler',
+        )
 
 
 def _pinned_request_deadline(

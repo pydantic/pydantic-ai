@@ -231,11 +231,12 @@ class AttemptLog:
         *,
         parent: Span | None,
         tracer: Tracer | None,
+        rejected_status: str = 'Response rejected',
     ) -> None:
         """Record that the attempt at `model` started at `start` failed with `failure`, an error or a rejected response.
 
         `parent` is the request's `chat` span and `tracer` the one it was opened with; without both, only the
-        record is kept.
+        record is kept. `rejected_status` is the span's status for a rejected response (see `record_attempt_span`).
         """
         # A nested `FallbackModel` recorded the attempts it made itself, and their usage was billed too.
         if isinstance(failure, ModelResponse):
@@ -246,7 +247,13 @@ class AttemptLog:
         self.attempts.append(attempt)
         if parent is not None and tracer is not None:
             record_attempt_span(
-                attempt, failure, model=model, index=len(self.attempts) - 1, parent=parent, tracer=tracer
+                attempt,
+                failure,
+                model=model,
+                index=len(self.attempts) - 1,
+                parent=parent,
+                tracer=tracer,
+                rejected_status=rejected_status,
             )
 
     def attach(self, response: ModelResponse) -> ModelResponse:

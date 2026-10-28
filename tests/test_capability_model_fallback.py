@@ -1554,6 +1554,31 @@ async def test_spans_match_fallback_model(capfire: CaptureLogfire):
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_rejected_attempt_span_status_says_what_rejected_it(capfire: CaptureLogfire):
+    """A `FallbackModel` attempt span says its `fallback_on` rejected the response, which is all that can there.
+
+    In the agent's attempt loop any capability can reject one, so its span only says the response was rejected.
+    """
+
+    def rejected_statuses() -> list[str | None]:
+        statuses = [
+            span.status.description
+            for span in capfire.exporter.exported_spans
+            # Logfire also exports a pending span when each span starts, before its status is set.
+            if span.name == 'model request attempt billed_rejection'
+            and (span.attributes or {}).get('logfire.span_type') != 'pending_span'
+        ]
+        capfire.exporter.clear()
+        return statuses
+
+    chain = (_billed_rejection, _billed_answer)
+    await _capability_agent(*chain, instrument=True).run('x')
+    assert rejected_statuses() == ['Response rejected']
+    await _fallback_model_agent(*chain, instrument=True).run('x')
+    assert rejected_statuses() == ['Response rejected by a `fallback_on` response handler']
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_exhausted_chain_spans_match_fallback_model(capfire: CaptureLogfire):
     """When every attempt fails, the `chat` span reports the error and no response; each attempt has its own span."""
     chain = (failure, _billed_rejection)
