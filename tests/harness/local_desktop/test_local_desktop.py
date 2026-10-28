@@ -149,7 +149,7 @@ async def test_a_window_manager_that_exited_is_started_again_on_the_same_screen(
     backend = _backend(desktop)
     try:
         await backend.display.display_size()
-        assert backend.display.take_fresh_start() is True
+        assert backend.display.starts == 1
         xvfb, window_manager = _pids(fake_x)
         _kill(window_manager)
 
@@ -157,11 +157,11 @@ async def test_a_window_manager_that_exited_is_started_again_on_the_same_screen(
         os.kill(xvfb, 0)  # still running
         assert len(_lines(fake_x, 'Xvfb')) == 1
         assert len(_lines(fake_x, 'fluxbox')) == 2
-        assert backend.display.take_fresh_start() is False
+        assert backend.display.starts == 1
 
         _kill(xvfb)
         await backend.display.display_size()
-        assert backend.display.take_fresh_start() is True
+        assert backend.display.starts == 2
     finally:
         await _stop(desktop)
 
@@ -179,8 +179,7 @@ def test_a_screen_outlives_the_thread_that_started_it(fake_x: Path, tmp_path: Pa
         _in_new_event_loop(display.display_size)
         # A screen that had stopped with the thread would have been started again.
         assert len(_lines(fake_x, 'Xvfb')) == 1
-        assert display.take_fresh_start() is True
-        assert display.take_fresh_start() is False
+        assert display.starts == 1
     finally:
         _in_new_event_loop(lambda: _stop(desktop))
 
