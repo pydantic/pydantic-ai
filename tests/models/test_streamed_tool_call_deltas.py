@@ -303,6 +303,7 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1',
+                    canonical_system='openai',
                     provider_details={'timestamp': IsDatetime()},
                     provider_response_id='123',
                     finish_reason='stop',
