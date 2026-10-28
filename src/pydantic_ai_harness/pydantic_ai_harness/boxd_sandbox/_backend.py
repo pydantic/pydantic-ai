@@ -16,8 +16,8 @@ changing acquisition, command, file, or error handling:
   isolated whenever the source is. A suspended machine is forked from its disk alone, without its memory or
   the writes it had not flushed.
 - Deleting or stopping a machine during a command ends the call with `APIConnectionError`; `machines.get` then
-  raises `NotFoundError` or reports `stopped`. A delete can return while `get` still reports the machine, so
-  deletion is confirmed.
+  raises `NotFoundError` or reports `stopped`. A delete can return while `get` still reports the machine for a
+  moment.
 - An isolated machine's metadata endpoint refuses token requests (403), and boxd's env vars and integrations
   are not installed in it. A machine created from a snapshot keeps the named `networks` of the machine the
   snapshot was saved from, even with `isolated=True`, and peers with every machine on them.

@@ -43,8 +43,8 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
 
     A run with no reference creates a fresh machine on first use; pass a `WorkspaceRef` to attach
     to an existing one. Ending a run does not delete the machine: boxd suspends it when idle and
-    keeps it, disk included, until you delete it, unless your organization's defaults set a delete timer. Commands run under `sh -c` as the machine's
-    non-root `boxd` user.
+    keeps it, disk included, until you delete it, unless your organization's defaults set a delete timer.
+    Commands run under `sh -c` as the machine's non-root `boxd` user.
 
     The machine is isolated: it holds no boxd credentials and has no peers on your organization's
     private network, and attaching to one that is not isolated raises `WorkspaceUnavailableError`.

@@ -424,6 +424,9 @@ class TestFiles:
         await backend.write_bytes(f'{root}/dir/a.txt', b'')
         # Sorted by name, as the shell filesystem lists them.
         assert [entry.name for entry in await backend.list_dir(f'{root}/dir')] == ['a.txt', 'b.txt']
+        assert await backend.stat(f'{root}/dir/b.txt') == FileEntry(
+            name='b.txt', path=f'{root}/dir/b.txt', is_dir=False, size=4
+        )
         assert await backend.stat(f'{root}/dir') == FileEntry(name='dir', path=f'{root}/dir', is_dir=True, size=None)
         # The only command was the working directory's probe.
         assert len(host.lines) == 1
@@ -433,9 +436,14 @@ class TestFiles:
     ) -> None:
         host.agent_outdated = True
         backend = BoxdSandboxBackend()
-        path = f'{await backend.working_dir()}/dir/file.txt'
+        root = await backend.working_dir()
+        path = f'{root}/dir/file.txt'
         await backend.write_bytes(path, b'data')
         assert await backend.read_bytes(path) == b'data'
+        assert (await backend.stat(path)).size == 4
+        await backend.remove(f'{root}/dir')
+        assert not await backend.exists(f'{root}/dir')
+        await backend.write_bytes(path, b'data')
         # Asked once, then remembered for the connection.
         assert host.fs_calls == ['FsWrite']
         await backend.aclose()

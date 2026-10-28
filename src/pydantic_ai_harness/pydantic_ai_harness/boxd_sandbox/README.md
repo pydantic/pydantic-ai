@@ -108,7 +108,7 @@ The ref holds no credentials, so the process that reattaches needs `BOXD_API_KEY
 
 `org`, `snapshot`, `vcpu`, and `auto_suspend_timeout` only shape a new machine; `working_dir` and `env` apply to every command, including after you reattach. A new machine gets `working_dir` created for it; on an attached machine it must already exist, or commands fail with `WorkspaceError`.
 
-A run leaves a backend you built open. Call `await backend.aclose()` when you are done with it: that closes the client it opened from `BOXD_API_KEY`, not the machine, and a later operation opens a new one. A `client=` you passed is never closed.
+A run leaves a backend you built open. Call `await backend.aclose()` when you are done with it: that closes the client it opened from the environment, not the machine, and a later operation opens a new one. A `client=` you passed is never closed.
 
 ## Fork a machine
 

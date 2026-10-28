@@ -354,7 +354,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   ref. `after_run` skips failed runs; one-shot jobs destroy `ctx.workspace.ref` in `run_error`.
 - `await BoxdSandbox().fork(ref)` copies a boxd machine, files and running processes included, into a new
   isolated one and returns its ref: pass it as `workspace=` to try another approach from the same state,
-  then `destroy` it. It wakes a suspended machine first, and refuses one that isn't isolated.
+  then `destroy` it. It wakes a suspended machine first, and refuses one that isn't isolated or is on a
+  named boxd network.
 - `workspace=` wins over the ref in `message_history`, and UI adapters strip refs from client-sent
   history, so keep the ref server-side. Attaching to a gone sandbox raises `WorkspaceUnavailableError`
   (so do rejected credentials); no empty replacement is created unless you pass `workspace='new'`.

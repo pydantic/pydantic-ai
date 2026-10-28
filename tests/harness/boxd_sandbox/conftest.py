@@ -30,7 +30,7 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     """Gate the live tier, before any live fixture can create a machine.
 
     It runs only with `PYDANTIC_AI_HARNESS_BOXD_LIVE=1` and a non-empty `BOXD_API_KEY`. Otherwise
-    it skips, unless `BOXD_REQUIRE_LIVE=1` (a CI live job would set it), where a missing key fails
+    it skips, unless `BOXD_REQUIRE_LIVE=1` (CI's live job sets it), where a missing key fails
     instead: a live job that tested nothing must not pass as a silent skip.
     """
     if item.get_closest_marker('boxd_live') is None:
