@@ -44,6 +44,7 @@ def schema_model(
     infers: StructuredOutputMode = 'native',
     rejects: tuple[OutputMode, ...] = ('native',),
     error_body: object = TOO_COMPLEX,
+    status_code: int = 400,
     model_name: str = 'compiler',
 ) -> FunctionModel:
     """A model that infers `infers`, answers with `error_body` in the `rejects` modes, and calls the output tool otherwise.
@@ -55,7 +56,7 @@ def schema_model(
         mode = info.model_request_parameters.output_mode
         modes.append(mode)
         if mode in rejects:
-            raise ModelHTTPError(400, model_name, body=error_body)
+            raise ModelHTTPError(status_code, model_name, body=error_body)
         [output_tool] = info.output_tools
         return ModelResponse(parts=[ToolCallPart(output_tool.name, {'answer': 1})])
 
@@ -104,14 +105,51 @@ async def test_explicit_native_output_is_left_alone():
     assert modes == ['native']
 
 
-async def test_other_rejections_are_raised():
+@pytest.mark.parametrize(
+    ('status_code', 'message'),
+    [(400, 'messages: field required'), (500, 'Schema is too complex.')],
+    ids=['other-400', 'not-a-400'],
+)
+async def test_other_errors_are_raised(status_code: int, message: str):
     modes: list[OutputMode] = []
-    body = {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'messages: field required'}}
-    agent = Agent(schema_model(modes, error_body=body), output_type=Survey, capabilities=[OutputModeFallback()])
+    body = {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': message}}
+    model = schema_model(modes, error_body=body, status_code=status_code)
+    agent = Agent(model, output_type=Survey, capabilities=[OutputModeFallback()])
 
-    with pytest.raises(ModelHTTPError, match='status_code: 400'):
+    with pytest.raises(ModelHTTPError, match=f'status_code: {status_code}'):
         await agent.run('Answer the survey.')
     assert modes == ['native']
+
+
+@FALLS_BACK_TO_TOOL_OUTPUT
+async def test_rejection_of_the_native_output_a_run_kept_is_attempted_in_tool_output():
+    """A later request keeps the mode the run's first request inferred, and Anthropic's compile can still time out."""
+    modes: list[OutputMode] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        mode = info.model_request_parameters.output_mode
+        modes.append(mode)
+        if len(modes) == 1:
+            return ModelResponse(parts=[ToolCallPart('look_up', {})])
+        if mode == 'native':
+            raise ModelHTTPError(400, 'compiler', body=TOO_COMPLEX)
+        return ModelResponse(parts=[ToolCallPart('final_result', {'answer': 1})])
+
+    model = FunctionModel(
+        respond,
+        model_name='compiler',
+        profile=ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native'),
+    )
+    agent = Agent(model, output_type=Survey, capabilities=[OutputModeFallback()])
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return 'found'
+
+    result = await agent.run('Answer the survey.')
+
+    assert result.output == Survey(answer=1)
+    assert modes == ['native', 'native', 'tool']
 
 
 async def test_rejection_in_inferred_tool_output_is_raised():
