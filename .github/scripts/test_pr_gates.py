@@ -136,9 +136,11 @@ class _Trigger(BaseModel):
 
 
 class _Step(BaseModel):
+    condition: str = Field(default='', alias='if')
     run: str = ''
     uses: str = ''
     settings: dict[str, str] = Field(default_factory=dict[str, str], alias='with')
+    env: dict[str, str] = Field(default_factory=dict[str, str])
 
 
 class _Job(BaseModel):
@@ -171,6 +173,10 @@ def test_the_workflow_runs_every_gate_on_every_pr_event_and_skips_only_the_merge
     assert workflow.jobs['compatibility-waiver'].condition == "github.event_name == 'pull_request'"
     publisher = workflow.jobs['review-statuses']
     assert publisher.permissions['statuses'] == 'write'
+    assert all(step.condition == "steps.pending.outputs.active == 'true'" for step in publisher.steps[1:])
+    for step in (publisher.steps[0], publisher.steps[-1]):
+        assert step.env['EXPECTED_HEAD_SHA'] == '${{ needs.review-target.outputs.head }}'
+        assert step.env['EXPECTED_HEAD_REPOSITORY_ID'] == '${{ needs.review-target.outputs.repository }}'
     assert all(context in publisher.steps[0].settings['script'] for context in pr_gates.REVIEW_CONTEXTS.values())
     checkout = next(step for step in publisher.steps if step.uses.startswith('actions/checkout@'))
     assert checkout.settings['ref'] == '${{ github.event.repository.default_branch }}'
@@ -202,8 +208,27 @@ def test_review_observer_is_read_only_and_schema_matches_the_trusted_publisher()
     assert json.loads(args[args.index('--json-schema') + 1]) == ReviewResult.model_json_schema()
 
 
-@pytest.mark.parametrize('missing_ref', [False, True])
-def test_observer_cannot_choose_the_status_target(missing_ref: bool):
+@pytest.mark.parametrize(
+    ('scenario', 'outcome'),
+    [
+        ('forged-title', 'active'),
+        ('empty-event-prs', 'active'),
+        ('producer', 'active'),
+        ('native', 'active'),
+        ('group', 'active'),
+        ('foreign-pr', 'error'),
+        ('wrong-sha', 'error'),
+        ('wrong-repository', 'error'),
+        ('ambiguous', 'error'),
+        ('closed-association', 'error'),
+        ('wrong-source', 'error'),
+        ('api-error', 'error'),
+        ('moved-while-queued', 'stale'),
+        ('repository-changed', 'stale'),
+        ('closed-while-queued', 'stale'),
+    ],
+)
+def test_observer_cannot_choose_the_status_target(scenario: str, outcome: str):
     workflow = _Workflow.model_validate(yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader))
     resolve = workflow.jobs['review-target'].steps[0].settings['script']
     pending = workflow.jobs['review-statuses'].steps[0].settings['script']
@@ -215,26 +240,70 @@ const outputs = {};
 const writes = [];
 const calls = [];
 const core = {setOutput: (name, value) => {outputs[name] = value;}};
+core.notice = () => {};
+const source = {number: 8, state: 'open', head: {sha: data.head, repo: {id: 888}}};
+const serverRun = {
+  name: 'PR Gates Events', event: 'pull_request_review',
+  path: '.github/workflows/pr-gates-events.yml',
+  repository: {full_name: 'pydantic/pydantic-ai'},
+  head_sha: data.head, head_branch: 'attacker-branch',
+  head_repository: {id: 888, owner: {login: 'attacker'}},
+  pull_requests: data.scenario === 'empty-event-prs' ? [] : [{number: 8}]
+};
+const associations = [structuredClone(source)];
+const live = structuredClone(source);
+if (data.scenario === 'foreign-pr') {
+  associations[0] = {number: 7, state: 'open', head: {sha: data.otherHead, repo: {id: 777}}};
+}
+if (data.scenario === 'wrong-sha') associations[0].head.sha = data.otherHead;
+if (data.scenario === 'wrong-repository') associations[0].head.repo.id = 777;
+if (data.scenario === 'closed-association') associations[0].state = 'closed';
+if (data.scenario === 'ambiguous') associations.push({...structuredClone(source), number: 9});
+if (data.scenario === 'moved-while-queued') live.head.sha = data.otherHead;
+if (data.scenario === 'repository-changed') live.head.repo.id = 777;
+if (data.scenario === 'closed-while-queued') live.state = 'closed';
+if (data.scenario === 'wrong-source') serverRun.event = 'workflow_dispatch';
+if (data.scenario === 'producer') {
+  serverRun.name = 'PR Bots'; serverRun.path = '.github/workflows/bots.yml';
+  serverRun.event = 'pull_request_target';
+}
 const context = {
   eventName: 'workflow_run', serverUrl: 'https://github.com', runId: 1,
   repo: {owner: 'pydantic', repo: 'pydantic-ai'},
   payload: {workflow_run: {
-    display_title: data.title, path: '.github/workflows/pr-gates-events.yml',
-    repository: {full_name: 'pydantic/pydantic-ai'}
-  }}
+    ...serverRun, id: 900, display_title: 'PR Gates Events #7 @ ' + data.otherHead,
+    pull_requests: [{number: 7}], head_sha: data.otherHead,
+    head_repository: {id: 777, owner: {login: 'victim'}}
+  }, pull_request: source, merge_group: {head_sha: data.head}}
 };
+if (data.scenario === 'native') context.eventName = 'pull_request_target';
+if (data.scenario === 'group') context.eventName = 'merge_group';
 const require = (name) => {
   if (name !== 'node:child_process') throw new Error('Unexpected dependency');
-  return {execFileSync: (command, args) => {calls.push([command, ...args]); return data.ref;}};
+  return {execFileSync: () => data.otherHead + '\\trefs/pull/7/head\\n'};
 };
-const github = {rest: {repos: {createCommitStatus: async (value) => {writes.push(value);}}}};
+const github = {
+  rest: {
+    actions: {getWorkflowRun: async args => {calls.push(['run', args]); return {data: serverRun};}},
+    pulls: {list: 'pull-list', get: async args => {calls.push(['live', args]); return {data: live};}},
+    repos: {createCommitStatus: async value => {writes.push(value);}}
+  },
+  paginate: async (method, args) => {
+    if (method !== 'pull-list') throw new Error('Unexpected API');
+    calls.push(['associations', args]);
+    if (data.scenario === 'api-error') throw new Error('GitHub unavailable');
+    return associations;
+  }
+};
 async function resolve() {
 """
         + resolve
         + """
 }
 async function pending() {
-  process.env.PR_NUMBER = String(outputs.number);
+  process.env.PR_NUMBER = String(outputs.number || '');
+  process.env.EXPECTED_HEAD_SHA = outputs.head || '';
+  process.env.EXPECTED_HEAD_REPOSITORY_ID = String(outputs.repository || '');
   process.env.MERGE_GROUP_SHA = outputs.group || '';
 """
         + pending
@@ -248,25 +317,46 @@ resolve().then(pending).then(() => {
 });
 """
     )
-    data: dict[str, str] = {
-        'title': f'PR Gates Events #7 @ {OLD_HEAD}',
-        'ref': '' if missing_ref else f'{HEAD}\trefs/pull/7/head\n',
-    }
+    data: dict[str, str] = {'scenario': scenario, 'head': OLD_HEAD, 'otherHead': HEAD}
     result = subprocess.run(
         ['node', '--input-type=module', '-e', harness, json.dumps(data)], capture_output=True, text=True
     )
     output = json.loads(result.stdout)
-    assert output['outputs'] == {'number': 7}
-    assert output['calls'] == [['git', 'ls-remote', 'https://github.com/pydantic/pydantic-ai.git', 'refs/pull/7/head']]
-    if missing_ref:
+    if outcome == 'error':
         assert result.returncode == 1
         assert output['writes'] == []
-        assert output['error'] == 'Cannot resolve a verified PR head'
+        assert output['outputs'] == {}
+        return
+    assert result.returncode == 0
+    if scenario == 'group':
+        assert output['outputs'] == {'group': OLD_HEAD, 'active': 'true'}
+        assert output['calls'] == []
     else:
-        assert result.returncode == 0
+        expected: dict[str, str | int] = {'number': 8, 'head': OLD_HEAD, 'repository': 888}
+        if outcome == 'active':
+            expected['active'] = 'true'
+        assert output['outputs'] == expected
+        if scenario != 'native':
+            assert output['calls'][:2] == [
+                ['run', {'owner': 'pydantic', 'repo': 'pydantic-ai', 'run_id': 900}],
+                [
+                    'associations',
+                    {
+                        'owner': 'pydantic',
+                        'repo': 'pydantic-ai',
+                        'state': 'open',
+                        'head': 'attacker:attacker-branch',
+                        'per_page': 100,
+                    },
+                ],
+            ]
+        assert output['calls'][-1] == ['live', {'owner': 'pydantic', 'repo': 'pydantic-ai', 'pull_number': 8}]
+    if outcome == 'active':
         assert [(write['sha'], write['context'], write['state']) for write in output['writes']] == [
-            (HEAD, context, 'pending') for context in pr_gates.REVIEW_CONTEXTS.values()
+            (OLD_HEAD, context, 'pending') for context in pr_gates.REVIEW_CONTEXTS.values()
         ]
+    else:
+        assert output['writes'] == []
 
 
 HEAD = 'a' * 40
@@ -306,6 +396,8 @@ class ReviewGitHub:
     permissions: dict[str, pr_gates.Permission] = field(default_factory=lambda: {'maintainer': 'write'})
     verified: bool = True
     head: str = HEAD
+    repository: int = 888
+    closed: bool = False
     statuses: list[tuple[str, pr_gates.ReviewGate, pr_gates.CommitStatus]] = field(
         default_factory=list[tuple[str, pr_gates.ReviewGate, pr_gates.CommitStatus]]
     )
@@ -313,8 +405,8 @@ class ReviewGitHub:
     def pull_request(self) -> pr_gates.ReviewPullRequest:
         return pr_gates.ReviewPullRequest.model_validate(
             {
-                'state': 'open',
-                'head': {'sha': self.head},
+                'state': 'closed' if self.closed else 'open',
+                'head': {'sha': self.head, 'repo': {'id': self.repository}},
                 'base': {'sha': OLD_HEAD},
                 'user': AUTHOR,
                 'changed_files': 1,
@@ -455,7 +547,14 @@ def test_human_approval_semantics(
     assert bool(verdicts(github)['human'].failures) is not passes
 
 
-ENV = {'HEAD_SHA': HEAD, 'GITHUB_SERVER_URL': 'https://github.com', 'GITHUB_REPOSITORY': 'o/r', 'GITHUB_RUN_ID': '100'}
+ENV = {
+    'HEAD_SHA': HEAD,
+    'EXPECTED_HEAD_SHA': HEAD,
+    'EXPECTED_HEAD_REPOSITORY_ID': '888',
+    'GITHUB_SERVER_URL': 'https://github.com',
+    'GITHUB_REPOSITORY': 'o/r',
+    'GITHUB_RUN_ID': '100',
+}
 
 
 def test_reevaluation_replaces_a_failure_with_success_on_the_live_head():
@@ -477,12 +576,29 @@ def test_errors_and_changing_snapshots_fail_closed():
 
     class Moving(ReviewGitHub):
         def pull_request(self) -> pr_gates.ReviewPullRequest:
-            self.head = OLD_HEAD if self.head == HEAD else HEAD
+            self.labels = ['size: M', 'chore'] if self.labels is None else None
             return super().pull_request()
 
     moving = Moving(current_reviews=[])
     assert pr_gates.reconcile_reviews(moving, ENV) == 1
     assert all(state == 'failure' for _, _, state in moving.statuses[-2:])
+
+
+@pytest.mark.parametrize('change', ['head', 'repository', 'closed'])
+def test_reevaluation_does_not_follow_an_observer_to_a_different_head(change: str):
+    class Superseded(ReviewGitHub):
+        def review_comments(self) -> list[pr_gates.ReviewComment]:
+            if change == 'head':
+                self.head = OLD_HEAD
+            elif change == 'repository':
+                self.repository = 777
+            else:
+                self.closed = True
+            return super().review_comments()
+
+    github = Superseded()
+    assert pr_gates.reconcile_reviews(github, ENV) == 0
+    assert github.statuses == [(HEAD, 'douwebot', 'pending'), (HEAD, 'human', 'pending')]
 
 
 def test_no_snapshot_cannot_write_to_an_unverified_environment_head():

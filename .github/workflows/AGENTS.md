@@ -215,11 +215,15 @@ dismissal in the ruleset to enforce human freshness when the diff changes.
 
 `pull_request_target` covers pushes, base edits, reopening, and label changes. Read-only
 `pr-gates-events.yml` observes review submissions, edits, dismissals and inline-comment changes,
-including forks. Its completion wakes a privileged `workflow_run`; its title supplies only a PR
-number, never a verdict. PR Bots completion also wakes the gate because `GITHUB_TOKEN` writes do
-not trigger review or label workflows. Fork observer runs may require contributor approval.
-Resolve that number through GitHub's canonical `refs/pull/<number>/head` before any status write.
-Ignore the SHA in an observer's title. A missing or unreadable canonical ref cannot target a status.
+including forks. Its completion wakes a privileged `workflow_run`. Fetch that run from GitHub;
+ignore run titles and artifacts. Resolve GitHub's open PR associations for the reported head
+repository and branch, requiring exactly one PR with the exact observed SHA and repository ID.
+Missing, ambiguous or unreadable associations cannot target a status. Fork runs can omit the
+event's `pull_requests` list; the server lookup supplies the association.
+PR Bots completion also wakes the gate because `GITHUB_TOKEN` writes do not trigger review or
+label workflows. Fork observer runs may require contributor approval.
+Recheck the open PR's SHA and repository inside the per-PR lock before pending statuses or setup.
+Keep that head identity pinned during evaluation; a stale event cannot write to the newer head.
 Rerun an existing default-branch `PR Gates` run to retry after an API failure or delayed observer.
 Do not add branch-selectable dispatch to this privileged workflow.
 

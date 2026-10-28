@@ -71,11 +71,19 @@ class ReviewUser(BaseModel):
     type: str
 
 
+class _Repository(BaseModel):
+    id: int = Field(gt=0)
+
+
+class _Head(_Commit):
+    repo: _Repository
+
+
 class ReviewPullRequest(BaseModel):
     """The live head, base, author, and labels that determine the review bar."""
 
     state: Literal['open', 'closed']
-    head: _Commit
+    head: _Head
     base: _Commit
     user: ReviewUser
     labels: list[_Label]
@@ -264,12 +272,15 @@ def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
         for gate in REVIEW_CONTEXTS:
             github.status(group, gate, 'success', 'Admission-only review gate; merge-group evaluation skipped.', url)
         return 0
+    expected_head = env['EXPECTED_HEAD_SHA']
+    expected_repository = int(env['EXPECTED_HEAD_REPOSITORY_ID'])
     head = ''
     verdicts: dict[ReviewGate, Verdict]
     try:
         for _ in range(3):
             pull = github.pull_request()
-            if pull.state != 'open':
+            if pull.state != 'open' or pull.head.sha != expected_head or pull.head.repo.id != expected_repository:
+                print('Observed PR head is no longer open/current; no new statuses written.')
                 return 0
             head = pull.head.sha
             for gate in REVIEW_CONTEXTS:
