@@ -212,7 +212,7 @@ def test_custom_removal_command_uses_safe_argv_and_repo_cwd(
     removal_command.action = remove
     token = 'literal; $(not-a-shell)'
     commands = {str(repo / '.git'): ['remove', '{path}', '{repo}', '{branch}', token]}
-    offer_worktree_cleanup(worktree=launched, remove_commands=commands)
+    offer_worktree_cleanup(worktree=launched, read_remove_commands=lambda: commands)
     assert removal_command.calls == [
         (['remove', str(launched.path), str(repo), branch, token], repo, terminal_stderr())
     ]
@@ -239,7 +239,7 @@ def test_custom_removal_from_bare_repository(
         path.rename(path.with_name('removed'))
 
     removal_command.action = remove
-    offer_worktree_cleanup(worktree=worktree, remove_commands={str(bare): ['remove', '{repo}']})
+    offer_worktree_cleanup(worktree=worktree, read_remove_commands=lambda: {str(bare): ['remove', '{repo}']})
     assert removal_command.calls == [(['remove', str(bare)], bare, terminal_stderr())]
     assert Path.cwd() == bare
 
@@ -251,7 +251,7 @@ def test_custom_removal_command_decline_keeps_checkout(
         return ''
 
     monkeypatch.setattr('builtins.input', decline)
-    offer_worktree_cleanup(worktree=launched, remove_commands={str(repo / '.git'): ['remove', '{path}']})
+    offer_worktree_cleanup(worktree=launched, read_remove_commands=lambda: {str(repo / '.git'): ['remove', '{path}']})
     assert launched.path.exists()
     assert not removal_command.calls
 
@@ -276,7 +276,7 @@ def test_custom_removal_failure_does_not_fall_back(
         raise subprocess.CalledProcessError(2, ['remove'])
 
     removal_command.action = fail
-    offer_worktree_cleanup(worktree=launched, remove_commands={str(repo / '.git'): ['remove']})
+    offer_worktree_cleanup(worktree=launched, read_remove_commands=lambda: {str(repo / '.git'): ['remove']})
     assert len(removal_command.calls) == 1
     assert launched.path.exists() == (outcome != 'partial')
     assert Path.cwd() == (repo if outcome == 'partial' else launched.path)
@@ -297,7 +297,7 @@ def test_custom_command_preparation_failure(
 
     monkeypatch.setattr(worktrees, '_git', fail)
     monkeypatch.setattr('builtins.input', no_prompt)
-    offer_worktree_cleanup(worktree=launched, remove_commands={str(repo / '.git'): ['remove']})
+    offer_worktree_cleanup(worktree=launched, read_remove_commands=lambda: {str(repo / '.git'): ['remove']})
     assert launched.path.exists()
     assert 'Cannot prepare worktree removal command' in capsys.readouterr().err
 
@@ -307,7 +307,7 @@ def test_custom_command_not_offered_without_tty(
 ) -> None:
     monkeypatch.setattr('sys.stdin.isatty', lambda: False)
     monkeypatch.setattr('builtins.input', no_prompt)
-    offer_worktree_cleanup(worktree=launched, remove_commands={str(repo / '.git'): ['custom']})
+    offer_worktree_cleanup(worktree=launched, read_remove_commands=lambda: {str(repo / '.git'): ['custom']})
     assert launched.path.exists()
     assert not removal_command.calls
 
@@ -320,7 +320,7 @@ def test_mismatched_repository_uses_git_removal(
         return 'yes'
 
     monkeypatch.setattr('builtins.input', confirm)
-    offer_worktree_cleanup(worktree=launched, remove_commands={str(repo / 'other.git'): ['custom']})
+    offer_worktree_cleanup(worktree=launched, read_remove_commands=lambda: {str(repo / 'other.git'): ['custom']})
     assert not launched.path.exists()
     assert git(repo, 'branch', '--list', 'feature')
     assert not removal_command.calls
@@ -330,7 +330,7 @@ def test_unmodified_worktree_ignores_custom_command(
     created: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, removal_command: RemovalCommand
 ) -> None:
     monkeypatch.setattr('builtins.input', no_prompt)
-    offer_worktree_cleanup(worktree=created, remove_commands={str(repo / '.git'): ['custom']})
+    offer_worktree_cleanup(worktree=created, read_remove_commands=lambda: {str(repo / '.git'): ['custom']})
     assert not created.path.exists()
     assert not removal_command.calls
 
@@ -357,7 +357,7 @@ def test_removal_configuration_is_read_only_for_changed_interactive_checkouts(
         (created.path / 'tracked.txt').write_text('changed')
     elif case == 'piped':
         monkeypatch.setattr('sys.stdin.isatty', lambda: False)
-    offer_worktree_cleanup(worktree=created, remove_commands=commands)
+    offer_worktree_cleanup(worktree=created, read_remove_commands=commands)
     assert bool(reads) == (case == 'changed')
     assert bool(removal_command.calls) == (case == 'changed')
     assert created.path.exists() == (case == 'piped')

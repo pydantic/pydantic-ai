@@ -11,8 +11,6 @@ from uuid import uuid4
 
 from pydantic_clai2.ui.stderr_relay import terminal_stderr
 
-_RemoveCommands = Mapping[str, Sequence[str]] | Callable[[], Mapping[str, Sequence[str]]] | None
-
 
 @dataclass(frozen=True, kw_only=True)
 class Worktree:
@@ -195,13 +193,15 @@ def current_worktree() -> Worktree | None:
     return Worktree(path=Path(root).resolve(), branch=branch, head=head, created=False)
 
 
-def offer_worktree_cleanup(*, worktree: Worktree | None, remove_commands: _RemoveCommands = None) -> None:
+def offer_worktree_cleanup(
+    *, worktree: Worktree | None, read_remove_commands: Callable[[], Mapping[str, Sequence[str]]] | None = None
+) -> None:
     """After interactive shutdown, remove an unchanged checkout marked `remove_if_unchanged`, or offer to remove a changed one.
 
     Uncommitted or untracked files, or a commit other than the one at launch, count as changes. Other
     unchanged checkouts are kept without asking. By default, a confirmed removal keeps the branch and
     dirty files. A registered command owns explicitly confirmed removal for its repository only.
-    A callable `remove_commands` reads configuration only when a changed checkout needs a prompt.
+    `read_remove_commands` reads configuration only when a changed checkout needs a prompt.
     """
     if worktree is None or not sys.stdin.isatty():
         return
@@ -216,12 +216,13 @@ def offer_worktree_cleanup(*, worktree: Worktree | None, remove_commands: _Remov
         if worktree.remove_if_unchanged:
             _remove(worktree, unchanged=True)
         return
-    if callable(remove_commands):
-        try:
-            remove_commands = remove_commands()
-        except (OSError, ValueError) as exc:
-            print(f'Worktree kept at {root}: cannot read removal commands: {exc}', file=sys.stderr)
-            return
+    try:
+        remove_commands: Mapping[str, Sequence[str]] = (
+            read_remove_commands() if read_remove_commands is not None else {}
+        )
+    except (OSError, ValueError) as exc:
+        print(f'Worktree kept at {root}: cannot read removal commands: {exc}', file=sys.stderr)
+        return
     custom: tuple[Path, list[str]] | None = None
     if remove_commands:
         try:
