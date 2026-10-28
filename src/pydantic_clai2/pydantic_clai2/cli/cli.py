@@ -206,7 +206,7 @@ def run(*, splash: Splash | None = None) -> None:
                     settings_for=settings_for,
                 )
             )
-            offer_worktree_cleanup(worktree=launched, remove_commands=store.load().worktree_remove_commands)
+            offer_worktree_cleanup(worktree=launched, remove_commands=store.worktree_remove_commands)
     except Relaunch as relaunch:
         # Replace this process with the new build; the working directory, a worktree included, carries over.
         argv = relaunch_argv(

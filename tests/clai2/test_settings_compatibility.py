@@ -1261,6 +1261,19 @@ def test_worktree_commands_roundtrip_and_older_reader(tmp_path: Path, monkeypatc
     assert SettingsStore(path).load().worktree_remove_commands == command_map
 
 
+def test_exit_removal_commands_ignore_unrelated_invalid_json(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    commands: dict[str, JsonValue] = {str(tmp_path.resolve()): ['remove', '{path}']}
+    store.set('worktrees.remove_commands', commands)
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('display.theme', 'not JSON from another build'))
+    assert store.worktree_remove_commands() == commands
+    with closing(sqlite3.connect(store.path)) as connection:
+        assert connection.execute('SELECT value_json FROM settings WHERE key = ?', ('display.theme',)).fetchone() == (
+            'not JSON from another build',
+        )
+
+
 def test_invalid_worktree_command_write_preserves_saved_map(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     key = str((tmp_path / 'repo').resolve())

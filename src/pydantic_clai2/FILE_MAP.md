@@ -100,7 +100,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `config/__init__.py` | `Settings`, `PluginSettings` |
 | `config/builtins.py` | `DEFAULT_PLUGINS` and `STOCK_PLUGINS`, the shipped plugin declarations |
 | `config/theme_names.py` | theme choices shared by settings validation and the picker |
-| `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/`, including saved models and removal of their overrides; `state_dir()`, `$XDG_STATE_HOME/pydantic-clai2/`, for state that is not a preference (`aoe`, `workspaces`) |
+| `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/`, including saved models, removal of their overrides, and an isolated read of removal commands on exit; `state_dir()`, `$XDG_STATE_HOME/pydantic-clai2/`, for state that is not a preference (`aoe`, `workspaces`) |
 | `config/features.py` | `SUPPORTED_FEATURES`, the feature names this build implements, and `CAPABILITY_REQUIREMENTS` for capability classes |
 | `config/plugin_requirements.py` | pure rules for requirement tags: parse stored rows, drop unsupported settings, merge tags on save, the notice |
 | `runtime/capability_guard.py` | `PluginGuard`: a plugin capability's run setup `UserError` becomes `CapabilitySetupError`; that turn fails, later turns leave the capability out |

@@ -2510,7 +2510,8 @@ ships with CLAI.
 CLAI warns that the command may delete the branch and uncommitted files before
 asking for confirmation. The command inherits stdin, stdout, stderr, and the
 terminal, has no timeout, and can be interrupted with Ctrl-C. A command failure
-does not fall back to Git. `.clai/settings.json` cannot set
+does not fall back to Git. If its saved configuration cannot be read or validated
+on exit, CLAI keeps the checkout and reports the error. `.clai/settings.json` cannot set
 `worktree_remove_commands`; CLAI refuses to start if it does. Automatic removal
 of unchanged worktrees and forced `remove_worktree` or `workspaces` destruction
 continue to use Git.

@@ -1,8 +1,10 @@
 """Worktree shutdown removes an unchanged checkout CLAI created, and keeps changed work unless removal is confirmed."""
 
 import os
+import sqlite3
 import subprocess
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -333,6 +335,34 @@ def test_unmodified_worktree_ignores_custom_command(
     assert not removal_command.calls
 
 
+@pytest.mark.parametrize('case', ['changed', 'unchanged', 'piped'])
+def test_removal_configuration_is_read_only_for_changed_interactive_checkouts(
+    created: Worktree,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    removal_command: RemovalCommand,
+    case: str,
+) -> None:
+    reads: list[bool] = []
+
+    def commands() -> dict[str, list[str]]:
+        reads.append(True)
+        return {str(repo / '.git'): ['remove']}
+
+    def remove() -> None:
+        created.path.rename(created.path.with_name('removed'))
+
+    removal_command.action = remove
+    if case == 'changed':
+        (created.path / 'tracked.txt').write_text('changed')
+    elif case == 'piped':
+        monkeypatch.setattr('sys.stdin.isatty', lambda: False)
+    offer_worktree_cleanup(worktree=created, remove_commands=commands)
+    assert bool(reads) == (case == 'changed')
+    assert bool(removal_command.calls) == (case == 'changed')
+    assert created.path.exists() == (case == 'piped')
+
+
 def test_forced_removal_ignores_registered_command(
     launched: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, removal_command: RemovalCommand
 ) -> None:
@@ -410,6 +440,54 @@ def test_cli_uses_custom_command_saved_during_session(repo: Path, monkeypatch: p
     prompts = run_cli(monkeypatch, '-w', 'task', repo=repo, session=save_command, answer='yes')
     assert len(prompts) == 1
     assert commands == [['remove', str(repo / '.worktrees/task')]]
+
+
+@pytest.mark.parametrize('linked', [False, True])
+def test_exit_ignores_unrelated_settings_changed_by_another_build(
+    repo: Path, checkout: Path, monkeypatch: pytest.MonkeyPatch, linked: bool
+) -> None:
+    monkeypatch.chdir(checkout if linked else repo)
+    reads: list[SettingsStore] = []
+    original = SettingsStore.worktree_remove_commands
+
+    def read(store: SettingsStore) -> dict[str, list[str]]:
+        reads.append(store)
+        return original(store)
+
+    monkeypatch.setattr(SettingsStore, 'worktree_remove_commands', read)
+
+    def newer_setting() -> None:
+        with closing(sqlite3.connect(repo.parent / 'config.db')) as connection, connection:
+            connection.execute('INSERT INTO settings VALUES (?, ?)', ('display.tool_calls', '"newer-format"'))
+        git(Path.cwd(), 'commit', '--allow-empty', '-m', 'Work')
+
+    assert len(run_cli(monkeypatch, repo=repo, session=newer_setting)) == linked
+    assert len(reads) == linked
+    assert checkout.exists()
+
+
+@pytest.mark.parametrize('failure', ['invalid-setting', 'database'])
+def test_exit_keeps_worktree_when_removal_setting_cannot_be_read(
+    repo: Path,
+    checkout: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: str,
+) -> None:
+    def break_setting() -> None:
+        if failure == 'invalid-setting':
+            with closing(sqlite3.connect(repo.parent / 'config.db')) as connection, connection:
+                connection.execute(
+                    'INSERT INTO settings VALUES (?, ?)', ('worktrees.remove_commands', '{"relative": ["remove"]}')
+                )
+        else:
+            with closing(sqlite3.connect(repo.parent / 'config.db')) as connection, connection:
+                connection.execute('DROP TABLE settings')
+        git(checkout, 'commit', '--allow-empty', '-m', 'Work')
+
+    assert run_cli(monkeypatch, repo=repo, session=break_setting) == []
+    assert checkout.exists()
+    assert 'cannot read removal commands' in capsys.readouterr().err
 
 
 def test_unchanged_hand_made_checkout_is_kept_silently(
