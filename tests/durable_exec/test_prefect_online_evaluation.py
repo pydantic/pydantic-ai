@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterator
 
+import logfire
 import pytest
-from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UsageLimitExceeded
@@ -20,9 +20,10 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
 
 try:
-    from pydantic_evals.evaluators import Evaluator, EvaluatorContext
-    from pydantic_evals.online import OnlineEvaluator, SamplingContext, wait_for_evaluations
+    from pydantic_evals.online import OnlineEvaluator, wait_for_evaluations
     from pydantic_evals.online_capability import OnlineEvaluation
+
+    from .online_evaluation_helpers import Answer, RecordRun, evaluated, failing_sample_rate, seen
 except ImportError:  # pragma: lax no cover
     pytest.skip('pydantic_evals not installed', allow_module_level=True)
 
@@ -36,20 +37,21 @@ def blockbuster_excluded_modules() -> tuple[str, ...]:
     return ('pydantic_ai.durable_exec.prefect',)
 
 
-class Answer(BaseModel):
-    text: str
+@pytest.fixture(autouse=True)
+def setup_logfire_instrumentation() -> Iterator[None]:
+    # Recording the evaluators' span tree needs a configured tracer provider. Prefect sets the
+    # `traceparent` header, so distributed tracing is enabled explicitly to avoid the warning.
+    logfire.configure(metrics=False, distributed_tracing=False)
+    yield
 
 
-async def test_prefect_online_evaluation_sees_live_output() -> None:
-    """Prefect tasks run in the flow's process, so the dispatch task hands evaluators the live output, once."""
-    evaluated: list[tuple[str | None, object]] = []
+@pytest.fixture(autouse=True)
+def clear_evaluated() -> None:
+    evaluated.clear()
 
-    @dataclass
-    class RecordRun(Evaluator):
-        def evaluate(self, ctx: EvaluatorContext) -> bool:
-            evaluated.append((ctx.name, ctx.output))
-            return True
 
+async def test_prefect_online_evaluation_sees_live_values() -> None:
+    """Prefect tasks run in the flow's process, so the dispatch task hands evaluators the live output and span tree, once."""
     agent = Agent(
         TestModel(),
         name='prefect_online_evaluation_agent',
@@ -63,17 +65,10 @@ async def test_prefect_online_evaluation_sees_live_output() -> None:
 
     run_id = await run_flow()
     await wait_for_evaluations()
-    assert evaluated == [(run_id, Answer(text='a'))]
-
-
-def _failing_sample_rate(ctx: SamplingContext) -> bool:
-    raise RuntimeError('sampling failed')
-
-
-@dataclass
-class NeverRun(Evaluator):
-    def evaluate(self, ctx: EvaluatorContext) -> bool:
-        raise AssertionError('not sampled')  # pragma: no cover
+    assert seen() == [('record', run_id, Answer(text='a'))]
+    [(_, context)] = evaluated
+    # The model request ran as a Prefect task inside the run, so the span tree shows it.
+    assert context.span_tree.any({'name_contains': 'Model Request'})
 
 
 async def test_prefect_online_evaluation_dispatch_failure() -> None:
@@ -86,7 +81,7 @@ async def test_prefect_online_evaluation_dispatch_failure() -> None:
             OnlineEvaluation(
                 id='online_evaluation',
                 evaluators=[
-                    OnlineEvaluator(evaluator=NeverRun(), sample_rate=_failing_sample_rate, run_on_errors=True)
+                    OnlineEvaluator(evaluator=RecordRun(), sample_rate=failing_sample_rate, run_on_errors=True)
                 ],
             ),
         ],
@@ -107,3 +102,4 @@ async def test_prefect_online_evaluation_dispatch_failure() -> None:
         await failed_run_flow()
     with pytest.raises(RuntimeError, match='sampling failed'):
         await completed_run_flow()
+    assert evaluated == []
