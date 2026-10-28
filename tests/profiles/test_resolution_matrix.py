@@ -1853,6 +1853,7 @@ def test_azure_openai_gpt_5():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'supports_cache': False,
             'openai_chat_supports_document_input': False,
         }
     )
