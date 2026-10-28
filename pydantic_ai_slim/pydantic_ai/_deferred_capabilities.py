@@ -13,7 +13,7 @@ from typing_extensions import TypedDict
 from .messages import (
     _TYPED_PART_TAGS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS_BY_TYPE,  # pyright: ignore[reportPrivateUsage]
-    ToolAvailabilityDeltaPart,
+    CapabilityAvailabilityDeltaPart,
     ToolCallPart,
     ToolKind,
     ToolReturnPart,
@@ -162,17 +162,14 @@ def _parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
 class LoadExchanges:
     """The one rule for which capabilities a part of history loads.
 
-    A capability is loaded by a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]
-    naming it in `capabilities_added`, which both a successful `load_capability` call and
-    [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability] record, or by a `load_capability`
-    return completing its call, which is all histories from earlier versions have. A return loads the capability
-    its call named, when the call was seen first and its arguments parsed. A failed load is a plain
-    `ToolReturnPart`, so it loads nothing.
+    A capability is loaded by a `load_capability` return completing its call, the model's load, or by a
+    [`CapabilityAvailabilityDeltaPart`][pydantic_ai.messages.CapabilityAvailabilityDeltaPart] naming it, which
+    [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability] records without a call. A return
+    loads the capability its call named, when the call was seen first and its arguments parsed. A failed load is a
+    plain `ToolReturnPart`, so it loads nothing.
     """
 
     _calls: dict[str, str] = field(default_factory=dict[str, str])
-    _returned: dict[str, str] = field(default_factory=dict[str, str])
-    """The capability each `load_capability` return seen so far loaded, by its tool call id."""
 
     def observe(self, part: ModelRequestPart | ModelResponsePart) -> str | None:
         """Fold in `part`, returning the capability it loads if it's a `load_capability` return completing a load.
@@ -183,21 +180,11 @@ class LoadExchanges:
             if part.capability_id is not None:
                 self._calls[part.tool_call_id] = part.capability_id
         elif isinstance(part, LoadCapabilityReturnPart):
-            if (capability_id := self._calls.get(part.tool_call_id)) is not None:
-                self._returned[part.tool_call_id] = capability_id
-            return capability_id
+            return self._calls.get(part.tool_call_id)
         return None
 
     def loads(self, part: ModelRequestPart | ModelResponsePart) -> list[str]:
-        """Fold in `part`, returning the capabilities it loads, in order.
-
-        A model's load records the capability twice, in its return and in the `ToolAvailabilityDeltaPart` after
-        it, and counts once, at its return.
-        """
-        if isinstance(part, ToolAvailabilityDeltaPart):
-            return [
-                capability_id
-                for capability_id in dict.fromkeys(part.capabilities_added)
-                if part.tool_call_id is None or self._returned.get(part.tool_call_id) != capability_id
-            ]
+        """Fold in `part`, returning the capabilities it loads, in order."""
+        if isinstance(part, CapabilityAvailabilityDeltaPart):
+            return list(part.capabilities_added)
         return [capability_id] if (capability_id := self.observe(part)) is not None else []

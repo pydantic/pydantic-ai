@@ -15,6 +15,7 @@ from ._utils import fill_run_metadata
 from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
+    CapabilityAvailabilityDeltaPart,
     CompactionPart,
     EnqueuedMessagesEvent,
     InstructionBaselinePart,
@@ -118,6 +119,7 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
                 RetryFeedbackPart,
                 ToolSearchReturnPart,
                 ToolAvailabilityDeltaPart,
+                CapabilityAvailabilityDeltaPart,
                 ModelSettingsDeltaPart,
                 InstructionDeltaPart,
                 InstructionBaselinePart,
@@ -198,17 +200,21 @@ class PendingMessage:
         return cls(messages=messages, priority=priority, _tool_call=_tool_call)
 
 
+CapabilityLoadRecord: TypeAlias = CapabilityAvailabilityDeltaPart | ToolAvailabilityDeltaPart
+"""A part recording a capability load from code: the load itself, or the reveal of the capability's tools."""
+
+
 class PendingMessageQueue(list[PendingMessage]):
     """A run's pending messages with thread-safe append and drain operations."""
 
     def __init__(
-        self, messages: Iterable[PendingMessage] = (), capability_loads: Iterable[ToolAvailabilityDeltaPart] = ()
+        self, messages: Iterable[PendingMessage] = (), capability_loads: Iterable[CapabilityLoadRecord] = ()
     ) -> None:
         super().__init__(messages)
         # Kept apart from the list items: a capability load rides along with the next model request
         # but must never make the run continue, and code that checks whether messages are pending
         # (e.g. to decide whether the run will continue) must not see it.
-        self._capability_loads: list[ToolAvailabilityDeltaPart] = list(capability_loads)
+        self._capability_loads: list[CapabilityLoadRecord] = list(capability_loads)
         self._closed = False
         self._lock = threading.Lock()
         # The request tool-call content was last put into, as `(request it replaced first, current copy)`, and
@@ -219,7 +225,7 @@ class PendingMessageQueue(list[PendingMessage]):
 
     def __reduce_ex__(
         self, protocol: SupportsIndex
-    ) -> tuple[type[PendingMessageQueue], tuple[list[PendingMessage], list[ToolAvailabilityDeltaPart]]]:
+    ) -> tuple[type[PendingMessageQueue], tuple[list[PendingMessage], list[CapabilityLoadRecord]]]:
         return PendingMessageQueue, (list(self), list(self._capability_loads))
 
     def append(self, pending: PendingMessage) -> None:
@@ -233,18 +239,19 @@ class PendingMessageQueue(list[PendingMessage]):
             return self._pop_priority(priority)
 
     @property
-    def capability_loads(self) -> tuple[ToolAvailabilityDeltaPart, ...]:
+    def capability_loads(self) -> tuple[CapabilityLoadRecord, ...]:
         """The records of the capability loads `RunContext.load_capability` queued that haven't been delivered yet."""
         with self._lock:
             return tuple(self._capability_loads)
 
-    def append_capability_load(self, record: ToolAvailabilityDeltaPart) -> None:
+    def append_capability_load(self, records: Sequence[CapabilityLoadRecord]) -> None:
+        """Queue the records of one capability load, delivered together with the next model request."""
         with self._lock:
             if self._closed:
                 raise UserError('`load_capability` is not available because the agent run has ended.')
-            self._capability_loads.append(record)
+            self._capability_loads.extend(records)
 
-    def pop_capability_loads(self) -> list[ToolAvailabilityDeltaPart]:
+    def pop_capability_loads(self) -> list[CapabilityLoadRecord]:
         with self._lock:
             loads, self._capability_loads = self._capability_loads, []
             return loads

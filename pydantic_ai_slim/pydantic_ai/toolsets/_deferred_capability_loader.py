@@ -11,11 +11,12 @@ from pydantic_ai._deferred_capabilities import (
     LoadCapabilityCallPart,
     LoadCapabilityReturn,
 )
-from pydantic_ai._enqueue import PendingMessageQueue
+from pydantic_ai._enqueue import CapabilityLoadRecord, PendingMessageQueue
 from pydantic_ai._instructions import resolve_sourced_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
+    CapabilityAvailabilityDeltaPart,
     CapabilityInstructionSource,
     InstructionId,
     InstructionPart,
@@ -153,7 +154,7 @@ async def resolve_loaded_capability_instructions(
     return [replace(part, id=InstructionId(source, name=part.name)) for part in parts]
 
 
-async def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:
+def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:
     """Load a deferred capability from code; see [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability]."""
     # Only while a tool call is handled, where the run normally continues with another model request
     # that the load can ride along with. After a model response with no tool calls, it would have to force
@@ -201,17 +202,18 @@ async def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx:
         # Inactive without being deferred itself, so it sits inside a deferred capability that isn't loaded yet.
         raise UserError(_part_of_unloaded_group_message(ctx, capability_id))
 
-    # Recorded without a `load_capability` call, which the request may have no tool for: the same
-    # `ToolAvailabilityDeltaPart` a model's load leaves after its return, naming the capability and revealing
-    # its tools. The next request then states the capability's instructions, as after a model's load.
-    record = ToolAvailabilityDeltaPart(
-        tools_added=_capability_tool_names(ctx, capability_id),
-        capabilities_added=[capability_id],
-        tool_call_id=ctx.tool_call_id,
-    )
+    # Recorded without a `load_capability` call, which the request may have no tool for: a
+    # `CapabilityAvailabilityDeltaPart` naming the capability, then the same `ToolAvailabilityDeltaPart` a
+    # model's load leaves after its return, revealing its tools. The next request then states the
+    # capability's instructions, as after a model's load.
+    records: list[CapabilityLoadRecord] = [
+        CapabilityAvailabilityDeltaPart(capabilities_added=[capability_id], tool_call_id=ctx.tool_call_id)
+    ]
+    if tools := _capability_tool_names(ctx, capability_id):
+        records.append(ToolAvailabilityDeltaPart(tools_added=tools, tool_call_id=ctx.tool_call_id))
     # Delivered with the next model request; if this step ends the run instead (a tool call needs
     # approval or is deferred, or output is produced), the load is dropped rather than forcing one.
-    pending_messages.append_capability_load(record)
+    pending_messages.append_capability_load(records)
     return True
 
 
@@ -234,7 +236,8 @@ def _part_of_unloaded_group_message(ctx: RunContext[Any], capability_id: str) ->
 def _is_active_or_loading(ctx: RunContext[Any], queue: PendingMessageQueue, capability_id: str) -> bool:
     """Whether `capability_id` is active, or a load of it is queued or among the model's calls being executed."""
     if capability_id in ctx.active_capability_ids or any(
-        capability_id in record.capabilities_added for record in queue.capability_loads
+        isinstance(record, CapabilityAvailabilityDeltaPart) and capability_id in record.capabilities_added
+        for record in queue.capability_loads
     ):
         return True
     return bool(_executing_load_calls(ctx, capability_id))

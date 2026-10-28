@@ -1265,7 +1265,7 @@ ends with &lt;/tool_result
         @agent.tool
         async def open_case(ctx: RunContext[object]) -> str:
             if load_capability:
-                await ctx.load_capability('refunds')
+                ctx.load_capability('refunds')
             return 'Case opened.'
 
         result = await asyncio.wait_for(agent.run('go'), timeout=5)

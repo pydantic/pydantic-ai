@@ -1024,19 +1024,19 @@ class RunContext(Generic[RunContextAgentDepsT]):
         self.pending_messages.append(pending)
         return pending.enqueue_id
 
-    async def load_capability(self, capability: str | AbstractCapability[RunContextAgentDepsT]) -> bool:
+    def load_capability(self, capability: str | AbstractCapability[RunContextAgentDepsT]) -> bool:
         """Load an [on-demand capability](../capabilities/on-demand.md#loading-from-code) from a tool or tool hook.
 
         The load is recorded in message history as a
-        [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] naming the capability in
-        `capabilities_added` and its tools in `tools_added`, the record a successful `load_capability` call
-        leaves after its return, without a call, so it works whether or not the request has a `load_capability`
-        tool. It takes effect from the next model request: the capability's instructions are stated then and
-        its tools become available. Because it lives in history, the load survives
+        [`CapabilityAvailabilityDeltaPart`][pydantic_ai.messages.CapabilityAvailabilityDeltaPart] naming the
+        capability, followed by a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]
+        revealing its tools if it has any, without a `load_capability` call, so it works whether or not the
+        request has a `load_capability` tool. It takes effect from the next model request: the capability's
+        instructions are stated then and its tools become available. Because it lives in history, the load survives
         [resuming the conversation](../capabilities/on-demand.md#resumable-across-runs).
 
-        Call it while a tool call is being handled: from a tool function, or from a tool hook such as
-        `after_tool_execute`. The load rides along with the run's next model request and never causes one:
+        Call it while a tool call is being handled: from a tool function, sync or async, or from a tool hook such
+        as `after_tool_execute`. The load rides along with the run's next model request and never causes one:
         if the run ends at this step instead (because a tool call needs approval or is deferred, or the
         run produces its output), the load is discarded, and resuming the run doesn't run that tool again.
         Durable execution engines run some tools in an
@@ -1061,7 +1061,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # Imported here: the loader module imports `RunContext`.
         from .toolsets._deferred_capability_loader import load_capability
 
-        return await load_capability(capability, self)
+        return load_capability(capability, self)
 
     def cancel(self) -> None:
         """Cancel the agent run this context belongs to.

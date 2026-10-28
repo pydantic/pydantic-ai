@@ -1654,8 +1654,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         repr=False, init=False, default=None
     )
     _did_stream: bool = field(repr=False, init=False, default=False)
-    _capability_load_records: list[_messages.ToolAvailabilityDeltaPart] = field(
-        repr=False, init=False, default_factory=list[_messages.ToolAvailabilityDeltaPart]
+    _capability_load_records: list[_enqueue.CapabilityLoadRecord] = field(
+        repr=False, init=False, default_factory=list[_enqueue.CapabilityLoadRecord]
     )
     """The records of the capability loads `RunContext.load_capability` queued, delivered on `request`."""
     last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
@@ -2560,7 +2560,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     def _emit_capability_load_records(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> None:
-        """Emit the records of the capability loads delivered on `request` as `ToolAvailabilityDeltaEvent`s, once.
+        """Emit the records of the capability loads delivered on `request` as events, once.
+
+        A `CapabilityAvailabilityDeltaEvent` for each load, and a `ToolAvailabilityDeltaEvent` for the reveal of
+        its tools.
 
         Emitted after the `before_model_request` hooks, like the deltas the request records itself, so content a hook
         delivers next to a tool's return, ahead of these records in history, comes first in the event stream too. A
@@ -2568,7 +2571,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         handler, emits them as it finishes, since the records are in history either way.
         """
         records, self._capability_load_records = self._capability_load_records, []
-        ctx.state.event_stream_buffer.extend(_messages.ToolAvailabilityDeltaEvent(part=part) for part in records)
+        ctx.state.event_stream_buffer.extend(
+            _messages.CapabilityAvailabilityDeltaEvent(part=part)
+            if isinstance(part, _messages.CapabilityAvailabilityDeltaPart)
+            else _messages.ToolAvailabilityDeltaEvent(part=part)
+            for part in records
+        )
 
     async def _finish_handling_pending(
         self,
@@ -3404,16 +3412,17 @@ def run_cancelled_snapshot(
 
 def _deliver_capability_loads(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]], request: _messages.ModelRequest
-) -> list[_messages.ToolAvailabilityDeltaPart]:
+) -> list[_enqueue.CapabilityLoadRecord]:
     """Record the capability loads `RunContext.load_capability` queued on `request`, the request being prepared.
 
-    Each is the `ToolAvailabilityDeltaPart` naming the capability in `capabilities_added`, the record a
-    model's `load_capability` call leaves after its return, without a call: the request may have no
-    `load_capability` tool to call. Recorded before `_refresh_loaded_capability_ids`, so the request sees the
-    loaded capability in full: its tools, instructions, model settings, native tools, and hooks.
+    Each is a `CapabilityAvailabilityDeltaPart` naming the capability, followed by a `ToolAvailabilityDeltaPart`
+    revealing its tools if it has any, the reveal a model's `load_capability` call leaves after its return.
+    There's no call: the request may have no `load_capability` tool to call. Recorded before
+    `_refresh_loaded_capability_ids`, so the request sees the loaded capability in full: its tools,
+    instructions, model settings, native tools, and hooks.
 
-    Returns the records, which the request emits as `ToolAvailabilityDeltaEvent`s once its hooks have run,
-    so a UI that rebuilds history from the event stream keeps them.
+    Returns the records, which the request emits as events once its hooks have run, so a UI that rebuilds
+    history from the event stream keeps them.
     """
     queue = ctx.state.pending_messages
     assert isinstance(queue, _enqueue.PendingMessageQueue)

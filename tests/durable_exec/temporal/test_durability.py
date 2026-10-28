@@ -4923,7 +4923,7 @@ async def _load_billing_after_open_case(
     ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
 ) -> Any:
     if tool_def.name == 'open_case':
-        await ctx.load_capability('code-load-billing')
+        ctx.load_capability('code-load-billing')
     return result
 
 
@@ -4976,7 +4976,7 @@ _code_load_tool_agent = Agent(
 
 @_code_load_tool_agent.tool(name='open_case')
 async def _code_load_open_case_and_load(ctx: RunContext[None]) -> str:
-    await ctx.load_capability('code-load-billing')
+    ctx.load_capability('code-load-billing')
     return 'Case opened.'  # pragma: no cover
 
 

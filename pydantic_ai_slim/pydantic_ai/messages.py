@@ -3238,9 +3238,6 @@ def _prefix_rank(part: InstructionPart) -> int:
 class ToolAvailabilityDeltaPart:
     """Records that the set of tools available to the model changed at this point.
 
-    That includes loading an on-demand capability, which makes its tools callable: `capabilities_added` names
-    the capabilities loaded here, alongside the tools revealed in `tools_added`.
-
     Additions only. Withdrawing a tool is not supported yet, because no provider can be told about one
     without also invalidating the prompt cache this part exists to protect: Anthropic rejects a
     reference to a tool the request doesn't declare, so a withdrawn tool has to leave the `tools`
@@ -3259,21 +3256,8 @@ class ToolAvailabilityDeltaPart:
     capability is loaded.
     """
 
-    capabilities_added: list[str] = field(default_factory=lambda: [])
-    """IDs of the [on-demand capabilities](../capabilities/on-demand.md) this point in history loads.
-
-    A loaded capability's tools become callable, and its instructions are stated on the next request. Recorded
-    after a successful `load_capability` call and by
-    [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability], which loads a capability
-    without a `load_capability` call. Never sent to the model: what it sees is the capability's instructions
-    and the tools in `tools_added`.
-    """
-
     tool_call_id: str | None = None
-    """The tool call associated with the change, if any.
-
-    For a capability loaded from code, the tool call being handled when it was loaded.
-    """
+    """The tool call associated with the change, if any."""
 
     part_kind: Literal['tool-availability-delta'] = 'tool-availability-delta'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -3281,17 +3265,44 @@ class ToolAvailabilityDeltaPart:
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         """Render the change as trace content.
 
-        Tool names and capability IDs are recorded regardless of `include_content`: they aren't user
-        content, the tools are already visible in the request's tool definitions, and a run where the
-        model suddenly can call something is unreadable without them.
+        Tool names are recorded regardless of `include_content`: they aren't user content, they're
+        already visible in the request's tool definitions, and a run where the model suddenly can
+        call something is unreadable without them.
         """
-        changes = ', '.join(
-            [
-                *(f'+{name}' for name in self.tools_added),
-                *(f'+capability:{capability_id}' for capability_id in self.capabilities_added),
-            ]
-        )
+        changes = ', '.join(f'+{name}' for name in self.tools_added)
         return [_otel_messages.TextPart(type='text', content=f'Tool availability changed: {changes}')]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class CapabilityAvailabilityDeltaPart:
+    """Records that [on-demand capabilities](../capabilities/on-demand.md) were loaded at this point, without a `load_capability` call.
+
+    [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability] records one on the request
+    after the tool call that loaded the capability, followed by a
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] revealing its tools, if it has
+    any. A capability the model loads through the `load_capability` tool is recorded by that call and its
+    return instead. Either way, the capability is loaded from the next model request on: its tools are callable,
+    its instructions are stated, and its model settings and hooks apply.
+
+    Never sent to the model: `prepare_messages` drops it, and the model sees the capability's instructions and
+    tools instead.
+    """
+
+    capabilities_added: list[str] = field(default_factory=lambda: [])
+    """IDs of the capabilities this point in history loads, in load order."""
+
+    tool_call_id: str | None = None
+    """The tool call being handled when the capabilities were loaded, if any."""
+
+    part_kind: Literal['capability-availability-delta'] = 'capability-availability-delta'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Render the change as trace content: capability IDs aren't user content, so they're always recorded."""
+        changes = ', '.join(f'+{capability_id}' for capability_id in self.capabilities_added)
+        return [_otel_messages.TextPart(type='text', content=f'Capability availability changed: {changes}')]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -4364,6 +4375,7 @@ ModelRequestPart = Annotated[
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]  # pyright: ignore[reportDeprecated]
     | Annotated[RetryFeedbackPart, pydantic.Tag('retry-feedback')]
     | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')]
+    | Annotated[CapabilityAvailabilityDeltaPart, pydantic.Tag('capability-availability-delta')]
     | Annotated[ModelSettingsDeltaPart, pydantic.Tag('model-settings-delta')]
     | Annotated[InstructionDeltaPart, pydantic.Tag('instruction-delta')]
     | Annotated[InstructionBaselinePart, pydantic.Tag('instruction-baseline')]
@@ -6718,6 +6730,24 @@ class ToolAvailabilityDeltaEvent:
 
 
 @dataclass(repr=False, kw_only=True)
+class CapabilityAvailabilityDeltaEvent:
+    """An event indicating on-demand capabilities were loaded without a `load_capability` call, carrying the recorded part.
+
+    Emitted when a request records a
+    [`CapabilityAvailabilityDeltaPart`][pydantic_ai.messages.CapabilityAvailabilityDeltaPart], so a UI that
+    rebuilds history from the event stream keeps it.
+    """
+
+    part: CapabilityAvailabilityDeltaPart
+    """The capability availability delta part that will be recorded in message history."""
+
+    event_kind: Literal['capability_availability_delta'] = 'capability_availability_delta'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
 class ModelSettingsDeltaEvent:
     """An event indicating recorded model settings changed, carrying the recorded delta part.
 
@@ -7017,6 +7047,7 @@ HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
     | ToolAvailabilityDeltaEvent
+    | CapabilityAvailabilityDeltaEvent
     | ModelSettingsDeltaEvent
     | OutputToolCallEvent
     | OutputToolResultEvent

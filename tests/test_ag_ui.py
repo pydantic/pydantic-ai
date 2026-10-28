@@ -24,6 +24,8 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CapabilityAvailabilityDeltaEvent,
+    CapabilityAvailabilityDeltaPart,
     CapabilityEvent,
     CompactionPart,
     CustomEvent as PydanticAICustomEvent,
@@ -10612,14 +10614,13 @@ def test_tool_availability_delta_ui_round_trip():
 
 
 def test_capability_load_record_ui_round_trip():
-    """A delta that loads a capability keeps `capabilities_added` through the UI, with or without tools."""
+    """A capability loaded from code keeps its record through the UI, with or without tools."""
     messages = [
         ModelRequest(
             parts=[
-                ToolAvailabilityDeltaPart(
-                    tools_added=['refund_status'], capabilities_added=['refunds'], tool_call_id='open'
-                ),
-                ToolAvailabilityDeltaPart(capabilities_added=['policy'], tool_call_id='open'),
+                CapabilityAvailabilityDeltaPart(capabilities_added=['refunds'], tool_call_id='open'),
+                ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id='open'),
+                CapabilityAvailabilityDeltaPart(capabilities_added=['policy'], tool_call_id='open'),
             ]
         )
     ]
@@ -10627,6 +10628,79 @@ def test_capability_load_record_ui_round_trip():
     loaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(messages))
     _sync_load_bookkeeping(messages, loaded)
     assert loaded == messages
+
+
+def test_capability_availability_delta_payload_hygiene():
+    """A malformed or empty load from the client is dropped, and a blank tool call id is cleared."""
+    loaded = AGUIAdapter.load_messages(
+        [
+            UserMessage(id='user-1', content='Hi'),
+            *(
+                ActivityMessage(
+                    id=f'a-{index}', activity_type='pydantic_ai_capability_availability_delta', content=content
+                )
+                for index, content in enumerate(
+                    [
+                        {'added': 'refunds'},
+                        {'added': ['']},
+                        {'added': ['refunds'], 'tool_call_id': '  '},
+                    ]
+                )
+            ),
+        ]
+    )
+    assert [part for message in loaded for part in message.parts if not isinstance(part, UserPromptPart)] == [
+        CapabilityAvailabilityDeltaPart(capabilities_added=['refunds'])
+    ]
+
+
+async def test_capability_availability_delta_event_skipped_for_legacy_ag_ui() -> None:
+    """Activity events are omitted when the negotiated AG-UI version predates them."""
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Hi')), ag_ui_version='0.1.10'
+    )
+    events = [
+        event
+        async for event in event_stream.handle_capability_availability_delta(
+            CapabilityAvailabilityDeltaEvent(part=CapabilityAvailabilityDeltaPart(capabilities_added=['policy']))
+        )
+    ]
+    assert events == []
+
+
+@requires_ag_ui('0.1.19')
+async def test_capability_availability_delta_stream_matches_dumped_activity_message() -> None:
+    """A load from code streams with the same activity type and content as dumped history."""
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='open_case', json_args='{}', tool_call_id='open')}
+        else:
+            yield 'done'
+
+    policy = Capability[None](
+        id='policy', description='Refund policy.', instructions='Refunds take 5 days.', defer_loading=True
+    )
+    agent = Agent(FunctionModel(stream_function=stream_function), capabilities=[policy])
+
+    @agent.tool
+    def open_case(ctx: RunContext[None]) -> str:
+        ctx.load_capability('policy')
+        return 'Case opened.'
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='user-1', content='Open a case')))
+    snapshot_event = next(event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT')
+
+    dumped = AGUIAdapter.dump_messages(
+        [ModelRequest(parts=[CapabilityAvailabilityDeltaPart(capabilities_added=['policy'], tool_call_id='open')])]
+    )
+    activity = next(message for message in dumped if isinstance(message, ActivityMessage))
+    assert snapshot_event['activityType'] == activity.activity_type
+    assert snapshot_event['content'] == activity.content
+    # The literal is a frontend-facing wire contract, like the tool availability delta's.
+    assert activity.activity_type == 'pydantic_ai_capability_availability_delta'
 
 
 def test_compaction_ui_round_trip_and_sanitization():

@@ -1,10 +1,9 @@
 --- expected
 +++ actual
-@@ -36,7 +35,0 @@
+@@ -36,6 +35,0 @@
 -    },
 -    {
 -     "kind": "tool-availability-delta",
 -     "tools_added": [
 -      "added_tool"
--     ],
--     "capabilities_added": []
+-     ]

@@ -376,6 +376,8 @@ Model providers reject a request whose message history has broken tool-call/tool
 
 Tool additions are stored as [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] request parts; tool removal is not represented. A tool returning [`ToolReturn(tools=[...])`][pydantic_ai.messages.ToolReturn] authors the part immediately after its [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] in the same request, with the call's `tool_call_id` as a causal link. The executor deduplicates names in first-occurrence order and omits names already revealed. Replaying history keeps each `added` name revealed; tool definitions continue to come from the current run, so unknown or already-visible names have no effect when rendering a request.
 
+An [on-demand capability loaded from code](capabilities/on-demand.md#loading-from-code) is recorded the same way, as a [`CapabilityAvailabilityDeltaPart`][pydantic_ai.messages.CapabilityAvailabilityDeltaPart] after the return of the tool call that loaded it. The model never sees it.
+
 Changes to recorded model settings, today the thinking effort, are stored the same way, as [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] request parts at the end of the request they apply to; see [Changing effort mid-conversation](capabilities/thinking.md#changing-effort-mid-conversation).
 
 The guiding rule is to adapt the history to what the provider accepts without ever discarding something you meant to send. Repairs only **add** synthesized parts or **remove** parts that are fundamentally unsendable (no provider could accept them); nothing meaningful is silently dropped. Concretely, before each request Pydantic AI:

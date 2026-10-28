@@ -14772,7 +14772,7 @@ def _refunds_loaded_from_code(model: AnthropicModel, *, keep_load_capability_too
     @agent.tool
     async def open_ticket(ctx: RunContext[None]) -> str:
         """Open the customer's support ticket for order ABC-123."""
-        await ctx.load_capability('refunds')
+        ctx.load_capability('refunds')
         return 'Ticket for order ABC-123 opened.'
 
     return agent

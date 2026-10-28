@@ -350,7 +350,7 @@ async def test_load_capability_from_tool_is_rejected_in_a_session() -> None:
 
     @agent.tool
     async def open_case(ctx: RunContext[object]) -> str:
-        await ctx.load_capability('pirate')
+        ctx.load_capability('pirate')
         return 'Case opened.'  # pragma: no cover
 
     model = _RecordingModel(

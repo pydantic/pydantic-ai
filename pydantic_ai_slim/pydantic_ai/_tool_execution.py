@@ -19,7 +19,7 @@ from pydantic_graph import GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import _output, exceptions, messages as _messages, result
-from ._deferred_capabilities import LoadCapabilityCallPart, LoadCapabilityReturnPart
+from ._deferred_capabilities import LoadCapabilityCallPart
 from .exceptions import ToolFailedError, ToolRetryError
 from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDefinitionKind, ToolDenied
 
@@ -287,10 +287,9 @@ def _prune_duplicate_tool_reveals(
         for i, part in enumerate(parts):
             if isinstance(part, _messages.ToolAvailabilityDeltaPart):
                 newly_discovered = [name for name in part.tools_added if name not in discovered_tool_names]
-                if newly_discovered or part.capabilities_added:
+                if newly_discovered:
                     discovered_tool_names.update(newly_discovered)
                     if newly_discovered != part.tools_added:
-                        # A part that also loads a capability stays, to record the load.
                         parts[i] = dataclasses.replace(part, tools_added=newly_discovered)
                 else:
                     del parts[i]
@@ -827,14 +826,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         )
 
         parts: _FunctionCallParts = [return_part]
-        narrowed_call = _messages.ToolCallPart.narrow_type(call)
-        # A successful `load_capability` call records the capability it loads, even one without tools.
-        loaded_capability_id = (
-            narrowed_call.capability_id
-            if isinstance(narrowed_call, LoadCapabilityCallPart) and isinstance(return_part, LoadCapabilityReturnPart)
-            else None
-        )
         if tools:
+            narrowed_call = _messages.ToolCallPart.narrow_type(call)
             _reject_unloaded_capability_reveals(
                 tools,
                 self.tool_manager,
@@ -842,16 +835,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     narrowed_call.capability_id if isinstance(narrowed_call, LoadCapabilityCallPart) else None
                 ),
             )
-        if tools or loaded_capability_id is not None:
             # Only call-level dedupe here: cross-call dedupe and `discovered_tool_names`
             # bookkeeping happen at assembly time in emitted history order, via
             # `_prune_duplicate_tool_reveals` — parallel siblings complete in scheduler order,
             # and the first call to name a tool in *history* must own its reveal.
             parts.append(
                 _messages.ToolAvailabilityDeltaPart(
-                    tools_added=list(dict.fromkeys(tools or ())),
-                    capabilities_added=[loaded_capability_id] if loaded_capability_id is not None else [],
-                    tool_call_id=call.tool_call_id,
+                    tools_added=list(dict.fromkeys(tools)), tool_call_id=call.tool_call_id
                 )
             )
         return parts, tool_user_content

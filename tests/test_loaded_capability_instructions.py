@@ -168,7 +168,7 @@ async def test_loaded_instructions_are_stated_after_the_load():
         and any(isinstance(part, LoadCapabilityReturnPart) for part in message.parts)
     )
     assert [type(part).__name__ for part in load_request.parts] == snapshot(
-        ['LoadCapabilityReturnPart', 'ToolAvailabilityDeltaPart', 'InstructionDeltaPart']
+        ['LoadCapabilityReturnPart', 'InstructionDeltaPart']
     )
     # The prefix never changes.
     assert len(set(received.instructions)) == 1

@@ -31,6 +31,7 @@ from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    CapabilityAvailabilityDeltaPart,
     CompactionPart,
     ForceDownloadMode,
     InstructionBaselinePart,
@@ -97,6 +98,7 @@ DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 _TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 """The tool-name shape accepted by the strictest supported model providers."""
 _TOOL_AVAILABILITY_DELTA_PART_ADAPTER = TypeAdapter(ToolAvailabilityDeltaPart)
+_CAPABILITY_AVAILABILITY_DELTA_PART_ADAPTER = TypeAdapter(CapabilityAvailabilityDeltaPart)
 _MODEL_SETTINGS_DELTA_PART_ADAPTER = TypeAdapter(ModelSettingsDeltaPart)
 _RETRY_FEEDBACK_PART_ADAPTER = TypeAdapter(RetryFeedbackPart)
 
@@ -313,15 +315,8 @@ def is_request_compaction_part(part: CompactionPart) -> bool:
 
 
 def tool_availability_delta_payload(part: ToolAvailabilityDeltaPart) -> dict[str, Any]:
-    """Serialize a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] for a UI data channel.
-
-    `capabilities_added` is only included when the part loads a capability, so a payload for a plain tool reveal
-    keeps the shape it had before capabilities were recorded there.
-    """
-    payload: dict[str, Any] = {'added': part.tools_added, 'tool_call_id': part.tool_call_id}
-    if part.capabilities_added:
-        payload['capabilities_added'] = part.capabilities_added
-    return payload
+    """Serialize a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] for a UI data channel."""
+    return {'added': part.tools_added, 'tool_call_id': part.tool_call_id}
 
 
 def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:
@@ -336,8 +331,36 @@ def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvai
     except ValidationError:
         return ToolAvailabilityDeltaPart()
     part.tools_added = [name for name in part.tools_added if _TOOL_NAME_PATTERN.fullmatch(name)]
-    # A capability id isn't model-visible, so it needs no name hygiene; one the run doesn't register loads nothing.
+    if part.tool_call_id is not None and not part.tool_call_id.strip():
+        part.tool_call_id = None
+    return part
+
+
+def capability_availability_delta_payload(part: CapabilityAvailabilityDeltaPart) -> dict[str, Any]:
+    """Serialize a [`CapabilityAvailabilityDeltaPart`][pydantic_ai.messages.CapabilityAvailabilityDeltaPart] for a UI data channel.
+
+    The part rides through the client like a `ToolAvailabilityDeltaPart`, because it's what keeps a capability
+    loaded from code loaded: leaving it out would unload the capability on the request after a round trip.
+    """
+    return {'added': part.capabilities_added, 'tool_call_id': part.tool_call_id}
+
+
+def capability_availability_delta_from_payload(payload: Mapping[str, Any]) -> CapabilityAvailabilityDeltaPart | None:
+    """Build a [`CapabilityAvailabilityDeltaPart`][pydantic_ai.messages.CapabilityAvailabilityDeltaPart] from a UI payload, or `None` if it loads nothing.
+
+    Client-driven like `tool_availability_delta_from_payload`, and no more than a client could already do by
+    sending a `load_capability` call and its return: a capability ID isn't sent to the model, and one the run
+    doesn't register as an on-demand capability loads nothing.
+    """
+    try:
+        part = _CAPABILITY_AVAILABILITY_DELTA_PART_ADAPTER.validate_python(
+            {'capabilities_added': payload.get('added'), 'tool_call_id': payload.get('tool_call_id')}
+        )
+    except ValidationError:
+        return None
     part.capabilities_added = [capability_id for capability_id in part.capabilities_added if capability_id]
+    if not part.capabilities_added:
+        return None
     if part.tool_call_id is not None and not part.tool_call_id.strip():
         part.tool_call_id = None
     return part

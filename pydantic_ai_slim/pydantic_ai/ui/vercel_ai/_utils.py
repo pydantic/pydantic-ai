@@ -52,6 +52,9 @@ __all__ = []
 TOOL_AVAILABILITY_DELTA_DATA_TYPE = 'data-tool-availability-delta'
 """Data chunk type for tool availability changes."""
 
+CAPABILITY_AVAILABILITY_DELTA_DATA_TYPE = 'data-capability-availability-delta'
+"""Data chunk type for capabilities loaded from code."""
+
 MODEL_SETTINGS_DELTA_DATA_TYPE = 'data-model-settings-delta'
 """Data chunk type for changes to the thinking effort in effect."""
 

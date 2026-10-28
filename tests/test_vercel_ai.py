@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
+    CapabilityAvailabilityDeltaPart,
     CapabilityEvent,
     Citation,
     CompactionPart,
@@ -12252,14 +12253,13 @@ def test_tool_availability_delta_ui_round_trip():
 
 
 def test_capability_load_record_ui_round_trip():
-    """A delta that loads a capability keeps `capabilities_added` through the UI, with or without tools."""
+    """A capability loaded from code keeps its record through the UI, with or without tools."""
     messages = [
         ModelRequest(
             parts=[
-                ToolAvailabilityDeltaPart(
-                    tools_added=['refund_status'], capabilities_added=['refunds'], tool_call_id='open'
-                ),
-                ToolAvailabilityDeltaPart(capabilities_added=['policy'], tool_call_id='open'),
+                CapabilityAvailabilityDeltaPart(capabilities_added=['refunds'], tool_call_id='open'),
+                ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id='open'),
+                CapabilityAvailabilityDeltaPart(capabilities_added=['policy'], tool_call_id='open'),
             ]
         )
     ]
@@ -12534,8 +12534,8 @@ async def test_tool_availability_delta_round_trips_through_client_rebuilt_stream
 async def test_capability_loaded_from_code_round_trips_through_client_rebuilt_stream() -> None:
     """A capability a tool loads with `ctx.load_capability` stays loaded when the client rebuilds history from the stream.
 
-    The load's record streams as a `data-tool-availability-delta` chunk carrying `capabilities_added`, after the tool
-    result, and loading the assistant message back restores it where the server-side history has it.
+    The load's record streams as a `data-capability-availability-delta` chunk after the tool result, and loading the
+    assistant message back restores it where the server-side history has it.
     """
 
     async def stream_function(
@@ -12553,7 +12553,7 @@ async def test_capability_loaded_from_code_round_trips_through_client_rebuilt_st
 
     @agent.tool
     async def open_case(ctx: RunContext[None]) -> str:
-        await ctx.load_capability('policy')
+        ctx.load_capability('policy')
         return 'Case opened.'
 
     user_message = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Open a case')])
@@ -12568,8 +12568,8 @@ async def test_capability_loaded_from_code_round_trips_through_client_rebuilt_st
     ]
 
     tool_output = next(event for event in events if event['type'] == 'tool-output-available')
-    delta_chunk = next(event for event in events if event['type'] == 'data-tool-availability-delta')
-    assert delta_chunk['data'] == snapshot({'added': [], 'tool_call_id': 'open', 'capabilities_added': ['policy']})
+    delta_chunk = next(event for event in events if event['type'] == 'data-capability-availability-delta')
+    assert delta_chunk['data'] == snapshot({'added': ['policy'], 'tool_call_id': 'open'})
     text = ''.join(event['delta'] for event in events if event['type'] == 'text-delta')
 
     assistant_message = UIMessage(
@@ -12588,6 +12588,16 @@ async def test_capability_loaded_from_code_round_trips_through_client_rebuilt_st
     loaded = VercelAIAdapter.load_messages([user_message, assistant_message])
 
     assert parse_loaded_capabilities(loaded) == parse_loaded_capabilities(server_history) == {'policy'}
+
+    def load_records(messages: list[ModelMessage]) -> list[tuple[int, CapabilityAvailabilityDeltaPart]]:
+        return [
+            (index, part)
+            for index, message in enumerate(messages)
+            for part in message.parts
+            if isinstance(part, CapabilityAvailabilityDeltaPart)
+        ]
+
+    assert load_records(loaded) == load_records(server_history)
 
 
 async def test_mid_run_tool_delta_round_trips_through_client_rebuilt_stream() -> None:

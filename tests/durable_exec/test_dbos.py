@@ -26,6 +26,7 @@ from pydantic_ai import (
     Agent,
     AgentStreamEvent,
     CancellationToken,
+    CapabilityAvailabilityDeltaPart,
     CapabilityEvent,
     CapabilityInstructionSource,
     CustomEvent,
@@ -2512,7 +2513,7 @@ async def test_dbos_durability_load_capability_from_tool_hook(dbos: DBOS) -> Non
         ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
     ) -> Any:
         if tool_def.name == 'open_case':
-            await ctx.load_capability('billing')
+            ctx.load_capability('billing')
         return result
 
     def open_case() -> str:
@@ -2569,9 +2570,8 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                     ToolReturnPart(
                         tool_name='open_case', content='Case opened.', tool_call_id='open', timestamp=IsDatetime()
                     ),
-                    ToolAvailabilityDeltaPart(
-                        tools_added=['invoice_status'], capabilities_added=['billing'], tool_call_id='open'
-                    ),
+                    CapabilityAvailabilityDeltaPart(capabilities_added=['billing'], tool_call_id='open'),
+                    ToolAvailabilityDeltaPart(tools_added=['invoice_status'], tool_call_id='open'),
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
@@ -2628,7 +2628,7 @@ async def test_dbos_durability_load_capability_from_function_tool(dbos: DBOS) ->
 
     @agent.tool
     async def open_case(ctx: RunContext[object]) -> str:
-        await ctx.load_capability('billing')
+        ctx.load_capability('billing')
         return 'Case opened.'
 
     @DBOS.workflow()
@@ -2642,7 +2642,7 @@ async def test_dbos_durability_load_capability_from_step_tool_raises(dbos: DBOS)
     """A dynamic-toolset tool runs as a step, whose recorded output replays without re-running it, so it can't load."""
 
     async def open_case(ctx: RunContext[object]) -> str:
-        await ctx.load_capability('billing')
+        ctx.load_capability('billing')
         return 'Case opened.'  # pragma: no cover
 
     agent = Agent(

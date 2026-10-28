@@ -1,6 +1,18 @@
 {
   "allowed_breakages": [
     {
+      "against": "v2.63.0",
+      "fingerprint": "d214853b6753da17efa07e6c1598165feb88c39bfb0d39c8ca322b81c718d733",
+      "reason": "Adds `CapabilityAvailabilityDeltaPart` to `ModelRequestPart`, the record `RunContext.load_capability` leaves for a capability loaded from code; the version policy permits new message parts, and every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10090"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "ba1ab327646b915f283a1cbc4ed1e479fccdfaa8c34c6cc5045ca2dddf1e3202",
+      "reason": "Adds `CapabilityAvailabilityDeltaEvent` to `HandleResponseEvent`, emitted when a request records a `CapabilityAvailabilityDeltaPart`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10090"
+    },
+    {
       "against": "v2.62.0",
       "fingerprint": "78216eb81400af46f893b51ddc502505de40494f0e809618b9157955c6e33186",
       "reason": "`SignInRequired` was renamed to `SignInRequiredError` (#11326); the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",

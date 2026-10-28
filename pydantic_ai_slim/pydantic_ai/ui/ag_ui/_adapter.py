@@ -27,6 +27,7 @@ from ...messages import (
     AudioUrl,
     BinaryContent,
     CachePoint,
+    CapabilityAvailabilityDeltaPart,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -70,6 +71,8 @@ from ...tools import (
 from ...toolsets import AbstractToolset
 from .._adapter import (
     DEFAULT_ALLOWED_CONTENT_TYPES,
+    capability_availability_delta_from_payload,
+    capability_availability_delta_payload,
     compaction_part_from_payload,
     compaction_payload,
     model_settings_delta_from_payload,
@@ -112,6 +115,7 @@ try:
     )
     from ._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
+        CAPABILITY_AVAILABILITY_DELTA_ACTIVITY_TYPE,
         COMPACTION_ACTIVITY_TYPE,
         DEFAULT_AG_UI_VERSION,
         ENCRYPTED_VALUE_VERSION,
@@ -743,6 +747,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 case ActivityMessage() as activity_msg:
                     if activity_msg.activity_type == TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE:
                         builder.add(tool_availability_delta_from_payload(activity_msg.content))
+                    elif activity_msg.activity_type == CAPABILITY_AVAILABILITY_DELTA_ACTIVITY_TYPE:
+                        if (load_part := capability_availability_delta_from_payload(activity_msg.content)) is not None:
+                            builder.add(load_part)
                     elif activity_msg.activity_type == MODEL_SETTINGS_DELTA_ACTIVITY_TYPE:
                         if (effort_part := model_settings_delta_from_payload(activity_msg.content)) is not None:
                             builder.add(effort_part)
@@ -973,6 +980,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         id=_new_message_id(),
                         activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
                         content=tool_availability_delta_payload(part),
+                    )
+                )
+            elif isinstance(part, CapabilityAvailabilityDeltaPart):
+                flush_user_content()
+                result.append(
+                    ActivityMessage(
+                        id=_new_message_id(),
+                        activity_type=CAPABILITY_AVAILABILITY_DELTA_ACTIVITY_TYPE,
+                        content=capability_availability_delta_payload(part),
                     )
                 )
             # TODO(v3): remove `RetryPromptPart`

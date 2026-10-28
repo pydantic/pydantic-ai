@@ -407,7 +407,7 @@ def _open_notes(agent: Agent[Any, Any], clock: Clock) -> None:
     @agent.tool
     async def open_notes(ctx: RunContext[Any]) -> str:
         """Open the notes."""
-        await ctx.load_capability('notes')
+        ctx.load_capability('notes')
         return 'Opened.'
 
 
