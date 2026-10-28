@@ -83,7 +83,7 @@ jobs:
                   *.md) return 1 ;;
                   # Requests/replay use TestModel/FunctionModel; public exports also import these utilities.
                   models/__init__.py|models/_abstract.py|models/_continuation.py|models/_known_model_names.py) return 0 ;;
-                  models/_prompt_cache.py|models/_request_timeout.py|models/_speech.py|models/concurrency.py) return 0 ;;
+                  models/_model_context.py|models/_prompt_cache.py|models/_request_timeout.py|models/_speech.py|models/concurrency.py) return 0 ;;
                   models/fallback.py|models/function.py|models/instrumented.py|models/test.py|models/wrapper.py) return 0 ;;
                   # `BatchModelRequests` and the `Model.batch_*` methods are exported, so these load with the core.
                   models/_batch_codec.py|models/_batch_model.py|models/_batch_settings.py|models/_in_memory_batch.py) return 0 ;;
