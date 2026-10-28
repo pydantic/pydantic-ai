@@ -310,6 +310,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     '_Skill': Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name'),
     'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
+    '_CompleteSummary': Anonymous('summary-local validation; repeating it rejects the same truncated responses'),
     '_DefaultCaching': Anonymous('Coder-local caching default; it yields to any `cache` already set'),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
     'DockerSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
