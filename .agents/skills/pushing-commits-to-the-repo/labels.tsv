@@ -57,6 +57,7 @@ enhancement
 examples
 feature	New feature request, or PR implementing a feature (enhancement)
 feedback wanted
+final-review	Run the CI Review agent on this PR's head
 fix
 gateway
 genai-prices
@@ -91,6 +92,7 @@ native-or-local	a.k.a. `provider adaptive` or `native fallback`
 native-tools
 needs MRE
 needs-confirmation
+needs-durable-exec-review	Touches a core definition a durable engine depends on (scripts/durable_exec_contract.json)
 needs-maintainer-action	The next meaningful action must come from a maintainer
 needs-maintainer-discussion	An unresolved design or scope decision needs maintainer input.
 new models	Support for new model(s)

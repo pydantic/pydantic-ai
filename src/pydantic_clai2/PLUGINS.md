@@ -277,10 +277,12 @@ Bare `/login` asks which sign-in to run.
 
 ## Herdr integration
 
-The built-in `herdr` plugin (`pydantic_clai2.builtin_plugins.herdr`) starts disabled.
-Run `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane. Use
-`/plugins disable herdr` to release the pane and stop reporting. No herdr-side
-integration install is needed. The plugin requires `HERDR_ENV=1`,
+The built-in `herdr` plugin (`pydantic_clai2.builtin_plugins.herdr`) is enabled
+by default and reports automatically inside a [herdr](https://herdr.dev) pane.
+Use `/plugins disable herdr` to release the pane and persistently stop reporting;
+`/plugins enable herdr` restores it. On upgrade, eligible panes that used the
+previous disabled default begin reporting; an existing saved opt-out stays disabled.
+No herdr-side integration install is needed. The plugin requires `HERDR_ENV=1`,
 `HERDR_SOCKET_PATH`, and `HERDR_PANE_ID`; optional `HERDR_TAB_ID` enables tab titles.
 Outside herdr, on Windows, or in a session without a terminal (such as `clai2 --web`),
 it contributes nothing and starts no worker.
@@ -292,9 +294,10 @@ request ID. Tool names supply activity text, never tool arguments or results.
 User-opened menus do not report `blocked`. `AskUser` is the only built-in
 question that waits for the user during a run, since CLAI2 asks for no tool
 approvals; a third-party plugin's own approval UI is not tracked. Herdr owns
-attention notifications; this plugin sends none. To avoid duplicate desktop
-alerts, separately disable CLAI2's `notifications` plugin if you prefer herdr's
-alerts.
+attention notifications; this plugin sends none. CLAI2's separate `notifications`
+plugin remains enabled by default and is not automatically disabled inside herdr.
+To avoid duplicate desktop alerts, use `/plugins disable notifications` if you
+prefer herdr's alerts.
 
 Reports use the source `clai2`. Persisted sessions report their stable
 conversation ID and SQLite database path, not a per-run ID, along with the
@@ -1437,12 +1440,13 @@ stay loaded. Nothing moves while a turn, a background
 The [wire protocol](clai2_web_README.md#wire-protocol) names each message's session and lists the
 routes for one session.
 
-A session whose directory is gone opens read-only. With `/web` from a terminal, the browser opens
-sessions beside the terminal's in the same way, except that a session saved in another directory
-opens read-only, since the terminal's `/resume ID` refuses it. The terminal shows one live session
-at a time: `/resume ID` there of a session live in the browser shows that session, even mid-turn,
-instead of copying it, and the session shown before stays live. Shell lines (`!`) run only in the
-terminal. A bare
+A session whose directory is gone opens read-only, as does one another CLAI is running, until
+**Fork to continue here** continues it in a fork, reusing one made before. With `/web` from a
+terminal, the browser opens sessions beside the terminal's in the same way, except that a session
+saved in another directory opens read-only, since the terminal's `/resume ID` refuses it. The
+terminal shows one live session at a time: `/resume ID` there of a session live in the browser
+shows that session, even mid-turn, instead of copying it, and the session shown before stays live.
+Shell lines (`!`) run only in the terminal. A bare
 command that declares its menu (`host.command_menu`), such as `/set`, `/theme`, or `/spinner`,
 opens that menu in the page instead and runs nothing: `/set` and `/settings` open the Settings
 window's General section, `/system_prompt` its System prompt section, `/update` its About section,
@@ -1481,6 +1485,13 @@ clears it. Its input runs your own cell with `/monty` between turns, shown as yo
 prompt tells the model what you ran. A saved session keeps no sandbox call log, so its cells list
 the calls found in their code.
 
+The **Changes** panel (Cmd/Ctrl+Shift+E, or the diff button at the top right, which shows how
+many files the session has changed) lists what the session changed, one diff per file. **Last
+turn** and **This session** come from the session's own `write_file` and `edit_file` calls, so
+they also work outside Git. **Uncommitted** is `git diff HEAD` in the session's directory, and
+**Branch vs base** compares the files with where the branch left `origin/HEAD`, `main`, or
+`master`. It uses the same column as plugins' side panels, so opening one closes the other.
+
 Images pasted or dropped into the composer go with the next prompt: the page shows each as a
 thumbnail until it is sent, and sends them with the text (`POST /api/sessions/ID/input` with
 `images`, base64-encoded), which the server checks and converts to PNG as the terminal does a pasted
@@ -1495,6 +1506,12 @@ typing it would; a running turn keeps the tools it started with. While speculati
 mode is on too, so its toggle stays lit. A change made with Ctrl+X Ctrl+S in the terminal shows in
 the browser at its next status update, which an idle session sends only when a prompt or command
 runs; reloading the page shows it at once.
+
+Typing `@` in the composer, at its start or after a space, lists the files and folders in the shown
+session's folder (`host.workspace`) that best match what follows (`GET /api/sessions/ID/files?q=`):
+the files Git tracks or would add in a checkout, so `.gitignore` applies, or elsewhere a walk that
+skips hidden folders, `node_modules`, and `__pycache__`. Picking one puts `@PATH` in the prompt, sent as text for the agent to read with
+its tools. The `/complete` route, the terminal's Tab completion, is unchanged.
 
 The **Settings** window (the gear in the sidebar's footer, or ⌘,) lists its sections on the
 left; each has its own address, such as `#settings/general` or `#settings/plugins`. **General** is `/set`'s
@@ -1540,6 +1557,7 @@ view. A panel sits on the right, resized by dragging its left edge; the browser 
 one is open and how wide. A page that allows the web UI to frame it shows inside the panel;
 others open in a window beside this one, which follows the panel as its page changes. The page's
 own `Content-Security-Policy` admits frames from `https:` and loopback `http:` pages only.
+Opening a side panel closes the Changes panel, which uses the same column.
 
 One menu edits a plugin at a time: while the terminal shows its menu, or an action's dialogs
 are open in the page, other edits to that plugin are refused until it closes. The panel cannot
@@ -3385,9 +3403,10 @@ when either changes. `await resume(conversation_id)` switches to a saved convers
 model or replays a tool. Call it between turns, for example from `on_session_start`; it raises
 `RuntimeError` during a run, `LookupError` for an unknown ID, and `ValueError` for a
 conversation saved in another directory or when persistence is not configured. A conversation
-still running in another process is not taken over: a fork of it is resumed, and the notice
-says so. When the conversation or its title changed, every loaded plugin, the caller included,
-then receives `on_conversation_changed`; when the ID changed, the status row starts afresh.
+still running in another process is not taken over: the newest unarchived copy CLAI made to
+continue it that no other process runs is resumed, else a new copy, and the notice says which.
+When the conversation or its title changed, every loaded plugin, the caller included, then
+receives `on_conversation_changed`; when the ID changed, the status row starts afresh.
 Resuming the conversation already held changes nothing. An in-memory `Transcript` has nothing
 saved, so its `resume` raises `LookupError`.
 Local `!command` executions append a user message with the command, stdout, stderr, and
@@ -3856,7 +3875,7 @@ What changes for a process-scoped plugin:
 | `listing()` | every live session, oldest first, each a `LiveSession` |
 | `get(live_id)` | the live session with that `LiveSession.id`; raises `LookupError` when none is live |
 | `current()` | the session being handled now, or `None` outside a moment, command, or run |
-| `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where CLAI opens no other sessions |
+| `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. A conversation another process runs continues in a fork of it, reusing one saved before, so the session's `conversation.conversation_id` differs from the one passed. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where CLAI opens no other sessions |
 | `await new(workspace=None)` | a new live session with a new conversation, in `workspace`, by default the folder CLAI started in. Raises `ValueError` unless `workspace` is an existing absolute folder, and `RuntimeError` where CLAI opens no other sessions |
 | `await close(live_id)` | close a live session, cancelling its turn; its plugins end with `'exit'`. Raises `LookupError` when none is live, and `ValueError` for a session its own driver runs: the one the terminal shows, or the one `clai2 --web` or `clai2 -p` started with. A host built outside CLAI's shell raises `RuntimeError` |
 | `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued (including an edit of its queue), or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |

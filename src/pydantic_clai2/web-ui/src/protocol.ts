@@ -373,6 +373,8 @@ export interface Transcript {
   openable: boolean
   /** CLAI would move to its directory, but that directory is gone. */
   missing: boolean
+  /** The process ID of another CLAI running it; opening it then continues in a fork of it. */
+  owner_pid: number | null
 }
 
 export interface CompletionInfo {
@@ -492,4 +494,30 @@ export interface Schema {
   default?: JsonValue
   minimum?: number
   maximum?: number
+}
+
+export type ChangeScope = 'turn' | 'session' | 'uncommitted' | 'branch'
+
+/** One changed file in the Changes panel. */
+export interface FileChange {
+  path: string
+  /** Added, modified, or deleted. */
+  status: 'A' | 'M' | 'D'
+  added: number
+  removed: number
+  diff: Diff
+  /** Why the diff is empty, such as a binary file. */
+  note: string | null
+}
+
+/** What a session changed in one scope. */
+export interface Changes {
+  scope: ChangeScope
+  files: FileChange[]
+  /** The branch `branch` compares with. */
+  base: string | null
+  /** Why the scope cannot be shown, such as a workspace outside Git. */
+  note: string | null
+  /** Changed files left out, past the most one answer lists. */
+  omitted: number
 }
