@@ -1219,6 +1219,32 @@ class TestReminder:
         cap = Planning[None](inject=False, store=store)
         assert await self._enqueued(cap, [ModelRequest(parts=[UserPromptPart('hi')])]) == []
 
+    async def test_inject_disabled_plan_tools_reply_without_the_plan(self) -> None:
+        """With `inject=False` the model isn't shown the plan: the plan tools reply as they did before returning it."""
+        calls = [
+            ToolCallPart('write_plan', {'items': [{'id': 'a', 'content': 'Do X'}]}, tool_call_id='c1'),
+            ToolCallPart('update_task_status', {'task_id': 'a', 'status': 'in_progress'}, tool_call_id='c2'),
+            ToolCallPart('remove_task', {'task_id': 'a'}, tool_call_id='c3'),
+        ]
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            step = sum(isinstance(message, ModelResponse) for message in messages)
+            return ModelResponse(parts=[calls[step]] if step < len(calls) else [TextPart('done')])
+
+        agent: Agent[None, str] = Agent(FunctionModel(model_fn), capabilities=[Planning(inject=False)])
+        result = await agent.run('go')
+        returns = [
+            part for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+        ]
+        assert [(part.content, part.metadata) for part in returns] == snapshot(
+            [
+                ('Plan updated: 1 step(s).\n\n1. [ ] Do X\n(0/1 completed)', None),
+                ("Updated step 'Do X' status to 'in_progress'.", None),
+                ("Removed step 'Do X' (id: a).", None),
+            ]
+        )
+        assert _plan_records(result.all_messages()) == []
+
     async def test_empty_plan_enqueues_nothing(self) -> None:
         assert await self._enqueued(await self._cap(), [ModelRequest(parts=[UserPromptPart('hi')])]) == []
 

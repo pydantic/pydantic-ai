@@ -121,9 +121,11 @@ class Planning(AbstractCapability[AgentDepsT]):
     """Add the subtask/dependency tools and the `blocked` status when true."""
 
     inject: bool = True
-    """Add the instructions' note on the plan's tag, and record the plan when the latest one isn't visible.
+    """Show the model the plan: the plan tools end their results with it, the instructions carry the note on its tag,
+    and the plan is recorded when the latest one isn't visible.
 
-    The plan tools return the plan either way."""
+    With `inject=False`, the plan tools reply as they did before they returned the plan: `write_plan` with the bare
+    checklist, the others with just their message."""
 
     tools: Sequence[str] | None = None
     """Optional allowlist of tool names to register; `None` registers all of them.

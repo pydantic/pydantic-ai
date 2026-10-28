@@ -27,7 +27,7 @@ The plan tools' results carry `metadata={'origin': 'pydantic-ai-harness.planning
 - in a run that starts without them in its history, such as an executor reading a plan another agent wrote to a shared store;
 - after something outside the plan tools changed the store.
 
-That record is kept in the history and marked with the same `origin`, so compaction tells it from something the user said. A plan emptied outside the plan tools after the model was shown one is recorded as `No plan yet.`, once, so the old plan doesn't read as current. A custom `guidance` replaces the tool guidance but keeps the note; `inject=False` drops the note and the record, and the plan tools still return the plan.
+That record is kept in the history and marked with the same `origin`, so compaction tells it from something the user said. A plan emptied outside the plan tools after the model was shown one is recorded as `No plan yet.`, once, so the old plan doesn't read as current. A custom `guidance` replaces the tool guidance but keeps the note; `inject=False` means the model isn't shown the plan: it drops the note and the record, and the plan tools reply as they did before they returned the plan (`write_plan` with the bare checklist, the others with just their message).
 
 ## Usage
 
@@ -163,7 +163,7 @@ The plan is never injected into the system prompt or instructions. Static usage 
 `Planning` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoints it places cover the plan tools' results with the rest of the history.
 
 !!! warning "The plan reminder is now kept in history"
-    Earlier releases spliced the plan reminder into a copy of each request, led by a cache breakpoint of its own with a `'5m'` TTL by default, and never recorded it. Plan tools now end their results with the plan in a `<plan_reminder>` tag (a `ToolReturn` with `metadata`, through the agent; a plain string when you call a `PlanningToolset` method directly), and the separate reminder is gone from the normal tool loop. When the latest plan isn't visible any more, after compaction or in a run started without it, `Planning` records it in the history as a user-channel part, so code that counted messages may see one. The instructions now end with a fixed note on the plan's tag, also when `guidance` is custom or `''`. The tag is now `<plan_reminder>`, with an underscore like every other framing tag, instead of `<plan-reminder>`; update any prompt or parser that names the old spelling. If you relied on `Planning` for prompt caching, turn it on for your model: leaving `cache_ttl` unset doesn't warn about the missing breakpoint. `cache_ttl` is deprecated and has no effect; set to `'5m'` or `'1h'`, it warns that it's ignored, so remove it.
+    Earlier releases spliced the plan reminder into a copy of each request, led by a cache breakpoint of its own with a `'5m'` TTL by default, and never recorded it. With `inject=True`, the default, plan tools now end their results with the plan in a `<plan_reminder>` tag (a `ToolReturn` with `metadata`, through the agent; a plain string when you call a `PlanningToolset` method directly), and the separate reminder is gone from the normal tool loop. When the latest plan isn't visible any more, after compaction or in a run started without it, `Planning` records it in the history as a user-channel part, so code that counted messages may see one. The instructions now end with a fixed note on the plan's tag, also when `guidance` is custom or `''`. The tag is now `<plan_reminder>`, with an underscore like every other framing tag, instead of `<plan-reminder>`; update any prompt or parser that names the old spelling. If you relied on `Planning` for prompt caching, turn it on for your model: leaving `cache_ttl` unset doesn't warn about the missing breakpoint. `cache_ttl` is deprecated and has no effect; set to `'5m'` or `'1h'`, it warns that it's ignored, so remove it.
 
 With a [UI adapter](../ui/overview.md#trust-model-for-client-submitted-messages), history that goes through the client may lose the metadata that marks a plan tool's result or a plan record (AG-UI drops it). Then when the client sends that history back, `Planning` records the plan on the next request, and compaction may keep an old record as a user turn. Keep history on the server when that matters.
 
@@ -191,7 +191,7 @@ Planning(
     guidance=None,           # static tool guidance; None = default, '' = omit (the plan note stays)
     store=None,              # None = fresh in-memory plan per run; or a PlanStore to persist
     enable_subtasks=False,   # add subtask/dependency tools and the 'blocked' status
-    inject=True,             # the instructions' note on the plan, and a record when the latest plan isn't visible
+    inject=True,             # show the model the plan: in the plan tools' results, the note, and a record
     tools=None,              # None = every tool the mode registers; or an allowlist of names
     descriptions=None,       # optional per-tool description overrides, keyed by tool name
 )

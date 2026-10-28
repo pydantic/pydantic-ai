@@ -63,7 +63,7 @@ Key parameters:
 - `guidance=None`: `None` = built-in guidance, `''` = none, a string replaces it.
 - `store=None`: `None` = fresh in-memory plan per run. Pass a `PlanStore` to persist.
 - `store_resolver=None`: `Callable[[RunContext], PlanStore]`, wins over `store` (per-tenant stores).
-- `enable_subtasks=False`, `inject=True` (the plan reminder). `cache_ttl` is deprecated and ignored
+- `enable_subtasks=False`, `inject=True` (show the model the plan). `cache_ttl` is deprecated and ignored
   (an explicit `'5m'`/`'1h'` warns); turn on caching on the model (such as `anthropic_cache_messages`).
 - `tools=None`: allowlist, e.g. `tools=['write_plan']`. Naming a tool the mode does not register
   raises `ValueError`; so does an unknown key in `descriptions`.

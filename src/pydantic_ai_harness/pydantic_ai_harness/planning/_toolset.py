@@ -570,6 +570,18 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             return ToolReturn(str(result), metadata={'origin': PLAN_ORIGIN, 'plan': result.plan})
         return result
 
+    def _plan_reply(self, message: str, items: list[PlanItem], suffix: str = '', *, bare_plan: bool = False) -> str:
+        """A plan-changing tool's reply: ending with the framed plan when `Planning` shows the model its plan.
+
+        With `inject=False`, the reply is what it was before plan tools returned the plan: the message, with the
+        bare checklist after it for `write_plan` (`bare_plan`).
+        """
+        if self._capability.inject:
+            return _PlanReply(message, items, suffix)
+        if bare_plan:
+            return f'{message}\n\n{render_plan(items)}{suffix}'
+        return f'{message}{suffix}'
+
     async def _resolve(self, ctx: RunContext[AgentDepsT]) -> PlanStore:
         """The store for this call: through the capability's durable operations inside a tool call.
 
@@ -650,7 +662,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         await self._emit_changes(ctx, before, after)
         in_progress = sum(1 for item in after if item.status is TaskStatus.in_progress)
         note = '' if in_progress <= 1 else _MULTI_IN_PROGRESS_NOTE
-        return _PlanReply(f'Plan updated: {len(after)} step(s).', after, note)
+        return self._plan_reply(f'Plan updated: {len(after)} step(s).', after, note, bare_plan=True)
 
     async def read_plan(self, ctx: RunContext[AgentDepsT]) -> str:
         """Read the current plan."""
@@ -687,7 +699,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         item = await store.add_item(PlanItem(content=content, active_form=active_form))
         after = await store.get_items()
         await self._emit_changes(ctx, before, after)
-        return _PlanReply(f"Added step '{content}' with id: {item.id}", after)
+        return self._plan_reply(f"Added step '{content}' with id: {item.id}", after)
 
     async def _sync_dependency_blocks(self, store: PlanStore) -> None:
         """Keep dependency-driven `blocked` status in sync after a status change.
@@ -749,7 +761,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         after = await store.get_items()
         stored = await self._stored_status(store, task_id, status)
         await self._emit_changes(ctx, items, after)
-        return _PlanReply(f"Updated step '{item.content}' status to '{stored}'.", after)
+        return self._plan_reply(f"Updated step '{item.content}' status to '{stored}'.", after)
 
     async def update_task_statuses(self, ctx: RunContext[AgentDepsT], updates: list[PlanStatusUpdate]) -> str:
         """Update several steps' statuses in one call.
@@ -798,7 +810,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             for item, status in resolved
         ]
         await self._emit_changes(ctx, before, after)
-        return _PlanReply(f'Updated {len(resolved)} step(s):\n' + '\n'.join(lines), after)
+        return self._plan_reply(f'Updated {len(resolved)} step(s):\n' + '\n'.join(lines), after)
 
     async def remove_task(self, ctx: RunContext[AgentDepsT], task_id: str) -> str:
         """Remove a step by id.
@@ -817,7 +829,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         after = await store.get_items()
         await self._emit_changes(ctx, before, after)
         extra = f' and {subtasks_removed} subtask(s)' if subtasks_removed else ''
-        return _PlanReply(f"Removed step '{item.content}' (id: {task_id}){extra}.", after)
+        return self._plan_reply(f"Removed step '{item.content}' (id: {task_id}){extra}.", after)
 
     async def _cleanup_after_removal(self, store: PlanStore, removed_id: str) -> int:
         """Cascade-remove the deleted step's descendants and drop dangling `depends_on` refs.
@@ -871,7 +883,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         item = await store.add_item(PlanItem(content=content, active_form=active_form, parent_id=parent_id))
         after = await store.get_items()
         await self._emit_changes(ctx, before, after)
-        return _PlanReply(f"Added subtask '{content}' with id: {item.id} (parent: {parent_id})", after)
+        return self._plan_reply(f"Added subtask '{content}' with id: {item.id} (parent: {parent_id})", after)
 
     async def set_dependency(self, ctx: RunContext[AgentDepsT], task_id: str, depends_on_id: str) -> str:
         """Make one step depend on another.
@@ -904,7 +916,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             await store.update_item(task_id, depends_on=new_depends_on, status=TaskStatus.blocked)
             after = await store.get_items()
             await self._emit_changes(ctx, items, after)
-            return _PlanReply(
+            return self._plan_reply(
                 f"Added dependency: '{item.content}' now depends on '{dependency.content}'. Step automatically blocked.",
                 after,
             )
@@ -915,7 +927,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         await self._sync_dependency_blocks(store)
         after = await store.get_items()
         await self._emit_changes(ctx, items, after)
-        return _PlanReply(f"Added dependency: '{item.content}' now depends on '{dependency.content}'.", after)
+        return self._plan_reply(f"Added dependency: '{item.content}' now depends on '{dependency.content}'.", after)
 
     async def get_available_tasks(self, ctx: RunContext[AgentDepsT]) -> str:
         """List steps that can be worked on now (no incomplete dependencies)."""
