@@ -3032,14 +3032,13 @@ class _ResponsesWebSocketState:
 
     async def reserve(
         self,
-        loop: asyncio.AbstractEventLoop,
         connect: Callable[[], Awaitable[ResponsesWebSocket]],
         response_id: str | None,
         headers: Mapping[str, str],
     ) -> ResponsesWebSocketStream | None:
         """Reserve a lane, opening a socket first if there's none, or the current one failed, closed or aged out.
 
-        Returns `None` when the socket has no free lane, opened with other headers or on another event loop, or when
+        Returns `None` when the socket has no free lane, opened with other headers, or when
         there's no socket left to use once the request's lease has ended. Only requests on this state's loop call this.
         """
         socket = self.socket
@@ -3058,8 +3057,7 @@ class _ResponsesWebSocketState:
                         await socket.close_if_idle()
             socket = self.socket
             assert socket is not None
-        # A socket serves only the event loop it opened on, which owns the holder.
-        if socket.loop is not loop or socket.headers != headers:
+        if socket.headers != headers:
             return None
         return socket.reserve(response_id)
 
@@ -3486,7 +3484,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         try:
             with _map_api_errors(self.model_name, self._provider.model_id_namespace):
                 return await self._websocket.states[loop].reserve(
-                    loop, connect, response_id, ResponsesWebSocket.effective_headers(self.client, headers)
+                    connect, response_id, ResponsesWebSocket.effective_headers(self.client, headers)
                 )
         except OpenAIError as exc:
             # The SDK raises this before connecting when it can't authenticate a socket for the client, like Bedrock
@@ -3540,21 +3538,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return cast(OpenAIModelProfile, profile)
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Turn off `openai_responses_supports_websocket` for a client or gateway not known to serve sockets.
+        """Turn off Batch API and Responses WebSocket defaults for Azure clients and the gateway.
 
         Every model resolves this, so it reads only the client's type and the provider's identity, never client state
         such as URLs, which a mocked or partly built client may not have yet.
         """
         if _is_azure(self._provider.client, self._provider.name) or is_gateway_provider(self._provider):
-            profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
-        provider = self._provider
-        if (
-            # Responses WebSockets aren't verified on the Azure client, as for `AzureProvider`.
-            isinstance(provider.client, AsyncAzureOpenAI)
-            # The gateway's handshake on its Responses route fails with a 503 while HTTP succeeds (live, 2026-10-22).
-            or is_gateway_provider(provider)
-        ):
-            return merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
+            # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
+            # Responses WebSockets aren't verified on Azure, and the gateway's handshake fails with a 503 (2026-10-22).
+            return merge_profile(
+                profile, OpenAIModelProfile(openai_supports_batch_api=False, openai_responses_supports_websocket=False)
+            )
         return profile
 
     @classmethod
@@ -4544,13 +4538,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 if retry is None:
                     raise
                 retry.rejection_retries = websocket_stream.rejection_retries + 1
-                try:
-                    return await _utils.replace_no_init(self, _websocket_stream=retry)._responses_create(
-                        messages, stream, given_settings, model_request_parameters
-                    )
-                except BaseException:
-                    await retry.close()
-                    raise
+                return await self._create_on_websocket_lane(
+                    retry, messages, stream, given_settings, model_request_parameters
+                )
             # The server closed the socket while it was idle, so nothing was sent: rebuild the request for a new socket
             # once, since what it can continue from depends on the lane.
             retry = (
@@ -4565,13 +4555,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     phase='connect',
                 )
             retry.retried = True
-            try:
-                return await _utils.replace_no_init(self, _websocket_stream=retry)._responses_create(
-                    messages, stream, given_settings, model_request_parameters
-                )
-            except BaseException:
-                await retry.close()
-                raise
+            return await self._create_on_websocket_lane(
+                retry, messages, stream, given_settings, model_request_parameters
+            )
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
@@ -4587,6 +4573,22 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
                     return model_response
                 raise
+
+    async def _create_on_websocket_lane(
+        self,
+        retry: ResponsesWebSocketStream,
+        messages: list[ModelRequest | ModelResponse],
+        stream: bool,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream | ModelResponse:
+        try:
+            return await _utils.replace_no_init(self, _websocket_stream=retry)._responses_create(
+                messages, stream, model_settings, model_request_parameters
+            )
+        except BaseException:
+            await retry.close()
+            raise
 
     async def _prepare_responses_create(
         self,

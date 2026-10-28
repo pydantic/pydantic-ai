@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import time
 from collections import deque
 from collections.abc import Mapping
@@ -98,8 +97,6 @@ class ResponsesWebSocket:
     named_lane_limit: int
     """How many named `stream_id` lanes concurrent requests may use; with none, only one request runs at a time."""
     status_error: StatusError
-    loop: asyncio.AbstractEventLoop = field(default_factory=asyncio.get_running_loop)
-    """The event loop the socket opened on, the only one that can use it."""
     opened_at: float = field(default_factory=time.monotonic)
     connection_closed: bool = False
     failure: str | None = None
@@ -172,7 +169,7 @@ class ResponsesWebSocket:
 
     @staticmethod
     def effective_headers(client: AsyncOpenAI, extra_headers: Mapping[str, str]) -> dict[str, str]:
-        # Compare configured headers; the model profile sends clients with per-request credential callbacks over HTTP.
+        # Compare configured headers; the model's runtime auth check sends per-request credential callbacks over HTTP.
         headers: dict[str, str | Omit] = {
             key.lower(): value
             for header_set in (client.default_headers, extra_headers)

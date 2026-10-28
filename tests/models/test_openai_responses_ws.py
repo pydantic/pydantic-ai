@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from importlib.util import find_spec
 from pathlib import Path
-from typing import Literal, NoReturn, get_type_hints
+from typing import Literal, get_type_hints
 from unittest.mock import Mock
 
 import anyio
@@ -878,33 +878,6 @@ async def test_run_on_another_event_loop_doesnt_wait_for_the_socket_this_loop_op
     assert not waited
     assert outputs == ['ready']
     assert sockets.connect_count == 2
-
-
-async def test_reservation_from_another_event_loop_leaves_the_open_socket_alone(
-    allow_model_requests: None, sockets: SocketHarness
-):
-    """A request on another thread's event loop can find no socket when it chooses one, and an open one by the time it
-    reserves a lane, so the reservation checks the socket's event loop too and leaves the request to use HTTP.
-
-    Two threads can't be interleaved on cue, so the test reserves directly, with a loop that never runs standing in for
-    the other thread's.
-    """
-
-    async def connect() -> NoReturn:
-        raise AssertionError('the open socket is never replaced')  # pragma: no cover
-
-    model = websocket_model()
-    holder = model._websocket  # pyright: ignore[reportPrivateUsage]
-    other_loop = asyncio.new_event_loop()
-    try:
-        async with model:
-            await model.request(user_prompt('hello'), None, ModelRequestParameters())
-            state = holder.states[asyncio.get_running_loop()]
-            assert await state.reserve(other_loop, connect, None, sockets.headers[0]) is None
-            assert sockets.opened[0].close_count == 0
-    finally:
-        other_loop.close()
-    assert sockets.connect_count == 1
 
 
 @pytest.mark.parametrize('lease_ends', [False, True])
