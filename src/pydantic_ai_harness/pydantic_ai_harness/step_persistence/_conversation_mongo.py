@@ -177,7 +177,10 @@ class MongoConversationStore(ConversationStore):
         )
 
     async def read_history(self, head_id: str | None, *, limit: int | None = None) -> list[ConversationEntry]:
-        """The entries from the first one up to `head_id`, in order, or only the last `limit` of them, read with one `$graphLookup`."""
+        """The entries from the first one up to `head_id`, in order, or only the last `limit` of them.
+
+        Read read with one `$graphLookup`.
+        """
         if head_id is None or limit == 0:
             return []
         lookup: _MongoDocument = {

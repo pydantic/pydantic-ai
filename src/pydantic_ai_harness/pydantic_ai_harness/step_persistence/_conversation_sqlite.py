@@ -295,7 +295,10 @@ class SqliteConversationStore(ConversationStore):
             ).fetchone()
 
     async def read_history(self, head_id: str | None, *, limit: int | None = None) -> list[ConversationEntry]:
-        """The entries from the first one up to `head_id`, in order, or only the last `limit` of them, read in one query."""
+        """The entries from the first one up to `head_id`, in order, or only the last `limit` of them.
+
+        Read read in one query.
+        """
         if head_id is None or limit == 0:
             return []
         rows = await anyio.to_thread.run_sync(self._sync_read_history, head_id, -1 if limit is None else limit)

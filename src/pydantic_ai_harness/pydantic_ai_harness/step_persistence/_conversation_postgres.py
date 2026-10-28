@@ -230,7 +230,7 @@ class PostgresConversationStore(ConversationStore):
             )
 
     async def _insert_messages(self, connection: PostgresConnection, messages: dict[str, str]) -> None:
-        """Insert the messages `{table}_messages` lacks, in key order so concurrent saves can't deadlock."""
+        """Insert the messages `{table}_conv_messages` lacks, in key order so concurrent saves can't deadlock."""
         rows = sorted(messages.items())
         for start in range(0, len(rows), _MESSAGES_PER_INSERT):
             batch = rows[start : start + _MESSAGES_PER_INSERT]
@@ -299,7 +299,10 @@ class PostgresConversationStore(ConversationStore):
         )
 
     async def read_history(self, head_id: str | None, *, limit: int | None = None) -> list[ConversationEntry]:
-        """The entries from the first one up to `head_id`, in order, or only the last `limit` of them, read in one query."""
+        """The entries from the first one up to `head_id`, in order, or only the last `limit` of them.
+
+        Read read in one query.
+        """
         if head_id is None or limit == 0:
             return []
         await self._ensure_schema()
