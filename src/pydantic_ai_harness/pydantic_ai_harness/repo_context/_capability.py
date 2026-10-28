@@ -77,10 +77,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     3. Nested-on-traversal (`nested_traversal`, off by default): when the model
        lists or reads a directory, or writes or edits a file in it, through a
-       filesystem capability event,
-       surface that directory's `CLAUDE.md`/`AGENTS.md`. The note is enqueued in
-       the message tail, not added to system instructions, so it does not
-       invalidate the cached prefix. `nested_inject='pointer'` (default)
+       filesystem capability event, surface that directory's
+       `CLAUDE.md`/`AGENTS.md`. The note is enqueued in the message tail, not
+       added to system instructions, so it does not invalidate the cached
+       prefix. `nested_inject='pointer'` (default)
        enqueues a one-line pointer; `'contents'` inlines the file body.
 
     Cache note: injecting file contents into the system prompt costs prompt-cache

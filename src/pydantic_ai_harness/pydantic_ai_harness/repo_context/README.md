@@ -99,9 +99,9 @@ before the next model request. Each directory is surfaced at most once per run.
 As with the walk-up, a symlinked instruction file is named after its target.
 
 `FileSystem` emits these events directly. Hosts with other file tools can emit
-the same types by importing `FileReadEvent`, `DirectoryListedEvent` and `FileWrittenEvent` from
-`pydantic_ai_harness.filesystem`; set `root_dir` to the directory the event's
-`path` is relative to.
+the same types by importing `FileReadEvent`, `DirectoryListedEvent` and
+`FileWrittenEvent` from `pydantic_ai_harness.filesystem`; set `root_dir` to the
+directory the event's `path` is relative to.
 
 The traversed location is `root_dir / path`, so a `FileSystem` rooted at a
 subdirectory of the working directory still surfaces the right directory. A
