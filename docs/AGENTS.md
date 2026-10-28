@@ -24,7 +24,7 @@ Follow the general [documentation guidance](../agent_docs/documentation.md). The
 
 ## Review
 
-- On a Pydantic AI pull request, apply `trigger:docs-preview` to request navigation validation and a rendered preview from unified-docs. Rendered previews require a same-repository head branch. Dispatch removes the label; re-add it after source changes.
+- On a Pydantic AI pull request, apply `trigger:docs-preview` to request navigation validation and a rendered preview from unified-docs. Dispatch removes the label; re-add it after source changes.
 - Read the separate `pydantic-docs[bot]` navigation and preview reports. Verify both reported SHAs match the current Pydantic AI pull request head.
 - Before merging, inspect the preview's **this commit** link, pinned to that source head. The stable **latest** link points to the latest deployed preview and can lag behind source changes. Navigation validation and the rendered preview are separate gates.
 - Fork PRs receive navigation validation only. Have a maintainer arrange a rendered preview of the reviewed fork head before merging.

@@ -113,7 +113,7 @@ jobs:
           body=$(cat <<EOF
           ## Docs Navigation Check — dispatch failed
 
-          The docs check and preview request could not be queued. See [the workflow run](${RUN_URL}) for details.
+          The docs validation request could not be queued. See [the workflow run](${RUN_URL}) for details.
 
           <sub>Re-add the \`trigger:docs-preview\` label to retry.</sub>
           EOF
@@ -131,7 +131,7 @@ jobs:
           body=$(cat <<EOF
           ## Docs Navigation Check — queued
 
-          The docs check and preview request was queued, but this workflow could not post its normal acknowledgement. See [the workflow run](${RUN_URL}) for details.
+          The docs validation request was queued, but this workflow could not post its normal acknowledgement. See [the workflow run](${RUN_URL}) for details.
           EOF
           )
           gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" -f body="$body"
