@@ -60,9 +60,6 @@ WorkspaceMethod: TypeAlias = Literal[
     'ensure', 'run', 'read_bytes', 'write_bytes', 'stat', 'list_dir', 'make_dir', 'remove', 'exists', 'realpath'
 ]
 
-READ_ONLY_METHODS: frozenset[WorkspaceMethod] = frozenset({'read_bytes', 'stat', 'list_dir', 'exists', 'realpath'})
-"""The methods that change nothing, so an engine may retry them; any other call runs at most once."""
-
 
 @pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
 class WorkspaceCallError:

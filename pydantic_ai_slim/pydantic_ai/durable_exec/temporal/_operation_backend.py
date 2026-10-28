@@ -27,12 +27,7 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
-from pydantic_ai.durable_exec._workspace import (
-    READ_ONLY_METHODS,
-    WORKSPACE_OPERATION_ID,
-    WorkspaceCall,
-    WorkspaceCallParams,
-)
+from pydantic_ai.durable_exec._workspace import WORKSPACE_OPERATION_ID, WorkspaceCall, WorkspaceCallParams
 from pydantic_ai.exceptions import ModelAPIError, UserError
 
 from ._activity_execution import execute_activity, execute_child_workflow
@@ -43,7 +38,6 @@ from ._toolset import (
     heartbeating,
     model_response_payload_errors,
     payload_size_errors,
-    with_non_retryable_errors,
 )
 
 ParamsT = TypeVar('ParamsT')
@@ -61,32 +55,21 @@ re-created agents whose backends never saw the worker being configured.
 
 TemporalOperationConfigValue = ActivityConfig | ChildWorkflowOperationConfig
 
-_WORKSPACE_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
-_WORKSPACE_MIN_TIMEOUT = timedelta(minutes=10)
 _WORKSPACE_TIMEOUT_MARGIN = timedelta(minutes=1)
 
 
 def _workspace_activity_config(config: ActivityConfig, call: WorkspaceCall) -> ActivityConfig:
     """The activity config for one workspace call, built on the tool activities' config.
 
-    A tool's timeout is too short for creating an environment or running a command, and a timed-out
-    attempt keeps running on the worker, so a retry would repeat what it did. The timeouts sit above the
-    call's own `timeout=`, so the backend's `WorkspaceTimeoutError` fires first; the heartbeat timeout
-    notices a lost worker instead; and only calls in `READ_ONLY_METHODS` are retried.
+    A command's own `timeout=` can be longer than the tool activities' start-to-close timeout. A timed-out
+    attempt keeps running on the worker, so Temporal's retry would run the command again while the first
+    run is still going. Keeping the start-to-close timeout a margin above the command's own lets the
+    backend's `WorkspaceTimeoutError` fire first.
     """
-    config = {'heartbeat_timeout': _WORKSPACE_HEARTBEAT_TIMEOUT, **config}
-    floor = _WORKSPACE_MIN_TIMEOUT
-    if call.timeout is not None:
-        floor = max(floor, timedelta(seconds=call.timeout) + _WORKSPACE_TIMEOUT_MARGIN)
-    if (start_to_close := config.get('start_to_close_timeout')) is not None:
-        config['start_to_close_timeout'] = max(start_to_close, floor)
-    if (schedule_to_close := config.get('schedule_to_close_timeout')) is not None:
-        config['schedule_to_close_timeout'] = max(schedule_to_close, floor)
-    if call.method not in READ_ONLY_METHODS:
-        retry_policy = with_non_retryable_errors(config.get('retry_policy'))
-        retry_policy.maximum_attempts = 1
-        config['retry_policy'] = retry_policy
-    return config
+    if call.timeout is None:
+        return config
+    floor = timedelta(seconds=call.timeout) + _WORKSPACE_TIMEOUT_MARGIN
+    return {**config, 'start_to_close_timeout': max(config.get('start_to_close_timeout') or floor, floor)}
 
 
 class TemporalParameterTransport(ParameterTransport[ParamsT, WireT], Protocol[ParamsT, WireT]):

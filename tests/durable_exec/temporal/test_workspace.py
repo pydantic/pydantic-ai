@@ -269,7 +269,7 @@ async def test_workspace_runs_draw_their_run_id_without_the_stable_id_patch(clie
     assert replay.replay_failure is None
 
 
-# Temporal's defaults: a 60-second timeout and unlimited retries.
+# The default activity config: a 60-second start-to-close timeout.
 default_config_agent = Agent(
     TestModel(), name='default_config', capabilities=[provider.capability(), TemporalDurability()]
 )
@@ -286,7 +286,6 @@ class WorkspaceCallsWorkflow:
             await workspace.read_bytes(read)
             return
         await workspace.exists('a.txt')
-        await workspace.write_text('a.txt', 'a')
         try:
             await workspace.run(['sleep', '900'], timeout=900)
         except TypeError:
@@ -312,8 +311,8 @@ async def _execute_workspace_calls(client: Client, read: str = '') -> WorkflowHi
         return await handle.fetch_history()
 
 
-async def test_workspace_activities_retry_only_read_only_calls_and_outlast_the_command_timeout(client: Client) -> None:
-    """Under the tool timeout and retries, a slow command or environment creation ran again on every attempt."""
+async def test_a_command_activity_outlasts_the_command_timeout(client: Client) -> None:
+    """Under the 60-second tool timeout, a command with a longer `timeout=` was retried while still running."""
     provider.reset()
     provider.environments['seeded'] = {}
     history = await _execute_workspace_calls(client)
@@ -326,17 +325,14 @@ async def test_workspace_activities_retry_only_read_only_calls_and_outlast_the_c
     assert [
         (
             json.loads(attributes.input.payloads[0].data)['call']['method'],
-            attributes.retry_policy.maximum_attempts,
             attributes.start_to_close_timeout.ToTimedelta(),
-            attributes.heartbeat_timeout.ToTimedelta(),
         )
         for attributes in scheduled
     ] == snapshot(
         [
-            ('ensure', 1, timedelta(minutes=10), timedelta(seconds=30)),
-            ('exists', 0, timedelta(minutes=10), timedelta(seconds=30)),
-            ('write_bytes', 1, timedelta(minutes=10), timedelta(seconds=30)),
-            ('run', 1, timedelta(seconds=960), timedelta(seconds=30)),
+            ('ensure', timedelta(seconds=60)),
+            ('exists', timedelta(seconds=60)),
+            ('run', timedelta(seconds=960)),
         ]
     )
 

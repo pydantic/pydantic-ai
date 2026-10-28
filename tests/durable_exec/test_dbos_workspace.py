@@ -16,11 +16,8 @@ from typing import Any
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
-
-from ..workspace_fakes import InMemoryProvider, ProviderBackend
-from .workspace_scenarios import SCENARIOS, Check, ScenarioFailed, WriteInHook, cases, scenario_agents
+from ..workspace_fakes import InMemoryProvider
+from .workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -114,37 +111,3 @@ async def test_dbos_workspace_calls_are_steps_and_a_fork_replays_them(dbos: DBOS
     assert await handle.get_result() == output
     assert provider.log == ['create:env-1', 'attach:env-1']
     assert list(provider.environments) == ['env-1']
-
-
-# Retries meant for flaky MCP servers.
-mcp_retries_agent = Agent(
-    TestModel(),
-    name='dbos_mcp_retries',
-    capabilities=[
-        WriteInHook(),
-        provider.capability(),
-        DBOSDurability(mcp_step_config={'retries_allowed': True, 'max_attempts': 3, 'interval_seconds': 0.01}),
-    ],
-)
-
-
-@DBOS.workflow()
-async def mcp_retries_workflow() -> str:
-    return (await mcp_retries_agent.run('Hi.')).output
-
-
-async def test_workspace_steps_do_not_take_the_mcp_step_retries(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A write whose connection dropped after it landed is not performed again."""
-    provider.reset()
-    writes: list[str] = []
-    write_bytes = ProviderBackend.write_bytes
-
-    async def write_then_drop(self: ProviderBackend, path: str, data: bytes) -> None:
-        await write_bytes(self, path, data)
-        writes.append(path)
-        raise ConnectionError('connection reset after the write')
-
-    monkeypatch.setattr(ProviderBackend, 'write_bytes', write_then_drop)
-    with pytest.raises(ConnectionError, match='connection reset after the write'):
-        await mcp_retries_workflow()
-    assert writes == ['/remote/hook.txt']
