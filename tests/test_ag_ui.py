@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from dirty_equals import IsJson, IsPartialDict
@@ -116,10 +116,12 @@ from .conftest import (
     IsInt,
     IsSameStr,
     IsStr,
+    conversation_view,
     iter_message_parts,
     legacy_retry_prompt_part,
     message,
     message_part,
+    server_history_agent,
     try_import,
 )
 
@@ -132,12 +134,12 @@ with try_import() as imports_successful:
         ActivityMessage,
         AssistantMessage,
         BaseEvent,
-        BinaryInputContent,
         Context,
         CustomEvent,
         DeveloperMessage,
         EventType,
         FunctionCall,
+        InputContent,
         Message,
         RunAgentInput,
         StateSnapshotEvent,
@@ -197,6 +199,14 @@ with try_import() as interrupts_imports_successful:
     # (PR #1569). On older installs, the dedicated interrupt tests below are skipped.
     from ag_ui.core import ActivitySnapshotEvent, ResumeEntry
 
+with try_import():
+    # Retired in 1.0 and kept importable for one release; every test using it is `skip_if_ag_ui_1_0`.
+    from ag_ui.core import BinaryInputContent
+
+with try_import():
+    # Added in ag-ui-protocol 1.0.0; tests using it are version-gated below.
+    from ag_ui.core import FileSource
+
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='ag-ui-protocol not installed'),
@@ -226,6 +236,20 @@ def requires_ag_ui(version: str) -> pytest.MarkDecorator:
     return pytest.mark.skipif(not _has_ag_ui(version), reason=f'requires ag-ui-protocol >= {version}')
 
 
+skip_if_ag_ui_1_0 = pytest.mark.skipif(_has_ag_ui('1.0.0'), reason='ag-ui-protocol >= 1.0 has no binary input part')
+"""Skip a test that constructs the retired `binary` input part, which 1.0 dropped from `InputContent`."""
+
+
+def run_started_protocol_version() -> dict[str, Any]:
+    """`RunStartedEvent.protocolVersion` as it appears when the adapter negotiates an installed 1.0 SDK."""
+    return {'protocolVersion': '1.0'} if _has_ag_ui('1.0.0') else {}
+
+
+def activity_replace() -> dict[str, Any]:
+    """`ActivitySnapshotEvent.replace` as the adapter emits it: `True` below 1.0, left out on 1.0, where absent means replace."""
+    return {} if _has_ag_ui('1.0.0') else {'replace': True}
+
+
 def run_finished_outcome() -> dict[str, Any]:
     """`RunFinishedEvent.outcome` as it appears in an expected event when the adapter emits it.
 
@@ -235,12 +259,13 @@ def run_finished_outcome() -> dict[str, Any]:
     return {'outcome': {'type': 'success'}} if _has_ag_ui('0.1.19') else {}
 
 
-def simple_result(*, outcome: bool = False) -> Any:
+def simple_result(*, negotiated: bool = False) -> Any:
     """Expected event sequence for `simple_stream`.
 
-    Pass `outcome=True` for callers that let the adapter negotiate the installed version, where
-    `RunFinishedEvent.outcome` is emitted from 0.1.19 on. Callers that pin an older negotiated
-    version (e.g. `ag_ui_version='0.1.10'`) suppress the field, and so does the default.
+    Pass `negotiated=True` for callers that let the adapter negotiate the installed version, where
+    `RunFinishedEvent.outcome` is emitted from 0.1.19 on and `protocolVersion` from 1.0 on.
+    Callers that pin an older negotiated version (e.g. `ag_ui_version='0.1.10'`) suppress the fields,
+    and so does the default.
     """
     thread_id = IsSameStr()
     run_id = IsSameStr()
@@ -251,7 +276,7 @@ def simple_result(*, outcome: bool = False) -> Any:
         'threadId': thread_id,
         'runId': run_id,
     }
-    if outcome:
+    if negotiated:
         run_finished.update(run_finished_outcome())
     return snapshot(
         [
@@ -260,6 +285,7 @@ def simple_result(*, outcome: bool = False) -> Any:
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
+                **(run_started_protocol_version() if negotiated else {}),
             },
             {
                 'type': 'TEXT_MESSAGE_START',
@@ -435,10 +461,16 @@ def create_input(
     state: Any = None,
     context: list[Context] | None = None,
     forwarded_props: Any = None,
+    protocol_version: str | None = None,
     resume: list[ResumeEntry] | None = None,
 ) -> RunAgentInput:
-    """Create a RunAgentInput for testing."""
+    """Create a RunAgentInput for testing.
+
+    `protocol_version` is the client's own declaration; only pass it under `requires_ag_ui('1.0.0')`,
+    since `RunAgentInput` has no such field below 1.0.
+    """
     thread_id = thread_id or uuid_str()
+    declared: dict[str, Any] = {'protocol_version': protocol_version} if protocol_version is not None else {}
     return RunAgentInput(
         thread_id=thread_id,
         run_id=uuid_str(),
@@ -447,6 +479,7 @@ def create_input(
         context=context or [],
         tools=tools or [],
         forwarded_props=forwarded_props,
+        **declared,
         resume=resume,
     )
 
@@ -524,7 +557,7 @@ async def test_agui_adapter_context_reaches_model_as_tool_output_not_instruction
         context=[Context(description='Requesting user', value='U456')],
     )
     adapter = AGUIAdapter(agent=agent, run_input=run_input)
-    deps = ChannelDeps(workspace='engineering', context=adapter.run_input.context)
+    deps = ChannelDeps(workspace='engineering', context=adapter.run_input.context or [])
     async for _ in adapter.run_stream(deps=deps):
         pass
 
@@ -1398,6 +1431,7 @@ async def test_text_between_tool_calls_starts_a_new_parent_message() -> None:
                 'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
+                **run_started_protocol_version(),
             },
             {
                 'type': 'TEXT_MESSAGE_START',
@@ -4390,7 +4424,7 @@ async def test_request_with_state() -> None:
         async for event in adapter.encode_stream(adapter.run_stream(deps=deps, on_complete=on_complete)):
             events.append(json.loads(event.removeprefix('data: ')))
 
-        assert events == simple_result(outcome=True)
+        assert events == simple_result(negotiated=True)
     assert seen_states == snapshot([41, 0, 0, 42])
     assert seen_deps_states == snapshot([42, 1, 1, 43])
 
@@ -4415,7 +4449,7 @@ async def test_request_with_state_without_handler() -> None:
         async for event in adapter.encode_stream(adapter.run_stream()):
             events.append(json.loads(event.removeprefix('data: ')))
 
-    assert events == simple_result(outcome=True)
+    assert events == simple_result(negotiated=True)
 
 
 async def test_request_with_empty_state_without_handler() -> None:
@@ -4434,7 +4468,7 @@ async def test_request_with_empty_state_without_handler() -> None:
     async for event in adapter.encode_stream(adapter.run_stream()):
         events.append(json.loads(event.removeprefix('data: ')))
 
-    assert events == simple_result(outcome=True)
+    assert events == simple_result(negotiated=True)
 
 
 async def test_request_with_state_with_custom_handler() -> None:
@@ -4740,7 +4774,75 @@ async def test_callback_async() -> None:
     assert events[-1]['type'] == 'RUN_FINISHED'
 
 
-async def test_messages(image_content: BinaryContent, document_content: BinaryContent) -> None:
+def legacy_binary(**fields: Any) -> InputContent:
+    """`BinaryInputContent`, cast as the adapter does because on 1.0 the class sits outside `InputContent`."""
+    return cast(InputContent, BinaryInputContent(**fields))
+
+
+@skip_if_ag_ui_1_0
+def test_load_messages_legacy_binary_content(image_content: BinaryContent, document_content: BinaryContent) -> None:
+    """The retired `binary` part loads as `BinaryContent` from a data URI or `data`, and as a typed URL otherwise."""
+    messages = [
+        UserMessage(
+            id='msg_1',
+            content=[
+                TextInputContent(text='this is an image:'),
+                legacy_binary(url=image_content.data_uri, mime_type=image_content.media_type),
+            ],
+        ),
+        UserMessage(id='msg2', content=[legacy_binary(url='http://example.com/image.png', mime_type='image/png')]),
+        UserMessage(id='msg3', content=[legacy_binary(url='http://example.com/video.mp4', mime_type='video/mp4')]),
+        UserMessage(id='msg4', content=[legacy_binary(url='http://example.com/audio.mp3', mime_type='audio/mpeg')]),
+        UserMessage(id='msg5', content=[legacy_binary(url='http://example.com/doc.pdf', mime_type='application/pdf')]),
+        UserMessage(
+            id='msg6', content=[legacy_binary(data=document_content.base64, mime_type=document_content.media_type)]
+        ),
+    ]
+
+    assert AGUIAdapter.load_messages(messages) == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content=['this is an image:', image_content], timestamp=IsDatetime()),
+                    UserPromptPart(
+                        content=[ImageUrl(url='http://example.com/image.png', _media_type='image/png')],
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[VideoUrl(url='http://example.com/video.mp4', _media_type='video/mp4')],
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[AudioUrl(url='http://example.com/audio.mp3', _media_type='audio/mpeg')],
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[DocumentUrl(url='http://example.com/doc.pdf', _media_type='application/pdf')],
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(content=[document_content], timestamp=IsDatetime()),
+                ],
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg6'}},
+            )
+        ]
+    )
+
+
+@skip_if_ag_ui_1_0
+def test_load_messages_legacy_binary_id_only_is_rejected() -> None:
+    """Below 1.0 a `binary` part carrying only an `id` has nothing to load and fails, as it always has.
+
+    On 1.0 the same part becomes a `file` source; see `test_retired_binary_part_with_only_an_id_is_dropped_on_1_0`.
+    """
+    message = UserMessage(
+        id='msg-1', content=[TextInputContent(text='see file'), legacy_binary(mime_type='image/png', id='file-1')]
+    )
+
+    with pytest.raises(ValueError, match='BinaryInputContent must have either a `url` or `data` field'):
+        AGUIAdapter.load_messages([message])
+
+
+async def test_messages() -> None:
     messages = [
         SystemMessage(
             id='msg_1',
@@ -4757,32 +4859,6 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
         UserMessage(
             id='msg_4',
             content='User message',
-        ),
-        UserMessage(
-            id='msg_1',
-            content=[
-                TextInputContent(text='this is an image:'),
-                BinaryInputContent(url=image_content.data_uri, mime_type=image_content.media_type),
-            ],
-        ),
-        UserMessage(
-            id='msg2',
-            content=[BinaryInputContent(url='http://example.com/image.png', mime_type='image/png')],
-        ),
-        UserMessage(
-            id='msg3',
-            content=[BinaryInputContent(url='http://example.com/video.mp4', mime_type='video/mp4')],
-        ),
-        UserMessage(
-            id='msg4',
-            content=[BinaryInputContent(url='http://example.com/audio.mp3', mime_type='audio/mpeg')],
-        ),
-        UserMessage(
-            id='msg5',
-            content=[BinaryInputContent(url='http://example.com/doc.pdf', mime_type='application/pdf')],
-        ),
-        UserMessage(
-            id='msg6', content=[BinaryInputContent(data=document_content.base64, mime_type=document_content.media_type)]
         ),
         AssistantMessage(
             id='msg_5',
@@ -4869,32 +4945,8 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                         content='User message',
                         timestamp=IsDatetime(),
                     ),
-                    UserPromptPart(
-                        content=['this is an image:', image_content],
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[ImageUrl(url='http://example.com/image.png', _media_type='image/png')],
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[VideoUrl(url='http://example.com/video.mp4', _media_type='video/mp4')],
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[AudioUrl(url='http://example.com/audio.mp3', _media_type='audio/mpeg')],
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[DocumentUrl(url='http://example.com/doc.pdf', _media_type='application/pdf')],
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[document_content],
-                        timestamp=IsDatetime(),
-                    ),
                 ],
-                metadata={'__pydantic_ai__': {'ui_message_id': 'msg6'}},
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg_4'}},
             ),
             ModelResponse(
                 parts=[
@@ -5278,6 +5330,7 @@ async def test_event_stream_back_to_back_text():
                 'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
+                **run_started_protocol_version(),
             },
             {
                 'type': 'TEXT_MESSAGE_START',
@@ -5323,6 +5376,7 @@ async def test_event_stream_without_run_input_generates_identity():
                 'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
+                **run_started_protocol_version(),
             },
             {
                 'type': 'TEXT_MESSAGE_START',
@@ -5365,7 +5419,13 @@ async def test_event_stream_without_run_input_uses_explicit_identity():
 
     assert [event for event in events if event['type'] in ('RUN_STARTED', 'RUN_FINISHED')] == snapshot(
         [
-            {'type': 'RUN_STARTED', 'timestamp': IsInt(), 'threadId': 'thread-1', 'runId': 'run-1'},
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': 'thread-1',
+                'runId': 'run-1',
+                **run_started_protocol_version(),
+            },
             {
                 'type': 'RUN_FINISHED',
                 'timestamp': IsInt(),
@@ -5400,6 +5460,7 @@ async def test_event_stream_identity_comes_from_run_input():
                 'timestamp': IsInt(),
                 'threadId': run_input.thread_id,
                 'runId': run_input.run_id,
+                **run_started_protocol_version(),
             },
             {
                 'type': 'RUN_FINISHED',
@@ -5468,6 +5529,7 @@ async def test_file_part_emits_no_ag_ui_event():
                 'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
+                **run_started_protocol_version(),
             },
             {
                 'type': 'TEXT_MESSAGE_START',
@@ -5529,6 +5591,7 @@ async def test_custom_event_maps_to_ag_ui_custom_event():
                 'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
+                **run_started_protocol_version(),
             },
             {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_progress', 'value': {'payload': {'pct': 50}}},
             # Same value shape whether or not the event was emitted from inside a tool call: a
@@ -5568,6 +5631,7 @@ async def test_capability_event_is_not_forwarded():
                 'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
+                **run_started_protocol_version(),
             },
             {
                 'type': 'RUN_FINISHED',
@@ -5637,6 +5701,7 @@ async def test_typed_custom_event_maps_to_ag_ui_custom_event():
                 'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
+                **run_started_protocol_version(),
             },
             {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_sync', 'value': {'done': 3, 'total': 9}},
             {
@@ -5679,6 +5744,7 @@ async def test_custom_event_with_ui_false_is_not_forwarded():
                 'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
+                **run_started_protocol_version(),
             },
             {'type': 'CUSTOM', 'timestamp': IsInt(), 'name': 'ag_ui_shown', 'value': {'done': 2}},
             {
@@ -5712,6 +5778,7 @@ async def test_custom_event_passes_through_ag_ui_base_event():
                 'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
+                **run_started_protocol_version(),
             },
             {'type': 'STATE_SNAPSHOT', 'timestamp': IsInt(), 'snapshot': {'key': 'value'}},
             {
@@ -5838,6 +5905,7 @@ async def test_event_stream_multiple_responses_with_tool_calls():
                 'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
+                **run_started_protocol_version(),
             },
             {
                 'type': 'TEXT_MESSAGE_START',
@@ -6152,6 +6220,7 @@ async def test_tool_call_start_args_are_emitted_raw():
                 'timestamp': IsInt(),
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
+                **run_started_protocol_version(),
             },
             {
                 'type': 'TEXT_MESSAGE_START',
@@ -6277,6 +6346,7 @@ async def test_dispatch_request():
                     'timestamp': IsInt(),
                     'threadId': (thread_id := IsSameStr()),
                     'runId': (run_id := IsSameStr()),
+                    **run_started_protocol_version(),
                 },
                 'more_body': True,
             },
@@ -7799,6 +7869,7 @@ def test_dump_messages_extensionless_url_round_trips() -> None:
     ]
 
 
+@skip_if_ag_ui_1_0
 def test_dump_messages_legacy_extensionless_url_loads_as_document() -> None:
     """Before typed multimodal input, a URL with no media type loses its kind, but not its ability to dump.
 
@@ -7824,6 +7895,7 @@ def test_dump_messages_legacy_extensionless_url_loads_as_document() -> None:
     ]
 
 
+@skip_if_ag_ui_1_0
 def test_dump_messages_legacy_binary_content() -> None:
     """Test that media URLs and BinaryContent are dumped as BinaryInputContent with ag_ui_version < 0.1.15."""
     messages: list[ModelMessage] = [
@@ -7850,6 +7922,34 @@ def test_dump_messages_legacy_binary_content() -> None:
             }
         ]
     )
+
+
+@requires_ag_ui('1.0.0')
+def test_dump_messages_legacy_version_uses_typed_content_on_1_0() -> None:
+    """An ag-ui 1.0 install emits typed media even for a legacy negotiated version, so `force_download` is kept."""
+    image = ImageUrl(url='https://example.com/img.png', media_type='image/png', force_download=True)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[image])])]
+
+    result = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.10')
+    assert [message.model_dump(exclude={'id'}, exclude_none=True) for message in result] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'image',
+                        'source': {
+                            'type': 'url',
+                            'value': 'https://example.com/img.png',
+                            'mime_type': 'image/png',
+                        },
+                        'metadata': {'force_download': True},
+                    }
+                ],
+            }
+        ]
+    )
+    assert message_part(AGUIAdapter.load_messages(result), UserPromptPart).content == [image]
 
 
 @requires_ag_ui('0.1.15')
@@ -8026,6 +8126,7 @@ def test_multimodal_roundtrip_preserves_file_url_force_download(
     assert loaded == messages
 
 
+@skip_if_ag_ui_1_0
 def test_multimodal_roundtrip_drops_file_url_force_download_before_0_1_15() -> None:
     """`FileUrl.force_download` is dropped when dumping to AG-UI versions before `0.1.15`.
 
@@ -8220,6 +8321,36 @@ def test_build_run_input_skips_only_unknown_content_leaving_empty_message() -> N
 
     assert run_input.messages[0].content == []
     assert AGUIAdapter.load_messages(run_input.messages) == []
+
+
+@requires_ag_ui('0.1.15')
+def test_build_run_input_skips_unknown_media_source_type() -> None:
+    """A media source type from a newer protocol version is skipped while the rest of the message loads.
+
+    The `file` source 1.0 added is this case for a server on 0.1.15 to 0.1.22.
+    """
+    body = build_run_input_body(
+        {
+            'id': 'msg-1',
+            'role': 'user',
+            'content': [
+                {'type': 'text', 'text': 'look at this'},
+                {'type': 'image', 'source': {'type': 'telepathy', 'value': 'img-1'}},
+            ],
+        }
+    )
+
+    with pytest.warns(UserWarning, match=r"does not support \(source.type='telepathy'\) was skipped"):
+        run_input = AGUIAdapter.build_run_input(body)
+
+    assert AGUIAdapter.load_messages(run_input.messages) == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='look at this', timestamp=IsDatetime())],
+                metadata={'__pydantic_ai__': {'ui_message_id': 'msg-1'}},
+            )
+        ]
+    )
 
 
 def test_build_run_input_reports_every_unknown_tag_once() -> None:
@@ -9116,13 +9247,524 @@ async def _collect_adapter_events(
     *,
     ag_ui_version: str = _INTERRUPTS_AG_UI_VERSION,
     deferred_tool_results: DeferredToolResults | None = None,
+    on_complete: OnCompleteFunc[BaseEvent] | None = None,
+    include_usage: bool = False,
 ) -> list[dict[str, Any]]:
     """Drive `AGUIAdapter` directly so we can pin `ag_ui_version` to the interrupt-aware release."""
-    adapter = AGUIAdapter(agent=agent, run_input=run_input, ag_ui_version=ag_ui_version)
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, ag_ui_version=ag_ui_version, include_usage=include_usage)
     events: list[dict[str, Any]] = []
-    async for encoded in adapter.encode_stream(adapter.run_stream(deferred_tool_results=deferred_tool_results)):
+    async for encoded in adapter.encode_stream(
+        adapter.run_stream(deferred_tool_results=deferred_tool_results, on_complete=on_complete)
+    ):
         events.append(json.loads(encoded.removeprefix('data: ')))
     return events
+
+
+@requires_ag_ui('1.0.0')
+async def test_run_started_has_no_protocol_version_for_an_older_ag_ui_version() -> None:
+    """A peer below 1.0 gets no `protocolVersion`; from 1.0 on it is the SDK's own, see `run_started_protocol_version()`."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    events = await _collect_adapter_events(
+        agent, create_input(UserMessage(id='m1', content='hi')), ag_ui_version='0.1.19'
+    )
+    assert 'protocolVersion' not in next(event for event in events if event['type'] == 'RUN_STARTED')
+
+
+def _cancelling_agent() -> Agent:
+    """An agent whose only tool cancels the run.
+
+    `cancel()` returns; the cancellation lands at the next await point, so the tool completes
+    normally first and its (discarded) result is recorded.
+    """
+    agent = Agent(model=TestModel())
+
+    @agent.tool
+    async def tool(ctx: RunContext, query: str) -> str:
+        ctx.cancel()
+        return 'completed before the cancellation took effect'
+
+    return agent
+
+
+@requires_ag_ui('1.0.0')
+async def test_run_finished_cancelled_outcome_and_usage() -> None:
+    """A cancelled run ends with a `cancelled` outcome on 1.0 and reports the usage of the calls it made;
+    below 1.0 see `test_run_cancelled_finishes_without_error_or_outcome`."""
+    agent = _cancelling_agent()
+
+    events = await _collect_adapter_events(
+        agent,
+        create_input(UserMessage(id='m1', content='hi'), protocol_version='1.0'),
+        ag_ui_version='1.0.0',
+        include_usage=True,
+    )
+    run_finished = next(event for event in events if event['type'] == 'RUN_FINISHED')
+
+    assert run_finished['outcome'] == {'type': 'cancelled'}
+    assert [entry['model'] for entry in run_finished['usage']] == ['test']
+
+
+async def test_include_usage_is_ignored_below_1_0() -> None:
+    """`include_usage` adds nothing for a peer below 1.0, whose `RUN_FINISHED` has no `usage`; runs on every SDK."""
+    events = await _collect_adapter_events(
+        Agent(model=TestModel()),
+        create_input(UserMessage(id='m1', content='hi')),
+        ag_ui_version='0.1.10',
+        include_usage=True,
+    )
+    assert 'usage' not in next(event for event in events if event['type'] == 'RUN_FINISHED')
+
+
+async def test_from_request_forwards_include_usage() -> None:
+    body = create_input(UserMessage(id='m1', content='hi')).model_dump_json().encode('utf-8')
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    headers = [(b'content-type', b'application/json')]
+    request = Request(scope={'type': 'http', 'method': 'POST', 'headers': headers}, receive=receive)
+    adapter = await AGUIAdapter.from_request(request, agent=Agent(model=TestModel()), include_usage=True)
+    assert adapter.include_usage
+
+
+def _three_response_agent() -> Agent:
+    """An agent whose run makes three model calls: two tool calls, then text.
+
+    `on_complete` runs before `RUN_FINISHED` is built, so a usage test sets each response's usage there.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        tool_returns = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+        if tool_returns < 2:
+            yield {0: DeltaToolCall(name='tool', json_args='{}')}
+        else:
+            yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def tool() -> str:
+        return 'called'
+
+    return agent
+
+
+@requires_ag_ui('1.0.0')
+async def test_run_finished_usage_aggregates_provider_model_pairs() -> None:
+    """With `include_usage`, `RUN_FINISHED.usage` has one entry per `(provider, model)`, summed across
+    responses, with every zero count left absent rather than reported as zero."""
+    agent = _three_response_agent()
+
+    def set_usage(run_result: AgentRunResult[Any]) -> None:
+        responses = [message for message in run_result.new_messages() if isinstance(message, ModelResponse)]
+        assert len(responses) == 3
+        responses[0].provider_name = 'provider-a'
+        responses[0].model_name = 'model-a'
+        responses[0].usage = RequestUsage(
+            input_tokens=10, output_tokens=2, output_reasoning_tokens=1, cache_read_tokens=3
+        )
+        responses[1].provider_name = 'provider-a'
+        responses[1].model_name = 'model-a'
+        responses[1].usage = RequestUsage(input_tokens=5, cache_write_tokens=5)
+        responses[2].provider_name = 'provider-b'
+        responses[2].model_name = 'model-b'
+        responses[2].usage = RequestUsage(output_tokens=1)
+
+    events = await _collect_adapter_events(
+        agent,
+        create_input(UserMessage(id='m1', content='hi')),
+        ag_ui_version='1.0.0',
+        on_complete=set_usage,
+        include_usage=True,
+    )
+    run_finished = next(event for event in events if event['type'] == 'RUN_FINISHED')
+    assert run_finished['usage'] == snapshot(
+        [
+            {
+                'provider': 'provider-a',
+                'model': 'model-a',
+                'inputTokens': 15,
+                'outputTokens': 2,
+                'totalTokens': 17,
+                'reasoningTokens': 1,
+                'cachedInputTokens': 3,
+                'cacheWriteInputTokens': 5,
+            },
+            {'provider': 'provider-b', 'model': 'model-b', 'outputTokens': 1, 'totalTokens': 1},
+        ]
+    )
+
+
+@requires_ag_ui('1.0.0')
+async def test_run_finished_has_no_usage_when_responses_report_no_tokens() -> None:
+    """No `usage` key at all when every response reports zero tokens."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+
+    def clear_usage(run_result: AgentRunResult[Any]) -> None:
+        response = next(message for message in run_result.new_messages() if isinstance(message, ModelResponse))
+        response.usage = RequestUsage()
+
+    events = await _collect_adapter_events(
+        agent,
+        create_input(UserMessage(id='m1', content='hi')),
+        ag_ui_version='1.0.0',
+        on_complete=clear_usage,
+        include_usage=True,
+    )
+    assert 'usage' not in next(event for event in events if event['type'] == 'RUN_FINISHED')
+
+
+@requires_ag_ui('1.0.0')
+async def test_run_finished_usage_drops_counts_outside_the_wire_range() -> None:
+    """A count `TokenUsage` cannot encode is left absent rather than failing the run at `RUN_FINISHED`.
+
+    The bound applies to a `(provider, model)` pair's sum, so two responses that only overflow together
+    are caught too, and `totalTokens` is left absent when either count is, since it would be wrong.
+    """
+    agent = _three_response_agent()
+
+    def set_usage(run_result: AgentRunResult[Any]) -> None:
+        responses = [message for message in run_result.new_messages() if isinstance(message, ModelResponse)]
+        assert len(responses) == 3
+        responses[0].provider_name = 'provider-a'
+        responses[0].model_name = 'model-a'
+        # A misreporting provider, or a bad cast upstream of one: `RequestUsage` doesn't bound its counts.
+        responses[0].usage = RequestUsage(input_tokens=-5, output_tokens=10, cache_read_tokens=2**53)
+        for response in responses[1:]:
+            response.provider_name = 'provider-b'
+            response.model_name = 'model-b'
+            response.usage = RequestUsage(input_tokens=2**52 + 1, output_tokens=1)
+
+    events = await _collect_adapter_events(
+        agent,
+        create_input(UserMessage(id='m1', content='hi')),
+        ag_ui_version='1.0.0',
+        on_complete=set_usage,
+        include_usage=True,
+    )
+    run_finished = next(event for event in events if event['type'] == 'RUN_FINISHED')
+    assert run_finished['usage'] == snapshot(
+        [
+            {'provider': 'provider-a', 'model': 'model-a', 'outputTokens': 10},
+            {'provider': 'provider-b', 'model': 'model-b', 'outputTokens': 2},
+        ]
+    )
+
+
+@requires_ag_ui('1.0.0')
+async def test_resumed_run_usage_excludes_history() -> None:
+    """A run that starts from message history reports usage for its own model calls only."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    history = AGUIAdapter.dump_messages(
+        [ModelRequest(parts=[UserPromptPart(content='hi')]), ModelResponse(parts=[TextPart(content='hello')])],
+        ag_ui_version='1.0.0',
+    )
+
+    def set_usage(run_result: AgentRunResult[Any]) -> None:
+        # AG-UI history carries no usage, so give the reloaded response some to prove it is excluded.
+        history_response, new_response = (m for m in run_result.all_messages() if isinstance(m, ModelResponse))
+        history_response.usage = RequestUsage(input_tokens=10, output_tokens=1)
+        new_response.usage = RequestUsage(input_tokens=20, output_tokens=2)
+
+    events = await _collect_adapter_events(
+        agent,
+        create_input(*history, UserMessage(id='m2', content='again')),
+        ag_ui_version='1.0.0',
+        on_complete=set_usage,
+        include_usage=True,
+    )
+    usage = next(event for event in events if event['type'] == 'RUN_FINISHED')['usage']
+    assert usage == snapshot(
+        [{'model': 'function::simple_stream', 'inputTokens': 20, 'outputTokens': 2, 'totalTokens': 22}]
+    )
+
+
+@requires_ag_ui('1.0.0')
+@pytest.mark.parametrize(
+    ('declared', 'ag_ui_version', 'pending'),
+    [
+        pytest.param('1.0', '1.0.0', True, id='declared_1_0'),
+        pytest.param(None, '1.0.0', False, id='undeclared'),
+        pytest.param('1.0', '0.1.19', False, id='older_ag_ui_version'),
+    ],
+)
+async def test_frontend_tool_calls_are_pending_on_success(
+    declared: str | None, ag_ui_version: str, pending: bool
+) -> None:
+    """Frontend tool calls the run hands back are listed in `pendingToolCallIds`, in call order, but only for a client
+    that declared 1.0 on a 1.0 `ag_ui_version`; pre-1.0 clients reject the field. A server-side tool called in the same
+    step is answered, so it is never pending."""
+
+    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {
+            0: DeltaToolCall(name='get_weather', json_args='{}'),
+            1: DeltaToolCall(name='get_time', json_args='{}'),
+            2: DeltaToolCall(name='get_weather_parts', json_args='{}'),
+        }
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def get_time() -> str:
+        return 'noon'
+
+    events = await _collect_adapter_events(
+        agent,
+        create_input(
+            UserMessage(id='m1', content='call tools'),
+            tools=[get_weather(), get_weather('get_weather_parts')],
+            protocol_version=declared,
+        ),
+        ag_ui_version=ag_ui_version,
+    )
+    call_ids = {event['toolCallName']: event['toolCallId'] for event in events if event['type'] == 'TOOL_CALL_START'}
+    results = {event['toolCallId']: event['content'] for event in events if event['type'] == 'TOOL_CALL_RESULT'}
+    assert results == {call_ids['get_time']: 'noon'}
+    outcome = next(event for event in events if event['type'] == 'RUN_FINISHED')['outcome']
+    assert outcome == (
+        {'type': 'success', 'pendingToolCallIds': [call_ids['get_weather'], call_ids['get_weather_parts']]}
+        if pending
+        else {'type': 'success'}
+    )
+
+
+@requires_ag_ui('1.0.0')
+@pytest.mark.parametrize(
+    ('declared', 'outcome'),
+    [
+        pytest.param(None, None, id='undeclared'),
+        pytest.param('0.9', None, id='older'),
+        pytest.param('next', {'type': 'cancelled'}, id='unreadable'),
+        pytest.param('0.9-next', {'type': 'cancelled'}, id='suffixed'),
+        pytest.param('1.1', {'type': 'cancelled'}, id='newer'),
+    ],
+)
+async def test_client_protocol_version_decides_1_0_outcomes(
+    declared: str | None, outcome: dict[str, str] | None
+) -> None:
+    """A client declaring no version, or one before 1.0, gets the pre-1.0 shapes. One newer than the SDK speaks, or outside the
+    `MAJOR.MINOR` grammar, is handled like a newer one, as the spec requires, and gets the 1.0 shapes without a warning:
+    the server operator can't change what the client declares."""
+    agent = _cancelling_agent()
+
+    events = await _collect_adapter_events(
+        agent,
+        create_input(UserMessage(id='m1', content='hi'), protocol_version=declared),
+        ag_ui_version='1.0.0',
+    )
+    assert next(event for event in events if event['type'] == 'RUN_FINISHED').get('outcome') == outcome
+
+
+_IMAGE_FROM_URL = {
+    'type': 'image',
+    'source': {'type': 'url', 'value': 'https://example.com/image.png', 'mime_type': 'image/png'},
+}
+_IMAGE_FROM_DATA = {'type': 'image', 'source': {'type': 'data', 'value': 'aGVsbG8=', 'mime_type': 'image/png'}}
+_DOCUMENT_FROM_DATA = {
+    'type': 'document',
+    'source': {'type': 'data', 'value': 'aGVsbG8=', 'mime_type': 'application/pdf'},
+}
+
+
+@requires_ag_ui('1.0.0')
+@pytest.mark.parametrize(
+    ('part', 'expected'),
+    [
+        pytest.param({'mimeType': 'image/png', 'url': 'https://example.com/image.png'}, _IMAGE_FROM_URL, id='url'),
+        pytest.param(
+            {'mime_type': 'image/png', 'url': 'https://example.com/image.png'}, _IMAGE_FROM_URL, id='mime_type'
+        ),
+        pytest.param(
+            {'mimeType': 'image/png', 'data': 'aGVsbG8=', 'url': 'https://example.com/image.png'},
+            _IMAGE_FROM_URL,
+            id='url_wins_over_data',
+        ),
+        pytest.param({'mimeType': 'image/png', 'data': 'aGVsbG8='}, _IMAGE_FROM_DATA, id='data'),
+        pytest.param(
+            {'mimeType': 'image/png', 'url': 'data:image/png;base64,aGVsbG8='}, _IMAGE_FROM_DATA, id='data_uri'
+        ),
+        pytest.param(
+            {'mimeType': 'image/png', 'url': 'data:;base64,aGVsbG8='},
+            _IMAGE_FROM_DATA,
+            id='data_uri_without_media_type',
+        ),
+        pytest.param(
+            {'mimeType': 'image/png', 'url': 'data:application/pdf;base64,aGVsbG8='},
+            _DOCUMENT_FROM_DATA,
+            id='data_uri_media_type_wins',
+        ),
+        pytest.param(
+            {'mimeType': 'image/png', 'url': 'data:image/png;base64,aGVs%62G8%3D'},
+            _IMAGE_FROM_DATA,
+            id='percent_encoded_data_uri',
+        ),
+        pytest.param(
+            {'mimeType': 'image/png', 'url': 'data:image/png;base64,'},
+            {'type': 'image', 'source': {'type': 'data', 'value': '', 'mime_type': 'image/png'}},
+            id='empty_data_uri',
+        ),
+        pytest.param(
+            {'mimeType': 'text/plain', 'url': 'data:text/plain,hello'},
+            {
+                'type': 'document',
+                'source': {'type': 'url', 'value': 'data:text/plain,hello', 'mime_type': 'text/plain'},
+            },
+            id='non_base64_data_uri_stays_a_url',
+        ),
+    ],
+)
+def test_retired_binary_part_is_translated_on_1_0(part: dict[str, Any], expected: dict[str, Any]) -> None:
+    """A retired `binary` part becomes the typed media part for its MIME type."""
+    run_input = AGUIAdapter.build_run_input(
+        build_run_input_body({'id': 'msg-1', 'role': 'user', 'content': [{'type': 'binary', **part}]})
+    )
+    content = run_input.messages[0].content
+    assert isinstance(content, list)
+    assert content[0].model_dump(exclude_none=True) == expected
+
+
+@requires_ag_ui('1.0.0')
+def test_retired_binary_part_with_only_an_id_is_dropped_on_1_0() -> None:
+    """1.0 replaced the `binary` part's `id` with the `file` source, so an id-only part becomes one with no provider
+    and is dropped with that source's warning, keeping the rest of the message."""
+    run_input = AGUIAdapter.build_run_input(
+        build_run_input_body(
+            {
+                'id': 'msg-1',
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'text': 'see file'},
+                    {'type': 'binary', 'mimeType': 'image/png', 'id': 'f'},
+                ],
+            }
+        )
+    )
+    with pytest.warns(UserWarning, match=r'\(no provider\) was dropped'):
+        messages = AGUIAdapter.load_messages(run_input.messages)
+    assert message_part(messages, UserPromptPart).content == 'see file'
+
+
+@requires_ag_ui('1.0.0')
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param([{'type': 'binary', 'data': 'aGVsbG8='}], id='no_mime_type'),
+        pytest.param([{'type': 'binary', 'mimeType': 'image/png'}], id='no_payload'),
+        pytest.param(
+            [
+                {'type': 'binary', 'mimeType': 'image/png'},
+                {'type': 'binary', 'mimeType': 'image/png', 'url': 'https://example.com/a'},
+            ],
+            id='next_to_a_translatable_part',
+        ),
+    ],
+)
+def test_retired_binary_part_without_payload_is_rejected(content: list[dict[str, Any]]) -> None:
+    """A `binary` part with no MIME type or payload is malformed and fails validation."""
+    with pytest.raises(ValidationError, match='binary'):
+        AGUIAdapter.build_run_input(build_run_input_body({'id': 'msg-1', 'role': 'user', 'content': content}))
+
+
+@requires_ag_ui('1.0.0')
+def test_retired_binary_part_in_a_tool_message_is_rejected() -> None:
+    """`binary` was only ever a user-message part, so it isn't translated in a tool message."""
+    tool_message = {
+        'id': 'msg-1',
+        'role': 'tool',
+        'toolCallId': 'call-1',
+        'content': [{'type': 'binary', 'mimeType': 'image/png', 'data': 'aGVsbG8='}],
+    }
+    with pytest.raises(ValidationError, match='binary'):
+        AGUIAdapter.build_run_input(build_run_input_body(tool_message))
+
+
+@requires_ag_ui('1.0.0')
+def test_file_source_loads_as_uploaded_file() -> None:
+    """A `file` source with a known provider loads as `UploadedFile`."""
+    source = FileSource(value='file-123', provider='openai', mime_type='image/png')
+    part = ImageInputContent(source=source, metadata={'vendor_metadata': {'detail': 'high'}})
+    messages = AGUIAdapter.load_messages([UserMessage(id='m1', content=[part])])
+    uploaded = message_part(messages, UserPromptPart).content[0]
+    assert uploaded == UploadedFile(
+        file_id='file-123', provider_name='openai', media_type='image/png', vendor_metadata={'detail': 'high'}
+    )
+
+
+@requires_ag_ui('1.0.0')
+@pytest.mark.parametrize(
+    ('provider', 'match'),
+    [
+        pytest.param('unknown', r"\(provider 'unknown'\) was dropped", id='unknown_provider'),
+        pytest.param(None, r'\(no provider\) was dropped', id='missing_provider'),
+    ],
+)
+def test_file_source_without_known_provider_is_skipped(provider: str | None, match: str) -> None:
+    """A `file` source Pydantic AI has no provider mapping for is dropped with a warning."""
+    source = FileSource(value='x', provider=provider)
+    with pytest.warns(UserWarning, match=match):
+        messages = AGUIAdapter.load_messages([UserMessage(id='m1', content=[ImageInputContent(source=source)])])
+    assert messages == []
+
+
+def _tool_call_with_result(content: list[dict[str, Any]]) -> list[Message]:
+    """A tool call and its 1.0 tool message carrying `content` parts, as a client sends them."""
+    return [
+        AssistantMessage(id='m1', tool_calls=[ToolCall(id='c1', function=FunctionCall(name='tool', arguments='{}'))]),
+        ToolMessage.model_validate({'id': 'm2', 'role': 'tool', 'toolCallId': 'c1', 'content': content}),
+    ]
+
+
+_TOOL_IMAGE = {'type': 'image', 'source': {'type': 'data', 'value': 'AAEC', 'mimeType': 'image/png'}}
+_TOOL_UPLOADED_FILE = {
+    'type': 'image',
+    'source': {'type': 'file', 'value': 'file-1', 'provider': 'openai', 'mimeType': 'image/png'},
+}
+
+
+@requires_ag_ui('1.0.0')
+@pytest.mark.parametrize(
+    ('content', 'expected'),
+    [
+        pytest.param([{'type': 'text', 'text': '{"answer": 42}'}], {'answer': 42}, id='lone_text_is_the_string_form'),
+        pytest.param(
+            [{'type': 'text', 'text': '[1, 2, 3]'}, _TOOL_IMAGE],
+            ['[1, 2, 3]', BinaryImage(data=b'\x00\x01\x02', media_type='image/png')],
+            id='text_among_media_stays_text',
+        ),
+        pytest.param(
+            [_TOOL_UPLOADED_FILE],
+            UploadedFile(file_id='file-1', provider_name='openai', media_type='image/png'),
+            id='uploaded_file',
+        ),
+    ],
+)
+def test_tool_message_content_parts_load_as_tool_return(content: list[dict[str, Any]], expected: Any) -> None:
+    """From 1.0 a tool message can carry content parts, which load like a user message's. A lone text part is the
+    string form, so it rehydrates like string content; text next to other parts stays text."""
+    loaded = AGUIAdapter.load_messages(_tool_call_with_result(content))
+    assert message_part(loaded, ToolReturnPart, message_index=1).content == expected
+
+
+@requires_ag_ui('1.0.0')
+def test_tool_message_with_no_parts_left_keeps_its_place() -> None:
+    """A tool message whose only part is dropped still loads, with no content, so its call isn't orphaned."""
+    with pytest.warns(UserWarning, match=r'\(no provider\) was dropped'):
+        loaded = AGUIAdapter.load_messages(
+            _tool_call_with_result([{'type': 'image', 'source': {'type': 'file', 'value': 'file-2'}}])
+        )
+    assert message_part(loaded, ToolReturnPart, message_index=1).content is None
+
+
+@requires_ag_ui('1.0.0')
+def test_tool_message_uploaded_file_is_dropped_by_sanitize_messages() -> None:
+    """Media in a tool message's parts passes the same checks as a user message's, so a client-sent uploaded file is
+    dropped unless `allow_uploaded_files` is set."""
+    adapter = AGUIAdapter(Agent(TestModel()), create_input(*_tool_call_with_result([_TOOL_UPLOADED_FILE])))
+    with pytest.warns(UserWarning, match='uploaded file'):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+    assert message_part(sanitized, ToolReturnPart, message_index=1).content is None
 
 
 @pytestmark_interrupts
@@ -9163,14 +9805,7 @@ async def test_run_finished_no_outcome_when_sdk_lacks_interrupts(monkeypatch: py
 
 @requires_ag_ui('0.1.11')
 async def test_run_cancelled_finishes_without_error_or_outcome() -> None:
-    agent = Agent(model=TestModel())
-
-    @agent.tool
-    async def tool(ctx: RunContext, query: str) -> str:
-        ctx.cancel()
-        # `cancel()` returns; the cancellation lands at the next await point, so this
-        # tool completes normally first and its (discarded) result is recorded.
-        return 'completed before the cancellation took effect'
+    agent = _cancelling_agent()
 
     events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='hi')))
     event_types = [event['type'] for event in events]
@@ -10231,6 +10866,7 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
             'type': 'ACTIVITY_SNAPSHOT',
             'timestamp': IsInt(),
             'messageId': IsStr(),
+            **activity_replace(),
             'activityType': 'pydantic_ai_enqueued_messages',
             'content': {
                 'messages': [
@@ -10241,7 +10877,6 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
                     }
                 ]
             },
-            'replace': True,
         }
     )
     # A server-owned system prompt isn't sent to the frontend at all: it would be stripped on the way back.
@@ -10913,3 +11548,133 @@ async def test_model_settings_delta_round_trips_through_client_rebuilt_stream() 
         ]
     )
     assert effort_parts(loaded) == effort_parts(server_history)
+
+
+async def _server_history_turn(
+    agent: Agent[None, str | DeferredToolRequests], run_input: RunAgentInput, message_history: list[ModelMessage] | None
+) -> list[ModelMessage]:
+    """One request through an endpoint that keeps the history on the server, returning what it persists."""
+    adapter = AGUIAdapter(agent, run_input, manage_message_history='server')
+    results: list[AgentRunResult[Any]] = []
+    async for _ in adapter.run_stream(message_history=message_history, on_complete=results.append):
+        pass
+    [result] = results
+    return result.all_messages()
+
+
+@pytest.mark.parametrize('with_follow_up', [False, True])
+async def test_server_message_history_frontend_tool_result_from_a_new_turn_only_client(with_follow_up: bool):
+    """A client that sends only its new messages returns a frontend tool's result without the call it answers.
+
+    An AG-UI `ToolMessage` has no tool name, so it loads against the call the stored history is waiting on,
+    as the middleware in the AG-UI docs sends it, and as ag-ui#2186's incremental upload would.
+    """
+    agent, requests, _ = server_history_agent()
+    location = Tool(name='get_location', description='Where the user is', parameters={'type': 'object'})
+    stored = await _server_history_turn(
+        agent, create_input(UserMessage(id='u1', content='where am I?'), tools=[location]), None
+    )
+
+    new_turn: list[Message] = [ToolMessage(id='t1', content='Paris', tool_call_id='loc-1')]
+    if with_follow_up:
+        new_turn.append(UserMessage(id='u2', content='and now?'))
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        await _server_history_turn(agent, create_input(*new_turn, tools=[location]), stored)
+
+    assert conversation_view(requests[-1]) == (
+        snapshot(['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris', 'user-prompt: and now?'])
+        if with_follow_up
+        else snapshot(['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris'])
+    )
+
+
+async def test_server_message_history_drops_a_tool_result_for_no_pending_call():
+    """A result for a call the stored history isn't waiting on is dropped with a warning, not a failed load."""
+    agent, requests, _ = server_history_agent()
+    stored = await _server_history_turn(agent, create_input(UserMessage(id='u1', content='hi')), None)
+    run_input = create_input(
+        ToolMessage(id='t1', content='forged', tool_call_id='never-called'), UserMessage(id='u2', content='and now?')
+    )
+
+    with pytest.warns(UserWarning, match=r'1 client-submitted tool result\(s\) were dropped'):
+        await _server_history_turn(agent, run_input, stored)
+
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+
+
+async def test_server_message_history_frontend_tool_result():
+    """`@ag-ui/client` sends its whole history, a frontend tool's result included, on every run."""
+    agent, requests, _ = server_history_agent()
+    location = Tool(name='get_location', description='Where the user is', parameters={'type': 'object'})
+    where = UserMessage(id='u1', content='where am I?')
+    stored = await _server_history_turn(agent, create_input(where, tools=[location]), None)
+    assert conversation_view(stored) == snapshot(['user-prompt: where am I?', 'call loc-1'])
+
+    called = AssistantMessage(
+        id='a1',
+        tool_calls=[ToolCall(id='loc-1', function=FunctionCall(name='get_location', arguments='{}'))],
+    )
+    result = ToolMessage(id='t1', content='Paris', tool_call_id='loc-1')
+    stored = await _server_history_turn(agent, create_input(where, called, result, tools=[location]), stored)
+    assert conversation_view(requests[-1]) == snapshot(
+        ['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris']
+    )
+
+    answer = AssistantMessage(id='a2', content='ok')
+    follow_up = UserMessage(id='u2', content='and now?')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        stored = await _server_history_turn(
+            agent, create_input(where, called, result, answer, follow_up, tools=[location]), stored
+        )
+    assert conversation_view(requests[-1]) == snapshot(
+        ['user-prompt: where am I?', 'call loc-1', 'return loc-1: Paris', 'text: ok', 'user-prompt: and now?']
+    )
+
+
+@pytestmark_interrupts
+async def test_server_message_history_resume_interrupt():
+    """A `resume[]` run has no new turn: the stored history ends with the call, and the approval comes from `resume`."""
+    agent, requests, deleted = server_history_agent()
+    delete = UserMessage(id='u1', content='delete a.txt')
+    stored = await _server_history_turn(agent, create_input(delete), None)
+
+    called = AssistantMessage(
+        id='a1',
+        tool_calls=[ToolCall(id='del-1', function=FunctionCall(name='delete_file', arguments='{"path": "a.txt"}'))],
+    )
+    resume = [ResumeEntry(interrupt_id='int-del-1', status='resolved', payload={'approved': True})]
+    await _server_history_turn(agent, create_input(delete, called, resume=resume), stored)
+
+    assert deleted == ['a.txt']
+    assert conversation_view(requests[-1]) == snapshot(
+        ['user-prompt: delete a.txt', 'call del-1', 'return del-1: Deleted a.txt']
+    )
+
+
+async def test_dispatch_request_forwards_manage_message_history():
+    agent, requests, _ = server_history_agent()
+    hi = UserMessage(id='u1', content='hi')
+    stored = await _server_history_turn(agent, create_input(hi), None)
+    run_input = create_input(hi, AssistantMessage(id='a1', content='ok'), UserMessage(id='u2', content='and now?'))
+    body = run_input.model_dump_json(by_alias=True).encode()
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await AGUIAdapter.dispatch_request(
+        request, agent=agent, message_history=stored, manage_message_history='server'
+    )
+    assert isinstance(response, StreamingResponse)
+
+    async def send(_: MutableMapping[str, Any]) -> None:
+        pass
+
+    await response.stream_response(send)
+
+    assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])

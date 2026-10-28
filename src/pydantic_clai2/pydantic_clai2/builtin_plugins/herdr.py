@@ -1,4 +1,4 @@
-"""Opt-in herdr state, session, metadata, and conversation-title integration."""
+"""Herdr state, session, metadata, and conversation-title integration in managed terminal panes."""
 
 import os
 import re
@@ -22,7 +22,7 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai_harness.ask_user import AskUserAnsweredEvent, AskUserRequestedEvent
 from pydantic_ai_harness.compaction import ContextUsageEvent
-from pydantic_clai2.builtin_plugins._herdr_client import SOURCE, HerdrClient
+from pydantic_clai2.builtin_plugins.herdr_client import SOURCE, HerdrClient
 from pydantic_clai2.config.settings_store import config_dir
 from pydantic_clai2.plugins import (
     ConversationChanged,
@@ -34,7 +34,7 @@ from pydantic_clai2.plugins import (
     TurnEnd,
     TurnStart,
 )
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.ui.rendering.usage_report import session_usage
 
 _UNSAFE_ARGUMENT = re.compile(r"['\x00-\x1f\x7f-\x9f]")

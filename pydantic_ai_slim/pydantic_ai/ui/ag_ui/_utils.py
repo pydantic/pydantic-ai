@@ -68,6 +68,9 @@ INTERRUPTS_VERSION = (0, 1, 19)
 [ag-ui-protocol#1569](https://github.com/ag-ui-protocol/ag-ui/pull/1569).
 """
 
+LIFECYCLE_1_0_VERSION = (1, 0)
+"""AG-UI version that added `RUN_STARTED.protocolVersion`, the `cancelled` outcome, `pendingToolCallIds` and `usage`."""
+
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
 INTERRUPT_ID_PREFIX: Final[str] = 'int-'
