@@ -108,6 +108,7 @@ class TestAdvisor:
                 return 'claude-code'
 
         model = AnthropicModel('claude-sonnet-4-5', provider=ClaudeCodeProvider(api_key='x'))
+        assert model.system == 'claude-code'
         [factory] = Advisor('anthropic:claude-opus-4-8', mode=mode).get_native_tools()
         assert callable(factory)
         assert factory(RunContext(deps=None, model=model, usage=RunUsage())) == AdvisorTool(model='claude-opus-4-8')

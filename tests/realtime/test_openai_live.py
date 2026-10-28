@@ -216,10 +216,13 @@ def test_azure_is_rejected() -> None:
         def name(self) -> str:
             return 'my-azure'
 
+    names: set[str] = set()
     for provider_cls in (AzureProvider, RenamedAzureProvider):
         provider = provider_cls(azure_endpoint='https://example.openai.azure.com', api_key='k', api_version='v')
+        names.add(provider.name)
         with pytest.raises(UserError, match='Azure OpenAI does not serve GPT-Live'):
             OpenAILiveModel('gpt-live-1', provider=provider)
+    assert names == {'azure', 'my-azure'}
 
 
 def test_agent_instructions_and_tools_configure_the_backend(model: OpenAILiveModel) -> None:
