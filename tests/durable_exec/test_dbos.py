@@ -2515,16 +2515,15 @@ async def test_dbos_durability_submit_output_from_a_function_tool(dbos: DBOS) ->
 
 
 @DBOS.step()
-async def _submit_output_in_a_step(ctx: RunContext[None]) -> str:
+async def _submit_output_in_a_step(ctx: RunContext[None]) -> None:
     await ctx.submit_output('final_result', {'response': 'submitted'})
-    return 'done'
 
 
 async def test_dbos_durability_submit_output_refused_in_a_users_step(dbos: DBOS) -> None:
     """A step the tool's own code runs records its result, and recovery wouldn't submit again, so it's refused."""
 
-    async def finish(ctx: RunContext[None]) -> str:
-        return await _submit_output_in_a_step(ctx)
+    async def finish(ctx: RunContext[None]) -> None:
+        await _submit_output_in_a_step(ctx)
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('finish', {})])
