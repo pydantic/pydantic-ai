@@ -22,12 +22,13 @@ Follow the general [documentation guidance](../agent_docs/documentation.md). The
 - Combine parameter variations when one example plus notes preserves every meaningful difference. Split examples when use cases, prerequisites, or constraints differ.
 - Use examples that demonstrate a credible user task or decision without introducing complexity unrelated to the feature.
 
-## Review
+## Rendered previews
 
+- Use a rendered preview when you need to check documentation visuals, links, or other rendered behavior.
 - On a Pydantic AI pull request, apply `trigger:docs-preview` to request navigation validation and a rendered preview from unified-docs. Dispatch removes the label; re-add it after source changes.
-- Read the separate `pydantic-docs[bot]` navigation and preview reports. Verify both reported SHAs match the current Pydantic AI pull request head.
-- Before merging, inspect the preview's **this commit** link, pinned to that source head. The stable **latest** link points to the latest deployed preview and can lag behind source changes. Navigation validation and the rendered preview are separate gates.
-- Fork PRs receive navigation validation only. Have a maintainer arrange a rendered preview of the reviewed fork head before merging.
+- Read the separate `pydantic-docs[bot]` navigation and preview reports. Verify their reported SHAs match the head you want to inspect.
+- Use the preview's **this commit** link to inspect that source head. The stable **latest** link points to the latest deployed preview and can lag behind source changes.
+- Fork PRs receive navigation validation only. If you need a rendered preview, ask a maintainer to arrange one for the reviewed fork head.
 - On a unified-docs renderer pull request, use its separate `trigger:docs` label for Docs Self-Preview. It builds the site and posts its rendered URL.
 
 <!-- /braindump -->
