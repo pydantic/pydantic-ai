@@ -170,9 +170,11 @@ def _doc_snippets() -> Iterable[ParameterSet]:
 
 
 @pytest.mark.parametrize('example', list(_doc_snippets()))
-def test_doc_snippet_valid(example: CodeExample) -> None:
+def test_doc_snippet_valid(example: CodeExample, monkeypatch: pytest.MonkeyPatch) -> None:
     if example.prefix_settings().get('test', '').startswith('skip'):
         pytest.skip('illustrative signature block; not runnable Python')
+    # Import checks model a fresh module, not prompt text escaped by an earlier test.
+    monkeypatch.setattr('pydantic_ai._framing._data_tag_openers_used', False)
     problem = _snippet_problem(example.source)
     assert problem is None, (
         f'{example.path}:{example.start_line} {problem}. '
