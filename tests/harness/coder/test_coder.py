@@ -8,8 +8,8 @@ from typing import NoReturn
 
 import pytest
 
-import pydantic_ai.capabilities.local_workspace
-import pydantic_ai_harness.coder
+import pydantic_ai
+import pydantic_ai_harness
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability, LocalWorkspace
 from pydantic_ai.exceptions import UserError
