@@ -44,6 +44,7 @@ from typing_extensions import TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
+from .._canonical_system import accepts_stateless_artifact
 from .._file_input import (
     KNOWN_DOCUMENT_MEDIA_TYPES,
     FileInputKind,
@@ -134,6 +135,7 @@ from ..messages import (
     _post_compaction_window_start,  # pyright: ignore[reportPrivateUsage]
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
+    _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
     _tool_return_text,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
@@ -1092,6 +1094,96 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         mode = self.profile.get('tool_addition_mode')
         return mode if mode in self.supported_tool_addition_modes else None
 
+    @property
+    def canonical_system(self) -> str:
+        """The system whose keys and format verify the stateless signed or encrypted data this model returns.
+
+        The provider's [`canonical_system`][pydantic_ai.providers.Provider.canonical_system], or `system` for a
+        model without a provider. See
+        [`accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts] for how it's used.
+        """
+        provider = self.provider
+        return provider.canonical_system if provider is not None else self.system
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        """Other canonical systems whose stateless data this model also sends back to its provider.
+
+        The provider's [`compatible_systems`][pydantic_ai.providers.Provider.compatible_systems], or none for a
+        model without a provider.
+        """
+        provider = self.provider
+        return provider.compatible_systems if provider is not None else frozenset()
+
+    def accepts_stateless_artifacts(self, response: ModelResponse, part: ModelResponsePart | None = None) -> bool:
+        """Whether this model can send back the stateless signed or encrypted data `part` carries in `response`.
+
+        That data is encrypted reasoning, thinking and thought signatures, redacted thinking, encrypted
+        server-side tool results and OpenAI compaction items: the API checks it by its own key and format
+        rather than by looking up stored state. The data's canonical system is `response.canonical_system`
+        for a part with the response's `provider_name`, and is otherwise derived from the part's
+        `provider_name`. It's accepted when that is this model's
+        [`canonical_system`][pydantic_ai.models.Model.canonical_system] or one of its
+        [`compatible_systems`][pydantic_ai.models.Model.compatible_systems]. Data from a part with this
+        model's own `system`, in a history that doesn't say otherwise, is accepted as before.
+
+        Every model that sends such data back decides with this method, as does the trim that drops history
+        before a compaction part, so the two always agree. Data that isn't accepted gets the model's fallback
+        for foreign data, such as thinking rendered as text. Stateful data, such as response, file and
+        container IDs, is only sent back to the same `provider_name`.
+
+        Args:
+            response: The response the part is in.
+            part: The part carrying the data, or `None` for data the response carries without a part of its
+                own provider, which is judged by the response's `provider_name`. A part without a
+                `provider_name` is never accepted.
+        """
+        return accepts_stateless_artifact(
+            response,
+            response.provider_name if part is None else part.provider_name,
+            system=self.system,
+            canonical_system=self.canonical_system,
+            compatible_systems=self.compatible_systems,
+        )
+
+    @property
+    def _canonical_system_stamp(self) -> str | None:
+        """The `canonical_system` to set on a response this model creates.
+
+        Its own, when that isn't `system`, or always when the provider derives it from its client rather than its
+        name (see `Provider._canonical_system_follows_client`), as the name alone then doesn't say which it was.
+        """
+        canonical_system = self.canonical_system
+        provider = self.provider
+        if provider is not None and provider._canonical_system_follows_client:  # pyright: ignore[reportPrivateUsage]
+            return canonical_system
+        return None if canonical_system == self.system else canonical_system
+
+    _honors_compaction_boundaries: ClassVar[bool] = False
+    """Whether the adapter drops the history before a compaction part it sends, with `_trim_before_compaction`."""
+
+    def _model_for_response(self, response: ModelResponse) -> Model:
+        """The model that produced `response`, for a model that delegates requests to others."""
+        return self
+
+    def _compaction_window_predicate(self, response: ModelResponse) -> _StatelessArtifactPredicate | None:
+        """The predicate the request that produced `response` was trimmed by, for its execution-availability window.
+
+        That's the producing model's
+        [`accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts] when it trims before
+        compaction parts and `response` is evidently its own. Otherwise `None`, for the window to treat a compaction
+        part as a boundary only when it's from the response's own provider: the producer then can't be asked, as
+        when a run resumes from another model's response, or never trimmed the history.
+        """
+        model = self._model_for_response(response)
+        if (
+            not model._honors_compaction_boundaries
+            or model.system != response.provider_name
+            or model._canonical_system_stamp != response.canonical_system
+        ):
+            return None
+        return model.accepts_stateless_artifacts
+
     def _trim_before_compaction(
         self,
         messages: list[ModelMessage],
@@ -1111,7 +1203,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         return _trim_messages_before_compaction(
             messages,
-            self.system,
+            self.accepts_stateless_artifacts,
             requires_encrypted_content=self.compaction_requires_encrypted_content,
             standing_prompt_retained=self.compaction_retains_standing_prompt
             if standing_prompt_retained is None
@@ -1673,8 +1765,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         from .._tool_search import synthesize_local_tool_search_messages
 
-        target_provider_name = self.system if supports_native_tool_search else None
-        messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
+        messages = synthesize_local_tool_search_messages(
+            messages, keeps_native=self.accepts_stateless_artifacts if supports_native_tool_search else None
+        )
 
         if not clears_request_scoped_prompts:
             messages = _move_request_scoped_prompts_to_tail(messages)
@@ -1887,7 +1980,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         if (provider := self.provider) is None:
             return {}
-        return provider.model_profile(self.model_name) or {}
+        return provider._configured_model_profile(self.model_name) or {}  # pyright: ignore[reportPrivateUsage]
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Adjust the provider's profile defaults for this model instance, before the user's `profile=` is applied.
@@ -1953,6 +2046,8 @@ class StreamedResponse(ABC):
 
     provider_response_id: str | None = field(default=None, init=False)
     provider_details: dict[str, Any] | None = field(default=None, init=False)
+    canonical_system: str | None = field(default=None, init=False)
+    """See [`ModelResponse.canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system]. Set by the model that opened the stream."""
     finish_reason: FinishReason | None = field(default=None, init=False)
     state: ModelResponseState = field(default='complete', init=False)
     """Lifecycle state of the response."""
@@ -2180,6 +2275,7 @@ class StreamedResponse(ABC):
             usage=self.usage,
             provider_name=self.provider_name,
             provider_url=self.provider_url,
+            canonical_system=self.canonical_system,
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
@@ -3290,12 +3386,16 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
 
 def _trim_messages_before_compaction(
     messages: list[ModelMessage],
-    system: str,
+    accepts: _StatelessArtifactPredicate,
     *,
     requires_encrypted_content: bool = False,
     standing_prompt_retained: bool = False,
 ) -> list[ModelMessage]:
-    """Drop history before the latest same-provider compaction part the request will send.
+    """Drop history before the latest compaction part the request will send.
+
+    `accepts` is the adapter's [`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts],
+    the predicate it renders compaction parts by, so a part from another provider with the same canonical system
+    is a boundary exactly when the adapter sends it.
 
     Reached through [`Model._trim_before_compaction`][pydantic_ai.models.Model._trim_before_compaction],
     which derives both flags from the adapter's declarations; adapters call that from their own
@@ -3336,7 +3436,7 @@ def _trim_messages_before_compaction(
         for part_index in range(len(message.parts) - 1, -1, -1):
             part = message.parts[part_index]
             if not isinstance(part, CompactionPart) or not _compaction_part_is_wire_boundary(
-                part, system, requires_encrypted_content=requires_encrypted_content
+                message, part, accepts, requires_encrypted_content=requires_encrypted_content
             ):
                 continue
             tail = [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]
