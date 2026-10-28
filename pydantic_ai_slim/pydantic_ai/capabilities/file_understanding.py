@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterator
-from dataclasses import KW_ONLY, dataclass, replace
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, TypeGuard, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
@@ -15,6 +15,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
+    ModelResponse,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -107,19 +108,35 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     which keeps the last. Pass a distinct `id` to keep both, or `id=None` for derived ids.
     """
 
-    async def before_model_request(
+    _unrecorded: dict[str, str] = field(default_factory=lambda: {}, init=False, repr=False)
+    """Descriptions made for this run's attempts and not yet in its history, by file identity.
+
+    `prepare_model_request` can't change the history, so a description waits here until `after_model_request`
+    records it. Another attempt at the same step, on another model, uses it rather than describing the file again.
+    """
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> FileUnderstanding[AgentDepsT]:
+        """A copy for this run, so descriptions waiting to be recorded don't leak into another run."""
+        return replace(self)
+
+    async def prepare_model_request(
         self,
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
+        """Describe the files the model serving this attempt can't read, and send the descriptions in their place.
+
+        Each attempt is judged by its own model, so with `ModelFallback` a candidate that reads a file gets the file
+        and only one that can't gets its description.
+        """
         try:
             profile = request_context.model.profile
         except NotImplementedError:
-            # A `FallbackModel` has no profile of its own; which model answers is not known yet.
+            # A `FallbackModel` has no profile of its own; which of its models answers is not known.
             return request_context
 
         # Every file is found first, so the distinct ones can be described at once rather than one after another.
-        recorded = self._recorded_descriptions([*ctx.messages, *request_context.messages])
+        recorded = {**self._recorded_descriptions([*ctx.messages, *request_context.messages]), **self._unrecorded}
         descriptions: dict[str, str] = {}
         pending: dict[str, SendableFile] = {}
         unaccepted = False
@@ -142,10 +159,27 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
 
         if pending:
             await self._describe_pending(ctx, pending, descriptions)
-            self._record(ctx.messages, {identity: descriptions[identity] for identity in pending})
+            self._unrecorded.update({identity: descriptions[identity] for identity in pending})
 
         messages = [_substitute(message, profile, descriptions) for message in request_context.messages]
         return replace(request_context, messages=messages)
+
+    async def after_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        request_context: ModelRequestContext,
+        response: ModelResponse,
+    ) -> ModelResponse:
+        """Record the descriptions this run's attempts made in its history, for later requests, turns and replays.
+
+        A description depends on the file and `instructions`, not on the model it was made for, so one made for an
+        attempt that is then rejected is recorded all the same.
+        """
+        if self._unrecorded:
+            self._record(ctx.messages, self._unrecorded)
+            self._unrecorded.clear()
+        return response
 
     @property
     def _metadata_key(self) -> str:

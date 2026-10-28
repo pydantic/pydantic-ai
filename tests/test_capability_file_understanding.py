@@ -27,8 +27,8 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.capabilities import FileUnderstanding
-from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.capabilities import FileUnderstanding, ModelFallback
+from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 from pydantic_ai.messages import sanitize_messages
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
@@ -39,7 +39,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
-from .conftest import try_import
+from .conftest import IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -347,10 +347,10 @@ async def test_a_url_is_not_described_twice_within_a_run():
     assert describer.calls == 1
 
 
-async def test_a_file_is_described_every_time_without_a_history_to_record_it_in():
-    """With no request in the run's history, a description is reused only within the request it was made for.
+async def test_a_file_is_described_once_per_run_without_a_history_to_record_it_in():
+    """With no request in the run's history, a description is still reused for the rest of the run, but not by another.
 
-    An agent run always has its request in the history, so this calls the hook directly with a bare `RunContext`.
+    An agent run always has its request in the history, so this calls the hooks directly with a bare `RunContext`.
     """
     describer = Describer()
     capability: FileUnderstanding[None] = FileUnderstanding(fallback_subagent_model=FunctionModel(describer))
@@ -364,8 +364,10 @@ async def test_a_file_is_described_every_time_without_a_history_to_record_it_in(
     )
 
     for _ in range(2):
-        await capability.before_model_request(ctx, request_context)
-    assert describer.calls == 2, 'the same URL twice in one request is described once, and again in the next'
+        run = await capability.for_run(ctx)
+        for _ in range(2):
+            await run.prepare_model_request(ctx, request_context)
+    assert describer.calls == 2, 'the same URL twice in one request is described once per run'
     assert ctx.usage.requests == 2
 
 
@@ -394,8 +396,10 @@ async def test_a_file_only_in_the_request_is_recorded_on_the_latest_request():
         model_request_parameters=ModelRequestParameters(),
     )
 
-    await capability.before_model_request(ctx, request_context)
-    await capability.before_model_request(ctx, request_context)
+    run = await capability.for_run(ctx)
+    await run.prepare_model_request(ctx, request_context)
+    await run.after_model_request(ctx, request_context=request_context, response=ModelResponse(parts=[]))
+    await run.prepare_model_request(ctx, request_context)
     assert describer.calls == 1
     [request] = history
     assert isinstance(request, ModelRequest)
@@ -573,3 +577,79 @@ async def test_a_real_adapter_that_cannot_read_a_video_gets_a_real_description(
         'This file describes a still photograph, not a video, showing a camera on a tripod in a red rock canyon, with its screen displaying a dirt road leading toward distant mountains.'
     )
     assert result.usage.requests == 2
+
+
+async def test_each_attempt_is_judged_by_the_model_serving_it():
+    """With `ModelFallback`, a candidate that reads a file gets it, and only one that can't gets its description.
+
+    The description made for the fallback is recorded once the attempt returns, so the next turn reuses it.
+    """
+    describer = Describer()
+    item = ImageUrl('https://example.com/cat.png')
+    primary_saw: list[list[object]] = []
+    backup_saw: list[list[ModelMessage]] = []
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        primary_saw.append(last_prompt([messages]))
+        raise ModelAPIError(model_name='primary', message='down')
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        backup_saw.append(messages)
+        return ModelResponse(parts=[TextPart('a cat')])
+
+    agent = Agent(
+        FunctionModel(primary),
+        capabilities=[
+            ModelFallback(FunctionModel(backup, profile=ModelProfile(supports_image_input=False))),
+            FileUnderstanding(fallback_subagent_model=FunctionModel(describer)),
+        ],
+    )
+    first = await agent.run(['What is this?', item])
+    assert primary_saw == [['What is this?', item]]
+    assert last_prompt(backup_saw) == ['What is this?', IsStr(regex='(?s).*A description of .*')]
+    assert describer.calls == 1
+
+    request = first.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.metadata == snapshot(
+        {
+            '__pydantic_ai__': {
+                'file_understanding': {
+                    'file_understanding': {'url:https://example.com/cat.png': 'A description of 750ff4.'}
+                }
+            }
+        }
+    )
+
+    await agent.run('And now?', message_history=first.all_messages())
+    assert describer.calls == 1, 'the recorded description is reused on the next turn'
+    # The first turn's request goes out with the same parts as before, so the cached prefix holds.
+    first_sent, again_sent = backup_saw[0][0], backup_saw[-1][0]
+    assert isinstance(first_sent, ModelRequest) and isinstance(again_sent, ModelRequest)
+    assert again_sent.parts == first_sent.parts
+
+
+async def test_a_description_is_made_once_across_the_attempts_of_a_step():
+    """An attempt that fails after its file was described leaves the description for the next one."""
+    describer = Describer()
+    no_images = ModelProfile(supports_image_input=False)
+    sent: list[list[object]] = []
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(last_prompt([messages]))
+        raise ModelAPIError(model_name='primary', message='down')
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(last_prompt([messages]))
+        return ModelResponse(parts=[TextPart('a cat')])
+
+    agent = Agent(
+        FunctionModel(primary, profile=no_images),
+        capabilities=[
+            ModelFallback(FunctionModel(backup, profile=no_images)),
+            FileUnderstanding(fallback_subagent_model=FunctionModel(describer)),
+        ],
+    )
+    await agent.run(['What is this?', ImageUrl('https://example.com/cat.png')])
+    assert describer.calls == 1
+    assert sent[0] == sent[1]
