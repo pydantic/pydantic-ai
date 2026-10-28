@@ -641,7 +641,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
-            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [compacting on demand](../capabilities/compaction.md#compacting-on-demand).
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -865,7 +865,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
-            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [compacting on demand](../capabilities/compaction.md#compacting-on-demand).
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1055,7 +1055,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 Note that it does _not_ receive any events after the final result is found.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
-            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [compacting on demand](../capabilities/compaction.md#compacting-on-demand).
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1428,7 +1428,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 Note that it does _not_ receive any events after the final result is found.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
-            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [compacting on demand](../capabilities/compaction.md#compacting-on-demand).
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1629,7 +1629,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
-            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [compacting on demand](../capabilities/compaction.md#compacting-on-demand).
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1856,7 +1856,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
-            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [compacting on demand](../capabilities/compaction.md#compacting-on-demand).
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
