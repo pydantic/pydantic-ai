@@ -1,12 +1,7 @@
-"""Temporal lifecycle experiment. Provider I/O is scripted; Temporal is a real local server."""
+"""Pin worker-owned socket reuse, unowned HTTP, recovery and replay with a real Temporal server and scripted I/O."""
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('temporalio', reason='temporal not installed', exc_type=ImportError)
-pytest.importorskip('openai')
-pytest.importorskip('websockets')
 import json
 from collections import deque
 from collections.abc import Mapping
@@ -17,21 +12,37 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import httpx2
-from openai import AsyncOpenAI
-from temporalio import activity, workflow
-from temporalio.client import Client, WorkflowHistory
-from temporalio.common import RetryPolicy
-from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
-from websockets.exceptions import ConnectionClosedError
+import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec._operation_backend import durable_unit_scope
-from pydantic_ai.durable_exec.temporal import AgentPlugin, TemporalDurability
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ModelResponse
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-from pydantic_ai.providers.openai import OpenAIProvider
-from tests.models.test_openai_responses_ws import FRAME_ADAPTER, Frame, ScriptedSocket, completed_response, text_events
+
+try:
+    from temporalio import activity, workflow
+    from temporalio.client import Client, WorkflowHistory
+    from temporalio.common import RetryPolicy
+    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
+
+    from pydantic_ai.durable_exec.temporal import AgentPlugin, TemporalDurability
+except ImportError:  # pragma: lax no cover
+    pytest.skip('temporal not installed', allow_module_level=True)
+
+try:
+    from openai import AsyncOpenAI
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from ..responses_websocket import FRAME_ADAPTER, Frame, ScriptedSocket, completed_response, text_events
+except ImportError:  # pragma: lax no cover
+    pytest.skip('openai not installed', allow_module_level=True)
+
+try:
+    from websockets.exceptions import ConnectionClosedError
+except ImportError:  # pragma: lax no cover
+    pytest.skip('websockets not installed', allow_module_level=True)
 
 _agent: Agent[None, str]
 

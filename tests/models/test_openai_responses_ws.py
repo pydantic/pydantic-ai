@@ -22,7 +22,7 @@ import pytest
 from _pytest.fixtures import SubRequest
 from dirty_equals import IsPartialDict
 from httpx import Timeout
-from pydantic import BaseModel, JsonValue, TypeAdapter
+from pydantic import BaseModel
 from typing_extensions import Unpack
 
 from pydantic_ai import (
@@ -63,6 +63,14 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.providers.gateway import gateway_provider
 
 from ..conftest import try_import
+from ..durable_exec.responses_websocket import (
+    FRAME_ADAPTER,
+    Frame,
+    ScriptedSocket,
+    completed_response,
+    on_lane,
+    text_events,
+)
 from ..durable_exec.test_durable_operation import (
     JournalDurability,
     _RegisteredDurability,  # pyright: ignore[reportPrivateUsage]
@@ -97,8 +105,6 @@ with try_import() as imports_successful:
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
 READINESS_WAIT_TIMEOUT = 10
-Frame = dict[str, JsonValue]
-FRAME_ADAPTER = TypeAdapter(Frame)
 WEBSOCKET: OpenAIResponsesModelSettings = {'openai_transport': 'websocket'}
 
 with try_import() as bedrock_mantle_imports_successful:
@@ -411,47 +417,6 @@ async def test_cross_socket_continuation_replays_history(
     assert 'amber' in str(second_input).lower()
 
 
-def completed_response(response_id: str, *, store: bool | None = None, output: list[JsonValue] | None = None) -> Frame:
-    response: Frame = {
-        'id': response_id,
-        'model': 'gpt-4o',
-        'object': 'response',
-        'created_at': 1704067200,
-        'status': 'completed',
-        'output': output or [],
-        'parallel_tool_calls': True,
-        'tool_choice': 'auto',
-        'tools': [],
-        'usage': {'input_tokens': 5, 'output_tokens': 1, 'total_tokens': 6},
-    }
-    if store is not None:
-        response['store'] = store
-    return response
-
-
-def text_events(text: str = 'ready', response_id: str = 'resp_test', *, store: bool | None = None) -> list[Frame]:
-    response = completed_response(response_id, store=store)
-    return [
-        {'type': 'response.created', 'sequence_number': 0, 'response': {**response, 'status': 'in_progress'}},
-        {
-            'type': 'response.output_item.added',
-            'sequence_number': 1,
-            'output_index': 0,
-            'item': {'type': 'message', 'id': 'msg_test', 'role': 'assistant', 'status': 'in_progress', 'content': []},
-        },
-        {
-            'type': 'response.output_text.delta',
-            'sequence_number': 2,
-            'output_index': 0,
-            'content_index': 0,
-            'item_id': 'msg_test',
-            'delta': text,
-            'logprobs': [],
-        },
-        {'type': 'response.completed', 'sequence_number': 3, 'response': response},
-    ]
-
-
 def function_call_item(call_id: str, item_id: str = 'fc_test') -> Frame:
     return {
         'type': 'function_call',
@@ -477,10 +442,6 @@ def tool_call_events(response_id: str, call_id: str) -> list[Frame]:
         {'type': 'response.output_item.done', 'sequence_number': 2, 'output_index': 0, 'item': item},
         {'type': 'response.completed', 'sequence_number': 3, 'response': response},
     ]
-
-
-def on_lane(events: list[Frame], stream_id: str) -> list[Frame]:
-    return [{**event, 'stream_id': stream_id} for event in events]
 
 
 def http_reply(response_id: str, *output: Frame) -> httpx2.Response:
@@ -525,62 +486,6 @@ async def http() -> AsyncIterator[HTTPResponses]:
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses.handle)) as client:
         responses.client = client
         yield responses
-
-
-@dataclass
-class ScriptedSocket:
-    """Control interruptions and concurrency beneath the real SDK event parser.
-
-    Not a cassette: the tests using it need lanes interleaved on cue, transport failures, and provider errors at
-    chosen points, which a live recording can't produce on demand. The recorded tests cover the real API's frames.
-    """
-
-    responses: deque[list[Frame]] = field(default_factory=lambda: deque([text_events()]))
-    sent: list[Frame] = field(default_factory=list[Frame])
-    incoming: deque[Frame | Exception] = field(default_factory=lambda: deque[Frame | Exception]())
-    receiving: anyio.Event = field(default_factory=anyio.Event)
-    waiting_for_input: anyio.Event = field(default_factory=anyio.Event)
-    available: anyio.Event = field(default_factory=anyio.Event)
-    sending: anyio.Event = field(default_factory=anyio.Event)
-    send_gate: anyio.Event | None = None
-    close_count: int = 0
-    send_error: Exception | None = None
-
-    async def send(self, data: str | bytes) -> None:
-        self.sending.set()
-        if self.send_error is not None:
-            raise self.send_error
-        if self.send_gate is not None:
-            await self.send_gate.wait()
-        frame = FRAME_ADAPTER.validate_json(data)
-        self.sent.append(frame)
-        if self.responses:
-            events = self.responses.popleft()
-            # The server echoes a request's `stream_id` on every event of its response.
-            stream_id = frame.get('stream_id')
-            self.push(*(on_lane(events, stream_id) if isinstance(stream_id, str) else events))
-
-    def push(self, *events: Frame | Exception) -> None:
-        self.incoming.extend(events)
-        self.available.set()
-
-    async def recv(self, *, decode: bool | None = None) -> str | bytes:
-        self.receiving.set()
-        while not self.incoming:
-            if self.close_count:
-                raise ConnectionClosedOK(None, None)
-            self.available = anyio.Event()
-            self.waiting_for_input.set()
-            await self.available.wait()
-        event = self.incoming.popleft()
-        if isinstance(event, Exception):
-            raise event
-        raw = FRAME_ADAPTER.dump_json(event)
-        return raw if decode is False else raw.decode()
-
-    async def close(self, *, code: int = 1000, reason: str = '') -> None:
-        self.close_count += 1
-        self.available.set()
 
 
 @dataclass

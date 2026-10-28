@@ -169,6 +169,7 @@ from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
 from ._known_model_names import KnownModelName as KnownModelName
+from ._model_context import ModelContext
 from ._prompt_cache import snap_cache_setting, split_cache_setting
 from ._request_timeout import RequestDeadline
 from ._speech import assistant_speech_text
@@ -927,8 +928,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     def _context(self) -> AbstractAsyncContextManager[Model]:
         """Bind lifecycle calls to one scope, even when an exit stack closes it from another task."""
-        from ._model_context import ModelContext
-
         return ModelContext(self)
 
     def _run_scope(self) -> AbstractAsyncContextManager[None]:
