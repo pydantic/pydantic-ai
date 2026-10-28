@@ -552,6 +552,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
         """
         if (primed := self._primed_segment) is not None:
             self._primed_segment = None
+            # Keep what the segment produced, as the segment loop does when a segment ends: the provider billed it,
+            # and the response the run commits for the stream is built from it.
+            self._merged_response = self._snapshot()
             self._current_sub = None
             # Shielded like the stitched close below: teardown can run inside a cancelled graph scope, where the
             # segment's `request_stream(...)` exit would otherwise be cancelled before it closes the connection.

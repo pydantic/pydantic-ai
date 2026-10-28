@@ -14,7 +14,7 @@ from typing import Any, cast
 
 import pytest
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, TextPart
+from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, RunUsage, TextPart, capture_run_messages
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CapabilityOrdering,
@@ -30,6 +30,8 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
+
+from .continuation_utils import ScriptedContinuationModel, StreamSegment
 
 
 def success(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -400,6 +402,42 @@ async def test_primed_stream_the_consumer_never_iterates_is_closed():
                     pass
                 break
     assert closed == [True]
+
+
+async def test_a_primed_stream_the_consumer_never_iterates_keeps_what_it_produced():
+    """The response committed for a primed stream the consumer left without iterating has what priming received.
+
+    Priming opened the stream and read its first event, so the provider billed the request and the response
+    has its id, as when the consumer iterates.
+    """
+    hooks = Hooks[None]()
+
+    @hooks.on.model_request_error
+    async def passthrough(
+        ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        raise error  # pragma: no cover
+
+    model = ScriptedContinuationModel(
+        segments=[
+            StreamSegment(
+                texts=['hello'], state='complete', provider_response_id='resp-1', input_tokens=7, output_tokens=3
+            )
+        ]
+    )
+    agent = Agent(model, deps_type=type(None), capabilities=[hooks])
+    usage = RunUsage()
+    with capture_run_messages() as messages:
+        async with agent.iter('x', usage=usage) as run:
+            async for node in run:  # pragma: no branch
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx):
+                        pass
+                    break
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert (response.provider_response_id, response.usage) == ('resp-1', RequestUsage(input_tokens=7, output_tokens=3))
+    assert usage == RunUsage(input_tokens=7, output_tokens=3, requests=1)
 
 
 async def test_open_failure_is_raised_when_the_consumer_never_iterates_the_stream():
