@@ -3,6 +3,7 @@ import importlib
 import os
 import subprocess
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import NoReturn
 
@@ -13,6 +14,8 @@ import pydantic_ai_harness.coder
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability, LocalWorkspace
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceRef
@@ -185,3 +188,24 @@ async def test_coder_strict_applies_to_its_own_tools_only(tmp_path: Path, strict
         'strict_tool': True,
         'inferred_tool': None,
     }
+
+
+@pytest.mark.parametrize('strict', [False, True, None])
+async def test_coder_strict_reaches_the_delegates_ask_parent(tmp_path: Path, strict: bool | None) -> None:
+    delegate_tools: dict[str, bool | None] = {}
+
+    def delegate(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': 'Run it'})])
+
+    async def run_delegated(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        delegate_tools.update((tool.name, tool.strict) for tool in info.function_tools)
+        yield 'done'
+
+    coder = Coder[object](strict=strict, task_control=TaskControl(), repo_context=False)
+    model = FunctionModel(delegate, stream_function=run_delegated)
+    await Agent[object](model, capabilities=[LocalWorkspace(tmp_path), coder]).run('go')
+
+    assert 'ask_parent' in delegate_tools
+    assert set(delegate_tools.values()) == {strict}

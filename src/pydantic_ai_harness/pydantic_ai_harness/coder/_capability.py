@@ -18,6 +18,7 @@ from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT, Shell
 from pydantic_ai_harness.subagents import SubAgents, TaskControl
+from pydantic_ai_harness.subagents._control import ASK_PARENT_TOOL_NAME
 from pydantic_ai_harness.subagents._toolset import CONTROL_TOOL_NAMES
 from pydantic_ai_harness.tool_output_limits import Band, ToolOutputLimits, Truncate
 
@@ -199,6 +200,7 @@ class Coder(CombinedCapability[AgentDepsT]):
             if sub_agents:
                 tool_names.add('delegate_task')
             if task_control is not None:
-                tool_names |= CONTROL_TOOL_NAMES
+                # `ask_parent` is the tool `SubAgents` gives each delegated run.
+                tool_names |= {*CONTROL_TOOL_NAMES, ASK_PARENT_TOOL_NAME}
             capabilities.append(_SetToolStrict[AgentDepsT](strict=strict, tool_names=frozenset(tool_names)))
         super().__init__(capabilities)
