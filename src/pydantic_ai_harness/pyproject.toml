@@ -22,7 +22,7 @@ description = "The official capability library and harness for Pydantic AI"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [
     { name = "Douwe Maan", email = "douwe@pydantic.dev" },
     { name = "David SF", email = "david.sanchez@pydantic.dev" },
@@ -48,9 +48,12 @@ dependencies = ["genai-prices>=0.0.71", "httpx>=0.28.1", "json-repair>=0.58.0", 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 anthropic = ["pydantic-ai-slim[anthropic]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 cli = ["pydantic-ai-slim[cli]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-code-mode = ["pydantic-ai-slim[duckduckgo]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-monty>=1.0.0,<2"]
+code-mode = ["pydantic-ai-slim[duckduckgo]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-monty>=1.4.0,<2"]
 # Extras metadata has no native redirect syntax, so aliases are represented as duplicate extras.
-codemode = ["pydantic-ai-slim[duckduckgo]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-monty>=1.0.0,<2"]
+codemode = ["pydantic-ai-slim[duckduckgo]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-monty>=1.4.0,<2"]
+# Runs model-written code in a local Jupyter kernel; see the IPython Code Mode docs before enabling it.
+# `jupyter-client` 8.6.3 is the first to import without a `DeprecationWarning` on Python 3.13+.
+ipython = ["ipykernel>=6.29.0", "jupyter-client>=8.6.3"]
 researcher = ["pydantic-ai-slim[duckduckgo,web-fetch]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 temporal = ["pydantic-ai-slim[temporal]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 dbos = ["pydantic-ai-slim[dbos]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
@@ -115,7 +118,7 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 packages = ["pydantic_ai_harness"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/pydantic_ai_harness", "/README.md", "/LICENSE"]
+include = ["/pydantic_ai_harness", "/README.md", "/LICENSE", "/THIRD_PARTY_NOTICES.md"]
 
 [tool.uv.sources]
 pydantic-ai-slim = { workspace = true }

@@ -6,12 +6,13 @@ import difflib
 import hashlib
 import mimetypes
 import os
+import re
 import sys
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Mapping, Sequence
 from copy import deepcopy
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, InitVar, dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
 from mimetypes import MimeTypes
@@ -73,6 +74,8 @@ from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from .format_prompt import format_as_xml
+from .settings import RecordedModelSettings
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
@@ -181,12 +184,16 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', '
   transparently for both `agent.run` and `agent.run_stream`, merging every segment into a single
   completed [`ModelResponse`][pydantic_ai.messages.ModelResponse], so a finished turn in the message
   history is never left in this state.
-- `'interrupted'`: generation was explicitly stopped before the model finished. Set when a streamed
-  response is cancelled via [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel],
+- `'interrupted'`: the response was cut off before the model finished, or the agent run stopped before
+  acting on it.
+  Set when a streamed response is cancelled via
+  [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel],
   and when a realtime turn is cut off by a barge-in or
   [`RealtimeSession.interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] — in which case the
   cut-off point is recorded on the last
-  [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms].
+  [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms]; and on a
+  response that arrived complete but crossed a token or cost usage limit, so the run stopped before
+  acting on it.
 """
 
 ModelRequestState: TypeAlias = Literal['complete', 'interrupted']
@@ -246,12 +253,14 @@ class SystemPromptPart:
     """How long the model sees this prompt.
 
     * `'conversation'` (the default): from where it sits in the history for the rest of the conversation.
-    * `'request'`: only for the model request it's part of, including a continuation of that same request
-      (such as an Anthropic `pause_turn`). Once a later request exists, the model no longer sees it.
+    * `'request'`: the model sees it only in the model request it's part of, including a continuation of
+      that same request (such as an Anthropic `pause_turn`): the next request, even the next step of the same
+      run, no longer shows it.
 
-    A request-scoped prompt stays in the message history like any other part. Use one for a nudge about the
-    current moment (a reminder against instruction fade, a note that tool output was hidden, a remaining
-    budget), not for something that stays true. See
+    A request-scoped prompt stays in the message history like any other part. Use one for a value that changes
+    from one request to the next, such as a remaining budget, sent with every request. Fixed text belongs in
+    instructions, and a note the model must still act on after the next request, such as one saying the user
+    can't see a tool's output, needs the default `'conversation'` scope. See
     [request-scoped system prompts](../message-history.md#request-scoped-system-prompts) for how each provider
     renders it.
     """
@@ -627,6 +636,127 @@ class TextContent:
 
     kind: Literal['text-content'] = 'text-content'
     """Type identifier, this is available on all parts as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+StructuredContentFormat: TypeAlias = Literal['json', 'xml']
+"""A built-in text format for [`StructuredContent`][pydantic_ai.messages.StructuredContent]."""
+
+_STRUCTURED_CONTENT_TAG_RE = re.compile(r'[a-z_][a-z0-9_]*')
+_FRAMING_TAG_NAMES = frozenset(get_args(FramingTag))
+
+
+@dataclass(repr=False)
+class StructuredContent(TextContent):
+    """A structured value in a user prompt, such as the state of the app the user is looking at.
+
+    The value stays structured in the message history, so a history processor or evaluator can read it back,
+    and a model that takes structured input natively, like a [decision model](../models/decision.md), is sent
+    the value itself. Every other model is sent `content`: the value rendered as text once, when the item is
+    created, and stored with it, so the text a model saw is reproduced exactly when the history is sent again,
+    including after it was stored and loaded.
+
+    This is a [`TextContent`][pydantic_ai.messages.TextContent], so code that reads `content` from text items
+    handles it unchanged. Code that rewrites `content`, such as a redaction step, should replace the item with a
+    plain `TextContent` holding the new text: a model that takes structured input would otherwise still be sent
+    the original `value`.
+
+    To render a kind of value the same way everywhere, subclass and override
+    [`render`][pydantic_ai.messages.StructuredContent.render]. A subclass is not kept in a message history
+    loaded from JSON: the item comes back as a `StructuredContent` with the text its `render` produced.
+    """
+
+    value: Any
+    """The structured value: any value Pydantic can serialize, such as a dict, a list or a Pydantic model.
+
+    After the message history is loaded from JSON, this is the JSON-compatible form of the value, such as a dict
+    in place of a Pydantic model.
+    """
+
+    _: KW_ONLY
+
+    content: str = ''
+    """The value as text, sent to models without native structured input.
+
+    Rendered by [`render`][pydantic_ai.messages.StructuredContent.render] when the item is created, unless given.
+    Rendering to empty text raises a `ValueError`. It isn't rendered again when `value`, `tag` or `description`
+    change: to change one, create a new item, or use `dataclasses.replace(item, value=..., content='')`, passing
+    `format` again if the item was created with one.
+    """
+
+    format: InitVar[StructuredContentFormat | Callable[[Any], str] | None] = None
+    """How to render the value as text, in place of [`render`][pydantic_ai.messages.StructuredContent.render]:
+
+    - `'json'`: as compact JSON, wrapped in `tag` when given. `<`, `>` and `&` are escaped, so a value can't close the tag.
+    - `'xml'`: with [`format_as_xml`][pydantic_ai.format_prompt.format_as_xml], with `tag` as the root tag.
+    - A function that takes the value and returns the text, used as it is, without `tag` or `description`.
+
+    Not stored: only the text it renders is.
+    """
+
+    tag: str | None = None
+    """The tag the value is wrapped in, such as `'ui_state'` for `<ui_state>...</ui_state>`.
+
+    Lowercase, with `_` between words. The tags the framework frames its own text in, such as `system` and
+    `tool_result`, are refused, so user content can't read as the framework speaking. Both are checked when
+    the text is rendered, not when an item is created with its `content`, as a stored one is loaded.
+    """
+
+    description: str | None = None
+    """What the value is, for the model, written before it by the built-in formats."""
+
+    # Narrowed from `TextContent.kind` so the two validate apart in `UserContent`; widening the parent's
+    # literal instead would let a `'structured-content'` payload validate as a plain `TextContent`.
+    kind: Literal['structured-content'] = 'structured-content'  # pyright: ignore[reportIncompatibleVariableOverride]
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    def __post_init__(self, format: StructuredContentFormat | Callable[[Any], str] | None) -> None:
+        if self.content:
+            # The text is already fixed, as on load, so `tag` is only data. Checking it here would make a stored
+            # history fail to load once a later release adds its tag to the framework's own.
+            return
+        if self.tag is not None:
+            if not _STRUCTURED_CONTENT_TAG_RE.fullmatch(self.tag):
+                raise ValueError(
+                    '`StructuredContent.tag` must be lowercase letters, digits and `_`, '
+                    f'starting with a letter or `_`, got {self.tag!r}.'
+                )
+            if self.tag in _FRAMING_TAG_NAMES:
+                raise ValueError(
+                    f'`StructuredContent.tag` cannot be {self.tag!r}, a tag the framework frames its own text in.'
+                )
+        if format is None:
+            content = self.render()
+        elif callable(format):
+            content = format(self.value)
+        else:
+            content = self._render_as(format)
+        if not content:
+            # An empty `content` is what tells a reloaded item to render, so storing one would change the text.
+            raise ValueError(
+                '`StructuredContent` rendered to empty text, which a model cannot be sent; give it a `tag` or a `format`'
+                ' that renders the value as text.'
+            )
+        self.content = content
+
+    def render(self) -> str:
+        """Render the value as the text sent to models without native structured input, as JSON by default.
+
+        Called once, when the item is created without `content` or `format`. Override it in a subclass to render
+        the value the same way wherever the subclass is used.
+        """
+        return self._render_as('json')
+
+    def _render_as(self, format: StructuredContentFormat) -> str:
+        if format == 'json':
+            text = pydantic_core.to_json(self.value).decode()
+            text = text.replace('<', r'\u003c').replace('>', r'\u003e').replace('&', r'\u0026')
+            if self.tag is not None:
+                text = f'<{self.tag}>{text}</{self.tag}>'
+        else:
+            text = format_as_xml(self.value, root_tag=self.tag)
+        return text if self.description is None else f'{self.description}\n{text}'
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1053,11 +1183,11 @@ def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
     return isinstance(obj, MULTI_MODAL_CONTENT_TYPES)
 
 
-UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
+UserContent: TypeAlias = str | StructuredContent | TextContent | MultiModalContent | CachePoint
 """A single item of user prompt content: a string, a typed text or multi-modal content part, or a [`CachePoint`][pydantic_ai.messages.CachePoint] marker."""
 
 # Explicit tuple for readability; validated against `UserContent` in tests
-_USER_CONTENT_TYPES: tuple[type, ...] = (str, TextContent, *MULTI_MODAL_CONTENT_TYPES, CachePoint)
+_USER_CONTENT_TYPES: tuple[type, ...] = (str, StructuredContent, TextContent, *MULTI_MODAL_CONTENT_TYPES, CachePoint)
 
 _NOT_USER_CONTENT = (
     'Serialize the value yourself before passing it, e.g. with Pydantic (`pydantic_core.to_json()`) '
@@ -2900,8 +3030,10 @@ class InstructionPart:
     `'rewrite'` replaces the instruction prefix on each request. `'append'` preserves the initial
     prefix and appends full replacements to trusted message history when this block changes,
     including withdrawal when it stops contributing content. Requires an addressable `id`;
-    otherwise a warning is emitted and the part uses `'rewrite'`. Evaluation frequency and
-    `dynamic` cache placement are unchanged. Compaction starts a new baseline.
+    otherwise a warning is emitted and the part uses `'rewrite'`. Evaluation frequency is unchanged.
+    Since an appending block doesn't change the prefix, it's placed after the static parts but ahead of the
+    `dynamic` parts that rewrite it, and providers that take several cache points get one after the appending
+    blocks as well as the one after the static parts. Compaction starts a new baseline.
     """
 
     name: str | None = None
@@ -2947,8 +3079,13 @@ class InstructionPart:
 
     @staticmethod
     def sorted(parts: Sequence[InstructionPart]) -> list[InstructionPart]:
-        """Sort instruction parts with static (`dynamic=False`) before dynamic, preserving relative order."""
-        return sorted(parts, key=lambda p: p.dynamic)
+        """Sort the parts by how much they can change the prefix, preserving relative order.
+
+        Literal (`dynamic=False`) parts never change, so they come first. An `on_change='append'` block comes next:
+        it keeps its first value in the prefix and delivers changes later in the conversation, but that first value
+        can differ between conversations. A dynamic part that rewrites the prefix when it changes comes last.
+        """
+        return sorted(parts, key=_prefix_rank)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -3076,6 +3213,27 @@ def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPa
     return rendered
 
 
+def _varies_in_prefix(part: InstructionPart) -> bool:
+    """Whether `part` can change the instruction prefix between requests, so it belongs after the cache point.
+
+    A literal never changes, and an addressable `on_change='append'` block keeps its first value in the prefix and
+    delivers its changes later in the conversation, so only a dynamic part that rewrites the prefix varies.
+    """
+    return part.dynamic and (part.on_change == 'rewrite' or part.id is None)
+
+
+def _prefix_rank(part: InstructionPart) -> int:
+    """Where `part` sorts in the instruction prefix: literal parts, then appending blocks, then varying parts.
+
+    Model adapters place the instruction cache point after the literal parts, which every conversation of the agent
+    shares, and where the provider allows a second one, after the appending blocks, which a conversation shares
+    with others only when its blocks' first values are the same.
+    """
+    if not part.dynamic:
+        return 0
+    return 2 if _varies_in_prefix(part) else 1
+
+
 @dataclass(repr=False, kw_only=True)
 class ToolAvailabilityDeltaPart:
     """Records that the set of tools available to the model changed at this point.
@@ -3113,6 +3271,41 @@ class ToolAvailabilityDeltaPart:
         """
         changes = ', '.join(f'+{name}' for name in self.tools_added)
         return [_otel_messages.TextPart(type='text', content=f'Tool availability changed: {changes}')]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class ModelSettingsDeltaPart:
+    """Records model settings that change from this point in the conversation onward.
+
+    The framework records one whenever a request resolves a [`RecordedModelSettings`][pydantic_ai.settings.RecordedModelSettings]
+    key to a different value than the one in effect; today that's the effort level of the unified
+    [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting. Request-level settings are part of the
+    provider's prompt cache key, so a model adapter that can deliver a change mid-conversation (for effort, an
+    OpenAI Responses `configuration_update` item or a per-message Anthropic `output_config`) renders it in place
+    and keeps sending the window's opening value as the request-level setting. For every other key and model, the
+    part is dropped and the current value goes out as the request-level setting, as it would without it. See
+    [changing effort mid-conversation](../capabilities/thinking.md#changing-effort-mid-conversation).
+    """
+
+    settings: RecordedModelSettings
+    """The settings in effect from here that changed, by their unified `ModelSettings` keys."""
+
+    top_level: bool = False
+    """Whether this request sent `settings` as request-level settings, opening a new window.
+
+    The first request that names an effort level opens one, as does a change that no mid-conversation channel
+    can express, such as an effort to or from `None`. Every other change is recorded with `top_level=False`.
+    """
+
+    part_kind: Literal['model-settings-delta'] = 'model-settings-delta'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Render the change as trace content: it's configuration rather than user content, so it's always recorded."""
+        changes = ', '.join(f'{key}={value!r}' for key, value in self.settings.items())
+        return [_otel_messages.TextPart(type='text', content=f'Model settings changed: {changes}')]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -3500,6 +3693,17 @@ class CompactionPart:
 
     For Anthropic, `content` contains a readable text summary.
     For OpenAI, `content` is `None` and the encrypted data is stored in `provider_details`.
+
+    A provider's compaction part lives in a [`ModelResponse`][pydantic_ai.messages.ModelResponse], in
+    that provider's own role.
+
+    A summary the application or a capability wrote, such as Pydantic AI Harness's
+    `SummarizingCompaction`, lives in a [`ModelRequest`][pydantic_ai.messages.ModelRequest] instead,
+    with no `provider_name`, `id` or `provider_details`. The assistant continuing the conversation
+    didn't write it, so every provider model sends its `content` as user-voice text inside
+    `<conversation_summary>`, after a line saying a separate summarization model wrote it. A
+    `FunctionModel` receives the part itself, a `DecisionModel` passes it on as a summary entry, and
+    realtime sessions send it as user text.
     """
 
     content: str | None = None
@@ -3531,12 +3735,27 @@ class CompactionPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the model.
+
+    Pydantic AI Harness's `SummarizingCompaction` marks the summaries it writes here.
+    """
+
     part_kind: Literal['compaction'] = 'compaction'
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def has_content(self) -> bool:
         """Return `True` if the compaction content is non-empty."""
         return bool(self.content)
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """The OTel message parts of a request-side summary: its text."""
+        if not self.content:
+            return []
+        part = _otel_messages.TextPart(type='text')
+        if settings.include_content:
+            part['content'] = self.content
+        return [part]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -3616,7 +3835,11 @@ class SpeechPart:
     """
 
     id: str | None = None
-    """The provider item ID, used to correlate the part with provider-side conversation items."""
+    """The provider item ID, used to correlate the part with provider-side conversation items.
+
+    Set on the model's speech when the provider names its output items, as the OpenAI Realtime protocol does;
+    `None` on providers that don't, like Gemini Live and GPT-Live.
+    """
 
     provider_name: str | None = None
     """The name of the provider that generated or transcribed the audio.
@@ -3965,6 +4188,16 @@ def _check_parts(
                     f'`SpeechPart` in `{owner}.parts` must have `speaker={speaker!r}`, got {part.speaker!r}'
                 )
             continue
+        if isinstance(part, CompactionPart):
+            if speaker == 'user' and (
+                part.provider_name is not None or part.id is not None or part.provider_details is not None
+            ):
+                raise ValueError(
+                    'A `CompactionPart` in `ModelRequest.parts` is a summary no provider produced, so it must not '
+                    "set `provider_name`, `id` or `provider_details`; a provider's own compaction part belongs "
+                    'in `ModelResponse.parts`.'
+                )
+            continue
         if type(part) not in _BASE_TOOL_PART_TYPES:
             continue
         if isinstance(part, ToolCallPart | NativeToolCallPart):
@@ -4010,7 +4243,7 @@ _BASE_TOOL_PART_TYPES: frozenset[type] = frozenset(
 )
 """The base tool part classes, which a message promotes to their typed subclasses by `tool_kind`."""
 
-_CHECKED_PART_TYPES: frozenset[type] = _BASE_TOOL_PART_TYPES | {SpeechPart}
+_CHECKED_PART_TYPES: frozenset[type] = _BASE_TOOL_PART_TYPES | {SpeechPart, CompactionPart}
 """The part classes `ModelRequest` / `ModelResponse` look at when they're built; see `_check_parts`."""
 
 
@@ -4110,8 +4343,10 @@ ModelRequestPart = Annotated[
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]  # pyright: ignore[reportDeprecated]
     | Annotated[RetryFeedbackPart, pydantic.Tag('retry-feedback')]
     | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')]
+    | Annotated[ModelSettingsDeltaPart, pydantic.Tag('model-settings-delta')]
     | Annotated[InstructionDeltaPart, pydantic.Tag('instruction-delta')]
     | Annotated[InstructionBaselinePart, pydantic.Tag('instruction-baseline')]
+    | Annotated[CompactionPart, pydantic.Tag('compaction')]
     # A legacy part is translated on the way in, so a stored history is upgraded by loading it and
     # the deprecated class is never constructed. `SerializeAsAny` covers the other direction: an
     # instance a caller built by hand and never validated still dumps in its own shape rather than
@@ -4290,6 +4525,19 @@ class ModelResponse:
     provider_url: str | None = None
     """The base URL of the LLM provider that generated the response."""
 
+    canonical_system: str | None = None
+    """The system whose keys verify the stateless signed or encrypted data in this response, when it isn't evident from `provider_name`.
+
+    Set by the model from its provider's [`canonical_system`][pydantic_ai.providers.Provider.canonical_system]
+    when that differs from `provider_name`, such as `'openai'` for an `openai-codex` response. It's always set
+    when the provider's canonical system depends on its client: the `google` and `google-cloud` providers each serve
+    both the Gemini API (`'google'`) and Google Cloud (`'google-cloud'`), and `OpenAIProvider` serves OpenAI
+    (`'openai'`) or, with an `AsyncAzureOpenAI` client, Azure (`'azure'`). It applies to the parts whose `provider_name` is this response's.
+    Models read it to decide whether they can send that data, such as encrypted reasoning and thinking signatures,
+    back to their own provider: see
+    [`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts].
+    """
+
     provider_details: Annotated[
         dict[str, Any] | None,
         # `vendor_details` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
@@ -4336,7 +4584,8 @@ class ModelResponse:
     [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id],
     so a later request continues from this response only while it and the messages before it are unchanged.
     The `metadata` fields on messages, tool return parts and user prompt `TextContent` are never sent to
-    the model, so they're left out, and changing them doesn't count as a change.
+    the model, so they're left out, and changing them doesn't count as a change. A request's `instructions`
+    are left out too: the server doesn't keep them with a response, so each request sends its own.
     Not sent to the model.
 
     Unless the model was given a key, it's a plain SHA-256, which anyone holding the stored history
@@ -4369,10 +4618,13 @@ class ModelResponse:
       The agent graph will automatically send a continuation request.
       Set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
       or return background/async responses (e.g. OpenAI background mode).
-    - `'interrupted'` — Generation was explicitly stopped before the model finished.
+    - `'interrupted'` — The response was cut off before the model finished, or the agent run stopped
+      before acting on it.
       Set when a streaming response is cancelled via `StreamedResponse.cancel()`, and when a realtime
       turn is cut off by a barge-in or `RealtimeSession.interrupt()` — in which case the cut-off point
-      is recorded on the last [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms].
+      is recorded on the last [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms];
+      and on a response that arrived complete but crossed a token or cost usage limit, so the run stopped
+      before acting on it.
     """
 
     def __post_init__(self) -> None:
@@ -4536,9 +4788,12 @@ def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessag
     """The messages from the latest [`CompactionPart`][pydantic_ai.messages.CompactionPart] onward.
 
     After compaction, the summary replaces everything before it, so this window is what the model
-    effectively works from — at part-level precision: within the response that carries the
-    compaction part, parts before it are excluded and parts after it are kept. With no compaction
-    part in the history, the whole history is returned (as a new list).
+    effectively works from — at part-level precision for a provider's compaction: within the response
+    that carries the compaction part, parts before it are excluded and parts after it are kept. A
+    summary the application wrote into a request opens the window at the start of that request's turn
+    (the consecutive requests around it), since normalizing the history merges them and moves tool
+    results ahead of the summary. With no compaction part in the history, the whole history is
+    returned (as a new list).
 
     This is the boundary rule Pydantic AI itself uses when deriving model-visible state from
     history (discovered tools, loaded capabilities). Capability and toolset authors should apply
@@ -4560,29 +4815,66 @@ def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessag
     continue to use this conservative provider-agnostic window because they feed a future request
     whose provider may differ.
     """
+    if (boundary := _post_compaction_window_start(messages)) == (0, 0):
+        return list(messages)
+    message_index, part_index = boundary
+    message = messages[message_index]
+    # Indexed iteration rather than `messages[message_index + 1:]`: the runtime `Sequence` contract
+    # only requires integer `__getitem__`, so a minimal conforming implementation may reject slices.
+    # (`message.parts` is a list.)
+    return [
+        replace(message, parts=list(message.parts[part_index:])),
+        *(messages[i] for i in range(message_index + 1, len(messages))),
+    ]
+
+
+def _post_compaction_window_start(messages: Sequence[ModelMessage]) -> tuple[int, int]:
+    """Where [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] begins, as a message index and a part index.
+
+    That's the latest [`CompactionPart`][pydantic_ai.messages.CompactionPart], or `(0, 0)` without one. For code that
+    folds history state in place, with the positions of the messages it walks, and must agree with the window on
+    where that state starts.
+    """
     for message_index in range(len(messages) - 1, -1, -1):
         message = messages[message_index]
-        if isinstance(message, ModelResponse):
-            for part_index in range(len(message.parts) - 1, -1, -1):
-                if isinstance(message.parts[part_index], CompactionPart):
-                    # Indexed iteration rather than `messages[message_index + 1:]`: the runtime
-                    # `Sequence` contract only requires integer `__getitem__`, so a minimal
-                    # conforming implementation may reject slices. (`message.parts` is a list.)
-                    return [
-                        replace(message, parts=list(message.parts[part_index:])),
-                        *(messages[i] for i in range(message_index + 1, len(messages))),
-                    ]
-    return list(messages)
+        if isinstance(message, ModelRequest):
+            if any(isinstance(part, CompactionPart) for part in message.parts):
+                # A summary the application wrote sits in a request, and the window opens with that
+                # request's turn: the run of consecutive requests that history normalization merges into
+                # one, hoisting its tool results ahead of the summary as providers require. Cutting at the
+                # part instead would let that reordering decide what was discovered or loaded.
+                start = message_index
+                while start > 0 and isinstance(messages[start - 1], ModelRequest):
+                    start -= 1
+                return start, 0
+            continue
+        # A provider's compaction part sits in a response, which the provider replays from that part on.
+        for part_index in range(len(message.parts) - 1, -1, -1):
+            if isinstance(message.parts[part_index], CompactionPart):
+                return message_index, part_index
+    return 0, 0
+
+
+_StatelessArtifactPredicate: TypeAlias = Callable[[ModelResponse, ModelResponsePart | None], bool]
+"""Whether a model can send back the stateless data a part in a response carries, such as
+[`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts]."""
 
 
 def _compaction_part_is_wire_boundary(
-    part: CompactionPart, provider_name: str, *, requires_encrypted_content: bool = False
+    response: ModelResponse,
+    part: CompactionPart,
+    accepts: _StatelessArtifactPredicate,
+    *,
+    requires_encrypted_content: bool = False,
 ) -> bool:
-    """Whether `provider_name` would honor `part` as a compaction boundary on the wire.
+    """Whether a model that `accepts` the part would honor `part` in `response` as a compaction boundary on the wire.
 
-    A part is only ever a boundary for the provider that produced it — compaction data round-trips
-    to its own provider — and only while it still carries the payload that provider renders. A part
-    carrying neither payload is a failed compaction, a documented no-op, and a boundary for nobody.
+    A part is only ever a boundary for a model that can send its compaction data back — its own
+    provider, or another with the same canonical system (see
+    [`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts]), the same
+    predicate the adapter renders the part by — and only while it still carries the payload that provider
+    renders. A part carrying neither payload (no encrypted content, and no summary or an empty one) is a failed
+    compaction, a documented no-op, and a boundary for nobody.
 
     `requires_encrypted_content` is the caller's own render condition, not something derivable from
     history: the OpenAI Responses adapter sends only the encrypted item, so a part holding just a
@@ -4599,25 +4891,35 @@ def _compaction_part_is_wire_boundary(
     adapter would skip. That errs toward refusing a call rather than toward admitting an unseen
     tool, and unifying the two properly wants a declared per-model compaction mode (see #7255).
     """
-    if part.provider_name != provider_name:
+    if not accepts(response, part):
         return False
     if part.provider_details and 'encrypted_content' in part.provider_details:
         return True
-    return not requires_encrypted_content and part.content is not None
+    return not requires_encrypted_content and part.has_content()
 
 
 def _post_compaction_window_for_response(  # pyright: ignore[reportUnusedFunction]
-    messages: Sequence[ModelMessage], serving_response: ModelResponse
+    messages: Sequence[ModelMessage],
+    serving_response: ModelResponse,
+    accepts: _StatelessArtifactPredicate | None = None,
 ) -> list[ModelMessage]:
-    """The provider-exact evidence window for calls in `serving_response`.
+    """The evidence window for calls in `serving_response`, from the boundary the request that produced it honored.
 
-    Only boundaries strictly before the serving response are eligible: a provider can emit a
-    compaction part and continue generating a call in the same response, but that response was not
-    part of the request whose tools the model saw. A response without provider provenance falls
-    back to the provider-agnostic window.
+    `accepts` is the predicate the request that produced `serving_response` was trimmed by (see
+    `Model._compaction_window_predicate`), so the window starts where that request's history did. Without one,
+    only a compaction part from the serving response's own provider is a boundary. Only boundaries strictly
+    before the serving response are eligible: a provider can emit a compaction part and continue generating a
+    call in the same response, but that response was not part of the request whose tools the model saw. A
+    response without provider provenance falls back to the provider-agnostic window.
     """
-    if serving_response.provider_name is None:
+    serving_provider_name = serving_response.provider_name
+    if serving_provider_name is None:
         return post_compaction_window(messages)
+
+    def from_serving_provider(response: ModelResponse, part: ModelResponsePart | None) -> bool:
+        return part is not None and part.provider_name == serving_provider_name
+
+    accepts = accepts or from_serving_provider
 
     serving_index = next((i for i in range(len(messages) - 1, -1, -1) if messages[i] is serving_response), None)
     assert serving_index is not None, '`serving_response` must be present in `messages`'
@@ -4626,9 +4928,7 @@ def _post_compaction_window_for_response(  # pyright: ignore[reportUnusedFunctio
         if isinstance(message, ModelResponse):
             for part_index in range(len(message.parts) - 1, -1, -1):
                 part = message.parts[part_index]
-                if isinstance(part, CompactionPart) and _compaction_part_is_wire_boundary(
-                    part, serving_response.provider_name
-                ):
+                if isinstance(part, CompactionPart) and _compaction_part_is_wire_boundary(message, part, accepts):
                     return [
                         replace(message, parts=list(message.parts[part_index:])),
                         *(messages[i] for i in range(message_index + 1, len(messages))),
@@ -4697,7 +4997,7 @@ def _drop_compaction_parts(messages: Sequence[ModelMessage]) -> list[ModelMessag
     from the model, replacing it with the client's own summary or blob — so only the server's own
     boundaries are kept. With no server-side history, the client-transmitted messages are the
     entire conversation, boundaries included, and its compaction parts should be honored. A
-    response left with no parts is dropped entirely. Shared by
+    message left with no parts is dropped entirely. Shared by
     `sanitize_messages(strip_compaction_parts=True)` and the UI adapters' handling of runs that
     combine server-side `message_history` with client-submitted messages.
     """
@@ -4707,6 +5007,11 @@ def _drop_compaction_parts(messages: Sequence[ModelMessage]) -> list[ModelMessag
             parts = [part for part in message.parts if not isinstance(part, CompactionPart)]
             if parts:
                 result.append(replace(message, parts=parts))
+        elif isinstance(message, ModelRequest) and any(isinstance(part, CompactionPart) for part in message.parts):
+            # A summary the client wrote stands in for history just as a provider's would.
+            request_parts = [part for part in message.parts if not isinstance(part, CompactionPart)]
+            if request_parts:
+                result.append(replace(message, parts=request_parts))
         else:
             result.append(message)
     return result
@@ -6391,6 +6696,23 @@ class ToolAvailabilityDeltaEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False, kw_only=True)
+class ModelSettingsDeltaEvent:
+    """An event indicating recorded model settings changed, carrying the recorded delta part.
+
+    Emitted when a request records a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart],
+    so a UI that rebuilds history from the event stream keeps it.
+    """
+
+    part: ModelSettingsDeltaPart
+    """The model settings delta part that will be recorded in message history."""
+
+    event_kind: Literal['model_settings_delta'] = 'model_settings_delta'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(repr=False)
 class OutputToolResultEvent(ToolResultEvent):
     """An event indicating the result of an output tool call."""
@@ -6464,8 +6786,8 @@ class RealtimeTurnCompleteEvent:
 
     It is synthesized by the session when a response ends and the model owes nothing more: no reply to an
     input sent (text, a tool's result, a request for a response), no answer to a tool call, and no response
-    still under way. It also ends an exchange a failure ended (a tool raised and its failure didn't go out to the
-    model, or a tool's result would pass a usage limit), once. Input transcription can finish after this event.
+    still under way. It also ends an exchange a failure ended (a tool's result would pass a usage limit, or a failed
+    tool's result couldn't be sent), once. Input transcription can finish after this event.
     On WebRTC sidebands, provider playback can also continue until
     [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent].
     """
@@ -6674,6 +6996,7 @@ HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
     | ToolAvailabilityDeltaEvent
+    | ModelSettingsDeltaEvent
     | OutputToolCallEvent
     | OutputToolResultEvent
     | DeferredToolRequestsEvent

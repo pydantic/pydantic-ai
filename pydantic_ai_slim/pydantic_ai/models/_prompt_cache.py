@@ -3,10 +3,14 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable, Iterable, Sequence
-from typing import Literal, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 from ..exceptions import UserError
+from ..messages import _varies_in_prefix  # pyright: ignore[reportPrivateUsage]
 from ..settings import CacheConfig, CacheRetention
+
+if TYPE_CHECKING:
+    from ..messages import InstructionPart
 
 T = TypeVar('T')
 
@@ -107,6 +111,50 @@ def excess_cache_points(
             else:
                 excess.append(block)
     return excess
+
+
+def instruction_cache_boundaries(parts: Sequence[InstructionPart]) -> tuple[int, int]:
+    """Where a request's instruction cache points go, as counts of its sorted instruction parts.
+
+    `InstructionPart.sorted` puts the literal parts first, then the `on_change='append'` blocks, then the parts that
+    vary in the prefix. The first cache point goes after the literal parts, so every conversation reads that prefix
+    even when its append blocks differ. A second one goes after the append blocks, covering the ones that are the same
+    in every conversation, such as framework catalogs, when there are any (see `split_instruction_cache_points` for
+    which of the two yields when a request is over the provider's limit).
+
+    Returns:
+        The number of literal parts, and the number of parts that don't vary in the prefix. An adapter adds the
+        blocks it sends ahead of the instructions to each, and places a second point only when the second count is
+        larger.
+    """
+    return sum(1 for part in parts if not part.dynamic), sum(1 for part in parts if not _varies_in_prefix(part))
+
+
+def split_instruction_cache_points(points: Sequence[T]) -> tuple[int, list[T]]:
+    """Split a request's instruction cache points into the reserved count and the ones that yield to message points.
+
+    An adapter places up to two instruction cache points (see `InstructionPart.sorted`): one after the literal
+    instructions and, when `on_change='append'` blocks follow them, one after those. The first one is reserved like the
+    tool definitions' point. The second one gives way to the message points when the request is over the provider's
+    limit: it goes to `excess_cache_points` after the oldest message point, so it's dropped before any of them. With no
+    literal instructions or system prompt to end the first point, the one after the append blocks is the only one, and
+    it's reserved. Each point covers a different prefix:
+
+    - The tool definitions point and the first instruction point cover what every conversation of the agent shares,
+      so they're the cross-conversation entries a new conversation reads, even when its append blocks differ.
+    - The point after the append blocks only adds an entry for a new conversation whose append blocks' first values
+      are the same as an earlier one's. Within a conversation, every message point already covers the append blocks.
+    - The message points, and the automatic caching breakpoint, cover the conversation, which is most of the prompt
+      after a few turns. A dropped message point (such as the one at the end of the previous request that keeps it
+      within the provider's lookback) makes the request write the whole conversation again.
+
+    Args:
+        points: The cache points in the request's instructions, in request order.
+
+    Returns:
+        How many points to reserve, and the rest, newest first, to be trimmed before any message point.
+    """
+    return min(len(points), 1), list(reversed(points[1:]))
 
 
 def raise_earlier_cache_ttls(ttls: Sequence[Literal['5m', '1h']]) -> list[Literal['5m', '1h']]:

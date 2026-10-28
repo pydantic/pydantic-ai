@@ -47,6 +47,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
+from pydantic_ai_harness._code_tools import NestedCallOutcome, run_nested_call
 from pydantic_ai_harness.code_mode._events import (
     SpeculativeCallClaimedEvent,
     SpeculativeCallEvictedEvent,
@@ -64,12 +65,7 @@ from pydantic_ai_harness.code_mode._streaming import (
     decode_partial_args,
     parse_code,
 )
-from pydantic_ai_harness.code_mode._toolset import (
-    NestedCallOutcome,
-    RunCodeExecution,
-    global_mode_is_sequential,
-    run_nested_call,
-)
+from pydantic_ai_harness.code_mode._toolset import RunCodeExecution, global_mode_is_sequential
 
 MAX_SPECULATIONS_PER_PART = 32
 """Upper bound on early launches per streamed `run_code` part.

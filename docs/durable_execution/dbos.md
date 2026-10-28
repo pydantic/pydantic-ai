@@ -154,7 +154,7 @@ When using DBOS with Pydantic AI agents, there are a few important consideration
 
 Each agent instance must have a unique `name` so DBOS can correctly resume workflows after a failure or restart.
 
-Each [`MCPToolset`][pydantic_ai.mcp.MCPToolset] must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id], as DBOS derives its step names and per-run tool-defs cache key from it. This field is normally optional, but is required when using DBOS. It should not be changed once the durable agent has been deployed to production, as this would break active workflows.
+Each [`MCPToolset`][pydantic_ai.mcp.MCPToolset] must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id], as DBOS derives its step names and per-run tool-defs cache key from it. This field is normally optional, but is required when using DBOS, and the hostname a URL toolset without one takes as its `id` doesn't count. It should not be changed once the durable agent has been deployed to production, as this would break active workflows.
 
 MCP tools perform I/O and always run in their DBOS step. Setting a tool's `metadata={'dbos': False}`
 is rejected instead of running the MCP call inline in workflow code.
@@ -216,6 +216,12 @@ Capabilities that only observe the run are safe to attach per-run: their hooks r
 
 For handlers with I/O side effects, pass `event_stream_handler=` to [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability]. Model events are delivered live inside each model-request step, while each tool event is delivered in its own event-handler step. As with any DBOS step, a handler may run more than once if the workflow recovers before its step is checkpointed, so keep its side effects idempotent.
 
+An event emitted with [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] inside a tool call takes its handler step's journal position at emission, before the tool's later durable calls. The handler still runs in the stream consumer, in emission order and after immediate capability listeners settle. `emit` does not wait for the handler, so a handler can depend on later tool work and a tool can emit progress before waiting for a consumer's response. Emissions from hooks outside tool calls retain their existing step ordering.
+
+!!! warning "Compatibility impact: recorded event-handler step order"
+
+    Reserving handler positions changes the recorded step sequence of tools that emit events and make durable calls. Before upgrading, let in-flight workflows finish or deploy the upgrade as a new DBOS application version. Recovering an older workflow with the new code can raise `DBOSUnexpectedStepError`. Runs without a durability handler and legacy-wrapper workflows retain their existing step sequence.
+
 Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream]. Its handler runs in workflow code and must be deterministic because it re-runs on workflow replay. Tool and final-output events arrive live, while model events are replayed from the final response after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
 A durability `event_stream_handler=` and a separately registered `ProcessEventStream` are two distinct handlers, and each fires once. The durability handler receives live events inside the durable step, while `ProcessEventStream` sees the buffered replay in workflow code.
@@ -238,14 +244,18 @@ The deadline bounds the agent run, not the workflow. To bound the whole workflow
 
 ### Suspended Turns and Background Mode
 
-When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request step, and the wait between polls is a durable `DBOS.sleep` step, so recovery skips completed waits. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first step. Size step timeouts for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation step.
+When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request step, and the wait between polls is a durable `DBOS.sleep` step, so recovery skips completed waits. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first step. Size step timeouts for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation step. [Batched requests](../batch.md#durable-execution) work the same way: submitting a request and each check on its batch are separate steps, with durable sleeps between checks.
 
 ### Parallel Tool Execution
 
-Under DBOS, tools are executed in parallel by default to minimize latency. To guarantee deterministic replay and reliable recovery, DBOS waits for all parallel tool calls to complete before emitting events **in order**.
+Under DBOS, tools are executed in parallel by default to minimize latency. Tool result events are emitted in tool-call order after all parallel tool calls complete.
 It's equivalent to the behavior of [`with agent.parallel_tool_call_execution_mode('parallel_ordered_events')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode].
 
-If you prefer strict ordering, you can configure the agent to run tools sequentially by setting `parallel_execution_mode='sequential'` on [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability].
+!!! warning "Durable calls in parallel tools"
+
+    DBOS requires durable steps to start in a deterministic order. When tools run concurrently, a tool that awaits one durable operation before starting another can interleave differently with sibling tools or their emitted-event handlers during replay, causing recovery to fail.
+
+    For this pattern, set `parallel_execution_mode='sequential'` on [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability]. To run independent sequences concurrently, put each sequence in a separate [child workflow](https://docs.dbos.dev/python/tutorials/workflow-tutorial#running-async-steps-in-parallel).
 A run with a [workspace](../workspace.md) always runs its tool calls sequentially.
 
 ### Toolsets at Runtime

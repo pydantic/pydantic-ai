@@ -5,8 +5,12 @@ from typing import TYPE_CHECKING, Self, overload
 from urllib.parse import urlparse
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._json_schema import (
+    JsonSchema,
+    JsonSchemaTransformerWithOutputOverride,
+)
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -29,7 +33,7 @@ else:
 
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 try:
@@ -45,7 +49,7 @@ _DEFAULT_VOICE_LIVE_API_VERSION = '2026-07-15'
 """Default Azure AI Voice Live API version when neither `AZURE_VOICELIVE_API_VERSION` nor an argument is set."""
 
 
-class AzureProvider(_OpenAICompatibleProvider):
+class AzureProvider(_OpenAISDKProvider):
     """Provider for Azure OpenAI API.
 
     See <https://azure.microsoft.com/en-us/products/ai-foundry> for more information.
@@ -53,6 +57,12 @@ class AzureProvider(_OpenAICompatibleProvider):
 
     @property
     def name(self) -> str:
+        return 'azure'
+
+    @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing encrypted reasoning. Azure doesn't
+        # accept OpenAI's encrypted reasoning or compaction items, nor OpenAI Azure's.
         return 'azure'
 
     @property
@@ -152,6 +162,11 @@ class AzureProvider(_OpenAICompatibleProvider):
         # See https://github.com/pydantic/pydantic-ai/issues/6593
         if is_mistral:
             base = merge_profile(base, OpenAIModelProfile(openai_chat_supports_max_completion_tokens=False))
+
+        if model_name.startswith('grok'):
+            # Azure Grok rejects definition references and still needs OpenAI schema conversion.
+            # https://github.com/pydantic/pydantic-ai/issues/10987
+            base = merge_profile(base, OpenAIModelProfile(json_schema_transformer=_AzureGrokJsonSchemaTransformer))
 
         return base
 
@@ -391,6 +406,21 @@ class AzureProvider(_OpenAICompatibleProvider):
         self._voice_live_api_version = (
             voice_live_api_version or os.getenv('AZURE_VOICELIVE_API_VERSION') or _DEFAULT_VOICE_LIVE_API_VERSION
         )
+
+
+class _AzureGrokJsonSchemaTransformer(
+    OpenAIJsonSchemaTransformer, InlineDefsJsonSchemaTransformer, JsonSchemaTransformerWithOutputOverride
+):
+    output_object_transformer = OpenAIJsonSchemaTransformer
+
+    def walk(self) -> JsonSchema:
+        result = super().walk()
+        if self.recursive_refs:
+            # Keep OpenAI's recursive conversion instead of merging an unconverted root definition.
+            transformer = OpenAIJsonSchemaTransformer(self.schema, strict=self.strict)
+            result = transformer.walk()
+            self.is_strict_compatible = transformer.is_strict_compatible
+        return result
 
 
 def _openai_compatible_v1_base_url(endpoint: str) -> str | None:

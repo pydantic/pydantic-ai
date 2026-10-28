@@ -180,7 +180,7 @@ class Interrupted:
 
 @dataclass(frozen=True, kw_only=True)
 class ExchangeAbandoned:
-    """The session hit a failure that stops the model getting what it needs (a tool raised, a limit tripped).
+    """The session hit a failure that stops the model getting what it needs (a limit tripped, a result couldn't go out).
 
     Nothing owed until now is waited for any more; what is asked for afterwards is.
     """
@@ -364,6 +364,8 @@ class _Response:
     open_part_item: str | None = None
     open_part_index: int = 0
     """The stream index of `open_part` (see `SessionCore._take_index`)."""
+    open_part_position: int = 0
+    """Where `open_part` goes in `parts` once it closes: where it started, ahead of tool calls made while it was open."""
     open_transcript: str = ''
     open_audio: bytearray = field(default_factory=bytearray)
     closed_parts: dict[str, tuple[int, SpeechPart | TextPart]] = field(
@@ -448,8 +450,8 @@ class SessionCore:
         responses_are_requests: bool = True,
         answers_tool_calls_per_response: bool = False,
         tracks_tool_rounds: bool = False,
+        speech_spans_tool_calls: bool = False,
         input_transcription_enabled: bool = True,
-        output_always_transcribed: bool = False,
         retain_input_audio: bool = False,
         retain_output_audio: bool = False,
         retain_audio_max_seconds: float | None = None,
@@ -470,9 +472,9 @@ class SessionCore:
         """Whether one reply answers all the tool results of a response, rather than one per result."""
         self._tracks_tool_rounds = tracks_tool_rounds
         """Whether to say when tool rounds are over (`ToolRoundsOver`), for a connection that prunes them."""
+        self._speech_spans_calls = speech_spans_tool_calls
+        """Whether the model's speech goes on through its tool calls, as one part, rather than ending at each one."""
         self._transcription = input_transcription_enabled
-        self._output_always_transcribed = output_always_transcribed
-        """Whether every word of the model's speech is transcribed, though not always in the part holding its audio."""
         self._retain_input = retain_input_audio
         self._retain_output = retain_output_audio
         self._input_rate = input_sample_rate
@@ -822,6 +824,7 @@ class SessionCore:
             part = response.open_part = self._with_item_details(response, part, item_id)
             response.open_part_item = item_id
             response.open_part_index = index = self._take_index()
+            response.open_part_position = len(response.parts)
             response.open_transcript = ''
             self._part_items[index] = item_id
             while len(self._part_items) > MAX_CUTTABLE_OUTPUT_ITEMS:
@@ -869,7 +872,13 @@ class SessionCore:
     def _with_item_details(
         self, response: _Response, part: SpeechPart | TextPart, item_id: str | None
     ) -> SpeechPart | TextPart:
-        if item_id is None or (details := response.item_details.get(item_id)) is None:
+        if item_id is None:
+            return part
+        if isinstance(part, SpeechPart):
+            # Only speech takes the item ID: a `TextPart.id` is replayed to the API that produced it, and a realtime
+            # item ID means nothing to a standard model.
+            part = replace(part, id=item_id, provider_name=self._provider_name)
+        if (details := response.item_details.get(item_id)) is None:
             return part
         return replace(part, provider_name=self._provider_name, provider_details=details)
 
@@ -884,7 +893,7 @@ class SessionCore:
                 wav = pcm_to_wav(bytes(response.open_audio), self._output_rate)
                 audio = BinaryContent(data=wav, media_type=_WAV_MEDIA_TYPE)
                 part = replace(part, audio=self._audio_budget.track(audio, len(response.open_audio), output=True))
-        response.parts.append(part)
+        response.parts.insert(response.open_part_position, part)
         if response.open_part_item is not None:
             response.closed_parts[response.open_part_item] = (response.open_part_index, part)
         self._effects.append(PartEndEvent(index=response.open_part_index, part=part))
@@ -905,7 +914,8 @@ class SessionCore:
         ):
             # Repeated (a resumed conversation replaying it, say): the call is already recorded, once.
             return
-        self._close_part(response)
+        if not self._speech_spans_calls:
+            self._close_part(response)
         call = ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id)
         response.parts.append(call)
         index = self._take_index()
@@ -942,15 +952,20 @@ class SessionCore:
             return
         del self._call_response[call_id]
         response.tool_calls.remove(call_id)
-        response.parts = [
-            part for part in response.parts if not (isinstance(part, ToolCallPart) and part.tool_call_id == call_id)
-        ]
+        position = next(
+            position
+            for position, part in enumerate(response.parts)
+            if isinstance(part, ToolCallPart) and part.tool_call_id == call_id
+        )
+        del response.parts[position]
+        if response.open_part is not None and position < response.open_part_position:
+            response.open_part_position -= 1
 
     def _tool_returned(self, command: ToolReturned) -> None:
         self._returns[command.tool_call_id] = command.request
         self._settled_calls.add(command.tool_call_id)
         if command.tool_call_id not in self._result_input:
-            # Settled without its result going out (cancelled, or the tool raised).
+            # Settled without its result going out (cancelled, stopped by a usage limit, or its send failed).
             self._call_unanswered(command.tool_call_id)
 
     def _call_unanswered(self, call_id: str) -> None:
@@ -1115,8 +1130,8 @@ class SessionCore:
         """Stop waiting for what is owed (see `ExchangeAbandoned`), ending the exchange under way if nothing else will.
 
         A response still under way, or one that ended in the frame being applied, ends it as it ends (see `end_frame`),
-        as nothing owed before now holds it open. Otherwise no response is coming to end it: the result of a tool that
-        raised doesn't go out, so the model never answers it.
+        as nothing owed before now holds it open. Otherwise no response is coming to end it: a usage limit stopped a tool
+        result from going out, or a failure result couldn't be sent, so the model never answers it.
         """
         owed = self.wait_tokens()
         self._abandoned.update((token.kind, token.key) for token in owed)
@@ -1145,19 +1160,9 @@ class SessionCore:
             # Cut off before it said anything or was billed: there is nothing to record.
             return None
         parts = [*response.native_parts, *response.parts]
-        if self._output_always_transcribed and any(isinstance(part, SpeechPart) and part.transcript for part in parts):
-            # Audio a tool call split off from its words, which the response's other speech has: it was streamed, but
-            # history has nothing to record for it.
-            parts = [
-                part
-                for part in parts
-                if not (isinstance(part, SpeechPart) and part.transcript is None and part.audio is None)
-            ]
         for item_id, (_, part) in response.closed_parts.items():
-            # (A part left out above has nothing in history to cut.)
-            index = next((i for i, p in enumerate(parts) if p is part), None)
-            if isinstance(part, SpeechPart) and index is not None:
-                self._recorded_items[item_id] = (response, index)
+            if isinstance(part, SpeechPart):
+                self._recorded_items[item_id] = (response, next(i for i, p in enumerate(parts) if p is part))
                 self._recorded_items.move_to_end(item_id)
         while len(self._recorded_items) > MAX_CUTTABLE_OUTPUT_ITEMS:
             self._recorded_items.popitem(last=False)

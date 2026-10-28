@@ -9,7 +9,7 @@ from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2.builtin_plugins.web.protocol import DialogOpened, SettingsChanged, StatusChanged
+from pydantic_clai2.builtin_plugins.web.protocol import PROTOCOL, DialogOpened, SettingsChanged, StatusChanged
 from pydantic_clai2.config.credential_store import save_codex_credentials
 from pydantic_clai2.ui.menus.dialogs import run_settings_menu
 from pydantic_clai2.ui.menus.model_menu import add_model
@@ -24,7 +24,7 @@ from tests.clai2.menu_script import Script, make_context, pick
 from tests.clai2.test_accounts import CODEX
 from tests.clai2.test_web import TOKEN, MakeWeb, Web, make_web as make_web, receive_until
 
-SOCKET = f'/ws?token={TOKEN}'
+SOCKET = f'/ws?token={TOKEN}&protocol={PROTOCOL}'
 ORIGIN = {'origin': 'http://testserver'}
 GPT = 'openai:gpt-5.6'
 ADDED = 'openai:gpt-5.1'

@@ -1,20 +1,24 @@
 from __future__ import annotations
 
+import sys
 import warnings
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from datetime import timedelta
 from types import TracebackType
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self, TypeVar
+
+import anyio
 
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
-from ..messages import ModelMessage, ModelResponse
+from ..messages import ModelMessage, ModelResponse, ModelResponsePart
 from ..native_tools import AbstractNativeTool
 from ..profiles import ModelProfile
 from ..providers import Provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingEffort
 from ..usage import RequestUsage
 from . import (
     KnownModelName,
@@ -27,7 +31,68 @@ from . import (
 )
 from ._request_timeout import RequestDeadline
 
+if TYPE_CHECKING:
+    from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, EncodedBatchRequest
+
 __all__ = ['WrapperModel']
+
+_T = TypeVar('_T')
+
+
+@dataclass
+class _Borrowed:
+    """A model whose lifecycle its owner manages, which a wrapper being entered or exited around a request leaves alone.
+
+    Only in the task entering or exiting the wrapper, and only while it is: a task the wrapper starts copies the
+    context, and must enter and exit the model as usual.
+    """
+
+    model: Model
+    task_id: int = field(default_factory=lambda: anyio.get_current_task().id)
+    active: bool = True
+
+
+_borrowed: ContextVar[_Borrowed | None] = ContextVar('_borrowed', default=None)
+
+
+def _is_borrowed(model: Model) -> bool:
+    return (
+        (borrowed := _borrowed.get()) is not None
+        and borrowed.active
+        and borrowed.model is model
+        and borrowed.task_id == anyio.get_current_task().id
+    )
+
+
+async def _leaving_borrowed_alone(borrowed: Model, call: Awaitable[_T]) -> _T:
+    marker = _Borrowed(borrowed)
+    token = _borrowed.set(marker)
+    try:
+        return await call
+    finally:
+        marker.active = False
+        _borrowed.reset(token)
+
+
+@asynccontextmanager
+async def serving_wrapper_scope(wrapper: Model, borrowed: Model) -> AsyncGenerator[Model]:
+    """Enter `wrapper`, a capability's wrapper around `borrowed`, around a request it serves.
+
+    `borrowed` isn't entered or exited with it: its owner, like `async with agent:`, manages its lifecycle, and exiting
+    it here could close an HTTP client another request is using. The exit is shielded from cancellation, so it
+    finishes, and its return value is discarded, so it can't suppress the request's error. The cancel scope encloses
+    the whole of it, so a cancel scope or task group the wrapper opens when entered is closed inside the same one.
+    """
+    with anyio.CancelScope() as scope:
+        entered = await _leaving_borrowed_alone(borrowed, wrapper.__aenter__())
+        try:
+            yield entered
+        except BaseException:
+            scope.shield = True
+            await _leaving_borrowed_alone(borrowed, wrapper.__aexit__(*sys.exc_info()))
+            raise
+        scope.shield = True
+        await _leaving_borrowed_alone(borrowed, wrapper.__aexit__(None, None, None))
 
 
 @dataclass(init=False)
@@ -45,7 +110,8 @@ class WrapperModel(Model):
         self.wrapped = infer_model(wrapped)
 
     async def __aenter__(self) -> Self:
-        await self.wrapped.__aenter__()
+        if not _is_borrowed(self.wrapped):
+            await self.wrapped.__aenter__()
         return self
 
     async def __aexit__(
@@ -54,6 +120,8 @@ class WrapperModel(Model):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> bool | None:
+        if _is_borrowed(self.wrapped):
+            return None
         return await self.wrapped.__aexit__(exc_type, exc_val, exc_tb)
 
     def _refresh_http_client(self) -> None:
@@ -67,11 +135,55 @@ class WrapperModel(Model):
     ) -> ModelResponse:
         return await self.wrapped.request(messages, model_settings, model_request_parameters)
 
+    @property
+    def batch_max_requests(self) -> int | None:
+        return self.wrapped.batch_max_requests
+
+    @property
+    def batch_max_bytes(self) -> int | None:
+        return self.wrapped.batch_max_bytes
+
+    def batch_request_size(self, request: EncodedBatchRequest) -> int:
+        return self.wrapped.batch_request_size(request)
+
+    def _batch_credential(self) -> str:
+        return self.wrapped._batch_credential()
+
+    def _batch_unlisted_status(self, batch: Batch) -> BatchResultStatus | None:
+        return self.wrapped._batch_unlisted_status(batch)
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        return await self.wrapped.batch_encode(request)
+
+    async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+        return await self.wrapped.batch_create(requests)
+
+    async def batch_status(self, batch: Batch) -> Batch:
+        return await self.wrapped.batch_status(batch)
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        return await self.wrapped.batch_results(batch)
+
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        return await self.wrapped.batch_cancel(batch)
+
+    def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
+        return self.wrapped.batch_decode(result, request)
+
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         return await self.wrapped.cancel_suspended_response(response)
 
     def continuation_delay(self, response: ModelResponse) -> float | None:
         return self.wrapped.continuation_delay(response)
+
+    def _limits_polls(self, response: ModelResponse) -> bool:
+        return self.wrapped._limits_polls(response)
+
+    def _release_suspended_response(self, response: ModelResponse) -> None:
+        self.wrapped._release_suspended_response(response)
+
+    def _withdraws_rejected_suspended_response(self, response: ModelResponse) -> bool:
+        return self.wrapped._withdraws_rejected_suspended_response(response)
 
     async def count_tokens(
         self,
@@ -115,6 +227,9 @@ class WrapperModel(Model):
     def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
         self.wrapped._warn_if_thinking_overridden(layers)
 
+    def _unified_effort(self, model_settings: ModelSettings | None) -> ThinkingEffort | None:
+        return self.wrapped._unified_effort(model_settings)
+
     def prepare_messages(
         self,
         messages: list[ModelMessage],
@@ -136,6 +251,22 @@ class WrapperModel(Model):
     @property
     def system(self) -> str:
         return self.wrapped.system
+
+    @property
+    def canonical_system(self) -> str:
+        return self.wrapped.canonical_system
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        return self.wrapped.compatible_systems
+
+    def accepts_stateless_artifacts(self, response: ModelResponse, part: ModelResponsePart | None = None) -> bool:
+        # Forwarded rather than derived from the two properties above, so a wrapped model that overrides the
+        # predicate keeps deciding.
+        return self.wrapped.accepts_stateless_artifacts(response, part)
+
+    def _model_for_response(self, response: ModelResponse) -> Model:
+        return self.wrapped._model_for_response(response)
 
     @property
     def model_id(self) -> str:

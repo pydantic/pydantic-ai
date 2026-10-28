@@ -206,8 +206,8 @@ left out on models that don't support them.
     the web search tool version from the model profile and Anthropic client: `web_search_20260209`
     for models and platforms that support Anthropic's dynamic-filtering web tools, and
     `web_search_20250305` otherwise.
-    The legacy Amazon Bedrock client does not support Anthropic web search, so Pydantic AI raises
-    a `UserError` if you use `WebSearchTool` with `AsyncAnthropicBedrock`.
+    Amazon Bedrock does not support Anthropic web search, so Pydantic AI raises a `UserError` if you
+    use `WebSearchTool` with `AsyncAnthropicBedrock` or `AsyncAnthropicBedrockMantle`.
     On Vertex AI, `WebSearchTool` always uses `web_search_20250305`, as Anthropic does not offer the
     dynamic-filtering version there, so dynamic filtering is unavailable even on otherwise-supported models.
     See the [Anthropic web search docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
@@ -712,9 +712,9 @@ in its place if one is provided, an `optional=True` tool is left out, and a
     the web fetch tool version from the model profile and Anthropic client: `web_fetch_20260209`
     for models and platforms that support Anthropic's dynamic-filtering web tools, and
     `web_fetch_20250910` otherwise.
-    `WebFetchTool` is unavailable on the legacy Amazon Bedrock and Vertex AI Anthropic clients, so
-    Pydantic AI raises a `UserError` if you use it with `AsyncAnthropicBedrock` or
-    `AsyncAnthropicVertex`.
+    `WebFetchTool` is unavailable on the Amazon Bedrock and Vertex AI Anthropic clients, so
+    Pydantic AI raises a `UserError` if you use it with `AsyncAnthropicBedrock`,
+    `AsyncAnthropicBedrockMantle` or `AsyncAnthropicVertex`.
     See the
     [Anthropic web fetch docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool)
     and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
@@ -818,7 +818,7 @@ The [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] lets an executor model
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| Anthropic | ✅ | Available on the Claude API and Claude Platform on AWS. |
+| Anthropic | ✅ | Available on the Claude API and Claude Platform on AWS, not on Amazon Bedrock. |
 | OpenRouter | ✅ | Works with any executor model. |
 | OpenAI | ❌ | |
 | Google | ❌ | |

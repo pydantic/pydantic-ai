@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from .._json_schema import JsonSchema, JsonSchemaTransformer
+from .._json_schema import JsonSchema, JsonSchemaTransformer, inline_objects, split_definitions
 from ..exceptions import UserError
 from ..native_tools import (
     CodeExecutionTool,
@@ -126,7 +126,7 @@ _CHAT_LATEST_REASONING = _ReasoningSupport(
 _GPT_5_PRO_EFFORTS: frozenset[OpenAIReasoningEffort] = frozenset(('medium', 'high', 'xhigh'))
 """The efforts GPT-5.2+ -pro models accept (live-verified for gpt-5.2-pro, gpt-5.4-pro and gpt-5.5-pro, 2026-10)."""
 
-_GPT_6_MODEL_PREFIXES = ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol')
+_GPT_6_MODEL_PREFIXES = ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra')
 
 _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # GPT-6 Astra reasons by default and does not accept `effort='none'` (its guide migrates
@@ -148,8 +148,11 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
         supports_context=True,
         efforts=frozenset(('low', 'medium', 'high', 'xhigh', 'max')),
     ),
-    # GPT-6 Sol and Luna retain GPT-5.6's default medium reasoning and accept `effort='none'`.
+    # GPT-6.1 Terra, GPT-6 Sol and Luna retain GPT-5.6's default medium reasoning and accept `effort='none'`.
     # https://developers.openai.com/api/docs/guides/latest-model
+    'gpt-6.1-terra': _ReasoningSupport(
+        enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
+    ),
     'gpt-6-sol': _ReasoningSupport(
         enabled_by_default=True, can_be_disabled=True, supports_mode=True, supports_context=True
     ),
@@ -280,6 +283,10 @@ class OpenAIModelProfile(ModelProfile, total=False):
     specified in `thinking_tags` profile option.
     * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
     * `False`: No thinking content is sent in the request.
+
+    Thinking sent as text in `'auto'` or `'tags'` mode goes in a user message ahead of the assistant message
+    instead when the profile sets
+    [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting].
 
     Defaults to `'auto'` to ensure thinking is sent back in the format expected by the model/provider."""
 
@@ -500,6 +507,16 @@ class OpenAIModelProfile(ModelProfile, total=False):
     setting is sent as `max_tokens` instead.
     """
 
+    openai_chat_supports_allowed_tools: bool
+    """Whether the Chat Completions API accepts an `allowed_tools` `tool_choice`. Default: `False`.
+
+    When `True`, a [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] that restricts the model to a
+    subset of tools is sent as `allowed_tools`, keeping the full `tools` array (and so the prompt cache) intact.
+    When `False`, the `tools` array is filtered down to the subset instead. Set by `OpenAIProvider`, including when
+    its `base_url` points at an OpenAI-compatible server. Set it to `False` in the model's `profile` for a server that
+    rejects or ignores `allowed_tools`, as OpenRouter and xAI do (their own providers leave it off).
+    """
+
     openai_supports_prompt_cache_breakpoints: bool
     """Whether the model supports OpenAI explicit prompt cache breakpoints. Default: False.
 
@@ -550,6 +567,18 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """Whether the provider exposes server-side input-token counting (`responses/input_tokens`). Default: `True`.
 
     When `False`, `count_tokens()` raises a `UserError` instead of calling a missing endpoint.
+    """
+
+    openai_supports_batch_api: bool
+    """Whether the provider serves the [OpenAI Batch API](https://platform.openai.com/docs/guides/batch) for Responses API
+    requests. Default: `False`.
+
+    [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] and
+    [`model_request_batch`][pydantic_ai.direct.model_request_batch] use it with `OpenAIResponsesModel`, which uploads a
+    batch's requests with `POST /v1/files` and submits them with `POST /v1/batches` for the `/v1/responses` endpoint.
+    Set by `OpenAIProvider`, also for an OpenAI-compatible `base_url`, except with an Azure OpenAI client, whose
+    batches need a batch deployment. Set it in a custom profile for another provider that serves these endpoints, or
+    to `False` for an endpoint that doesn't.
     """
 
 
@@ -661,6 +690,8 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_output_truncation': False,
         'supports_text_output': False,
         'supports_session_seeding': True,
+        # A system prompt asking for a reply goes to the backend as a developer message, and Live hears it as context.
+        'supports_system_messages': True,
         'supports_seeding_images': False,
         'supports_seeding_audio': False,
         # A server relays the browser's offer and attaches a sideband. Live has no client secrets.
@@ -696,6 +727,9 @@ def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_interruption': True,
         'supports_output_truncation': True,
         'supports_session_seeding': True,
+        # A mid-session `system` message is taken as instructions (checked live on `gpt-realtime` and
+        # `gpt-realtime-2.1`, and on Azure).
+        'supports_system_messages': True,
         'supports_webrtc': True,
         'supports_seeding_images': True,
         'supports_seeding_audio': True,
@@ -754,6 +788,28 @@ _TOP_LEVEL_DEFINITION_REF = re.compile(r'#/(\$defs|definitions)/[^/]+')
 """A local `$ref` to a top-level definition, the only JSON pointer other than `#` that OpenAI strict mode resolves."""
 
 _sentinel = object()
+
+_STRICT_MAX_NESTING_DEPTH = 10
+_STRICT_MAX_PROPERTIES = 5000
+"""OpenAI's limits on one strict schema, enforced by both the Chat Completions and Responses APIs.
+
+https://developers.openai.com/api/docs/guides/structured-outputs#objects-have-limitations-on-nesting-depth-and-size
+"""
+
+
+def _exceeds_strict_size_limits(schema: JsonSchema) -> bool:
+    """Whether a schema has more levels of nested objects, or more object properties, than OpenAI's strict mode allows.
+
+    The API counts the schema and each of its definitions on their own, without following `$ref`s.
+    """
+    root, definitions = split_definitions(schema)
+    for part in [root, *definitions]:
+        objects = list(inline_objects(part))
+        if max((depth for _, depth in objects), default=0) > _STRICT_MAX_NESTING_DEPTH:
+            return True
+        if sum(len(node['properties']) for node, _ in objects) > _STRICT_MAX_PROPERTIES:
+            return True
+    return False
 
 
 def _regex_contains_lookaround(pattern: str) -> bool:
@@ -970,6 +1026,9 @@ class _OpenAIJsonSchemaTransformer(_OpenAIGuardedJsonSchemaTransformer):  # pyri
             transformer = _OpenAIGuardedJsonSchemaTransformer(self.schema, strict=self.strict)
             result = transformer.walk()
             self.is_strict_compatible = transformer.is_strict_compatible
+        if self.strict is None and self.is_strict_compatible and _exceeds_strict_size_limits(result):
+            # OpenAI rejects such a schema in strict mode but accepts it without.
+            self.is_strict_compatible = False
         return result
 
     def _handle_array(self, schema: JsonSchema) -> JsonSchema:

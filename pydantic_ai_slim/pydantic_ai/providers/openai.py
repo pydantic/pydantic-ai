@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import (
+    _GPT_6_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     OpenAIJsonSchemaTransformer,
     OpenAIModelProfile,
     # Keep the provider-specific specialization private; the provider only selects it.
@@ -20,7 +21,7 @@ if TYPE_CHECKING:
     from pydantic_ai.realtime import RealtimeModelProfile
 
 try:
-    from openai import AsyncOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the OpenAI provider, '
@@ -29,22 +30,35 @@ except ImportError as _import_error:
 
 from ._openai_compatible import (
     AsyncHTTPClient as _OpenAIHTTPClient,
-    OpenAICompatibleProvider as _OpenAICompatibleProvider,
+    _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
 )
 
 
-class OpenAIProvider(_OpenAICompatibleProvider):
-    """Provider for OpenAI API.
+class OpenAIProvider(_OpenAISDKProvider):
+    """Provider for the OpenAI API, or a transparent proxy to it.
 
-    Changing `base_url` does not change the OpenAI model profile selection. For another service,
-    use its dedicated provider when available. For a custom gateway, subclass this provider and
-    override `model_profile`, or configure the model's `profile` explicitly.
+    Changing `base_url` does not change the OpenAI model profile selection, nor the
+    [`canonical_system`][pydantic_ai.providers.Provider.canonical_system]: encrypted reasoning and
+    compaction items from OpenAI are sent to it, and the ones it returns are sent to OpenAI. For another
+    service, use its dedicated provider when available, or
+    [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider].
     See [OpenAI-compatible models](https://pydantic.dev/docs/ai/models/openai/#openai-compatible-models).
     """
 
     @property
     def name(self) -> str:
         return 'openai'
+
+    _canonical_system_follows_client = True
+
+    @property
+    def canonical_system(self) -> str:
+        """`'azure'` with an `AsyncAzureOpenAI` client, as Azure only accepts its own encrypted data, otherwise `name`.
+
+        `name` rather than `'openai'`, so a subclass that renames itself to talk to another service doesn't send
+        that service's encrypted data to OpenAI, or OpenAI's to it.
+        """
+        return 'azure' if isinstance(self._client, AsyncAzureOpenAI) else self.name
 
     @property
     def base_url(self) -> str:
@@ -121,6 +135,20 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 openai_responses_supports_max_reasoning_effort=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # Set here rather than in `openai_model_profile` because OpenAI-compatible Chat Completions APIs
+                # don't all honor it: OpenRouter and xAI silently ignore it, and OpenRouter rejects it for Claude.
+                # A server reached through a custom `base_url` that doesn't honor it opts out in the model's profile.
+                # https://platform.openai.com/docs/api-reference/chat/create
+                openai_chat_supports_allowed_tools=True,
+                # The `configuration_update` input item that changes reasoning effort mid-conversation is
+                # documented for the GPT-6 family. Set here rather than in `openai_model_profile` because the
+                # OpenAI-compatible Responses endpoints that share it don't necessarily implement the item.
+                # https://developers.openai.com/api/docs/guides/reasoning
+                supports_mid_conversation_effort=model_name.startswith(_GPT_6_MODEL_PREFIXES),
+                # The Batch API is OpenAI's own: set here rather than in `openai_model_profile`, which OpenAI-compatible
+                # providers share without necessarily serving `/v1/batches`. `OpenAIResponsesModel` turns it off for an
+                # Azure OpenAI client.
+                openai_supports_batch_api=True,
             ),
         )
 

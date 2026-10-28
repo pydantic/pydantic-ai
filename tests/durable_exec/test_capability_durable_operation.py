@@ -19,6 +19,8 @@ from pydantic_ai.agent import AbstractAgent, AgentRunResult
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     AbstractCapability,
+    BatchModelRequests,
+    CombinedCapability,
     FileUnderstanding,
     Instrumentation,
     ProcessEventStream,
@@ -53,11 +55,13 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import (
+    Model,
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
     StreamedResponse,
 )
+from pydantic_ai.models._batch_model import BatchedModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
@@ -65,6 +69,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from ..batch_utils import FAST_BATCH_SETTINGS
 from ..conftest import try_import
 from ..model_lifecycle_utils import LifecycleTrackingModel
 
@@ -300,6 +305,31 @@ def test_a_second_durable_engine_is_refused_at_construction() -> None:
             name='two_engines',
             capabilities=[_BindLoggingDurability(bound), _OtherEngineDurability(bound)],
         )
+    assert bound == []
+
+
+@pytest.mark.parametrize('wrap', [False, True], ids=['bare', 'wrapped'])
+def test_a_durable_engine_inside_a_capability_group_is_refused(wrap: bool) -> None:
+    """A deferred group can't hold the engine that has to wrap every toolset the agent has."""
+    bound: list[str] = []
+    engine: AbstractCapability[Any] = _BindLoggingDurability(bound)
+    with pytest.raises(UserError) as exc_info:
+        Agent(
+            TestModel(),
+            name='grouped_engine',
+            capabilities=[
+                CombinedCapability(
+                    [WrapperCapability(engine) if wrap else engine],
+                    id='infra',
+                    description='Infra.',
+                    defer_loading=True,
+                )
+            ],
+        )
+    assert str(exc_info.value) == snapshot(
+        "`_BindLoggingDurability` is inside capability 'infra', but a durable execution engine must be passed to "
+        'the agent directly, so it can wrap every toolset the agent has.'
+    )
     assert bound == []
 
 
@@ -1603,6 +1633,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     [
         'get_toolset',
         'get_wrapper_toolset',
+        'get_wrapper_model',
         'wrap_run',
         'wrap_node_run',
         'wrap_model_request',
@@ -1614,7 +1645,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     ],
 )
 def test_never_durable_hooks_fail_at_bind(hook: str) -> None:
-    if hook in ('get_toolset', 'get_wrapper_toolset'):
+    if hook in ('get_toolset', 'get_wrapper_toolset', 'get_wrapper_model'):
 
         def sync_invalid(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> None:
             return None
@@ -1733,6 +1764,35 @@ async def test_decorated_model_request_hook_round_trips_request_only_mutation() 
     assert isinstance(sent_request, ModelRequest)
     assert isinstance(sent_request.parts[0], UserPromptPart)
     assert sent_request.parts[0].content == 'replaced'
+
+
+class RecordModelInBeforeModelRequest(AbstractCapability[Any]):
+    id = 'record_model'
+
+    def __init__(self) -> None:
+        self.models: list[Model] = []
+
+    @durable_operation('before_model_request')
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        self.models.append(request_context.model)
+        return request_context
+
+
+async def test_decorated_model_request_hook_sees_the_model_before_capabilities_wrap_it() -> None:
+    """Model wrappers apply after the `before_model_request` hooks, in the durable unit too."""
+    recorder = RecordModelInBeforeModelRequest()
+    batching = BatchModelRequests(**FAST_BATCH_SETTINGS)
+    agent = Agent(
+        TestModel(call_tools=[]), name='record_model', capabilities=[recorder, batching, RecordingDurability()]
+    )
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'success (no tool calls)'
+    assert recorder.models
+    assert not any(isinstance(model, BatchedModel) for model in recorder.models)
 
 
 async def test_custom_model_request_operation_round_trips_request_only_projection() -> None:

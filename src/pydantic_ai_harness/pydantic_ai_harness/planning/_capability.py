@@ -2,16 +2,27 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
+from pydantic_ai._framing import neutralize_tags
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.messages import CachePoint, ModelRequest, ModelResponse, UserContent, UserPromptPart
+from pydantic_ai.messages import (
+    CachePoint,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    RetryFeedbackPart,
+    TextContent,
+    ToolReturnPart,
+    UserContent,
+    UserPromptPart,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
-from pydantic_ai_harness._cache_points import has_cache_point_target
 from pydantic_ai_harness.planning._store import InMemoryPlanStore, PlanStore
 from pydantic_ai_harness.planning._toolset import (
     SUBTASK_TOOL_NAMES,
@@ -224,7 +235,7 @@ class Planning(AbstractCapability[AgentDepsT]):
             content: list[UserContent] = ['<plan-reminder>\n', _reminder_text(render_plan(items))]
             # With no content before the reminder (an instructions-only first request) there is no
             # prefix to protect, and providers reject a breakpoint with nothing to attach to.
-            if has_cache_point_target(last.parts):
+            if _has_cache_point_target(last.parts):
                 content.insert(0, CachePoint(ttl=self.cache_ttl))
             messages[-1] = replace(last, parts=[*last.parts, UserPromptPart(content=content)])
         return await handler(request_context)
@@ -297,5 +308,55 @@ class Planning(AbstractCapability[AgentDepsT]):
         return 'Planning'
 
 
+# TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
+# `plan-reminder` as a framing tag there.
+# The `<` of an opening or closing `plan-reminder` tag, in any case, spacing or with attributes, or cut off at the end
+# of the plan, where the frame's own end tag would complete it. Core's own framing tags are left to `neutralize_tags`.
+_PLAN_REMINDER_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?plan-reminder(?=[\s/>]|$))', re.IGNORECASE)
+
+
 def _reminder_text(plan: str) -> str:
-    return f'Your current plan (keep it updated with the planning tools):\n\n{plan}\n</plan-reminder>'
+    """The reminder's body and closing tag, with the plan's step text kept inside the `<plan-reminder>` frame.
+
+    The steps are written by the model, so the `<` of every opening or closing `plan-reminder` tag and of every
+    framing tag core writes is escaped as `&lt;`.
+    """
+    body = _PLAN_REMINDER_TAG_OPENER.sub('&lt;', neutralize_tags(plan))
+    return f'Your current plan (keep it updated with the planning tools):\n\n{body}\n</plan-reminder>'
+
+
+def _has_cache_point_target(parts: Sequence[ModelRequestPart]) -> bool:
+    """Whether these request parts already carry content a leading `CachePoint` can attach to.
+
+    Providers attach a `CachePoint` that opens a user prompt to the content right before it, which is
+    the end of the durable history when the prompt is the plan reminder, whether that history ends in
+    a user prompt, a tool return, or retry feedback. With nothing before it to attach to, providers
+    that honor `CachePoint` reject it, so the reminder only leads with one when the request already
+    contributes such content. `SystemPromptPart` maps to the system field, not to message content, so
+    it does not count.
+
+    `RetryFeedbackPart` counts: it is translated at request time into a `<validation_errors>`-fenced
+    user prompt when it quotes the model's own output, and otherwise into a mid-conversation system
+    prompt, which providers without an inline system channel receive as `<system>`-tagged user text.
+    """
+    for part in parts:
+        if isinstance(part, ToolReturnPart | RetryFeedbackPart):
+            return True
+        if isinstance(part, UserPromptPart):
+            content = part.content
+            if isinstance(content, str):
+                if content:
+                    return True
+            elif any(_is_user_content_item(item) for item in content):
+                return True
+    return False
+
+
+def _is_user_content_item(item: object) -> bool:
+    if isinstance(item, CachePoint):
+        return False
+    if isinstance(item, str):
+        return bool(item)
+    if isinstance(item, TextContent):
+        return bool(item.content)
+    return True

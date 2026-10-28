@@ -43,6 +43,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._instrumentation import model_request_parameters_attributes
 from pydantic_ai._run_context import with_tool_name_layer
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -56,8 +57,12 @@ from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelAuthenticationError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelServerError,
     ModelTimeoutError,
     UserError,
@@ -68,6 +73,7 @@ from pydantic_ai.messages import (
     CustomEvent,
     InstructionId,
     InstructionPart,
+    ThinkingPart,
     ToolsetInstructionSource,
     UnknownCustomEvent,
     UploadedFile,
@@ -907,7 +913,7 @@ async def test_oversized_model_response_payload(client: Client):
     ):
         with workflow_raises(
             UserError,
-            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134307)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
+            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134331)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
         ):
             await client.execute_workflow(
                 OversizedModelResponseWorkflow.run,
@@ -1655,6 +1661,52 @@ def test_temporal_model_profile_for_raw_strings():
         assert temporal_model_with_registry.model_name == 'alt-model'
         assert temporal_model_with_registry.system == alt_model.system
         assert temporal_model_with_registry.profile == alt_model.profile
+
+
+class _CanonicalSystemTestModel(TestModel):
+    @property
+    def canonical_system(self) -> str:
+        return 'anthropic'
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        return frozenset({'bedrock'})
+
+
+def test_temporal_model_canonical_system_follows_active_model():
+    """Which history data a model sends back is decided by the active model, like its identity.
+
+    A raw model string has no model to ask, so its provider name stands in, as it does for `system`.
+    """
+    default_model = TestModel(model_name='default-model')
+    alt_model = _CanonicalSystemTestModel(model_name='alt-model')
+    temporal_model = TemporalModel(
+        default_model,
+        activity_name_prefix='test__canonical_system',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': alt_model},
+    )
+    anthropic_response = ModelResponse(
+        parts=[ThinkingPart(content='thought', signature='sig', provider_name='anthropic')], provider_name='anthropic'
+    )
+
+    assert (temporal_model.canonical_system, temporal_model.compatible_systems) == ('test', frozenset())
+    assert not temporal_model.accepts_stateless_artifacts(anthropic_response, anthropic_response.parts[0])
+    assert temporal_model._model_for_response(anthropic_response) is default_model  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('alt'):
+        assert (temporal_model.canonical_system, temporal_model.compatible_systems) == (
+            'anthropic',
+            frozenset({'bedrock'}),
+        )
+        assert temporal_model.accepts_stateless_artifacts(anthropic_response, anthropic_response.parts[0])
+        assert temporal_model._model_for_response(anthropic_response) is alt_model  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('anthropic:claude-sonnet-4-5'):
+        assert (temporal_model.canonical_system, temporal_model.compatible_systems) == ('anthropic', frozenset())
+        assert temporal_model.accepts_stateless_artifacts(anthropic_response, anthropic_response.parts[0])
+        assert temporal_model._model_for_response(anthropic_response) is temporal_model  # pyright: ignore[reportPrivateUsage]
 
 
 class _NoRestrictionsTestModel(TestModel):
@@ -3075,10 +3127,11 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     else:
         await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
 
+    # Foundry serves no mid-conversation system messages, so the standing prompt also says what `<system>` means.
     assert rendered_requests == snapshot(
         [
             {
-                'system': 'leading',
+                'system': f'leading\n\n{SYSTEM_VOICE_ANNOUNCEMENT}',
                 'messages': [
                     {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
                     {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},
@@ -3550,6 +3603,26 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='gpt-test', in_stream=True),
             'ModelHTTPError',
             id='in-stream-http-category',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-authentication',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelRequestRejectedError, status_code=400, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-request-rejected',
+        ),
+        pytest.param(
+            ModelNotFoundError('gpt-test', 'The model does not exist.', in_stream=True),
+            'ModelAPIError',
+            id='not-found',
+        ),
+        pytest.param(
+            ModelContextWindowExceededError('gpt-test', 'context_length_exceeded: too long'),
+            'ModelAPIError',
+            id='context-window',
         ),
         pytest.param(ModelTimeoutError('gpt-test', 'timed out', phase='read'), 'ModelAPIError', id='timeout'),
         pytest.param(

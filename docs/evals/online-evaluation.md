@@ -208,7 +208,7 @@ Each event has `event.name = 'gen_ai.evaluation.result'` and a short human-reada
 - `gen_ai.evaluation.explanation` — `EvaluationResult.reason` on success or `EvaluatorFailure.error_message` on failure. Omitted when absent. Set via `reason=...` when constructing an `EvaluationResult` inside a custom evaluator.
 - `error.type` (failure events only) — the exception class name (e.g. `'ValueError'`) when the failure was built from a caught exception; falls back to `'pydantic_evals.EvaluatorFailure'` for `EvaluatorFailure` instances constructed without it. Absent on successful evaluations. Source: `EvaluatorFailure.error_type`.
 - `gen_ai.evaluation.target` — `@evaluate(target=...)` or agent `name`. See [Target](#target).
-- `gen_ai.evaluation.evaluator.version` — `Evaluator.evaluator_version` class attribute; omitted when the class doesn't set it. See [Evaluator Versioning](#evaluator-versioning).
+- `gen_ai.evaluation.evaluator.version` — the return value of [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version]; omitted when it returns `None`, which is the default. See [Evaluator Versioning](#evaluator-versioning).
 - `gen_ai.evaluation.evaluator.source` — JSON-serialized [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec] identifying the evaluator class and its constructor arguments, so downstream queries can group by evaluator identity without relying on `name` alone (two different `LLMJudge(rubric=...)` instances share a name but have different sources).
 
 [OTel baggage](https://pydantic.dev/docs/logfire/reference/baggage/) entries (if any) are also attached to each event as attributes — configurable via `include_baggage` on the config. The `gen_ai.*` and `error.type` attributes above always win on conflict with baggage.
@@ -1015,6 +1015,8 @@ After each completed agent run, the capability:
 To attach additional sinks or override sampling defaults, pass an [`OnlineEvalConfig`][pydantic_evals.online.OnlineEvalConfig] — same as with the `@evaluate` decorator: `OnlineEvaluation(evaluators=[...], config=OnlineEvalConfig(default_sample_rate=0.1))`.
 
 The capability supports all the same features as the [`@evaluate()`][pydantic_evals.online.evaluate] decorator: sampling, per-evaluator sinks, concurrency control, and error handling. The `config` parameter is optional and defaults to the global [`DEFAULT_CONFIG`][pydantic_evals.online.DEFAULT_CONFIG].
+
+An agent can have several `OnlineEvaluation` capabilities, for example with different configs or sinks. Each samples and dispatches its own evaluators for every run, and they share the run's measured duration, span tree, attributes and metrics.
 
 !!! note
     [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] wraps [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent.iter()`][pydantic_ai.agent.Agent.iter] when the run reaches a final result. For streaming runs, evaluators are dispatched only after the final result is available and the surrounding context manager exits. The same delayed-dispatch behavior applies when driving an [`agent.iter()`][pydantic_ai.agent.Agent.iter] run to completion, which is generally the preferred streaming API.

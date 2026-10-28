@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "606"
+      - "612"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -27,7 +27,7 @@ interactions:
               I have a box of books from the library donation drive. Where should it be
               routed?
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5
         stream: true
         system:
         - type: text
@@ -39,7 +39,7 @@ interactions:
             <context id="capability:memory:state">
             Send parcels to warehouse A.
             </context>
-            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
   response:
     status: 200
     headers:
@@ -51,10 +51,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=99
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-07a6cee26d5bc50346edc8d459d2bf84-fdd7919d39fdb1c5-01
+      - 00-0003543dc275dc9fa81e2f00229a869c-88c23859e0f82ab2-01
       transfer-encoding:
       - chunked
       vary:
@@ -63,10 +65,10 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgqecJkb2Q3QPN4d2mU","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":101,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null} }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CgPK3hxSMgTrZnwaZvXw2","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":139,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null} }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}            }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}          }
 
         event: ping
         data: {"type": "ping"}
@@ -75,15 +77,15 @@ interactions:
         data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"A"}    }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0    }
+        data: {"type":"content_block_stop","index":0}
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":101,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}             }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":139,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}           }
 
         event: message_stop
-        data: {"type":"message_stop"        }
+        data: {"type":"message_stop"      }
 
-  recorded_at: 2026-09-30T00:36:17.712914+00:00
+  recorded_at: 2026-10-25T16:59:37.330355+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -91,11 +93,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "912"
+      - "918"
       content-type:
       - application/json
       host:
@@ -103,7 +105,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -124,7 +126,7 @@ interactions:
               Send parcels to warehouse B.
               </context></system>
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5
         stream: true
         system:
         - type: text
@@ -136,7 +138,7 @@ interactions:
             <context id="capability:memory:state">
             Send parcels to warehouse A.
             </context>
-            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
   response:
     status: 200
     headers:
@@ -148,10 +150,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=106
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-ee87067f1f43d90487d0ba2b2251553c-9ef3389e0573b56e-01
+      - 00-4c6a4a3012dd1a47018949a0600d18e6-64a82211828aaf7c-01
       transfer-encoding:
       - chunked
       vary:
@@ -160,115 +164,10 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgqkby3MuzZ3cSQwW1c","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":152,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}        }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CgPK3ksJBvmL4TjpcRcxp","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":206,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null} }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}         }
-
-        event: ping
-        data: {"type": "ping"}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"B"}               }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":0        }
-
-        event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":152,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4} }
-
-        event: message_stop
-        data: {"type":"message_stop"            }
-
-  recorded_at: 2026-09-30T00:36:19.134452+00:00
-- request:
-    method: POST
-    uri: https://api.anthropic.com/v1/messages?beta=true
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - "1083"
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    body:
-      type: json
-      content:
-        max_tokens: 64000
-        messages:
-        - role: user
-          content:
-          - text: >-
-              I have a box of books from the library donation drive. Where should it be
-              routed?
-            type: text
-        - role: assistant
-          content:
-          - text: A
-            type: text
-        - role: user
-          content:
-          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
-            type: text
-          - text: |-
-              <system><context id="capability:memory:state">
-              Send parcels to warehouse B.
-              </context></system>
-            type: text
-        - role: assistant
-          content:
-          - text: B
-            type: text
-        - role: user
-          content:
-          - text: This one is a bicycle frame, oversized. Where does it go?
-            type: text
-        model: claude-sonnet-4-5
-        stream: true
-        system:
-        - type: text
-          text: >-
-            You help route parcels. The destination warehouse is specified separately.
-            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-        - type: text
-          text: |-
-            <context id="capability:memory:state">
-            Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one and stays in effect until replaced again.
-  response:
-    status: 200
-    headers:
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - text/event-stream; charset=utf-8
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-d8f1c50102d4ba9ede01d2890cc438da-605784a9c3c43805-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    body:
-      type: text
-      content: |+
-        event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgqrLFfNZVMt4FSWR65","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":174,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}    }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}        }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}    }
 
         event: ping
         data: {"type": "ping"}
@@ -277,15 +176,15 @@ interactions:
         data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"B"}             }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0         }
+        data: {"type":"content_block_stop","index":0           }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":174,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}            }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":206,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}      }
 
         event: message_stop
-        data: {"type":"message_stop"             }
+        data: {"type":"message_stop"          }
 
-  recorded_at: 2026-09-30T00:36:20.423810+00:00
+  recorded_at: 2026-10-25T16:59:38.042707+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -293,11 +192,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "1365"
+      - "1089"
       content-type:
       - application/json
       host:
@@ -305,7 +204,126 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: This one is a bicycle frame, oversized. Where does it go?
+            type: text
+        model: claude-sonnet-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=99
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-fad0ccaef4704f9ddba6041bc2d1643c-28b794e8854e1a8e-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CgPK3opePBfbctTr9uevK","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":232,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}  }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EuUDCuUCCBMYAipA74y2KYt2rBJ+dnztFTZfGnmH1BrG9O1aOfW3kNb6DnMZCh6b5jkz/VgK6tkZD9UXE6M31JAz6N9YDpvGj2/m3jIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTGaAREKD2NsYXVkZS1zb25uZXQtNagB+ur41gbCAVsIDxAAGi0B7GgBy2IC2ooDTzcF9CoEJq0FSxwDTzcFeI4FchgEJq0FiWkDTzcF1VYEJq0gAzIEEnHPJToElfFxh0IEODMjikoEODMjilAAWgTZBeFWYAZoAXAC2gFgChZwcmVmaXhfYmVmb3JlX2Jsb2NrX3YxEiAqVWJNI48i3gk5SKUPk/8MiQAJLq79GxyztGIXEie5eCIAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgy6k1xQ5MDuHNMvTUYaDL5gGdw/XYWhvtBPsyIwHdg+7P6tq5u/A+0LqmPiGeN/s9QnTuAvYQNz9VQUjJheM1VCX/JOan5Gsv/ut3ecKi1fmJGn0M8Ud+ViWri44hhmoxB/f6W0EdRKyAFPi8LKfDt0/crufIYnpnia2wwYAQ=="} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"B"}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1       }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":232,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":15,"output_tokens_details":{"thinking_tokens":12}}           }
+
+        event: message_stop
+        data: {"type":"message_stop" }
+
+  recorded_at: 2026-10-25T16:59:38.787368+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "2076"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -336,6 +354,10 @@ interactions:
             type: text
         - role: assistant
           content:
+          - thinking: ""
+            signature: >-
+              EuUDCuUCCBMYAipA74y2KYt2rBJ+dnztFTZfGnmH1BrG9O1aOfW3kNb6DnMZCh6b5jkz/VgK6tkZD9UXE6M31JAz6N9YDpvGj2/m3jIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTGaAREKD2NsYXVkZS1zb25uZXQtNagB+ur41gbCAVsIDxAAGi0B7GgBy2IC2ooDTzcF9CoEJq0FSxwDTzcFeI4FchgEJq0FiWkDTzcF1VYEJq0gAzIEEnHPJToElfFxh0IEODMjikoEODMjilAAWgTZBeFWYAZoAXAC2gFgChZwcmVmaXhfYmVmb3JlX2Jsb2NrX3YxEiAqVWJNI48i3gk5SKUPk/8MiQAJLq79GxyztGIXEie5eCIAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgy6k1xQ5MDuHNMvTUYaDL5gGdw/XYWhvtBPsyIwHdg+7P6tq5u/A+0LqmPiGeN/s9QnTuAvYQNz9VQUjJheM1VCX/JOan5Gsv/ut3ecKi1fmJGn0M8Ud+ViWri44hhmoxB/f6W0EdRKyAFPi8LKfDt0/crufIYnpnia2wwYAQ==
+            type: thinking
           - text: B
             type: text
         - role: user
@@ -347,7 +369,7 @@ interactions:
               Send parcels to warehouse A.
               </context></system>
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5
         stream: true
         system:
         - type: text
@@ -359,7 +381,7 @@ interactions:
             <context id="capability:memory:state">
             Send parcels to warehouse A.
             </context>
-            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
   response:
     status: 200
     headers:
@@ -371,10 +393,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=119
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-4e3b6ef7137c05dc9629627cb7f543bd-996235362e9b1224-01
+      - 00-b1dc32741c0f0c584be093017affc473-eac881f3b26a721c-01
       transfer-encoding:
       - chunked
       vary:
@@ -383,27 +407,27 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgqwucNFWVSY7XZCWNJ","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":216,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}              }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CgPK3s5roiMqNNzrT7L2e","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":297,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}    }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}              }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""} }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"A"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"A"}              }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0          }
+        data: {"type":"content_block_stop","index":0  }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":216,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}        }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":297,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}          }
 
         event: message_stop
-        data: {"type":"message_stop"            }
+        data: {"type":"message_stop"   }
 
-  recorded_at: 2026-09-30T00:36:21.576562+00:00
+  recorded_at: 2026-10-25T16:59:39.414133+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -411,11 +435,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "1721"
+      - "2432"
       content-type:
       - application/json
       host:
@@ -423,7 +447,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -454,6 +478,10 @@ interactions:
             type: text
         - role: assistant
           content:
+          - thinking: ""
+            signature: >-
+              EuUDCuUCCBMYAipA74y2KYt2rBJ+dnztFTZfGnmH1BrG9O1aOfW3kNb6DnMZCh6b5jkz/VgK6tkZD9UXE6M31JAz6N9YDpvGj2/m3jIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTGaAREKD2NsYXVkZS1zb25uZXQtNagB+ur41gbCAVsIDxAAGi0B7GgBy2IC2ooDTzcF9CoEJq0FSxwDTzcFeI4FchgEJq0FiWkDTzcF1VYEJq0gAzIEEnHPJToElfFxh0IEODMjikoEODMjilAAWgTZBeFWYAZoAXAC2gFgChZwcmVmaXhfYmVmb3JlX2Jsb2NrX3YxEiAqVWJNI48i3gk5SKUPk/8MiQAJLq79GxyztGIXEie5eCIAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgy6k1xQ5MDuHNMvTUYaDL5gGdw/XYWhvtBPsyIwHdg+7P6tq5u/A+0LqmPiGeN/s9QnTuAvYQNz9VQUjJheM1VCX/JOan5Gsv/ut3ecKi1fmJGn0M8Ud+ViWri44hhmoxB/f6W0EdRKyAFPi8LKfDt0/crufIYnpnia2wwYAQ==
+            type: thinking
           - text: B
             type: text
         - role: user
@@ -478,7 +506,7 @@ interactions:
               This context has been withdrawn, and the withdrawal stays in effect until replaced again.
               </context></system>
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5
         stream: true
         system:
         - type: text
@@ -490,7 +518,7 @@ interactions:
             <context id="capability:memory:state">
             Send parcels to warehouse A.
             </context>
-            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
   response:
     status: 200
     headers:
@@ -502,10 +530,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=117
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-b0f8d613f18b8a71ff94c9f113dca324-047e0fe8a0dcf018-01
+      - 00-3b23284ac76252609e57759ecbad84ed-4e3e4ef812fbbff3-01
       transfer-encoding:
       - chunked
       vary:
@@ -514,27 +544,27 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgr2r2Pv4V3efCEP4zy","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":273,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}    }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CgPK3ukrA32ADsVhBqrR8","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":372,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}           }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}               }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}       }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"UNASSIGNED"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"UNASSIGNED"}     }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0               }
+        data: {"type":"content_block_stop","index":0   }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":273,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":7}            }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":372,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10,"output_tokens_details":{"thinking_tokens":0}}         }
 
         event: message_stop
-        data: {"type":"message_stop"               }
+        data: {"type":"message_stop"             }
 
-  recorded_at: 2026-09-30T00:36:22.764740+00:00
+  recorded_at: 2026-10-25T16:59:40.054497+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -542,11 +572,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "2042"
+      - "2753"
       content-type:
       - application/json
       host:
@@ -554,7 +584,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -585,6 +615,10 @@ interactions:
             type: text
         - role: assistant
           content:
+          - thinking: ""
+            signature: >-
+              EuUDCuUCCBMYAipA74y2KYt2rBJ+dnztFTZfGnmH1BrG9O1aOfW3kNb6DnMZCh6b5jkz/VgK6tkZD9UXE6M31JAz6N9YDpvGj2/m3jIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTGaAREKD2NsYXVkZS1zb25uZXQtNagB+ur41gbCAVsIDxAAGi0B7GgBy2IC2ooDTzcF9CoEJq0FSxwDTzcFeI4FchgEJq0FiWkDTzcF1VYEJq0gAzIEEnHPJToElfFxh0IEODMjikoEODMjilAAWgTZBeFWYAZoAXAC2gFgChZwcmVmaXhfYmVmb3JlX2Jsb2NrX3YxEiAqVWJNI48i3gk5SKUPk/8MiQAJLq79GxyztGIXEie5eCIAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgy6k1xQ5MDuHNMvTUYaDL5gGdw/XYWhvtBPsyIwHdg+7P6tq5u/A+0LqmPiGeN/s9QnTuAvYQNz9VQUjJheM1VCX/JOan5Gsv/ut3ecKi1fmJGn0M8Ud+ViWri44hhmoxB/f6W0EdRKyAFPi8LKfDt0/crufIYnpnia2wwYAQ==
+            type: thinking
           - text: B
             type: text
         - role: user
@@ -622,7 +656,7 @@ interactions:
               Send parcels to warehouse C.
               </context></system>
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5
         stream: true
         system:
         - type: text
@@ -634,7 +668,7 @@ interactions:
             <context id="capability:memory:state">
             Send parcels to warehouse A.
             </context>
-            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
   response:
     status: 200
     headers:
@@ -646,10 +680,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=94
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-19babf1435c9aba916ce5b6080225c89-d102a610f720daf9-01
+      - 00-d50471e2f853ba6a84f7b9f82cb38ce9-fc21f0644c7f990a-01
       transfer-encoding:
       - chunked
       vary:
@@ -658,24 +694,24 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgr7quwn9yQu3u6PuY8","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":323,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}          }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CgPK3xU44VWFNhwiEzDfg","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":444,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}  }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""} }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}               }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"C"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"C"}}
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0 }
+        data: {"type":"content_block_stop","index":0              }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":323,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}     }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":444,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}} }
 
         event: message_stop
-        data: {"type":"message_stop"          }
+        data: {"type":"message_stop"    }
 
-  recorded_at: 2026-09-30T00:36:24.017465+00:00
+  recorded_at: 2026-10-25T16:59:40.794167+00:00

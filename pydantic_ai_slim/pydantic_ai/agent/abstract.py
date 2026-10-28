@@ -43,7 +43,7 @@ from .._run_context import set_current_run_context
 from ..capabilities import AgentCapability
 from ..conversation import Conversation
 from ..exceptions import RunCancelled
-from ..output import OutputDataT, OutputSpec
+from ..output import OutputDataT, OutputSpec, PendingModelResponse
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
 from ..settings import ModelSettings
@@ -1023,6 +1023,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             # f_back because `asynccontextmanager` adds one frame
             if frame := inspect.currentframe():  # pragma: no branch
                 self._infer_name(frame.f_back)
+            # This generator's frame would otherwise refer to itself and keep `deps` alive until garbage collection.
+            del frame
 
         event_stream_handler = event_stream_handler or self.event_stream_handler
 
@@ -1125,9 +1127,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # So we call `process_tool_calls` directly and then end the run with the found final result.
 
                                 parts: list[_messages.ModelRequestPart] = []
+                                # A response the provider is still working on ended the run as `PendingModelResponse`,
+                                # so its tool calls aren't complete and don't run.
+                                pending = isinstance(final_result.output, PendingModelResponse)
                                 async for _event in _agent_graph.process_tool_calls(
                                     tool_manager=graph_ctx.deps.tool_manager,
-                                    tool_calls=stream.response.tool_calls,
+                                    tool_calls=[] if pending else stream.response.tool_calls,
                                     tool_call_results=None,
                                     tool_call_metadata=None,
                                     final_result=final_result,
@@ -1210,7 +1215,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 )
 
         if not yielded:
-            raise exceptions.AgentRunError('Agent run finished without producing a final result')  # pragma: no cover
+            # The loop above only ends without yielding by raising, so the run failed before it streamed a final
+            # result, and `wrap_run` or `on_run_error` recovered it with a result, which `iter()` sets on the run as
+            # it suppresses the error.
+            run_result = agent_run.result
+            assert run_result is not None
+            yield StreamedRunResult(
+                agent_run.ctx.state.message_history,
+                agent_run.ctx.deps.new_message_index,
+                run_result=run_result,
+            )
 
     @overload
     def run_stream_sync(

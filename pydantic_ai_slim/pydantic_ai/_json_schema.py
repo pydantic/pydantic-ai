@@ -1,9 +1,10 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Literal, TypeAlias
+from typing import Any, ClassVar, Literal, TypeAlias, cast
 
 from pydantic import JsonValue
 
@@ -293,6 +294,12 @@ class JsonSchemaTransformer(ABC):
         return cases
 
 
+class JsonSchemaTransformerWithOutputOverride(JsonSchemaTransformer):
+    """A tool-schema transformer that selects a different transformer for output objects."""
+
+    output_object_transformer: ClassVar[type[JsonSchemaTransformer]]
+
+
 class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
     """Transforms the JSON Schema to inline `$defs`, and `$ref`s that point elsewhere in the schema like `#/properties/from`.
 
@@ -321,3 +328,38 @@ class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         return schema
+
+
+DEFINITION_KEYS = ('$defs', 'definitions')
+"""The keys a schema keeps its definitions under: `$defs`, and draft-07 `definitions`."""
+
+
+def split_definitions(schema: JsonSchema) -> tuple[JsonSchema, list[object]]:
+    """A schema without its definitions, and the definitions under `DEFINITION_KEYS`."""
+    root = {key: value for key, value in schema.items() if key not in DEFINITION_KEYS}
+    definitions: list[object] = []
+    for key in DEFINITION_KEYS:
+        group = schema.get(key)
+        if isinstance(group, dict):
+            definitions.extend(cast(dict[str, object], group).values())
+    return root, definitions
+
+
+def inline_objects(schema: object, depth: int = 1) -> Iterator[tuple[JsonSchema, int]]:
+    """Each object with `properties` reached from `schema` through properties, array items and `anyOf`, and its depth.
+
+    The depth is the number of such objects along the path, the object included. `$ref`s aren't followed and
+    definitions aren't entered: providers that limit strict schemas were observed to count this way.
+    """
+    if not isinstance(schema, dict):
+        return
+    node = cast(JsonSchema, schema)
+    properties = node.get('properties')
+    children: list[object] = [node.get('items'), *node.get('anyOf', [])]
+    child_depth = depth
+    if isinstance(properties, dict):
+        yield node, depth
+        children.extend(cast(dict[str, object], properties).values())
+        child_depth = depth + 1
+    for child in children:
+        yield from inline_objects(child, child_depth)

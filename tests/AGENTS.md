@@ -20,6 +20,8 @@ Recorded cassettes also double as a suite-wide prompt-cache prefix regression ne
 
 `tests/test_history_append_only.py` (core) and `tests/harness/test_history_append_only.py` (Harness) check the same invariant without cassettes, over every capability the packages ship. A new capability is picked up automatically; if it can't be built with its defaults, give it a `FIXTURES` entry (or an `EXEMPT` entry saying why it can't run offline), and, in the Harness file, a `SCENARIOS` entry if it keeps state the conversation should change. A prefix move that is a bug goes in `KNOWN`, linked to the issue or PR that fixes it; a move that is documented behavior (compaction, a request-only tail) goes in `ALLOWED`, which pins how far it may move.
 
+Tests without a cassette get the same check from `fail_function_model_prefix_violations` in `tests/conftest.py`: every request a `FunctionModel` or `TestModel` receives is rendered offline as the body `AnthropicModel` would send, and compared with the previous request of its run, or, for a run's first request, with the latest shorter request that starts with the same message. A test whose conversation moves the prefix on purpose (it changes the tools or instructions between steps, compacts or rewrites history, drops a request-scoped prompt, rewinds a fallback continuation) uses `@pytest.mark.moves_cache_prefix(reason=...)`, preferably with one of the shared reasons in `tests/function_model_prefix.py`. A move the framework shouldn't make is a bug, the counterpart of a `KNOWN` entry above: fix it rather than mark the test, or, when the fix belongs in its own PR, mark it with a reason that links the issue tracking the fix.
+
 ## Test File Structure
 
 ```python
@@ -295,6 +297,16 @@ The suite runs on every push across a matrix of Python versions and install shap
 - When `PYTEST_TEST_BUDGET_SECONDS` is set (one CI leg sets it; it is off locally), a test whose setup and call together take longer fails unless it is marked `@pytest.mark.slow(reason='...')`. Setup of `module`, `class`, `package` and `session`-scoped fixtures is not counted, so sharing an expensive fixture is never penalized. Reach for the marker only when the duration is inherent to what the test proves; otherwise make the test cheaper with the patterns above
 
 When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module that takes longer to collect fails the session, with no escape hatch: check whether a heavy dependency is installed with `importlib.util.find_spec` for the skip condition, and import it in the tests that use it, after a `module`-scoped fixture has imported it once outside the per-test budget.
+
+## Property tests
+
+`tests/history_strategies.py` draws message histories with Hypothesis. `tests/history_invariants.py` holds the checkers: plain functions that return a stable code for each violation. `tests/test_history_properties.py` runs the properties, and `tests/test_history_invariants.py` holds the falsifiers.
+
+- Commit a falsifier with every checker code: a hand-built input that triggers exactly that code. A property that no committed input fails checks nothing.
+- When a property fails on main for an input in the drawn domain, record it as a known finding: add a `KNOWN_FINDINGS` entry in `tests/test_history_properties.py` that names the `Damage` drawing the input, a hand-built reproducer for each provider it fails on, and, in `tracked_by`, the URL of the GitHub issue tracking it. Open the issue first. The entry leaves the damage out of that property on those providers and pins each reproducer as a strict expected failure. If no `Damage` draws the input alone, add one that does.
+- Never mark a property test as an expected failure: it would then stop checking every other input.
+- Narrow the strategy only to leave out an input that providers and users never produce, or one whose shape needs its own strategy. List each narrowing with its reason in the `tests/history_strategies.py` module docstring.
+- Hypothesis settings are module-local; there is no suite-wide profile. `tests/test_history_properties.py` gives each property its `PROPERTY_SETTINGS`, a derandomized batch of 50 examples, so a run is reproducible and fits the per-test budget. Hunt for new failures with `HISTORY_PROPERTY_EXAMPLES=1000 uv run pytest tests/test_history_properties.py`, which draws 1000 randomized examples per test.
 
 ## Directory Structure
 
