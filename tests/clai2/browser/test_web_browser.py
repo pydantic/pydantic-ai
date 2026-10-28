@@ -1063,3 +1063,311 @@ async def test_opening_a_session_that_resolves_to_the_shown_one_ends_the_wait(pa
     await expect(page.locator('.opening-overlay')).to_have_count(0, timeout=2_000)
     await expect(page.locator('.session.opening')).to_have_count(0, timeout=2_000)
     await expect(current).to_have_text(shown)
+
+
+async def open_draft_session(page: Page, title: str) -> None:
+    await page.locator('.sidebar').get_by_text(title, exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text(title)
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    await expect(page.get_by_role('combobox', name='Message CLAI')).to_be_enabled()
+
+
+async def wait_for_draft(page: Page, conversation: str, text: str | None, images: int = 0) -> None:
+    """Wait for a committed browser draft, or its deletion, through the real IndexedDB API."""
+    await page.evaluate('window.draftCheck = {matched: false, pending: false, error: null}')
+    await page.wait_for_function(
+        """([id, text, images]) => {
+            const check = window.draftCheck;
+            if (check.error) throw new Error(check.error);
+            if (check.matched) return true;
+            if (check.pending) return false;
+            check.pending = true;
+            const request = indexedDB.open('clai-drafts', 1);
+            request.onerror = () => { check.error = request.error.message; };
+            request.onsuccess = () => {
+                const db = request.result;
+                if (!db.objectStoreNames.contains('drafts')) { db.close(); check.pending = false; return; }
+                const tx = db.transaction('drafts');
+                const read = tx.objectStore('drafts').get(id);
+                tx.oncomplete = () => {
+                    db.close();
+                    const draft = read.result;
+                    check.matched = text === null ? !draft : draft?.text === text && draft.attachments.length === images;
+                    check.pending = false;
+                };
+                tx.onabort = () => { db.close(); check.error = tx.error?.message ?? 'Aborted'; };
+            };
+            return false;
+        }""",
+        arg=[conversation, text, images],
+    )
+
+
+async def paste_draft_image(page: Page, name: str) -> None:
+    await page.get_by_role('combobox', name='Message CLAI').evaluate(
+        """(area, name) => {
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = 2;
+            const bytes = Uint8Array.from(atob(canvas.toDataURL().split(',')[1]), c => c.charCodeAt(0));
+            const transfer = new DataTransfer();
+            transfer.items.add(new File([bytes], name, {type: 'image/png'}));
+            area.dispatchEvent(new ClipboardEvent('paste', {clipboardData: transfer, bubbles: true}));
+        }""",
+        name,
+    )
+    await expect(page.get_by_role('img', name=name, exact=True)).to_be_visible()
+
+
+async def test_session_drafts_survive_reload_and_reopen(page: Page, web_ui: WebUI) -> None:
+    """Text and images stay with their conversation, including an image-only draft."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await open_draft_session(page, 'Browser Gamma')
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await composer.fill('  Gamma unsent\nsecond line  ')
+    await paste_draft_image(page, 'gamma.png')
+    await wait_for_draft(page, web_ui.gamma, '  Gamma unsent\nsecond line  ', 1)
+    await open_draft_session(page, 'Browser Beta')
+    await expect(composer).to_have_value('')
+    await paste_draft_image(page, 'beta.png')
+    await wait_for_draft(page, web_ui.beta, '', 1)
+    await page.reload()
+    await expect(composer).to_have_value('')
+    await expect(page.get_by_role('img', name='beta.png', exact=True)).to_be_visible()
+    await open_draft_session(page, 'Browser Gamma')
+    await expect(composer).to_have_value('  Gamma unsent\nsecond line  ')
+    await expect(page.get_by_role('img', name='gamma.png', exact=True)).to_be_visible()
+    # Restored images must not share the new page's numeric attachment IDs.
+    await paste_draft_image(page, 'new.png')
+    await page.get_by_role('button', name='Remove new.png', exact=True).click()
+    await expect(page.get_by_role('img', name='gamma.png', exact=True)).to_be_visible()
+    await wait_for_draft(page, web_ui.gamma, '  Gamma unsent\nsecond line  ', 1)
+    context = page.context
+    await page.close()
+    reopened = await context.new_page()
+    await reopened.goto(f'{web_ui.url}/?token={TOKEN}')
+    await expect(reopened.get_by_role('combobox', name='Message CLAI')).to_have_value('  Gamma unsent\nsecond line  ')
+    await expect(reopened.get_by_role('img', name='gamma.png', exact=True)).to_be_visible()
+    # Explicit discard removes only this conversation's record.
+    await reopened.get_by_role('combobox', name='Message CLAI').fill('')
+    await reopened.get_by_role('button', name='Remove gamma.png', exact=True).click()
+    await wait_for_draft(reopened, web_ui.gamma, None)
+    await wait_for_draft(reopened, web_ui.beta, '', 1)
+
+
+@pytest.mark.parametrize('accepted', [True, False])
+async def test_draft_send_preserves_edits_while_waiting(page: Page, web_ui: WebUI, accepted: bool) -> None:
+    """An acknowledgement or failure for Gamma cannot overwrite newer Gamma edits or a shown Beta draft."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await open_draft_session(page, 'Browser Gamma')
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await composer.fill('submitted Gamma')
+    await wait_for_draft(page, web_ui.gamma, 'submitted Gamma')
+    release = asyncio.Event()
+    requests: list[str] = []
+
+    async def hold(route: Route) -> None:
+        requests.append(route.request.post_data or '')
+        await release.wait()
+        if accepted:
+            await route.continue_()
+        else:
+            await route.fulfill(status=503, json={'detail': 'Draft test rejected'})
+
+    await page.route(f'**/api/sessions/{web_ui.gamma}/input', hold)
+    async with page.expect_request(f'**/api/sessions/{web_ui.gamma}/input'):
+        await composer.press('Enter')
+    await expect(composer).to_have_value('submitted Gamma')
+    await composer.press('Enter')
+    await composer.fill('new Gamma draft')
+    await paste_draft_image(page, 'new-gamma.png')
+    await wait_for_draft(page, web_ui.gamma, 'new Gamma draft', 1)
+    await open_draft_session(page, 'Browser Beta')
+    await composer.fill('Beta draft')
+    async with page.expect_response(f'**/api/sessions/{web_ui.gamma}/input'):
+        release.set()
+    await expect(composer).to_have_value('Beta draft')
+    await open_draft_session(page, 'Browser Gamma')
+    await expect(composer).to_have_value('new Gamma draft')
+    await expect(page.get_by_role('img', name='new-gamma.png', exact=True)).to_be_visible()
+    assert len(requests) == 1
+    await page.reload()
+    await expect(composer).to_have_value('new Gamma draft')
+
+
+async def test_acknowledged_draft_is_not_restored(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await open_draft_session(page, 'Browser Beta')
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await composer.fill('accept this draft')
+    await paste_draft_image(page, 'sent.png')
+    await wait_for_draft(page, web_ui.beta, 'accept this draft', 1)
+    async with page.expect_response(f'**/api/sessions/{web_ui.beta}/input') as sent:
+        await composer.press('Enter')
+    assert (await sent.value).ok
+    await expect(composer).to_have_value('')
+    await expect(page.locator('.composer .attachment')).to_have_count(0)
+    await wait_for_draft(page, web_ui.beta, None)
+    await page.reload()
+    await expect(composer).to_have_value('')
+    await expect(page.locator('.composer .attachment')).to_have_count(0)
+
+
+@pytest.mark.parametrize('failure', ['open', 'read', 'put', 'abort'])
+async def test_draft_storage_failure_keeps_editing_available(page: Page, web_ui: WebUI, failure: str) -> None:
+    """Exercise denied access, failed reads, synchronous write errors and actual aborted transactions."""
+    await page.add_init_script(
+        f'window.draftFailure = {json.dumps(failure)};'
+        + """
+        const open = IDBFactory.prototype.open;
+        IDBFactory.prototype.open = function(...args) {
+            if (window.draftFailure === 'open') throw new DOMException('Denied', 'SecurityError');
+            return open.apply(this, args);
+        };
+        const transaction = IDBDatabase.prototype.transaction;
+        IDBDatabase.prototype.transaction = function(...args) {
+            const tx = transaction.apply(this, args);
+            if (this.name === 'clai-drafts' && (
+                window.draftFailure === 'read' && args[1] !== 'readwrite' ||
+                window.draftFailure === 'abort' && args[1] === 'readwrite'
+            )) queueMicrotask(() => tx.abort());
+            return tx;
+        };
+        const put = IDBObjectStore.prototype.put;
+        IDBObjectStore.prototype.put = function(...args) {
+            if (this.name === 'drafts' && window.draftFailure === 'put')
+                throw new DOMException('Full', 'QuotaExceededError');
+            return put.apply(this, args);
+        };
+        """
+    )
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await open_draft_session(page, 'Browser Beta')
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await composer.fill('keep this draft')
+    await expect(page.get_by_role('alert', name='Draft storage')).to_be_visible()
+    await expect(composer).to_have_value('keep this draft')
+    # A real reload attempt asks before leaving and can be cancelled without losing the editor.
+    async with page.expect_event('dialog') as leaving:
+        await page.evaluate('setTimeout(() => location.reload(), 0)')
+    dialog = await leaving.value
+    assert dialog.type == 'beforeunload'
+    await dialog.dismiss()
+    await expect(composer).to_have_value('keep this draft')
+    if failure in ('put', 'abort'):
+        await page.evaluate('window.draftFailure = null')
+        await composer.fill('saved after retry')
+        await wait_for_draft(page, web_ui.beta, 'saved after retry')
+        await expect(page.get_by_role('alert', name='Draft storage')).to_have_count(0)
+        # Once committed, reloading no longer requires a confirmation.
+        await page.reload()
+        await expect(composer).to_have_value('saved after retry')
+
+
+async def test_draft_hydration_waits_before_enabling_the_editor(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await open_draft_session(page, 'Browser Beta')
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await composer.fill('saved before reload')
+    await wait_for_draft(page, web_ui.beta, 'saved before reload')
+    await page.add_init_script("""
+        window.holdDraftRead = true;
+        const getAll = IDBObjectStore.prototype.getAll;
+        IDBObjectStore.prototype.getAll = function(...args) {
+            const request = getAll.apply(this, args);
+            if (this.name === 'drafts') request.onsuccess = () => {
+                const hold = () => {
+                    if (window.holdDraftRead) this.get('__hold__').onsuccess = hold;
+                };
+                hold();
+            };
+            return request;
+        };
+    """)
+    await page.reload()
+    await expect(page.get_by_text('Restoring drafts…', exact=True)).to_be_visible()
+    await expect(composer).to_be_disabled()
+    await wait_for_draft(page, web_ui.beta, 'saved before reload')
+    await page.evaluate('window.holdDraftRead = false')
+    await expect(composer).to_be_enabled()
+    await expect(page.get_by_role('alert', name='Draft storage')).to_have_count(0)
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(composer).to_have_value('saved before reload')
+
+
+async def test_unavailable_session_draft_is_retained_until_discarded(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await open_draft_session(page, 'Browser Beta')
+    await page.evaluate("""() => new Promise((resolve, reject) => {
+        const request = indexedDB.open('clai-drafts', 1);
+        request.onsuccess = () => {
+            const db = request.result;
+            const tx = db.transaction('drafts', 'readwrite');
+            tx.objectStore('drafts').put({id: 'missing-session', text: 'orphaned draft', attachments: []});
+            tx.oncomplete = () => { db.close(); resolve(); };
+            tx.onabort = () => { db.close(); reject(tx.error); };
+        };
+    })""")
+    await page.reload()
+    await expect(page.get_by_role('alert').filter(has_text="This draft's session is unavailable")).to_be_visible()
+    await expect(page.get_by_role('combobox', name='Message CLAI')).to_have_value('')
+    await wait_for_draft(page, 'missing-session', 'orphaned draft')
+    await page.get_by_role('button', name='Discard draft', exact=True).click()
+    await wait_for_draft(page, 'missing-session', None)
+
+
+async def test_acknowledgement_cannot_be_undone_by_an_older_draft_write(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await open_draft_session(page, 'Browser Beta')
+    await page.evaluate("""() => {
+        window.holdDraftWrite = true;
+        const put = IDBObjectStore.prototype.put;
+        IDBObjectStore.prototype.put = function(...args) {
+            const request = put.apply(this, args);
+            if (this.name === 'drafts') request.onsuccess = () => {
+                window.draftWriteStarted = true;
+                const hold = () => {
+                    if (window.holdDraftWrite) this.get('__hold__').onsuccess = hold;
+                };
+                hold();
+            };
+            return request;
+        };
+    }""")
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await composer.fill('write held while sending')
+    await page.wait_for_function('() => window.draftWriteStarted')
+    async with page.expect_response(f'**/api/sessions/{web_ui.beta}/input') as sent:
+        await composer.press('Enter')
+    assert (await sent.value).ok
+    await expect(composer).to_have_value('')
+    await expect(page.get_by_text('Saving drafts…', exact=True)).to_be_visible()
+    await page.evaluate('window.holdDraftWrite = false')
+    await wait_for_draft(page, web_ui.beta, None)
+    await page.reload()
+    await expect(composer).to_have_value('')
+
+
+async def test_failed_draft_cleanup_stays_pending_until_retried(page: Page, web_ui: WebUI) -> None:
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await open_draft_session(page, 'Browser Beta')
+    composer = page.get_by_role('combobox', name='Message CLAI')
+    await composer.fill('accepted but not yet removed')
+    await wait_for_draft(page, web_ui.beta, 'accepted but not yet removed')
+    await page.evaluate("""() => {
+        window.failDraftDelete = true;
+        const remove = IDBObjectStore.prototype.delete;
+        IDBObjectStore.prototype.delete = function(...args) {
+            if (this.name === 'drafts' && window.failDraftDelete) throw new DOMException('Disk error', 'UnknownError');
+            return remove.apply(this, args);
+        };
+    }""")
+    async with page.expect_response(f'**/api/sessions/{web_ui.beta}/input') as sent:
+        await composer.press('Enter')
+    assert (await sent.value).ok
+    await expect(composer).to_have_value('')
+    await expect(page.get_by_role('alert', name='Draft storage')).to_be_visible()
+    await wait_for_draft(page, web_ui.beta, 'accepted but not yet removed')
+    await page.evaluate('window.failDraftDelete = false')
+    await open_draft_session(page, 'Browser Gamma')
+    await wait_for_draft(page, web_ui.beta, None)
+    await expect(page.get_by_role('alert', name='Draft storage')).to_have_count(0)

@@ -40,6 +40,9 @@ interface Props {
   /** The draft, held by the page so it survives the composer moving between the new-session hero and the bottom bar. */
   draft: string
   onDraft: (draft: string) => void
+  /** Ordinary session drafts stay in the editor until this request is acknowledged by the server. */
+  onSubmit?: (enter: () => Promise<void>) => Promise<void>
+  submitting?: boolean
   /** Images pasted or dropped for the next prompt, held by the page as the draft is; without them, only text pastes. */
   attachments?: readonly Attachment[]
   onAttachments?: (update: (current: readonly Attachment[]) => Attachment[]) => void
@@ -76,6 +79,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     onMenu,
     draft: text,
     onDraft: setText,
+    onSubmit,
+    submitting = false,
     attachments = [],
     onAttachments,
     chat,
@@ -215,7 +220,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
 
   const send = async (steer = false) => {
     const value = text.trim()
-    if (disabled) return
+    if (disabled || submitting) return
     if (empty) {
       // As in the terminal: Alt+Enter with nothing typed steers the oldest queued follow-up, which stays if it cannot.
       const head = steer ? queue?.[0] : undefined
@@ -224,16 +229,18 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     }
     const images = attachments
     recall.current = null
-    setText('')
-    onAttachments?.(() => [])
+    if (!onSubmit) {
+      setText('')
+      onAttachments?.(() => [])
+    }
     dismiss()
     // Own keys only: `constructor` or `toString` typed alone is a prompt, not a local command.
     const handle = images.length === 0 && local && Object.hasOwn(local, value) ? local[value] : undefined
-    if (handle) {
-      handle()
-      return
-    }
-    try {
+    const enter = async () => {
+      if (handle) {
+        handle()
+        return
+      }
       if (chat) await chat.send(value)
       else {
         // A prompt Alt+Enter cannot steer, such as any while no turn runs, is entered as Enter enters it.
@@ -243,9 +250,15 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           : session.send(value, images.map(base64)))
         if (entered.menu !== null) onMenu?.(entered.menu)
       }
+    }
+    try {
+      if (onSubmit) await onSubmit(enter)
+      else await enter()
     } catch (error) {
-      setText(value)
-      onAttachments?.((current) => [...images, ...current])
+      if (!onSubmit) {
+        setText(value)
+        onAttachments?.((current) => [...images, ...current])
+      }
       report(error)
     }
   }
@@ -486,9 +499,10 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             <button
               className="send steer"
               onClick={() => void send(true)}
-              disabled={disabled}
+              disabled={disabled || submitting}
               title={`Steer now: send it to the running turn (${STEER_KEY})`}
               aria-label="Steer now"
+              aria-busy={submitting}
             >
               <BoltIcon size={15} />
             </button>
@@ -506,7 +520,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             <button
               className="send"
               onClick={() => void send()}
-              disabled={empty || disabled}
+              disabled={empty || disabled || submitting}
+              aria-busy={submitting}
               title={running ? 'Queue for after this turn (Enter)' : 'Send (Enter)'}
             >
               <ArrowUpIcon size={16} />

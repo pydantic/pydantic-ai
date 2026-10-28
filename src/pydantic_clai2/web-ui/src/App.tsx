@@ -25,6 +25,7 @@ import { MAC, MOD, STEER_KEY } from './platform'
 import { isLight, paletteVariables } from './palette'
 import { initial, initialOrchestrator, reduce, reduceOrchestrator, shownChat, type Action, type Chat } from './state'
 import { WorkersContext } from './workers'
+import { useDraftStorage, type Draft } from './drafts'
 
 type Theme = 'dark' | 'light'
 /** What the main pane shows: the session, or the orchestrator chat. */
@@ -131,16 +132,68 @@ export function App() {
   const closeCommandPalette = useCallback(() => setCommandPalette(false), [])
   // Each session's unsent draft, by conversation ID, so switching away and back keeps it.
   const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const revisions = useRef<Record<string, number>>({})
   const draft = drafts[shown ?? ''] ?? ''
-  const setDraft = useCallback((text: string) => setDrafts((all) => ({ ...all, [shown ?? '']: text })), [shown])
   // Each session's pasted images, kept as its draft is.
   const [attached, setAttached] = useState<Record<string, readonly Attachment[]>>({})
   const attachments = attached[shown ?? ''] ?? NO_ATTACHMENTS
+  const [recovered, setRecovered] = useState<string[]>([])
+  const restoreDrafts = useCallback((found: Draft[]) => {
+    setDrafts(Object.fromEntries(found.map((draft) => [draft.id, draft.text])))
+    setAttached(Object.fromEntries(found.map((draft) => [draft.id, draft.attachments])))
+    setRecovered(found.map((draft) => draft.id))
+  }, [])
+  const { ready: draftsReady, unsaved, error: draftError, flush: flushDrafts } = useDraftStorage(drafts, attached, restoreDrafts)
+  const setDraft = useCallback((text: string) => {
+    if (!draftsReady || shown === null) return
+    revisions.current[shown] = (revisions.current[shown] ?? 0) + 1
+    setDrafts((all) => ({ ...all, [shown]: text }))
+  }, [draftsReady, shown])
   const setAttachments = useCallback(
-    (update: (current: readonly Attachment[]) => Attachment[]) =>
-      setAttached((all) => ({ ...all, [shown ?? '']: update(all[shown ?? ''] ?? NO_ATTACHMENTS) })),
-    [shown],
+    (update: (current: readonly Attachment[]) => Attachment[]) => {
+      if (!draftsReady || shown === null) return
+      revisions.current[shown] = (revisions.current[shown] ?? 0) + 1
+      setAttached((all) => ({ ...all, [shown]: update(all[shown] ?? NO_ATTACHMENTS) }))
+    },
+    [draftsReady, shown],
   )
+  useEffect(() => flushDrafts(), [shown, flushDrafts])
+  const discardDraft = useCallback((id: string) => {
+    revisions.current[id] = (revisions.current[id] ?? 0) + 1
+    setDrafts((all) => ({ ...all, [id]: '' }))
+    setAttached((all) => ({ ...all, [id]: NO_ATTACHMENTS }))
+  }, [])
+  const submitting = useRef(new Set<string>())
+  const [sending, setSending] = useState<ReadonlySet<string>>(new Set())
+  const submitDraft = useCallback(async (enter: () => Promise<void>) => {
+    if (shown === null || submitting.current.has(shown)) return
+    const revision = revisions.current[shown] ?? 0
+    submitting.current.add(shown)
+    setSending(new Set(submitting.current))
+    flushDrafts()
+    try {
+      await enter()
+      // The captured conversation may now be hidden, and its editor may hold newer work.
+      if ((revisions.current[shown] ?? 0) === revision) discardDraft(shown)
+    } finally {
+      submitting.current.delete(shown)
+      setSending(new Set(submitting.current))
+    }
+  }, [shown, flushDrafts, discardDraft])
+  const [unavailableDrafts, setUnavailableDrafts] = useState<string[]>([])
+  useEffect(() => {
+    if (connection !== 'open' || recovered.length === 0) return
+    let stopped = false
+    // Include archived sessions. An idle session absent from `live` can still be resumed.
+    void api.sessions('', true).then((projects) => {
+      if (stopped) return
+      const resumable = new Set(projects.flatMap((project) => project.worktrees.flatMap((tree) =>
+        tree.sessions.filter((entry) => entry.openable).map((entry) => entry.id),
+      )))
+      setUnavailableDrafts(recovered.filter((id) => !(id in live) && !resumable.has(id)))
+    }, () => undefined) // A failed listing says nothing about whether a saved session exists.
+    return () => { stopped = true }
+  }, [connection, recovered, live, state.sessionsVersion])
   const composer = useRef<ComposerHandle>(null)
   // A file dropped beside the composer must not open in the tab, losing every session's draft.
   useEffect(() => {
@@ -596,7 +649,9 @@ export function App() {
       meter={<TurnMeter status={status} startedAt={chat.turnStartedAt} />}
       controls={<Switches status={status} running={chat.running} onError={showError} />}
       model={status?.model ?? '…'}
-      disabled={connection !== 'open'}
+      disabled={connection !== 'open' || !draftsReady || shown === null || chat.session?.id !== shown}
+      onSubmit={submitDraft}
+      submitting={shown !== null && sending.has(shown)}
       placeholder={chat.running ? `Queue a follow-up, or steer with ${STEER_KEY}…` : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
       local={local}
       onMenu={openMenu}
@@ -650,6 +705,19 @@ export function App() {
         />
       )}
       <main className="main">
+        {(!draftsReady || unsaved || draftError) && (
+          <div className="preview-banner" role={draftError ? 'alert' : 'status'} aria-label="Draft storage">
+            <span>{draftError ?? (draftsReady ? 'Saving drafts…' : 'Restoring drafts…')}</span>
+          </div>
+        )}
+        {unavailableDrafts.filter((id) => drafts[id] || attached[id]?.length).map((id) => (
+          <div className="preview-banner" role="alert" key={id}>
+            <span>
+              This draft's session is unavailable. It is kept in this browser: {drafts[id]?.slice(0, 80) || `${attached[id]?.length ?? 0} images`}
+            </span>
+            <button className="ghost small" onClick={() => discardDraft(id)}>Discard draft</button>
+          </div>
+        ))}
         {orchestrating ? (
           <OrchestratorPane
             view={orchestration}
