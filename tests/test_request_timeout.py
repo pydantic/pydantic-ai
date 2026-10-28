@@ -27,7 +27,7 @@ from pydantic_ai import (
     TextPart,
     capture_run_messages,
 )
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError
 from pydantic_ai.messages import ModelRequest
@@ -38,7 +38,7 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
@@ -637,3 +637,72 @@ async def test_request_timeout_covers_sdk_retries(
                 await agent.run('hello')
 
     assert attempts == 2
+
+
+# The `ModelFallback` capability gives each candidate a deadline of its own, as `FallbackModel` does: every attempt is a
+# model request of its own.
+
+
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_model_fallback_gives_each_candidate_a_fresh_deadline(anyio_backend: str, clock: Clock):
+    time_left: list[float] = []
+
+    async def hang_past_the_deadline(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        clock.advance()
+        return await hang(messages, info)
+
+    async def record_time_left(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        time_left.append(anyio.current_effective_deadline() - anyio.current_time())
+        return ModelResponse(parts=[TextPart('fallback answer')])
+
+    agent = Agent(
+        FunctionModel(hang_past_the_deadline, model_name='primary'),
+        model_settings={'request_timeout': LONG_TIMEOUT},
+        capabilities=[ModelFallback(FunctionModel(record_time_left, model_name='fallback'))],
+    )
+
+    result = await agent.run('hello')
+
+    assert result.output == 'fallback answer'
+    assert time_left[0] > LONG_TIMEOUT / 2
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert [(attempt.model_name, attempt.outcome, attempt.error) for attempt in response.failed_attempts or []] == (
+        snapshot([('primary', 'error', "ModelRequestTimeout: Request to model 'primary' timed out after 10 seconds")])
+    )
+
+
+async def test_model_fallback_uses_each_candidates_own_request_timeout():
+    agent = Agent(
+        FunctionModel(hang, model_name='primary', settings={'request_timeout': SHORT_TIMEOUT}),
+        capabilities=[ModelFallback(FunctionModel(answer, model_name='fallback'))],
+    )
+
+    assert (await agent.run('hello')).output == 'answer'
+
+
+async def test_model_fallback_falls_back_when_a_stream_times_out_before_its_first_event():
+    """The deadline covers opening a candidate's stream and waiting for its first event."""
+
+    async def stalls_before_first_event(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
+        yield {}  # opens the stream without producing an event
+        await anyio.sleep_forever()
+
+    agent = Agent(
+        FunctionModel(
+            stream_function=stalls_before_first_event, model_name='primary', settings={'request_timeout': SHORT_TIMEOUT}
+        ),
+        capabilities=[ModelFallback(FunctionModel(stream_function=stream_answer, model_name='fallback'))],
+    )
+
+    async with agent.run_stream('hello') as result:
+        output = await result.get_output()
+
+    assert output == 'answer'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert [(attempt.model_name, attempt.error) for attempt in response.failed_attempts or []] == snapshot(
+        [('primary', "ModelRequestTimeout: Request to model 'primary' timed out after 0.05 seconds")]
+    )

@@ -25,12 +25,13 @@ from ._instrumentation import (
     set_error_status,
     span_include_content,
 )
+from .exceptions import FallbackExceptionGroup
 from .messages import ModelRequestAttempt, ModelResponse
 
 if TYPE_CHECKING:
     from .models import Model
 
-__all__ = ('AttemptStart', 'failed_attempt', 'record_attempt_span')
+__all__ = ('AttemptStart', 'carried_attempts', 'carry_attempts', 'failed_attempt', 'record_attempt_span')
 
 ATTEMPT_ATTRIBUTE = 'pydantic_ai.model_request.attempt'
 """The zero-based position of an attempt among the attempts at its request."""
@@ -46,6 +47,29 @@ class AttemptStart:
     def elapsed(self) -> timedelta:
         """How long it has been since the attempt started, unaffected by changes to the system clock."""
         return timedelta(microseconds=(perf_counter_ns() - self._monotonic_ns) / 1e3)
+
+
+_CARRIED_ATTEMPTS = '_pydantic_ai_failed_attempts'
+
+
+def carry_attempts(error: BaseException, attempts: list[ModelRequestAttempt]) -> None:
+    """Carry the attempts a model made before `error` ended its request, so the run still counts their usage.
+
+    A model that makes attempts of its own, like `FallbackModel`, lists them on the response that answers, or on the
+    `FallbackExceptionGroup` when every one failed. When the request ends with another error instead, like a
+    cancellation, a timeout or an error `fallback_on` doesn't cover, the rejected responses among them were still
+    billed, so they ride on that error to the run, after any an inner model carried.
+    """
+    # A group lists the attempts itself.
+    if attempts and not isinstance(error, FallbackExceptionGroup):
+        carried = carried_attempts(error)
+        setattr(error, _CARRIED_ATTEMPTS, [*carried, *(attempt for attempt in attempts if attempt not in carried)])
+
+
+def carried_attempts(error: BaseException) -> list[ModelRequestAttempt]:
+    """The attempts `carry_attempts` put on `error`, if any."""
+    attempts: list[ModelRequestAttempt] = getattr(error, _CARRIED_ATTEMPTS, [])
+    return attempts
 
 
 def failed_attempt(
@@ -84,8 +108,12 @@ def record_attempt_span(
     index: int,
     parent: Span,
     tracer: Tracer,
+    rejected_status: str = 'Response rejected',
 ) -> None:
     """Record a failed attempt as an ERROR child span of `parent`, the request's `chat` span.
+
+    `rejected_status` is the span's status description when `failure` is a rejected response, which says what
+    rejected it where that's known.
 
     The `chat` span keeps its own outcome, that of the model that answered, the way a failed tool call
     gets its own ERROR span under an agent run that goes on to succeed. The span is only opened once
@@ -116,7 +144,7 @@ def record_attempt_span(
                 record_exception(span, failure, include_content=include_content)
                 set_error_status(span, failure, include_content=include_content)
             else:
-                span.set_status(Status(StatusCode.ERROR, 'Response rejected by a `fallback_on` response handler'))
+                span.set_status(Status(StatusCode.ERROR, rejected_status))
         finally:
             span.end(start_time + round(attempt.duration.total_seconds() * 1e9))
 

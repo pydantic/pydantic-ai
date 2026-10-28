@@ -92,7 +92,7 @@ they agree in the same PR.
   background task outlives that run, so no hook of the parent sees them; `Tasks.observe`,
   the harness owner's one observer, fires `TaskProgress`. A `/fork` runs a separate session in the
   background, so its run's hooks belong to that session and nothing of the parent sees it end;
-  `Forks._run` fires `ForkEnd`. `/update` is a command, so no core
+  `Forks._run` fires `ForkEnd`. `/update now` is a command, so no core
   hook sees its install either, and `CommandEnd` comes only once uv has finished; `Updates.command`
   fires `InstallProgress` as it goes. Additional moments need the same
   justification: say which core hook you checked and why it does not fit.
@@ -142,7 +142,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   already holding a conversation, and `Session.resume` refuses one another session
   holds or is resuming (`LiveRuntimes.claim`). Sessions `open` and `new` start run as tasks of
   `serving`, in their own directory, with `Interrupts(signals=False)`, refuse
-  `/reload` and `/update` unless the terminal shows them (only that session, or the one
+  `/reload` and `/update now` unless the terminal shows them (only that session, or the one
   CLAI started with, restarts it, never from another folder or while another session runs a
   turn, and a failed `/reload` continues the shown session's conversation), and close
   after `IDLE_AFTER` (an hour) with no turn, command, queued input, fork, task,
@@ -266,8 +266,10 @@ chain's `take_background_compaction` (without a focus) or `discard_background_co
 row's window does not depend on it: `Session.on_context_window` reports each
 streamed request model's window, and the shell fills it in when no gauge has.
 Until a turn on the selected model runs in the conversation, `show_model` sets
-`Status.model_window` from its profile (`infer_model_profile`), which the row and
-web UI show while `context_window` is `None`; after one, an unresolved window stays `?`.
+`Status.model_window` from its profile (`infer_model_profile`; a plugin model's from
+its `settings_from` provider's), which the row and web UI show while `context_window`
+is `None`; after one, an unresolved window stays `?`. A conversation without a figure
+yet, such as a resumed one, reads its last response's `context_tokens`.
 
 ## Adding or changing a CLAI moment or contribution
 
@@ -399,6 +401,15 @@ and update its row when you add, move, or change the responsibility of a module.
 is kept out of this file because this file is sent with every request.
 
 Keep files concise - we don't need any 10,000 line files. Single responsibility.
+
+## Windows-only CLI operations
+
+Check whether an existing interactive command already completes the operation on Windows.
+If a new non-interactive path cannot observe completion because CLAI must exit first,
+fail early with a non-zero status and name the working command. Do not report success
+for a detached operation or add a process trampoline just to make the new path work.
+Add Windows-specific orchestration only when a concrete requirement cannot use the
+existing path. For updates, `/update now` is the working interactive path.
 
 ## Testing
 
