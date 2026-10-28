@@ -67,10 +67,10 @@ def _system_prompts(messages: list[ModelMessage]) -> list[list[SystemPromptPart]
     ]
 
 
-def _user_name_agent(recorder: Recorder, **kwargs: str) -> Agent[str | None, str]:
+def _user_name_agent(recorder: Recorder, *, name: str | None = None) -> Agent[str | None, str]:
     agent = Agent(recorder.model(), deps_type=str | None)
 
-    @agent.system_prompt(on_change='append', **kwargs)
+    @agent.system_prompt(on_change='append', name=name)
     def user_name(ctx: RunContext[str | None]) -> str | None:
         return f"The user's name is {ctx.deps}." if ctx.deps else None
 
