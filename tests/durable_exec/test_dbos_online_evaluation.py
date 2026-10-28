@@ -13,7 +13,7 @@ import logfire
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import UsageLimits
 
@@ -277,3 +277,47 @@ async def test_dbos_online_evaluation_failed_run_hands_evaluators_the_live_excep
     [(_, context)] = evaluated
     assert isinstance(context.output, UsageLimitExceeded)
     assert str(context.output) == str(exc_info.value)
+
+
+async def test_dbos_online_evaluation_failed_run_records_step_when_run_on_errors_evaluator_is_not_sampled(
+    dbos: DBOS,
+) -> None:
+    """A failed run records the dispatch step when an evaluator may be sampled and one runs on errors, even if none of those are sampled."""
+    agent = Agent(
+        TestModel(),
+        name='dbos_online_evaluation_failed_run_unsampled',
+        capabilities=[
+            DBOSDurability[object](),
+            OnlineEvaluation(
+                id='online_evaluation',
+                evaluators=[
+                    OnlineEvaluator(evaluator=RecordRun('completed_only'), sample_rate=1.0),
+                    OnlineEvaluator(evaluator=RecordRun('on_errors'), sample_rate=0, run_on_errors=True),
+                ],
+            ),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run', usage_limits=UsageLimits(request_limit=0))
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        with pytest.raises(UsageLimitExceeded):
+            await run_workflow()
+    await wait_for_evaluations()
+    assert evaluated == []
+    assert dispatch_steps(await dbos.list_workflow_steps_async(workflow_id)) == [
+        'dbos_online_evaluation_failed_run_unsampled__capability__online_evaluation.dispatch'
+    ]
+
+
+def test_dbos_online_evaluation_requires_an_id() -> None:
+    """Without an `id`, the dispatch operation has no stable name, so a durable agent refuses to build."""
+    with pytest.raises(UserError, match="Capability 'OnlineEvaluation' contributes durable operations"):
+        Agent(
+            TestModel(),
+            name='dbos_online_evaluation_without_id',
+            capabilities=[DBOSDurability[object](), OnlineEvaluation(evaluators=[RecordRun()])],
+        )
