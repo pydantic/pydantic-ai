@@ -1118,6 +1118,14 @@ pre {
 .message-copy {
   margin-top: 4px;
   padding: 4px 0;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.user-row:hover .message-copy,
+.assistant-message:hover .message-copy,
+.message-copy:focus-visible {
+  opacity: 1;
 }
 
 .code-head .copy:hover,
@@ -1533,7 +1541,8 @@ pre {
 }
 
 @media (hover: none) {
-  .attachment-remove {
+  .attachment-remove,
+  .message-copy {
     opacity: 1;
   }
 }
