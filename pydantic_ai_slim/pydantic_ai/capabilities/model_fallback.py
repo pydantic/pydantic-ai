@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 from pydantic_ai import exceptions
 from pydantic_ai._fallback import (
@@ -337,12 +337,12 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         """
         # Spec arguments reach here unvalidated: the annotations above are what the published spec schema
         # advertises, not something that rejects other values on the way in.
-        given_models: Sequence[object] = [models] if isinstance(models, str) else models
+        given_models = _spec_list(models, 'models')
         model_names = [model for model in given_models if isinstance(model, str)]
         if len(model_names) != len(given_models):
             invalid = [model for model in given_models if not isinstance(model, str)]
             raise UserError(f'`ModelFallback` in an agent spec takes model names, got {invalid!r}.')
-        given_errors: Sequence[object] = [fallback_on] if isinstance(fallback_on, str) else fallback_on
+        given_errors = _spec_list(fallback_on, 'fallback_on')
         error_types = [
             _SPEC_FALLBACK_ERRORS[name]
             for name in given_errors
@@ -355,6 +355,18 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 f'got {unknown!r}. Valid names: {", ".join(_SPEC_FALLBACK_ERRORS)}.'
             )
         return cls(*model_names, fallback_on=tuple(error_types))
+
+
+def _spec_list(value: object, name: str) -> Sequence[object]:
+    """A `ModelFallback` spec argument given as one name or a list of them, as a list.
+
+    Anything else, like a mapping, whose keys iterating would silently take as the names, is rejected.
+    """
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, Sequence):
+        return cast(Sequence[object], value)
+    raise UserError(f'`ModelFallback` `{name}` in an agent spec must be a name or a list of names, got {value!r}.')
 
 
 def _pin_id(model: Model | str) -> str:

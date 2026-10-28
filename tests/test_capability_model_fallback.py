@@ -2245,6 +2245,17 @@ def test_spec_fallback_on_names_every_public_model_api_error():
         ),
         pytest.param({'ModelFallback': []}, '`ModelFallback` requires at least one model', id='no-models'),
         pytest.param(
+            {'ModelFallback': {'models': {'working': 'test'}}},
+            "`ModelFallback` `models` in an agent spec must be a name or a list of names, got {'working': 'test'}.",
+            id='models-mapping',
+        ),
+        pytest.param(
+            {'ModelFallback': {'models': ['working'], 'fallback_on': {'ModelRateLimitError': False}}},
+            '`ModelFallback` `fallback_on` in an agent spec must be a name or a list of names, '
+            "got {'ModelRateLimitError': False}.",
+            id='fallback-on-mapping',
+        ),
+        pytest.param(
             {'ModelFallback': ['working', {'name': 'other'}]},
             "`ModelFallback` in an agent spec takes model names, got [{'name': 'other'}].",
             id='not-a-model-name',
