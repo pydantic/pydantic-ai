@@ -31,6 +31,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai_harness import ClearToolResults, DetectLoops, SlidingWindowCompaction
 from pydantic_ai_harness.detect_loops import DetectedLoop, LoopDetectedError
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 
 def _scripted(*responses: Sequence[ModelResponsePart]) -> FunctionModel:
@@ -428,6 +429,7 @@ class TestDetectLoops:
         assert 'detect_loops.fingerprints' not in (span.attributes or {})
         assert (span.attributes or {})['detect_loops.pattern'] == 'repeated_result'
 
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_cleared_tool_results_are_not_mistaken_for_a_loop(self):
         loops, detector = _collect()
         # Each call has its own arguments and result. Clearing old results and inputs makes them look alike
@@ -446,6 +448,7 @@ class TestDetectLoops:
         assert loops == []
         assert '[tool result cleared]' in str(result.all_messages())
 
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_dropped_messages_do_not_shift_detection(self):
         responses_at_detection: list[int] = []
         responses = 0

@@ -86,7 +86,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.builtin_plugins.web.server import WebServer
 from pydantic_clai2.builtin_plugins.web.service import Observer
-from pydantic_clai2.cli import _cli
+from pydantic_clai2.cli import cli
 from pydantic_clai2.cli.web import run_web
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -642,7 +642,7 @@ def test_web_flag_rejects(
 ) -> None:
     monkeypatch.setattr(sys, 'argv', ['clai2', *argv])
     with pytest.raises(SystemExit):
-        _cli.run()
+        cli.run()
     assert error in capsys.readouterr().err
 
 
@@ -658,7 +658,7 @@ def test_web_flag_runs_the_web_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         sys, 'argv', ['clai2', '--web', '--database', str(tmp_path / 'c.db'), '-m', 'test', '--request-limit', '7']
     )
     with pytest.raises(SystemExit) as exited:
-        _cli.run()
+        cli.run()
     assert exited.value.code == 130
     [call] = calls
     assert (call['resume'], call['session_id'], call['fork_session']) == (None, None, False)
@@ -693,10 +693,10 @@ def test_web_flag_reads_a_private_token_file(
         os.chdir(elsewhere)
         return Worktree(path=elsewhere, branch='clai-x', head='0', created=False)
 
-    monkeypatch.setattr(_cli, '_enter_worktree', enter_worktree)
+    monkeypatch.setattr(cli, '_enter_worktree', enter_worktree)
     argv = ['clai2', '--web', '--database', 'c.db', '--port', '4567', '--token-file', 'token', '--worktree', 'x']
     monkeypatch.setattr(sys, 'argv', argv)
-    _cli.run()
+    cli.run()
     [call] = calls
     assert (call['token'], call['port']) == ('a' * 40, 4567)
     argv = ['clai2', '--web', '--database', str(tmp_path / 'c.db'), '--token-file', str(token)]
@@ -708,11 +708,11 @@ def test_web_flag_reads_a_private_token_file(
         token.write_text(text)
         token.chmod(mode)
         with pytest.raises(SystemExit):
-            _cli.run()
+            cli.run()
         assert error in capsys.readouterr().err
     token.unlink()
     with pytest.raises(SystemExit):
-        _cli.run()
+        cli.run()
     assert 'No such file' in capsys.readouterr().err
 
 
@@ -766,7 +766,7 @@ def test_web_flag_returns_after_the_web_ui(tmp_path: Path, monkeypatch: pytest.M
 
     monkeypatch.setattr('pydantic_clai2.cli.web.run_web', fake_run_web)
     monkeypatch.setattr(sys, 'argv', ['clai2', '--web', '--database', str(tmp_path / 'c.db')])
-    _cli.run()
+    cli.run()
 
 
 async def test_browser_dialogs_back_out_and_cancel_a_wait() -> None:

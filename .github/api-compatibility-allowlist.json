@@ -1,6 +1,54 @@
 {
   "allowed_breakages": [
     {
+      "against": "v2.62.0",
+      "fingerprint": "78216eb81400af46f893b51ddc502505de40494f0e809618b9157955c6e33186",
+      "reason": "`SignInRequired` was renamed to `SignInRequiredError` (#11326); the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11353"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "27c8ff120ab94b08ec312d57ef65ab9c6e24341158a352b620fb9d3725f3a6c6",
+      "reason": "`make_spinner` was renamed to `build_spinner` (#11326); the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11353"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "94f674ff1880b9bb949e993a2124067f2dd0f97c41a63bc1eb54e71474ab0fbe",
+      "reason": "`PylonConfig` was renamed to `PylonSource` to match the other plugin settings menus; #11326 classifies it as clai2-internal and renames it without an alias.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11353"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "1be0f7bda25f3b135a00248359c89d911a74b96a526d98ece6f0219d0c500b1c",
+      "reason": "False positive: `PylonPlugin.config` is built the same way; Griffe compares the expression text, which only renamed `PylonConfig` to `PylonSource`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11353"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "b0d9bfd5a2a6202d0cc27c800eff53af93209a80f52fb22da08333c6c9dd331e",
+      "reason": "`UiSpan` was renamed to `UISpan` (#11326); the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11353"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "073353b7e83233b82b5f2023998543b9560f12c2b0e9dc5f9f7b673ba00cca77",
+      "reason": "`DisplayArguments` was renamed to `DisplayArgs` (`*Args` convention); #11326 classifies it as clai2-internal and renames it without an alias.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11353"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "290c3bdb83c880f36941988aeb90b428ce8e3408c5aec0d6f52de4bb9cd0ecd9",
+      "reason": "`GrepArguments` was renamed to `GrepArgs` (`*Args` convention); #11326 classifies it as clai2-internal and renames it without an alias.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11353"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "ff1e48e5a12c3326cb47b55a13de7e49c8a5be8e8f338b5b69e211178e45f688",
+      "reason": "False positive: `BUILTIN_SPINNERS` holds the same spinners; Griffe compares the expression text, which only renamed `make_spinner` to `build_spinner`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11353"
+    },
+    {
       "against": "v2.59.0",
       "fingerprint": "ca884de6c28ed4e97d48cd6c522936a934a38a929e25cb3440f903884b53d9c8",
       "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `inputs=inputs`.",
@@ -8,9 +56,9 @@
     },
     {
       "against": "v2.62.0",
-      "fingerprint": "8cb8cd8599117122d06cdb06c3f0113ddd97f018c56417a2dd65310dd85c2439",
-      "reason": "clai2 0.x: adds the built-in `hooks` declaration to `DEFAULT_PLUGINS`; every existing declaration is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11423"
+      "fingerprint": "f68f11981b239bbeb67fb773b7b3867dae32610591a7dc708b398d14e003ba28",
+      "reason": "clai2 0.x: intentional default change enabling the guarded `herdr` integration. Saved disabled declarations are preserved; `/plugins disable herdr` opts out. Also retains the `hooks` declaration approved in #11423; every other declaration is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11661"
     },
     {
       "against": "v2.61.0",
@@ -277,6 +325,18 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11416"
     },
     {
+      "against": "v2.62.0",
+      "fingerprint": "395a2aa1ebaab1b2b172e166494deecabd8c7b335623a14487ff2fefb40f8668",
+      "reason": "Intentional default change: `CodeMode.dynamic_catalog` now defaults to `True`, so revealed tools are appended instead of rewriting the cached prompt. `dynamic_catalog=False` restores the previous behavior.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11358"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "cb420642db9e51cbb5920770a16535a819cb113b486b4bc5dfca7e799fa32a8f",
+      "reason": "Intentional default change: the `CodeMode.__init__` `dynamic_catalog` parameter now defaults to `True`. Every call stays valid, and `dynamic_catalog=False` restores the previous behavior.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11358"
+    },
+    {
       "against": "v2.61.0",
       "fingerprint": "0ef0f187b937e18a7a2f390ec449fb1bd21dab342b6e146ed3abe5fd9a9a52a1",
       "reason": "Adds `SystemPromptPart` to the `RealtimeSessionInput` union `RealtimeSession.send()` accepts; every existing member is unchanged.",
@@ -317,6 +377,30 @@
       "fingerprint": "c2655ed50f60d9b53296c110ea2267134651aa29c6bfa49d4beb7ffcceede410",
       "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `forks=forks`.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11334"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "2018a1f6f9f174b7c4f2eaa1f0c7f1e8ed6452a63fda3ffee7095e81516c3afc",
+      "reason": "Harness 0.x: `Planning.cache_ttl` is deprecated and has no effect, because the plan reminder no longer places a cache breakpoint of its own, so its default is `None`. An explicit `'5m'` or `'1h'` warns that it's ignored; the loss of the default breakpoint is in the docs and release note, and caching on the model replaces it.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "9be216257b6cf2a0b4fb6c866822cd4230b68487f7423e74113ccd0e9ea1fb40",
+      "reason": "Harness 0.x: `Planning.cache_ttl` is deprecated and has no effect, because the plan reminder no longer places a cache breakpoint of its own, so its default is `None`. An explicit `'5m'` or `'1h'` warns that it's ignored; the loss of the default breakpoint is in the docs and release note, and caching on the model replaces it.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "51c9835f3d0b470684680c992c6a4df453c356ad85fe788921de808a6624054c",
+      "reason": "Harness 0.x: `Planning.from_spec`'s `cache_ttl` follows the deprecated `Planning.cache_ttl`, defaulting to `None`; an explicit `'5m'` or `'1h'` warns that it's ignored.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "4f48f3cbafd028241e3620a3564f13cde10fcf648b18bd76b1a881f743ec9241",
+      "reason": "False positive: `Planning` still inherits `wrap_model_request` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the fallback plan record is now added in `before_model_request`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
     }
   ],
   "model_name_literals": [
@@ -435,6 +519,20 @@
     {
       "path": "pydantic_ai_slim/pydantic_ai/realtime/settings.py",
       "symbol": "KnownRealtimeTranscriptionModelName"
+    }
+  ],
+  "growing_collections": [
+    {
+      "path": "src/pydantic_clai2/pydantic_clai2/config/features.py",
+      "symbol": "SUPPORTED_FEATURES"
+    },
+    {
+      "path": "src/pydantic_clai2/pydantic_clai2/config/__init__.py",
+      "symbol": "SETTING_FIELDS"
+    },
+    {
+      "path": "src/pydantic_clai2/pydantic_clai2/config/__init__.py",
+      "symbol": "STRING_SETTINGS"
     }
   ]
 }
