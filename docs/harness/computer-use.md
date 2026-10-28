@@ -76,7 +76,8 @@ far: on Claude, a run costs several times more without it. Set `cache=False` in 
 
 ## Screen size
 
-A model's profile can limit the size of the screenshots it takes, as `computer_use_screenshot_limit`. On a larger
+A model's profile can limit the size of the screenshots it takes, as `computer_use_screenshot_limit`. GPT's is
+2560x1440, since it clicks less accurately on a larger screen. On a larger
 screen, `ComputerUse` sends the model the screenshot scaled down and scales its positions back up, when the display
 can scale its screenshots ([`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot]); otherwise
 the run stops with an error naming the largest screen that fits. A zoom into a region larger than the limit fails the
