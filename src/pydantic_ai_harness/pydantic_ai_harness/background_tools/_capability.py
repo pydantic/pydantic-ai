@@ -460,16 +460,8 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         for outcome in self._arrived():
             if isinstance(outcome, BaseException):
                 raise outcome
-            content = outcome.content
-            parts.append(
-                UserPromptPart(content[0] if len(content) == 1 and isinstance(content[0], str) else list(content))
-            )
-        if not parts:
-            return
-        last = ctx.messages[-1]
-        if isinstance(last, ModelRequest):
-            ctx.messages[-1] = replace(last, parts=[*last.parts, *parts])
-        else:
+            parts.append(UserPromptPart(list(outcome.content)))
+        if parts:
             ctx.messages.append(ModelRequest(parts=parts, run_id=ctx.run_id, conversation_id=ctx.conversation_id))
 
     def _settle(self, ctx: RunContext[AgentDepsT]) -> None:
