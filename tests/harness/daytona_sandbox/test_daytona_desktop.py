@@ -8,7 +8,7 @@ from typing import Any
 
 import anyio
 import pytest
-from daytona import DaytonaBadRequestError, DaytonaServiceUnavailableError
+from daytona import DaytonaBadRequestError, DaytonaInternalServerError
 
 from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.models.test import TestModel
@@ -28,6 +28,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceError,
     WorkspaceRef,
+    WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
@@ -161,30 +162,44 @@ async def test_a_failed_release_still_lets_go_of_the_other_keys(fake_daytona: Fa
     ) -> None:
         if x == 'b' and not failed:
             failed.append(x)
-            raise DaytonaServiceUnavailableError('connection is shut down', status_code=503)
+            raise DaytonaInternalServerError('unexpected EOF', status_code=500)
         await up(x, y, button, request_timeout)
 
     sandbox.computer_use.up = up_failing_once
-    with pytest.raises(DaytonaServiceUnavailableError):
+    with pytest.raises(WorkspaceError, match='unexpected EOF'):
         await Workspace(backend).act(PressKeys(keys=('ctrl', 'a', 'b')))
 
-    # `b` failed to come up, so it is tried again along with the keys still down.
-    assert sandbox.desktop_calls == ['keydown ctrl', 'keydown a', 'keydown b', 'keyup b', 'keyup a', 'keyup ctrl']
+    # `b` failed to come up, so it is tried again along with the keys still down; then the desktop is started again.
+    assert sandbox.desktop_calls == [
+        'keydown ctrl',
+        'keydown a',
+        'keydown b',
+        'keyup b',
+        'keyup a',
+        'keyup ctrl',
+        'start',
+    ]
 
 
 async def test_a_failed_drag_releases_the_button_and_keys(fake_daytona: FakeDaytona) -> None:
     backend, sandbox = await _started(fake_daytona)
 
     async def fail_on_move(x: int, y: int, request_timeout: float | None = None) -> None:
-        raise DaytonaServiceUnavailableError('connection is shut down', status_code=503)
+        raise DaytonaInternalServerError('unexpected EOF', status_code=500)
 
     sandbox.computer_use.move = fail_on_move
-    with pytest.raises(DaytonaServiceUnavailableError):
+    with pytest.raises(WorkspaceError, match='unexpected EOF'):
         await Workspace(backend).act(
             Drag(path=(Point(x=1, y=1), Point(x=2, y=2), Point(x=3, y=3)), modifiers=('shift',))
         )
 
-    assert sandbox.desktop_calls == ['keydown shift', 'mousedown 1 1 left', 'mouseup None None left', 'keyup shift']
+    assert sandbox.desktop_calls == [
+        'keydown shift',
+        'mousedown 1 1 left',
+        'mouseup None None left',
+        'keyup shift',
+        'start',
+    ]
 
 
 async def test_the_live_view_url_is_a_signed_link_to_the_desktops_viewer(fake_daytona: FakeDaytona) -> None:
@@ -240,18 +255,53 @@ async def test_the_desktop_starts_once_however_many_first_uses_race(fake_daytona
 async def test_a_failed_desktop_call_starts_it_again_next_time(fake_daytona: FakeDaytona) -> None:
     backend, sandbox = await _started(fake_daytona)
 
-    sandbox.computer_use.error = DaytonaServiceUnavailableError('connection is shut down', status_code=503)
-    with pytest.raises(DaytonaServiceUnavailableError):
+    sandbox.computer_use.error = DaytonaInternalServerError('unexpected EOF', status_code=500)
+    # A server error fails the action, rather than ending the run.
+    with pytest.raises(WorkspaceError, match='The Daytona desktop failed: unexpected EOF'):
         await Workspace(backend).act(Click(x=1, y=1))
     await Workspace(backend).act(Click(x=1, y=1))
 
     assert sandbox.computer_use.start_calls == 2
 
 
+async def test_an_action_after_the_sandbox_restarted_starts_the_desktop_before_any_input(
+    fake_daytona: FakeDaytona,
+) -> None:
+    backend, sandbox = await _started(fake_daytona)
+    assert backend.display is not None
+    backend.display.take_fresh_start()
+    await Workspace(backend).screenshot()
+
+    sandbox.computer_use.stop_with_sandbox()
+    with pytest.raises(WorkspaceError, match=r'^The display had stopped, so the action did not run'):
+        await Workspace(backend).act(Click(x=1, y=1))
+    await Workspace(backend).act(Click(x=1, y=1))
+
+    assert not sandbox.computer_use.broken
+    assert sandbox.desktop_calls[-2:] == ['start', 'click 1 1 left clicks=1 modifiers=[]']
+    assert backend.display.take_fresh_start() is True
+
+
+async def test_a_desktop_that_stopped_answering_ends_the_run(fake_daytona: FakeDaytona) -> None:
+    backend, sandbox = await _started(fake_daytona)
+    sandbox.computer_use.broken = True
+
+    with pytest.raises(WorkspaceUnavailableError, match='stopping and starting the sandbox brings it back'):
+        await Workspace(backend).screenshot()
+
+
+async def test_a_scaled_screenshot_is_taken_at_the_scale_that_fits(fake_daytona: FakeDaytona) -> None:
+    backend, sandbox = await _started(fake_daytona)
+    assert backend.display is not None
+
+    assert await backend.display.scaled_screenshot(640, 400) == sandbox.computer_use.png
+    assert sandbox.desktop_calls == ['get_info', 'take_compressed png 0.5']
+
+
 async def test_a_failed_look_starts_the_desktop_again_and_looks_again(fake_daytona: FakeDaytona) -> None:
     backend, sandbox = await _started(fake_daytona)
 
-    sandbox.computer_use.error = DaytonaServiceUnavailableError('connection is shut down', status_code=503)
+    sandbox.computer_use.error = DaytonaInternalServerError('unexpected EOF', status_code=500)
     assert await Workspace(backend).screenshot() == sandbox.computer_use.png
 
     assert sandbox.computer_use.start_calls == 2
