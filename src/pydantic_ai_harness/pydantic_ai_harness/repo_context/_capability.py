@@ -85,7 +85,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        surface that directory's `CLAUDE.md`/`AGENTS.md`. The note is enqueued in
        the message tail, not added to system instructions, so it does not
        invalidate the cached prefix. `nested_inject='pointer'` (default)
-       enqueues a one-line pointer; `'contents'` inlines the file body.
+       enqueues a one-line pointer; `'contents'` inlines the file body. With it
+       on, the instructions also gain one static sentence on how instruction
+       files relate: each applies to its subtree, and the deeper one wins.
 
     Cache note: injecting file contents into the system prompt costs prompt-cache
     stability. Strategy 1 is safe because its files are stable within a run, and a

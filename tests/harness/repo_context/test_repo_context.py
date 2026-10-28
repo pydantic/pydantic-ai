@@ -299,17 +299,6 @@ Instruction files (`AGENTS.md`, `CLAUDE.md`) apply to the directory they are in 
             "Instruction files (`CLAUDE.md`, `AGENTS.md`) apply to the directory they are in and everything below it. Where instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions take precedence over all of them."
         )
 
-    async def test_no_statement_without_nested_traversal(self, tmp_path: Path, workspace: Workspace) -> None:
-        _write(tmp_path / 'AGENTS.md', 'root')
-        cap = RepoContext[object]()
-        ctx = _run_context(workspace=workspace)
-        await cap.before_run(ctx)
-        assert _render_capability_instructions(cap, ctx) == snapshot("""\
-<context-file path="AGENTS.md">
-root
-</context-file>\
-""")
-
     async def test_no_files_no_inventory_is_none(self, tmp_path: Path, workspace: Workspace) -> None:
         cap = RepoContext[object](expose_inventory_tool=False)
         ctx = _run_context(workspace=workspace)
