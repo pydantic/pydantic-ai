@@ -112,6 +112,11 @@ class ComputerResult(TypedDict):
     coordinate_grid: NotRequired[int]
     """The grid the call's coordinates were on, when they weren't pixels, so history says which they were."""
 
+    changed: NotRequired[bool]
+    """Set when the actions that ran differ from the ones the model asked for, such as after an approval changed
+    them: `performed` counts the ones that ran, and the summary says what they were. A model adapter then sends the
+    summary rather than reporting the model's own actions as run."""
+
 
 _ComputerContent: TypeAlias = list[str | BinaryImage]
 """What the model sees from a `computer` call; see the module docstring for its order."""
