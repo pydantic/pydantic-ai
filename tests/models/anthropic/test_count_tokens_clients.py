@@ -123,7 +123,9 @@ async def test_count_tokens_server_tools_by_client(
                     ),
                     ToolDefinition(name='memory', parameters_json_schema={'type': 'object'}),
                 ],
-                native_tools=[MemoryTool(), ToolSearchTool(), CodeExecutionTool()],
+                # Optional because the Bedrock clients don't get `CodeExecutionTool` at all; see
+                # `test_code_execution_clients.py`.
+                native_tools=[MemoryTool(), ToolSearchTool(), CodeExecutionTool(optional=True)],
             ),
         )
 
