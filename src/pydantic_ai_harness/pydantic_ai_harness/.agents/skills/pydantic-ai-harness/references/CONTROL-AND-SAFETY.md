@@ -431,11 +431,11 @@ Gotchas:
   same store object to two `SpendLimits` to share counters. `defer_loading=True` is refused.
 - `SpendLimits` counts every billed response, including one a nested hook rejects, whatever the
   capability order; cached and `SkipModelRequest` responses aren't charged.
-- Each response a `FallbackModel` rejected is charged as its own request, with its own
-  `SpendRecordedEvent` (`failed_attempt=True`). `price` receives it as a `ModelResponse` with the
-  attempt's model, provider and usage but no `parts` and no `provider_url`, so a `price` that reads
-  the output or keys on the endpoint will misprice it. `Spent.requests` can exceed
-  `RunUsage.requests`.
+- Each response a `FallbackModel` or the `ModelFallback` capability rejected is charged as its own request,
+  with its own `SpendRecordedEvent` (`failed_attempt=True`). `Spent.requests` can exceed `RunUsage.requests`.
+- For a `FallbackModel` rejection, `price` receives a `ModelResponse` rebuilt from the attempt's model,
+  provider and usage, with no `parts` and no `provider_url`, so a `price` that reads the output or keys
+  on the endpoint will misprice it. A `ModelFallback` capability rejection reaches `price` as the real response.
 - Spec-loadable except callables (`store`, `price`, `scope`, `clock`).
 
 ## AskUser
@@ -591,8 +591,8 @@ output validators, and gets no deps.
 
 Gotchas: judge usage counts against the run's `usage` and `usage_limits` (a tick that cannot fit
 the request limit is skipped); one evaluation in flight per judge (a slow judge skips ticks); judge
-failures are raised on the run at the next tick or run end (use a `FallbackModel` in a custom
-agent to degrade); rejected with `UserError` inside Temporal/DBOS/Prefect durable execution. It
+failures are raised on the run at the next tick or run end (give a custom agent the `ModelFallback`
+capability to degrade); rejected with `UserError` inside Temporal/DBOS/Prefect durable execution. It
 observes and steers only; enforcement belongs to guardrails. Try `SystemReminders` first.
 
 `TrajectoryJudge(model='openai:...')` builds its judge `Agent` in the constructor, so defining it
