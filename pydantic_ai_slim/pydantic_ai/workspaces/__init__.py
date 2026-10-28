@@ -25,6 +25,7 @@ from .protocol import (
     SupportsDisplay,
     SupportsFilesystem,
     SupportsRealpath,
+    SupportsScaledScreenshot,
     SupportsZoom,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -75,6 +76,7 @@ __all__ = (
     'SupportsDisplay',
     'SupportsFilesystem',
     'SupportsRealpath',
+    'SupportsScaledScreenshot',
     'SupportsZoom',
     'UnavailableWorkspace',
 )

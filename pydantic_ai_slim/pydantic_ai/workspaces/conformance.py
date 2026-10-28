@@ -37,6 +37,7 @@ from .protocol import (
     SupportsCursorPosition,
     SupportsDisplay,
     SupportsRealpath,
+    SupportsScaledScreenshot,
     SupportsZoom,
     WorkspaceBackend,
     WorkspaceRef,
@@ -639,6 +640,16 @@ class WorkspaceBackendSuite:
         zoom_width, zoom_height = _png_size(png)
         assert zoom_width >= region_width and zoom_height >= region_height
         assert abs(zoom_width * region_height - zoom_height * region_width) <= region_width + region_height
+
+    async def test_a_scaled_screenshot_is_a_png_of_the_size_asked(self, backend: WorkspaceBackend) -> None:
+        display = _display(backend)
+        if not isinstance(display, SupportsScaledScreenshot):
+            pytest.skip('backend cannot scale screenshots')
+        width, height = await display.display_size()
+        # A size that isn't an exact ratio of the display's, so a display that scales by a ratio has to round.
+        size = (max(1, width * 2 // 3), max(1, height * 2 // 3))
+        scaled_width, scaled_height = _png_size(await display.scaled_screenshot(*size))
+        assert abs(scaled_width - size[0]) <= 1 and abs(scaled_height - size[1]) <= 1
 
     async def test_the_cursor_position_is_on_the_screen(self, backend: WorkspaceBackend) -> None:
         display = _display(backend)

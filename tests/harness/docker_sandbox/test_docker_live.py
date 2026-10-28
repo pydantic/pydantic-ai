@@ -172,9 +172,3 @@ class TestLiveDockerDesktop(WorkspaceBackendSuite):
 
         typed = await backend.run('until [ -s typed.txt ]; do sleep 0.1; done; cat typed.txt', shell=True, timeout=30)
         assert typed.stdout == 'héllo, Desktop! 你好 @#?\t~?é\n'
-
-    async def test_a_scaled_screenshot_has_the_size_asked_for(self, backend: WorkspaceBackend) -> None:
-        assert isinstance(backend, DockerSandboxBackend)
-        assert backend.display is not None
-        png = await backend.display.scaled_screenshot(640, 400)
-        assert (int.from_bytes(png[16:20]), int.from_bytes(png[20:24])) == (640, 400)
