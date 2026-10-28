@@ -633,8 +633,12 @@ class WorkspaceBackendSuite:
         if not isinstance(display, SupportsZoom):
             pytest.skip('backend cannot zoom')
         width, height = await display.display_size()
-        png = await display.zoom(Region(left=0, top=0, right=width // 2, bottom=height // 4))
-        assert _png_size(png) == (width // 2, height // 4)
+        region_width, region_height = width // 2, height // 4
+        png = await display.zoom(Region(left=0, top=0, right=region_width, bottom=region_height))
+        # Full resolution: on a display whose screenshots are scaled down, the capture is larger than the region.
+        zoom_width, zoom_height = _png_size(png)
+        assert zoom_width >= region_width and zoom_height >= region_height
+        assert abs(zoom_width * region_height - zoom_height * region_width) <= region_width + region_height
 
     async def test_the_cursor_position_is_on_the_screen(self, backend: WorkspaceBackend) -> None:
         display = _display(backend)
@@ -643,3 +647,14 @@ class WorkspaceBackendSuite:
         width, height = await display.display_size()
         point = await display.cursor_position()
         assert 0 <= point.x < width and 0 <= point.y < height
+
+    async def test_moving_the_mouse_puts_the_pointer_there(self, backend: WorkspaceBackend) -> None:
+        """An action takes effect, in screenshot pixels: the pointer ends where it was moved, give or take a pixel."""
+        display = _display(backend)
+        if not isinstance(display, SupportsCursorPosition):
+            pytest.skip('backend cannot report the pointer position')
+        width, height = await display.display_size()
+        for x, y in ((width // 3, height // 3), (width * 2 // 3, height * 3 // 4)):
+            await display.act(MoveMouse(x=x, y=y))
+            point = await display.cursor_position()
+            assert abs(point.x - x) <= 1 and abs(point.y - y) <= 1, f'moved to ({x}, {y}), pointer at {point}'
