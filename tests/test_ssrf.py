@@ -1781,6 +1781,39 @@ class TestSafeDownload:
         with pytest.raises(ValueError, match='not in the allowed domains'):
             await safe_download('https://example.com/page', allowed_domains=['example.com'])
 
+    @pytest.mark.parametrize(
+        ('allowed_domains', 'blocked_domains', 'error'),
+        [
+            (['example.com'], None, 'not in the allowed domains'),
+            (None, ['evil.com'], 'is blocked'),
+        ],
+    )
+    async def test_rejected_domain_is_not_resolved(
+        self, allowed_domains: list[str] | None, blocked_domains: list[str] | None, error: str, mock_dns: AsyncMock
+    ) -> None:
+        """A hostname the domain lists reject is rejected without resolving it."""
+        with pytest.raises(ValueError, match=error):
+            await safe_download(
+                'https://evil.com/page', allowed_domains=allowed_domains, blocked_domains=blocked_domains
+            )
+        mock_dns.assert_not_awaited()
+
+    async def test_redirect_to_rejected_domain_is_not_resolved(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """A redirect target the domain lists reject is rejected without resolving it."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        redirect_response = AsyncMock()
+        redirect_response.is_redirect = True
+        redirect_response.headers = {'location': 'https://evil.com/payload'}
+        mock_client = AsyncMock()
+        mock_client.get.return_value = redirect_response
+        mock_ssrf_client.return_value = mock_client
+
+        with pytest.raises(ValueError, match='not in the allowed domains'):
+            await safe_download('https://example.com/page', allowed_domains=['example.com'])
+        mock_dns.assert_awaited_once()
+
 
 class TestSensitiveHeaderStrippingOnRedirects:
     """Tests for sensitive-header (Authorization/Cookie/Proxy-Authorization) stripping on redirects.
