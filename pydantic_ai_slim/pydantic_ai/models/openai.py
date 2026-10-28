@@ -3133,12 +3133,11 @@ class _ResponsesWebSocketHolder:
     @asynccontextmanager
     async def lease(self) -> AsyncGenerator[None]:
         acquired = self.acquire()
-        # Agent run scopes require asyncio; direct model contexts can run without it.
-        assert acquired is not None
         try:
             yield
         finally:
-            await self.release(acquired)
+            if acquired is not None:
+                await self.release(acquired)
 
     async def close_if_unused(self, state: _ResponsesWebSocketState) -> None:
         with _WEBSOCKET_LIFECYCLE_LOCK:
@@ -3535,10 +3534,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.
         if profile.get('openai_responses_supports_json_schema_output', False):
             profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
-        client = self._provider.client
-        if isinstance(self._provider, OAuthCredentialsProvider) or non_static_auth_source(client) is not None:
-            # Per-request credentials must be resolved again for each request; a socket keeps its handshake's
-            # credentials, so `profile=` can't enable it for these clients.
+        if isinstance(self._provider, OAuthCredentialsProvider):
+            # These providers authenticate HTTP requests without configuring the SDK socket client.
             profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
         return cast(OpenAIModelProfile, profile)
 

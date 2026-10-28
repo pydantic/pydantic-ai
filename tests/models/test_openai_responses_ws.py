@@ -10,6 +10,7 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass, field
+from functools import partial
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Literal, NoReturn, get_type_hints
@@ -2411,7 +2412,6 @@ async def test_credential_callbacks_keep_request_authentication(
     assert sockets.connect_count == 0
     assert len(caught) == 2
     assert all(issubclass(w.category, UnsupportedSettingWarning) for w in caught)
-    assert model.profile.get('openai_responses_supports_websocket') is False
 
 
 OVERRIDABLE_NEVER_SOCKET_SETUPS = ['azure-provider', 'azure-client', 'gateway']
@@ -2511,16 +2511,26 @@ async def test_missing_websocket_dependency_warns_and_uses_http(
 
 
 @pytest.mark.parametrize('anyio_backend', ['trio'])
+@pytest.mark.parametrize('run_scope', [False, True])
+@pytest.mark.parametrize('websocket', [False, True])
 async def test_other_async_backends_warn_and_use_http(
-    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, run_scope: bool, websocket: bool
 ):
-    """Only the asyncio event loop runs the socket, so a request under Trio uses HTTP, even inside `async with model:`."""
-    model = websocket_model(http.provider())
-    async with model:
-        with pytest.warns(UnsupportedSettingWarning, match='Responses WebSockets need the asyncio event loop'):
+    """A model request and its resource scope use HTTP on Trio, with a warning only when WebSocket mode was selected."""
+    model = OpenAIResponsesModel('gpt-4o', provider=http.provider(), settings=WEBSOCKET if websocket else None)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always', UnsupportedSettingWarning)
+        async with model, AsyncExitStack() as scope:
+            if run_scope:
+                await scope.enter_async_context(model._run_scope())  # pyright: ignore[reportPrivateUsage]
             response = await model.request(user_prompt('hello'), None, ModelRequestParameters())
     assert response.text == 'from HTTP'
     assert sockets.connect_count == 0
+    if websocket:
+        assert len(caught) == 1
+        assert 'Responses WebSockets need the asyncio event loop' in str(caught[0].message)
+    else:
+        assert caught == []
 
 
 @pytest.mark.parametrize(
@@ -3019,7 +3029,7 @@ async def test_credential_callbacks_refresh_over_http(
 
     client = AsyncOpenAI(api_key=api_key, http_client=http.client)
     agent = Agent(websocket_model(OpenAIProvider(openai_client=client)))
-    with pytest.warns(UnsupportedSettingWarning, match='openai_responses_supports_websocket=False'):
+    with pytest.warns(UnsupportedSettingWarning, match='resolves authentication per request'):
         async with agent:
             assert (await agent.run('hello')).output == 'from HTTP'
             token = 'refreshed-token'
@@ -3127,15 +3137,40 @@ async def test_nested_direct_model_contexts_keep_the_socket_until_the_outer_exit
 
 
 @pytest.mark.parametrize('profile', [None, WEBSOCKET_PROFILE])
-async def test_workload_identity_cannot_enable_a_socket(http: HTTPResponses, profile: OpenAIModelProfile | None):
+async def test_workload_identity_cannot_enable_a_socket(
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    http: HTTPResponses,
+    monkeypatch: pytest.MonkeyPatch,
+    profile: OpenAIModelProfile | None,
+):
     identity: WorkloadIdentity = {
         'identity_provider_id': 'idp',
         'service_account_id': 'tenant-a',
         'provider': {'token_type': 'jwt', 'get_token': lambda: 'subject-token'},
     }
+    exchanges: list[httpx2.Request] = []
+
+    def exchange(request: httpx2.Request) -> httpx2.Response:
+        exchanges.append(request)
+        return httpx2.Response(200, json={'access_token': 'workload-access-token', 'expires_in': 3600})
+
+    monkeypatch.setattr(
+        'openai.auth._workload.DefaultHttpx2Client',
+        partial(httpx2.Client, transport=httpx2.MockTransport(exchange)),
+    )
     client = AsyncOpenAI(workload_identity=identity, http_client=http.client)
     model = websocket_model(OpenAIProvider(openai_client=client), profile=profile)
-    assert model.profile.get('openai_responses_supports_websocket') is False
+    with pytest.warns(UnsupportedSettingWarning, match='resolves authentication per request'):
+        async with Agent(model) as agent:
+            assert (await agent.run('hello')).output == 'from HTTP'
+    assert sockets.connect_count == 0
+    assert len(exchanges) == 1
+    assert str(exchanges[0].url) == 'https://auth.openai.com/oauth/token'
+    assert FRAME_ADAPTER.validate_json(exchanges[0].content) == IsPartialDict(
+        subject_token='subject-token', identity_provider_id='idp', service_account_id='tenant-a'
+    )
+    assert http.requests[0].headers['authorization'] == 'Bearer workload-access-token'
 
 
 @pytest.mark.parametrize('profile', [None, WEBSOCKET_PROFILE])

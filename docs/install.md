@@ -50,14 +50,12 @@ For example, if you're using just [`OpenAIChatModel`][pydantic_ai.models.openai.
 pip/uv-add "pydantic-ai-slim[openai]"
 ```
 
-For OpenAI Responses over WebSocket, install `pydantic-ai-slim[openai-responses-websocket]`. This installs `openai` and the `websockets` versions supported by the SDK socket client.
-
 `pydantic-ai-slim` has the following optional groups:
 
 * `logfire` — installs [Pydantic Logfire](logfire.md) dependency `logfire` [PyPI ↗](https://pypi.org/project/logfire){:target="_blank"}
 * `evals` — installs [Pydantic Evals](evals.md) dependency `pydantic-evals` [PyPI ↗](https://pypi.org/project/pydantic-evals){:target="_blank"}
 * `openai` — installs [OpenAI Model](models/openai.md) dependency `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
-* `openai-responses-websocket` — installs `openai` and the compatible `websockets` versions for the SDK socket client used by OpenAI Responses
+* `openai-responses-websocket` — installs [OpenAI Responses WebSockets](models/openai.md#responses-websockets) dependencies `openai` [PyPI ↗](https://pypi.org/project/openai){:target='_blank'} and `websockets` [PyPI ↗](https://pypi.org/project/websockets){:target='_blank'}, with the SDK socket client compatibility bound
 * `google` — installs [Google Model](models/google.md) dependency `google-genai` [PyPI ↗](https://pypi.org/project/google-genai){:target="_blank"}
 * `anthropic` — installs [Anthropic Model](models/anthropic.md) dependency `anthropic` [PyPI ↗](https://pypi.org/project/anthropic){:target="_blank"}
 * `groq` — installs [Groq Model](models/groq.md) dependency `groq` [PyPI ↗](https://pypi.org/project/groq){:target="_blank"}
