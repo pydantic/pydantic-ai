@@ -25,15 +25,29 @@ WAIVER = {
 }
 
 
-def _config(tmp_path: Path, allowlist: object = None, waivers: Mapping[str, object] | None = None) -> list[str]:
-    """Write an allowlist and a directory with a file per named waiver, and return the arguments naming them."""
+def _write_allowlist(tmp_path: Path, allowlist: object = None) -> Path:
     path = tmp_path / 'allowlist.json'
     path.write_text(json.dumps(allowlist or {}), encoding='utf-8')
+    return path
+
+
+def _write_waivers(tmp_path: Path, waivers: Mapping[str, object] | None = None) -> Path:
+    """Write a directory with a file per named waiver."""
     directory = tmp_path / 'waivers'
     directory.mkdir()
     for name, waiver in (waivers or {}).items():
         (directory / name).write_text(json.dumps(waiver), encoding='utf-8')
-    return ['--allowlist', str(path), '--waivers', str(directory)]
+    return directory
+
+
+def _config(tmp_path: Path, allowlist: object = None, waivers: Mapping[str, object] | None = None) -> list[str]:
+    """Write an allowlist and waivers, and return the arguments naming them."""
+    return [
+        '--allowlist',
+        str(_write_allowlist(tmp_path, allowlist)),
+        '--waivers',
+        str(_write_waivers(tmp_path, waivers)),
+    ]
 
 
 def test_fingerprint_identifies_the_exact_finding():
@@ -116,19 +130,19 @@ def test_run_griffe_reports_real_griffe_findings(tmp_path: Path, monkeypatch: py
 
 def test_load_allowlist_and_waivers(tmp_path: Path):
     finding = Finding('pydantic_ai', 'messages.py', 12, 'RequestPart: Attribute value was changed: Old -> New')
-    _, allowlist, _, waivers = _config(
+    allowlist = _write_allowlist(
         tmp_path,
         {
             'model_name_literals': [{'path': 'models/foo.py', 'symbol': 'LatestFooModelNames'}],
             'growing_collections': [{'path': 'config.py', 'symbol': 'SETTINGS'}],
         },
-        {f'{finding.fingerprint}.json': WAIVER},
     )
+    waivers = _write_waivers(tmp_path, {f'{finding.fingerprint}.json': WAIVER})
 
-    assert {fingerprint: waiver.against for fingerprint, waiver in load_waivers(Path(waivers)).items()} == {
+    assert {fingerprint: waiver.against for fingerprint, waiver in load_waivers(waivers).items()} == {
         finding.fingerprint: 'v2.32.1'
     }
-    model_name_literals, growing_collections = load_allowlist(Path(allowlist))
+    model_name_literals, growing_collections = load_allowlist(allowlist)
     assert model_name_literals == {('models/foo.py', 'LatestFooModelNames')}
     assert growing_collections == {('config.py', 'SETTINGS')}
 
@@ -396,27 +410,39 @@ def test_main_rejects_unused_waiver_for_current_baseline(
 
 _FINGERPRINT = 'a' * 64
 
-_INVALID_CONFIGS: list[tuple[object, dict[str, object], str]] = [
+_INVALID_ALLOWLISTS: list[tuple[object, str]] = [
     # An entry under the old layout, from a PR opened before waivers moved to their own files.
-    ({'allowed_breakages': []}, {}, 'extra_forbidden'),
-    ({'model_name_literals': {}}, {}, 'list_type'),
-    ({}, {f'{_FINGERPRINT}.json': {}}, 'against'),
-    ({}, {'bad.json': WAIVER}, 'must be named'),
-    ({}, {_FINGERPRINT: WAIVER}, 'must be named'),
-    ({}, {f'{_FINGERPRINT.upper()}.json': WAIVER}, 'must be named'),
-    ({}, {f'{_FINGERPRINT}.json': {**WAIVER, 'fingerprint': _FINGERPRINT}}, 'extra_forbidden'),
-    ({}, {f'{_FINGERPRINT}.json': {**WAIVER, 'reason': ''}}, 'string_too_short'),
-    ({}, {f'{_FINGERPRINT}.json': {**WAIVER, 'pull_request': 'not-a-pr'}}, 'string_pattern_mismatch'),
+    ({'allowed_breakages': []}, 'extra_forbidden'),
+    ({'model_name_literals': {}}, 'list_type'),
+    ({'growing_collections': [{'path': 'config.py'}]}, 'symbol'),
 ]
 
 
-@pytest.mark.parametrize('allowlist, waivers, error', _INVALID_CONFIGS)
-def test_loading_rejects_invalid_entries(tmp_path: Path, allowlist: object, waivers: dict[str, object], error: str):
-    _, allowlist_path, _, waivers_path = _config(tmp_path, allowlist, waivers)
+@pytest.mark.parametrize('allowlist, error', _INVALID_ALLOWLISTS)
+def test_load_allowlist_rejects_invalid_entries(tmp_path: Path, allowlist: object, error: str):
+    path = _write_allowlist(tmp_path, allowlist)
 
     with pytest.raises(ValueError, match=error):
-        load_allowlist(Path(allowlist_path))
-        load_waivers(Path(waivers_path))
+        load_allowlist(path)
+
+
+_INVALID_WAIVERS: list[tuple[str, object, str]] = [
+    (f'{_FINGERPRINT}.json', {}, 'against'),
+    ('bad.json', WAIVER, 'must be named'),
+    (_FINGERPRINT, WAIVER, 'must be named'),
+    (f'{_FINGERPRINT.upper()}.json', WAIVER, 'must be named'),
+    (f'{_FINGERPRINT}.json', {**WAIVER, 'fingerprint': _FINGERPRINT}, 'extra_forbidden'),
+    (f'{_FINGERPRINT}.json', {**WAIVER, 'reason': ''}, 'string_too_short'),
+    (f'{_FINGERPRINT}.json', {**WAIVER, 'pull_request': 'not-a-pr'}, 'string_pattern_mismatch'),
+]
+
+
+@pytest.mark.parametrize('name, waiver, error', _INVALID_WAIVERS)
+def test_load_waivers_rejects_invalid_files(tmp_path: Path, name: str, waiver: object, error: str):
+    directory = _write_waivers(tmp_path, {name: waiver})
+
+    with pytest.raises(ValueError, match=error):
+        load_waivers(directory)
 
 
 def test_emit_annotation_escapes_workflow_commands(capsys: pytest.CaptureFixture[str]):
