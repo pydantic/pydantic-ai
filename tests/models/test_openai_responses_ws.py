@@ -3097,3 +3097,19 @@ async def test_context_closed_on_another_loop_closes_socket_on_its_own_loop(
     await anyio.to_thread.run_sync(lambda: asyncio.run(stack.aclose()))
     assert closed_on == [owner_loop]
     assert socket.close_count == 1
+
+
+async def test_nested_direct_model_contexts_keep_the_socket_until_the_outer_exit(
+    allow_model_requests: None, sockets: SocketHarness
+):
+    socket = sockets.pending[0]
+    socket.responses.append(text_events('second', 'resp_second'))
+    model = websocket_model()
+    async with model:
+        async with model:
+            assert (await model.request(user_prompt('first'), None, ModelRequestParameters())).text == 'ready'
+        assert socket.close_count == 0
+        assert (await model.request(user_prompt('second'), None, ModelRequestParameters())).text == 'second'
+    assert sockets.opened == [socket]
+    assert len(socket.sent) == 2
+    assert socket.close_count == 1
