@@ -17,6 +17,7 @@ from pydantic_ai.exceptions import UserError
 from .computer import ComputerAction, Point, Region
 from .protocol import (
     CommandResult,
+    Display,
     FileEntry,
     SupportsCommands,
     SupportsCursorPosition,
@@ -29,6 +30,7 @@ from .protocol import (
     WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceRef,
+    WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
     validate_timeout,
 )
@@ -417,8 +419,12 @@ class Workspace(WorkspaceBackend):
     @property
     def has_display(self) -> bool:
         """Whether the backend has a display to control, so `screenshot` and `act` can work. Does no I/O."""
-        backend = self._backend
-        return isinstance(backend, SupportsDisplay) and backend.has_display
+        return self._backend_display is not None
+
+    @property
+    def display(self) -> Display | None:
+        """This workspace, when its backend has a display, so wrappers around it reach the display through it."""
+        return self if self.has_display else None
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -537,10 +543,21 @@ class Workspace(WorkspaceBackend):
         return posixpath.normpath(path)
 
     @property
-    def _display(self) -> SupportsDisplay:
+    def _backend_display(self) -> Display | None:
         backend = self._backend
-        if isinstance(backend, SupportsDisplay):
-            return backend
+        display = backend.display if isinstance(backend, SupportsDisplay) else None
+        # An attribute that merely shares the name, such as an X display string, is not a display.
+        return display if isinstance(display, Display) else None
+
+    @property
+    def _display(self) -> Display:
+        if (display := self._backend_display) is not None:
+            return display
+        backend = self._backend
+        if isinstance(backend, Workspace):
+            return backend  # it raises its own reason, such as `WorkspaceUnavailableError`
+        if isinstance(backend, UnavailableWorkspace):
+            raise WorkspaceUnavailableError(backend.reason)
         raise UserError(
             'This workspace has no display to control. Attach a backend that implements `SupportsDisplay`, '
             'such as a sandbox started with a desktop.'
@@ -563,20 +580,20 @@ class Workspace(WorkspaceBackend):
 
         Raises `WorkspaceUnsupportedActionError` if the backend can't zoom.
         """
-        backend = self._display  # a workspace without a display says so first
-        if not isinstance(backend, SupportsZoom):
+        display = self._display  # a workspace without a display says so first
+        if not isinstance(display, SupportsZoom):
             raise WorkspaceUnsupportedActionError('This display cannot zoom.')
-        return await backend.zoom(region)
+        return await display.zoom(region)
 
     async def cursor_position(self) -> Point:
         """The pointer's position in screenshot pixels.
 
         Raises `WorkspaceUnsupportedActionError` if the backend can't report it.
         """
-        backend = self._display
-        if not isinstance(backend, SupportsCursorPosition):
+        display = self._display
+        if not isinstance(display, SupportsCursorPosition):
             raise WorkspaceUnsupportedActionError('This display cannot report the pointer position.')
-        return await backend.cursor_position()
+        return await display.cursor_position()
 
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
         """Read a file as text; undecodable bytes raise `UnicodeDecodeError`."""
