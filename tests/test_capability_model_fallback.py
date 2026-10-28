@@ -410,6 +410,54 @@ async def test_a_stream_stopped_while_it_opens_is_recorded_as_interrupted(billed
     assert usage == (RunUsage(input_tokens=100, output_tokens=10) if billed else RunUsage())
 
 
+async def test_a_task_cancelled_while_its_stream_is_primed_closes_what_priming_opened():
+    """Cancelling the task that consumes the run while a stream is being primed closes the segments it opened.
+
+    Here priming has opened a silent, suspended first segment and is waiting on its continuation's first event, so
+    the cancellation reaches priming from outside, not through priming's own scope.
+    """
+    exited: list[int] = []
+
+    class TracksSegments(_SilentlySuspendsThenHangs):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext[Any] | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            segment = self.request_stream_calls
+            try:
+                async with super().request_stream(
+                    messages, model_settings, model_request_parameters, run_context
+                ) as stream:
+                    yield stream
+            finally:
+                exited.append(segment)
+
+    continuing = asyncio.Event()
+    agent = Agent(TracksSegments(continuing), capabilities=[ModelFallback(TestModel())])
+
+    async def consume(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        # Consuming the run's events streams its requests. The run stops before a stream reaches it.
+        [event async for event in events]  # pragma: no cover
+
+    run = asyncio.create_task(agent.run('x', event_stream_handler=consume))
+    await continuing.wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError) as exc_info:
+        await run
+    # The suspended first segment, and the continuation that was opening.
+    assert sorted(exited) == [0, 1]
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None
+    assert [(type(message).__name__, getattr(message, 'state', None)) for message in cancelled.all_messages()] == [
+        ('ModelRequest', 'complete'),
+        ('ModelResponse', 'interrupted'),
+    ]
+
+
 async def test_suspended_response_is_pinned_to_the_model_that_served_it():
     """Walking away from a suspended stream leaves it in history pinned to the candidate that started the job."""
     served = ScriptedContinuationModel(
@@ -769,8 +817,13 @@ def _provider_model(name: str, system: str, seen: list[tuple[str, list[str]]], *
             raise ModelAPIError(model_name=name, message='boom')
         return ModelResponse(parts=[TextPart('hello')])
 
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        respond(messages, info)
+        yield 'hello'
+
     model = FunctionModel(
         respond,
+        stream_function=stream,
         model_name=name,
         profile=ModelProfile(supported_native_tools=frozenset({WebSearchTool})) if system == 'anthropic' else None,
     )
@@ -802,8 +855,9 @@ _NO_TOOLS: list[str] = []
         ('anthropic', 'anthropic', [('primary', ['WebSearchTool']), ('backup', ['WebSearchTool'])]),
     ],
 )
+@pytest.mark.parametrize('streaming', [False, True])
 async def test_native_tool_factories_resolve_for_each_model_attempted(
-    primary_system: str, backup_system: str, sent: list[tuple[str, list[str]]]
+    primary_system: str, backup_system: str, sent: list[tuple[str, list[str]]], streaming: bool
 ):
     """A native tool factory sees the model serving each attempt as `ctx.model`, as each model would on its own."""
     seen: list[tuple[str, list[str]]] = []
@@ -816,7 +870,11 @@ async def test_native_tool_factories_resolve_for_each_model_attempted(
             NativeTool(_anthropic_web_search(evaluated)),
         ],
     )
-    assert (await agent.run('x')).output == 'hello'
+    if streaming:
+        async with agent.run_stream('x') as result:
+            assert await result.get_output() == 'hello'
+    else:
+        assert (await agent.run('x')).output == 'hello'
     assert seen == sent
     assert evaluated == [primary_system, backup_system]
 
