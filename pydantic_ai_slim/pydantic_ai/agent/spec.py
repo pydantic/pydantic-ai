@@ -86,7 +86,7 @@ class OpenAICompatibleModelSpec(
         """Build the model, reading the environment variables named by `base_url_env` and `api_key_env`.
 
         Raises:
-            UserError: If a named environment variable is not set.
+            UserError: If a named environment variable is not set or empty.
         """
         from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
         from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider

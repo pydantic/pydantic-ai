@@ -55,7 +55,7 @@ When the agent is constructed, this builds an [`OpenAIChatModel`][pydantic_ai.mo
 | `base_url_env` | The name of an environment variable to read the base URL from instead, so the same spec can point at different deployments |
 | `api_key_env` | The name of an environment variable to read the API key from, if the service needs one |
 
-Exactly one of `base_url` and `base_url_env` must be set. There is no field for the API key itself, so a spec never contains a secret. The environment variables are read when the agent is constructed, even with `defer_model_check=True`, and a missing one raises a [`UserError`][pydantic_ai.exceptions.UserError]. A `model` passed to `Agent.from_spec` replaces the spec's model without reading them.
+Exactly one of `base_url` and `base_url_env` must be set. There is no field for the API key itself, so a spec never contains a secret. The environment variables are read when the model is built, and a missing one raises a [`UserError`][pydantic_ai.exceptions.UserError]. `Agent.from_spec` and `Agent.from_file` build it when the agent is constructed, even with `defer_model_check=True`. A spec passed to a run method or to [`override`][pydantic_ai.agent.Agent.override] builds it when the run starts or the override is entered. An explicit `model` argument replaces the spec's model without reading them.
 
 ## Loading specs
 
