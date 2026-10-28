@@ -288,16 +288,13 @@ def test_custom_removal_failure_does_not_fall_back(
 def test_custom_command_preparation_failure(
     launched: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def confirm(prompt: str) -> str:
-        pytest.fail('Cannot ask about a command whose metadata could not be read')
-
     def fail(*args: str) -> str:
         if '--git-common-dir' in args:
             raise subprocess.CalledProcessError(1, ['git'], stderr='metadata unavailable')
         return git(Path.cwd(), *args)
 
     monkeypatch.setattr(worktrees, '_git', fail)
-    monkeypatch.setattr('builtins.input', confirm)
+    monkeypatch.setattr('builtins.input', no_prompt)
     offer_worktree_cleanup(worktree=launched, remove_commands={str(repo / '.git'): ['remove']})
     assert launched.path.exists()
     assert 'Cannot prepare worktree removal command' in capsys.readouterr().err
