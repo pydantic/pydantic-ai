@@ -10683,7 +10683,7 @@ async def test_capability_availability_delta_stream_matches_dumped_activity_mess
     policy = Capability[None](
         id='policy', description='Refund policy.', instructions='Refunds take 5 days.', defer_loading=True
     )
-    agent = Agent(FunctionModel(stream_function=stream_function), capabilities=[policy])
+    agent = Agent(FunctionModel(stream_function=stream_function), deps_type=type(None), capabilities=[policy])
 
     @agent.tool
     def open_case(ctx: RunContext[None]) -> str:

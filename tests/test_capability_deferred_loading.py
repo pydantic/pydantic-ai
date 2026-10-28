@@ -3693,4 +3693,4 @@ async def test_load_capability_after_the_run_ended_raises() -> None:
     await agent.run('Was I refunded?')
 
     with pytest.raises(UserError, match='is not available because the agent run has ended'):
-        await stored[0].load_capability('refunds')
+        stored[0].load_capability('refunds')
