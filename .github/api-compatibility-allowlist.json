@@ -377,6 +377,12 @@
       "fingerprint": "c2655ed50f60d9b53296c110ea2267134651aa29c6bfa49d4beb7ffcceede410",
       "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `forks=forks`.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11334"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "d5285492ca23af2008b3177a6cef38cb5bdc1cefe293b8e3812dcb4f3ad229ae",
+      "reason": "False positive: `Agent.system_prompt(dynamic=...)` now defaults to `None` so that `on_change='append'` can imply `dynamic=True` while an explicit `dynamic=False` still raises. Without `on_change='append'`, `None` behaves exactly like the old default `False`, so every existing call is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11445"
     }
   ],
   "model_name_literals": [
