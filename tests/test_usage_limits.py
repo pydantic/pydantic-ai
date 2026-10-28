@@ -346,6 +346,29 @@ async def test_multi_agent_usage_no_incr():
     }
 
 
+def test_usage_opentelemetry_attributes_cache_write_name_follows_the_version():
+    """Version 7 reports cache-write tokens under the current GenAI convention name.
+
+    The registry renamed `cache_creation` to `cache_write` (semantic-conventions-genai#440). Versions 5
+    and 6 keep the retired name so an existing telemetry pipeline does not silently lose the series;
+    version 7 emits the current one. Either way the count stays reachable as `details.cache_write_tokens`.
+    """
+    usage = RequestUsage(input_tokens=100, output_tokens=50, cache_write_tokens=7, cache_read_tokens=3)
+
+    for version in (5, 6):
+        attributes = usage.opentelemetry_attributes(version=version)
+        assert attributes['gen_ai.usage.cache_creation.input_tokens'] == 7, version
+        assert 'gen_ai.usage.cache_write.input_tokens' not in attributes, version
+
+    attributes = usage.opentelemetry_attributes(version=7)
+    assert attributes['gen_ai.usage.cache_write.input_tokens'] == 7
+    assert 'gen_ai.usage.cache_creation.input_tokens' not in attributes
+    # the read side was not renamed in any version
+    assert attributes['gen_ai.usage.cache_read.input_tokens'] == 3
+    # the old key stays available under `details` for every version
+    assert attributes['gen_ai.usage.details.cache_write_tokens'] == 7
+
+
 def test_usage_opentelemetry_attributes_include_zero_details():
     """A zero-valued detail is a real measurement and must survive the OTel mapping.
 

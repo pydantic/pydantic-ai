@@ -488,8 +488,11 @@ def test_safe_to_json_falls_back_on_lone_surrogates():
 
 
 def test_instrumentation_settings_rejects_removed_version():
-    with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, 5, or 6'):
+    with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, 5, 6, or 7'):
         InstrumentationSettings(version=1)  # pyright: ignore[reportArgumentType]
+
+    with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, 5, 6, or 7'):
+        InstrumentationSettings(version=8)  # pyright: ignore[reportArgumentType]
 
 
 @pytest.mark.parametrize('version', [2, 3, 4])

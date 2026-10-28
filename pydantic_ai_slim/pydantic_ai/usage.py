@@ -15,6 +15,7 @@ from pydantic_core import SchemaSerializer, core_schema
 from . import _utils
 from ._gateway_cost import gateway_reported_cost
 from ._genai_prices import iter_provider_references
+from ._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from ._warnings import CostNotFoundWarning, UsageExtractionFailedWarning, UsageLimitUnavailableWarning
 from .exceptions import UsageLimitExceeded
 
@@ -246,8 +247,15 @@ class UsageBase:
         """
         return self.cache_read_tokens / self.input_tokens if self.input_tokens else 0.0
 
-    def opentelemetry_attributes(self) -> dict[str, int]:
-        """Get the token usage values as OpenTelemetry attributes."""
+    def opentelemetry_attributes(self, version: int = DEFAULT_INSTRUMENTATION_VERSION) -> dict[str, int]:
+        """Get the token usage values as OpenTelemetry attributes.
+
+        Args:
+            version: The instrumentation format version, which decides which names the attributes use.
+                Version 7 renames the cache-write token attribute to the name the current
+                [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
+                use; earlier versions keep emitting the older name.
+        """
         result: dict[str, int] = {}
         if self.input_tokens:
             result['gen_ai.usage.input_tokens'] = self.input_tokens
@@ -256,7 +264,13 @@ class UsageBase:
 
         details = self.details.copy()
         if self.cache_write_tokens:
-            result['gen_ai.usage.cache_creation.input_tokens'] = self.cache_write_tokens
+            # The registry renamed `cache_creation` to `cache_write`
+            # (semantic-conventions-genai#440). Version 7 follows the rename; earlier versions keep
+            # the old name so an existing telemetry pipeline does not silently lose the series.
+            cache_write_key = (
+                'gen_ai.usage.cache_write.input_tokens' if version >= 7 else 'gen_ai.usage.cache_creation.input_tokens'
+            )
+            result[cache_write_key] = self.cache_write_tokens
             # For backwards compat
             details['cache_write_tokens'] = self.cache_write_tokens
         if self.cache_read_tokens:

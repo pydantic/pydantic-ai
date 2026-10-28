@@ -87,7 +87,7 @@ class InstrumentationSettings:
     include_binary_content: bool = True
     include_content: bool = True
     include_model_request_parameters: bool = True
-    version: Literal[2, 3, 4, 5, 6] = DEFAULT_INSTRUMENTATION_VERSION
+    version: Literal[2, 3, 4, 5, 6, 7] = DEFAULT_INSTRUMENTATION_VERSION
     use_aggregated_usage_attribute_names: bool = True
 
     def __init__(
@@ -98,7 +98,7 @@ class InstrumentationSettings:
         include_binary_content: bool = True,
         include_content: bool = True,
         include_model_request_parameters: bool = True,
-        version: Literal[2, 3, 4, 5, 6] = DEFAULT_INSTRUMENTATION_VERSION,
+        version: Literal[2, 3, 4, 5, 6, 7] = DEFAULT_INSTRUMENTATION_VERSION,
         use_aggregated_usage_attribute_names: bool = True,
     ):
         """Create instrumentation options.
@@ -146,6 +146,11 @@ class InstrumentationSettings:
                     that answers no tool call moves from `role='user'` to `role='system'`, the voice it
                     reaches the model in. Opt in to it when your telemetry consumer keys on the message
                     role; it is not the default.
+                Version 7 is the same as version 6, but the cache-write token count is reported as
+                    `gen_ai.usage.cache_write.input_tokens`, the name the current GenAI semantic
+                    conventions use, instead of the retired `gen_ai.usage.cache_creation.input_tokens`.
+                    Opt in to it when your telemetry consumer reads the current name; version 5 and 6
+                    keep the old one so an existing pipeline does not lose the series.
             use_aggregated_usage_attribute_names: Whether to use `gen_ai.aggregated_usage.*` attribute names
                 for token usage on agent run spans instead of the standard `gen_ai.usage.*` names.
                 Defaults to True to prevent double-counting in observability backends that aggregate span
@@ -164,8 +169,8 @@ class InstrumentationSettings:
         self.include_content = include_content
         self.include_model_request_parameters = include_model_request_parameters
 
-        if version not in (2, 3, 4, 5, 6):
-            raise ValueError('Instrumentation version must be one of 2, 3, 4, 5, or 6.')
+        if version not in (2, 3, 4, 5, 6, 7):
+            raise ValueError('Instrumentation version must be one of 2, 3, 4, 5, 6, or 7.')
         # TODO(v3): remove instrumentation format versions 2, 3, and 4
         # TODO(v3): default to instrumentation format version 6
         if version in (2, 3, 4):
@@ -343,7 +348,7 @@ class InstrumentationSettings:
         against the per-request `chat` spans' `gen_ai.usage.*`. Shared by the classic agent-run span (the
         `Instrumentation` capability) and the realtime session span so the two can't drift.
         """
-        attributes = usage.opentelemetry_attributes()
+        attributes = usage.opentelemetry_attributes(version=self.version)
         if not self.use_aggregated_usage_attribute_names:
             return attributes
         return {key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): value for key, value in attributes.items()}

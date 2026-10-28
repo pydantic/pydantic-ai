@@ -329,6 +329,8 @@ Versions 2, 3, and 4 are deprecated compatibility formats. Passing one of these 
 
 Version 6 is opt-in: it changes the role of messages you already receive, so pass it explicitly once your telemetry consumer is ready for the new role.
 
+Version 7 is opt-in as well: it reports the cache-write token count as `gen_ai.usage.cache_write.input_tokens`, the name the current GenAI semantic conventions use, instead of the retired `gen_ai.usage.cache_creation.input_tokens`. Versions 5 and 6 keep emitting the older name, so a dashboard querying it does not lose its series when you upgrade.
+
 #### Version 2 (deprecated)
 
 Uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:

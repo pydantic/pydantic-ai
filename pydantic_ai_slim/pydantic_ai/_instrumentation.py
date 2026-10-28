@@ -772,6 +772,7 @@ def response_attributes(
     response: ModelResponse,
     response_model: AttributeValue | None,
     price_calculation: PriceCalculation | None = None,
+    version: int = DEFAULT_INSTRUMENTATION_VERSION,
 ) -> dict[str, AttributeValue]:
     """Build the `gen_ai.response.*`, usage, and cost span attributes for a completed response.
 
@@ -780,7 +781,7 @@ def response_attributes(
     `response_model` is set only when known (always the case for a classic request; a realtime
     session may not know its model name).
     """
-    attributes: dict[str, AttributeValue] = {**response.usage.opentelemetry_attributes()}
+    attributes: dict[str, AttributeValue] = {**response.usage.opentelemetry_attributes(version=version)}
     if response_model is not None:
         attributes['gen_ai.response.model'] = response_model
     if (cost := response_cost(response, price_calculation)) is not None:
@@ -1045,7 +1046,9 @@ def open_model_request_span(
                     message_json_cache=message_json_cache,
                 )
 
-                attributes_to_set = response_attributes(accounted_response, response_model, price_calculation)
+                attributes_to_set = response_attributes(
+                    accounted_response, response_model, price_calculation, version=settings.version
+                )
                 if time_to_first_chunk is not None:
                     attributes_to_set['gen_ai.client.operation.time_to_first_chunk'] = time_to_first_chunk
                 span.set_attributes(attributes_to_set)
