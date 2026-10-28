@@ -1052,10 +1052,10 @@ async def test_a_result_built_outside_a_run_explains_that_no_workspace_is_attach
 
     with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached') as exc_info:
         await result.workspace.run(['true'])
-    # A bare `WorkspaceRef` is refused without a capability to resolve it, so the hint names one.
-    assert 'with a capability that can reconnect to an existing environment, pass its `WorkspaceRef`' in str(
-        exc_info.value
-    )
+    # Durable engines refuse a live backend on the run, so the hint leads with the capability and says so.
+    message = str(exc_info.value)
+    assert message.index("capabilities=[LocalWorkspace('.')]") < message.index("workspace=LocalWorkspaceBackend('.')")
+    assert 'under a durable engine, attach the capability when the agent is constructed' in message
 
 
 class ProviderWorkspaceCapability(AbstractCapability[Any]):
