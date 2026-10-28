@@ -644,7 +644,7 @@ _APPEND_INSTRUCTIONS = (
 _LOADED_INSTRUCTIONS = (
     "a loaded capability's instructions are stated as an `InstructionDeltaPart`, system voice the adapter strips "
     'from client history, so the next request states them again after its last message instead of after the load; '
-    "a model's `load_capability` call shows the same; no issue yet"
+    "a model's `load_capability` call shows the same; #11771"
 )
 _FEEDBACK_NOT_STREAMED = (
     "retry feedback (`RetryFeedbackPart`) isn't streamed, so the client keeps the rejected and the accepted "
