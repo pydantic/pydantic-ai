@@ -253,7 +253,7 @@ class RetryModelRequest(Exception):
                 raise error
             if request_context.attempt == 1:
                 raise RetryModelRequest()  # the same model again
-            raise RetryModelRequest('anthropic:claude-fable-5')  # a different model
+            raise RetryModelRequest('anthropic:claude-fable-5-1')  # a different model
     ```
 
     Each attempt re-runs
@@ -334,6 +334,9 @@ class AgentRunError(RuntimeError):
     def __str__(self) -> str:
         return self.message
 
+
+_ATTACHED_ATTR_PREFIX = '_pydantic_ai_'
+"""The prefix of the attributes Pydantic AI attaches to an exception it passes on."""
 
 _RUN_CANCELLED_ATTR = '_pydantic_ai_run_cancelled'
 
@@ -685,6 +688,10 @@ class ModelAPIError(AgentRunError):
             'provider_error_type': self.provider_error_type,
             'retry_after': self.retry_after,
             'in_stream': self.in_stream,
+            # What Pydantic AI attached to the error on its way, like the attempts a `FallbackModel` made before it
+            # or what a stream produced before it, so a durable engine that records the error by pickling it, like
+            # DBOS, raises it on replay as it was raised.
+            **{key: value for key, value in vars(self).items() if key.startswith(_ATTACHED_ATTR_PREFIX)},
         }
 
 

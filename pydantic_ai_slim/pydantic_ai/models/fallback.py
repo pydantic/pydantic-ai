@@ -36,7 +36,11 @@ from .._fallback import (
 )
 from .._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from ..exceptions import ModelAPIError
-from ..messages import ModelResponse, ModelResponsePart
+from ..messages import (
+    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
+    ModelResponse,
+    ModelResponsePart,
+)
 from ..profiles import ModelProfile
 from ..settings import merge_model_settings
 from . import (
@@ -64,7 +68,6 @@ if TYPE_CHECKING:
 # `ModelFallback` capability, and `from pydantic_ai.models.fallback import ...` must keep working.
 __all__ = 'FallbackModel', 'FallbackOn', 'ExceptionHandler', 'ResponseHandler', 'ResponseRejected'
 
-_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 # Must match `_continuation._REPLACE_PREVIOUS_RESPONSE_KEY`: the merge module reads this exact key
 # (under `__pydantic_ai__`) to fold a post-rewind response as a replace. Duplicated as a literal rather
 # than imported because that constant is module-private (importing it trips `reportPrivateUsage`).
@@ -603,7 +606,15 @@ class FallbackModel(Model):
         # Only under the `chat` span instrumentation opened for this request, and on its tracer provider.
         span = self._fallback_span()
         policy = open_request_policy() if span else None
-        chain.log.record(model, failure, start, parent=span, tracer=policy.tracer if policy else None)
+        chain.log.record(
+            model,
+            failure,
+            start,
+            parent=span,
+            tracer=policy.tracer if policy else None,
+            # Only a `fallback_on` response handler rejects a response here, unlike in the agent's attempt loop.
+            rejected_status='Response rejected by a `fallback_on` response handler',
+        )
 
 
 def _pinned_request_deadline(

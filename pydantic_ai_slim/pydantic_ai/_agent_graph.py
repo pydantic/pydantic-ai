@@ -3300,7 +3300,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                 )
                 opened = sr
-                if ctx.deps.root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
+                if ctx.deps.root_capability._handles_model_request_error(run_context, request_context):  # pyright: ignore[reportPrivateUsage]
                     # Only worth opening early when a hook can act on a failure to open: otherwise the
                     # stream keeps opening lazily, once the consumer starts iterating it.
                     outcome: asyncio.Future[Exception | None] = asyncio.get_running_loop().create_future()
@@ -3461,7 +3461,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             request_context._usage_response_ledger.attempts.extend(error.attempts)  # pyright: ignore[reportPrivateUsage]
         root_capability = ctx.deps.root_capability
         try:
-            if not root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
+            if not root_capability._handles_model_request_error(run_context, request_context):  # pyright: ignore[reportPrivateUsage]
                 raise error
             return await root_capability.on_model_request_error(
                 run_context, request_context=request_context, error=error

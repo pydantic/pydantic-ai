@@ -1163,6 +1163,8 @@ A [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] override may 
 
 An operation can also be called from a tool the capability contributes. Where the engine already runs the tool in its own activity, step, or task, as Temporal, Prefect, and AWS Lambda do, the operation runs directly inside it, under that unit's timeout, retry, and cache configuration rather than its own, since that unit records the result. Where the tool runs in workflow code, as function tools do under DBOS, the operation is its own unit. Either way the work is recorded once, so a capability whose tools do I/O can route that I/O through an operation and stay durable on every engine.
 
+A `prepare_model_request`, `after_model_request` or `on_model_request_error` hook that runs as a durable operation can still raise [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] to ask for another attempt. The model to attempt has to be named by a string, such as a model registered with the durability capability's `models`, since a model instance can't cross the durable boundary.
+
 Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
 
 Keep a capability's `id` stable once runs that use it are deployed, including the default `id` of one you did not write: Harness capabilities that record their tool requests, such as [`ExaSearch`](../harness/exa-search.md), name those records after their `id`.

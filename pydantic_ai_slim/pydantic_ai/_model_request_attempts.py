@@ -108,8 +108,12 @@ def record_attempt_span(
     index: int,
     parent: Span,
     tracer: Tracer,
+    rejected_status: str = 'Response rejected',
 ) -> None:
     """Record a failed attempt as an ERROR child span of `parent`, the request's `chat` span.
+
+    `rejected_status` is the span's status description when `failure` is a rejected response, which says what
+    rejected it where that's known.
 
     The `chat` span keeps its own outcome, that of the model that answered, the way a failed tool call
     gets its own ERROR span under an agent run that goes on to succeed. The span is only opened once
@@ -140,7 +144,7 @@ def record_attempt_span(
                 record_exception(span, failure, include_content=include_content)
                 set_error_status(span, failure, include_content=include_content)
             else:
-                span.set_status(Status(StatusCode.ERROR, 'Response rejected'))
+                span.set_status(Status(StatusCode.ERROR, rejected_status))
         finally:
             span.end(start_time + round(attempt.duration.total_seconds() * 1e9))
 
