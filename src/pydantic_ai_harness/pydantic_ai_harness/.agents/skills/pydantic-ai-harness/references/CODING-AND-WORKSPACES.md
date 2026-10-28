@@ -166,9 +166,13 @@ Tool arguments (scripted tests need them; `expected_hash` exists only with `cont
 `find_files(pattern, path='.')`, `create_directory(path)`, `file_info(path)`; `list_files` and `grep`
 as under Coder.
 
-`read_file` returns `[header, BinaryContent]` for a PNG, JPEG, GIF, WebP or PDF up to 5 MB (detected
-from its leading bytes, not its extension), and a text description (size, media type, and for other
-binary files the first 64 bytes in hex) for any other binary file; text files come back as a string.
+`read_file` returns `[header, BinaryContent]` up to 5 MB for an image (PNG, JPEG, GIF, WebP), PDF,
+Word or Excel document, audio file (WAV, MP3, OGG, FLAC, AIFF, AAC) or video (MP4, QuickTime, WebM,
+Matroska, FLV, MPEG, WMV, 3GP), detected from its leading bytes, not its extension. A legacy `.doc` or
+`.xls` is the exception: Word and Excel share its container, so the extension says which. A model whose
+profile says it can't take that kind of file gets a note in its place, or a description when
+`FileUnderstanding` is on the agent. Any other binary file gets a text description (size, media type
+and the first 64 bytes in hex); text files come back as a string.
 A file over 64 MiB is described by its size instead of read: find the lines with `search_files` or `grep`.
 
 `read_file` has the tool kind `READ_FILE_KIND` (`file_system.read_file`). `ToolOutputLimits`'

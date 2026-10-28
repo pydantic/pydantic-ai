@@ -729,8 +729,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     ) -> str | list[str | BinaryContent]:
         """Read a file in `workspace` directly, outside an agent run.
 
-        A file `sniff_media_type` recognizes (an image, PDF, office document, audio or
-        video) comes back as its header followed by a `BinaryContent`; everything else is text.
+        An image, PDF, Word or Excel document, audio file or video, recognized by its
+        leading bytes, comes back as its header followed by a `BinaryContent`; everything
+        else is text.
         """
         return await self._read_file(await self._scope(workspace), None, path, offset=offset, limit=limit)
 

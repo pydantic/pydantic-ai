@@ -867,8 +867,7 @@ class TestReadFile:
     )
     async def test_a_container_no_media_type_names_is_described(self, tmp_path: Path, data: bytes) -> None:
         # A plain or broken ZIP is no office document, HEIC and AVIF photos aren't video, MPEG-4 audio has no
-        # `AudioMediaType`, and a stray 0xFF is no
-        # audio frame.
+        # `AudioMediaType`, and a stray 0xFF is no audio frame.
         (tmp_path / 'blob').write_bytes(data)
         result = await _unhashed_toolset().read_file('blob', workspace=LocalWorkspaceBackend(tmp_path))
         assert isinstance(result, str)

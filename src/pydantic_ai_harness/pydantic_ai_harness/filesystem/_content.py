@@ -83,7 +83,7 @@ _HEX_PREVIEW_BYTES = 64
 """Leading bytes of a non-media binary file shown as hex."""
 
 
-def sniff_media_type(data: bytes, path: str = '') -> str | None:
+def sniff_media_type(data: bytes, path: str) -> str | None:
     """The media type of a file `BinaryContent` can send, read from its leading bytes.
 
     Images, PDFs, office documents, audio and video are returned as files. A model
