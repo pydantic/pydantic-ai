@@ -17,12 +17,6 @@ on:
   workflow_run: # zizmor: ignore[dangerous-triggers] -- no artifacts or upstream code are consumed; reevaluates live metadata
     workflows: [PR Bots, PR Gates Events]
     types: [completed]
-  workflow_dispatch:
-    inputs:
-      pull_request_number:
-        description: Pull request to reevaluate
-        required: true
-        type: number
   # A required check has to report on the merge group's commit, or the queue stalls. The gate
   # judges the PR's own diff and labels, settled on its head before it could be enqueued, so it
   # skips here, and a job skipped by `if:` reports success.
@@ -63,8 +57,6 @@ jobs:
     name: Resolve review gate target
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: read
     outputs:
       number: ${{ steps.target.outputs.number }}
       head: ${{ steps.target.outputs.head }}
@@ -72,8 +64,6 @@ jobs:
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         id: target
-        env:
-          INPUT_NUMBER: ${{ inputs.pull_request_number }}
         with:
           script: |
             if (context.eventName === 'merge_group') {
@@ -99,11 +89,10 @@ jobs:
               core.setOutput('head', match[3]);
               return;
             } else {
-              number = context.payload.pull_request?.number ?? Number(process.env.INPUT_NUMBER);
+              number = context.payload.pull_request.number;
             }
             if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid PR number');
-            const pull = context.payload.pull_request ??
-              (await github.rest.pulls.get({...context.repo, pull_number: number})).data;
+            const pull = context.payload.pull_request;
             core.setOutput('number', number);
             core.setOutput('head', pull.head.sha);
 

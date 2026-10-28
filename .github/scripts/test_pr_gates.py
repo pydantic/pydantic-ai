@@ -158,7 +158,6 @@ def test_the_workflow_runs_every_gate_on_every_pr_event_and_skips_only_the_merge
         'pull_request',
         'pull_request_target',
         'workflow_run',
-        'workflow_dispatch',
         'merge_group',
     }
     assert workflow.on['pull_request'].paths is None

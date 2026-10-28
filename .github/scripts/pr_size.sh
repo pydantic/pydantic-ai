@@ -22,7 +22,7 @@ DOCS=$(jq '[.[] | select(
   (.filename != "uv.lock") and (.filename | contains("/cassettes/") | not)
 ) | .additions + .deletions] | add // 0' <<<"$FILES")
 TESTS=$(jq '[.[] | select(
-  (.filename | startswith("tests/")) and (.filename | endswith(".md") | not) and
+  (.filename | startswith("tests/")) and
   (.filename | contains("/cassettes/") | not)
 ) | .additions + .deletions] | add // 0' <<<"$FILES")
 SCORE=$((CODE + DOCS / 2 + TESTS / 2))

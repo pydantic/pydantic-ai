@@ -218,7 +218,8 @@ dismissal in the ruleset to enforce human freshness when the diff changes.
 including forks. Its completion wakes a privileged `workflow_run`; its title supplies only a PR
 number, never a verdict. PR Bots completion also wakes the gate because `GITHUB_TOKEN` writes do
 not trigger review or label workflows. Fork observer runs may require contributor approval.
-Dispatch `PR Gates` with a PR number to retry after an API failure or delayed observer.
+Rerun an existing default-branch `PR Gates` run to retry after an API failure or delayed observer.
+Do not add branch-selectable dispatch to this privileged workflow.
 
 Serialize publication per PR with `queue: max`. Re-read live head, labels and reviews before
 publishing; API errors or incomplete file pagination fail closed. The two review contexts are
