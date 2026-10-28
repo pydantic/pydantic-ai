@@ -54,7 +54,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     dump,
     history_items,
 )
-from pydantic_clai2.builtin_plugins.web.sidebar import busy_elsewhere, session_entry, worktrees
+from pydantic_clai2.builtin_plugins.web.sidebar import session_entry, worktrees
 from pydantic_clai2.builtin_plugins.web.workers import task_entry
 from pydantic_clai2.builtin_plugins.web.workspaces import checkouts
 from pydantic_clai2.cli.self_update import installed
@@ -85,6 +85,7 @@ from pydantic_clai2.runtime.project_identity import (
     project_identity,
     worktree_roots,
 )
+from pydantic_clai2.runtime.session import busy_elsewhere
 from pydantic_clai2.runtime.session_workspace import workspace_directory
 from pydantic_clai2.runtime.task_prompts import is_task_prompt
 
@@ -683,12 +684,24 @@ class WebService:
         places = placements(entries, identities=self._identities)
         here = places[workspace]
         default = self.default().id
+        saved_in = {entry.workspace for entry in entries}
+        follows = self.catalog.follows_workspace
+        # Whether each opens may check its folder, off the event loop; what is live here is read before, on it.
+        openable = await to_thread.run_sync(
+            lambda: {folder: continuable(folder, here=workspace, follows=follows) for folder in saved_in}
+        )
         grouped: dict[str, dict[str, tuple[ProjectIdentity, list[SessionEntry]]]] = {}
         for entry in entries:
             identity = places[entry.workspace]
             _, sessions = grouped.setdefault(identity.key, {}).setdefault(identity.root, (identity, []))
             sessions.append(
-                session_entry(entry, live=live.get(entry.id), busy=entry.id in busy, current=entry.id == default)
+                session_entry(
+                    entry,
+                    live=live.get(entry.id),
+                    busy=entry.id in busy,
+                    current=entry.id == default,
+                    openable=openable[entry.workspace],
+                )
             )
         for folder in empty:
             if not (identity := places[folder]).missing:
@@ -705,28 +718,25 @@ class WebService:
         return sorted(projects, key=lambda project: (not project.current, project.key == MISSING))
 
     async def transcript(self, conversation_id: str) -> Transcript:
+        """A saved session to show; one another CLAI runs is only shown, so opening it is the user's choice to fork it."""
         saved = await self.catalog.saved(conversation_id)
-        openable = self._continuable(saved.summary.workspace)
+        continuable = self._continuable(saved.summary.workspace)
+        busy = continuable and await to_thread.run_sync(busy_elsewhere, saved.summary)
         return Transcript(
             id=saved.summary.id,
             title=saved.summary.title,
             workspace=saved.summary.workspace,
             items=history_items(saved.messages),
-            openable=openable,
-            missing=self.catalog.follows_workspace and not openable,
+            openable=continuable and not busy,
+            missing=self.catalog.follows_workspace and not continuable,
+            owner_pid=saved.summary.owner_pid if busy else None,
         )
 
     def _continuable(self, workspace: str) -> bool:
         """Whether a session saved in `workspace` can be opened: here, or there while CLAI follows sessions."""
-        if workspace == str(self.default().session.workspace):
-            return True
-        if not self.catalog.follows_workspace:
-            return False
-        try:
-            workspace_directory(workspace)
-        except ValueError:
-            return False
-        return True
+        return continuable(
+            workspace, here=str(self.default().session.workspace), follows=self.catalog.follows_workspace
+        )
 
     async def rename(self, conversation_id: str, title: str) -> None:
         await self.catalog.rename(conversation_id, title)
@@ -749,6 +759,34 @@ class WebService:
         catalog = self.catalog
         await (catalog.archive(conversation_id) if archived else catalog.unarchive(conversation_id))
         self.hub.publish(SessionsChanged())
+
+    async def archive_all(self, ids: Sequence[str]) -> None:
+        """Archive several sessions, such as a worktree's; any refused are named once the others are archived."""
+        catalog = self.catalog
+        unique = list(dict.fromkeys(ids))
+        refused: list[str] = []
+        for conversation_id in unique:
+            try:
+                await catalog.archive(conversation_id)
+            except (LookupError, ValueError) as exc:
+                refused.append(f'{conversation_id!r}: {exc}')
+        if len(refused) < len(unique):
+            self.hub.publish(SessionsChanged())
+        if refused:
+            raise ValueError(f'Archived {len(unique) - len(refused)} of {len(unique)} sessions. ' + ' '.join(refused))
+
+
+def continuable(workspace: str, *, here: str, follows: bool) -> bool:
+    """Whether a session saved in `workspace` can be opened from a session in `here`, which may stat its folder."""
+    if workspace == here:
+        return True
+    if not follows:
+        return False
+    try:
+        workspace_directory(workspace)
+    except ValueError:
+        return False
+    return True
 
 
 async def _view(panel: SidePanel) -> PanelView:
