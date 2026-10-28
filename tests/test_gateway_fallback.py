@@ -11,7 +11,7 @@ import json
 from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import httpx2
@@ -494,24 +494,31 @@ def test_the_next_provider_is_created_once_per_format():
 
 
 @contextmanager
-def converse_responses(model: BedrockConverseModel, seen: list[dict[str, str]]) -> Generator[None]:
-    """Answer Converse requests without sending them, recording the headers of the request that would go out."""
+def converse_responses(
+    model: BedrockConverseModel,
+    seen: list[dict[str, str]],
+    *,
+    operation: Literal['Converse', 'ConverseStream'] = 'Converse',
+    status: int = 200,
+    body: dict[str, Any] | None = None,
+) -> Generator[None]:
+    """Answer `operation` requests without sending them, recording the headers of the request that would go out."""
 
     def send(request: Any, **_: Any) -> AWSResponse:
         seen.append(
             {name.lower(): _text(value) for name, value in request.headers.items() if 'fallback' in name.lower()}
         )
-        body = {
+        headers = HTTPHeaders()
+        headers['content-type'] = 'application/json'
+        response = body or {
             'output': {'message': {'role': 'assistant', 'content': [{'text': 'Hello from Converse'}]}},
             'stopReason': 'end_turn',
             'usage': {'inputTokens': 10, 'outputTokens': 5, 'totalTokens': 15},
             'metrics': {'latencyMs': 1},
         }
-        headers = HTTPHeaders()
-        headers['content-type'] = 'application/json'
-        return AWSResponse(request.url, 200, headers, _RawBody(json.dumps(body).encode()))
+        return AWSResponse(request.url, status, headers, _RawBody(json.dumps(response).encode()))
 
-    event = 'before-send.bedrock-runtime.Converse'
+    event = f'before-send.bedrock-runtime.{operation}'
     # botocore sends the response a `before-send` handler returns instead of the request, though the stubs type every
     # handler as returning `None`.
     model.client.meta.events.register_last(event, send)  # pyright: ignore[reportArgumentType]
@@ -554,25 +561,12 @@ async def test_converse_stream_requests_advertise_too(allow_model_requests: None
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=provider)
     seen: list[dict[str, str]] = []
 
-    def send(request: Any, **_: Any) -> AWSResponse:
-        seen.append(
-            {name.lower(): _text(value) for name, value in request.headers.items() if 'fallback' in name.lower()}
-        )
-        headers = HTTPHeaders()
-        headers['content-type'] = 'application/json'
-        error = {'__type': 'ValidationException', 'message': 'Stopped by the test after recording the headers'}
-        return AWSResponse(request.url, 400, headers, _RawBody(json.dumps(error).encode()))
+    error = {'__type': 'ValidationException', 'message': 'Stopped by the test after recording the headers'}
 
-    event = 'before-send.bedrock-runtime.ConverseStream'
-    # botocore sends the response a `before-send` handler returns instead of the request, though the stubs type every
-    # handler as returning `None`.
-    model.client.meta.events.register_last(event, send)  # pyright: ignore[reportArgumentType]
-    try:
+    with converse_responses(model, seen, operation='ConverseStream', status=400, body=error):
         with pytest.raises(ModelHTTPError):
             async with Agent(model).run_stream('Hello') as result:
                 await result.get_output()  # pragma: no cover
-    finally:
-        model.client.meta.events.unregister(event, send)  # pyright: ignore[reportArgumentType]
 
     assert seen == [ADVERTISED]
 
