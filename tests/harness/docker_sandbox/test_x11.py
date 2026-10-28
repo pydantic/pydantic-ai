@@ -27,7 +27,11 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceUnsupportedActionError,
 )
-from pydantic_ai_harness.docker_sandbox._x11 import X11Computer, _keysym  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_harness.docker_sandbox._x11 import (
+    _PRESS_MAPPED,  # pyright: ignore[reportPrivateUsage]
+    X11Computer,
+    _keysym,  # pyright: ignore[reportPrivateUsage]
+)
 
 from ...workspace_fakes import FAKE_SCREENSHOT
 
@@ -100,7 +104,10 @@ class BlockingCommands(ScriptedCommands):
             ['xdotool', 'mousemove', '7', '8', 'click', '--repeat', '3', '--delay', '20', '5'],
         ),
         (Scroll(direction='up', amount=2), ['xdotool', 'click', '--repeat', '2', '--delay', '20', '4']),
-        (TypeText(text='-n "hi"'), ['xdotool', 'type', '--', '-n "hi"']),
+        (
+            TypeText(text='-n "hi"'),
+            ['xdotool', 'key', '--delay', '12', '--', 'U002D', 'U006E', 'U0020', 'U0022', 'U0068', 'U0069', 'U0022'],
+        ),
         (PressKeys(keys=('ctrl', 's'), repeat=3), ['xdotool', 'key', '--repeat', '3', '--', 'ctrl+s']),
         (PressKeys(keys=('PageDown', 'F5', 'ArrowUp')), ['xdotool', 'key', '--repeat', '1', '--', 'Next+F5+Up']),
         (PressKeys(keys=('shift', 'XF86AudioMute')), ['xdotool', 'key', '--repeat', '1', '--', 'shift+XF86AudioMute']),
@@ -109,6 +116,9 @@ class BlockingCommands(ScriptedCommands):
             ['xdotool', 'key', '--repeat', '1', '--', 'Print+Caps_Lock+KP_Enter'],
         ),
         (PressKeys(keys=('ctrl', '+')), ['xdotool', 'key', '--repeat', '1', '--', 'ctrl+plus']),
+        # A character key presses what the layout needs to type it: xdotool adds shift for `?`.
+        (PressKeys(keys=('ctrl', '?')), ['xdotool', 'key', '--repeat', '1', '--', 'ctrl+U003F']),
+        (PressKeys(keys=('@',)), ['xdotool', 'key', '--repeat', '1', '--', 'U0040']),
         (HoldKeys(keys=('shift',), seconds=0.5), ['xdotool', 'keydown', 'shift', 'sleep', '0.5', 'keyup', 'shift']),
     ],
 )
@@ -118,28 +128,28 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: Computer
     assert commands.calls == [(argv, False, {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'})]
 
 
-async def test_x11_computer_presses_enter_for_each_newline_in_typed_text() -> None:
+async def test_x11_computer_presses_enter_and_tab_for_newlines_and_tabs_in_typed_text() -> None:
     commands = ScriptedCommands()
-    await X11Computer(commands).act(TypeText(text='ls\n\nexit\n'))
-    assert commands.argvs == [
-        ['xdotool', 'type', '--', 'ls'],
-        ['xdotool', 'key', 'Return'],
-        ['xdotool', 'key', 'Return'],
-        ['xdotool', 'type', '--', 'exit'],
-        ['xdotool', 'key', 'Return'],
-    ]
+    await X11Computer(commands).act(TypeText(text='l\n\tx\n'))
+    assert commands.argvs == [['xdotool', 'key', '--delay', '12', '--', 'U006C', 'Return', 'Tab', 'U0078', 'Return']]
 
 
-async def test_x11_computer_maps_characters_outside_ascii_to_keys_before_pressing_them() -> None:
+async def test_x11_computer_types_mixed_text_in_one_command_mapping_each_character_outside_ascii_once() -> None:
     commands = ScriptedCommands()
-    await X11Computer(commands).act(TypeText(text='Zoë 日本日 ok'))
-    # Each distinct character of a run is mapped to a key once, then the run is pressed in order.
-    assert [argv if argv[0] == 'xdotool' else argv[3:] for argv in commands.argvs] == [
-        ['xdotool', 'type', '--', 'Zo'],
-        ['sh', 'U00EB', '--', 'U00EB'],
-        ['xdotool', 'type', '--', ' '],
-        ['sh', 'U65E5', 'U672C', '--', 'U65E5', 'U672C', 'U65E5'],
-        ['xdotool', 'type', '--', ' ok'],
+    await X11Computer(commands).act(TypeText(text='Zoë 日本日 é'))
+    ((sh, _, script, _, *args),) = commands.argvs
+    assert (sh, script) == ('sh', _PRESS_MAPPED)
+    # The characters to map, then `xdotool key`'s arguments: the whole text, ASCII included.
+    assert args == ['U00EB', 'U65E5', 'U672C', 'U00E9', '--', '--delay', '12', '--'] + [
+        'U005A',
+        'U006F',
+        'U00EB',
+        'U0020',
+        'U65E5',
+        'U672C',
+        'U65E5',
+        'U0020',
+        'U00E9',
     ]
 
 
@@ -148,8 +158,14 @@ async def test_x11_computer_maps_at_most_50_characters_a_command() -> None:
     text = ''.join(chr(0x4E00 + n) for n in range(51))
     await X11Computer(commands).act(TypeText(text=text))
     first, second = commands.argvs
-    assert first[first.index('--') + 1 :] == [f'U{0x4E00 + n:04X}' for n in range(50)]
-    assert second[4:] == ['U4E32', '--', 'U4E32']
+    assert first[4 : first.index('--')] == [f'U{0x4E00 + n:04X}' for n in range(50)]
+    assert second[4:] == ['U4E32', '--', '--delay', '12', '--', 'U4E32']
+
+
+async def test_x11_computer_maps_a_character_key_outside_ascii_before_pressing_it() -> None:
+    commands = ScriptedCommands()
+    await X11Computer(commands).act(PressKeys(keys=('ctrl', 'é')))
+    assert commands.argvs[0][4:] == ['U00E9', '--', '--repeat', '1', '--', 'ctrl+U00E9']
 
 
 @pytest.mark.parametrize(
@@ -179,6 +195,8 @@ def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(key: str)
             [['xdotool', 'mouseup', '1', 'keyup', 'alt']],
         ),
         (PressKeys(keys=('ctrl', 's'), repeat=3), [['xdotool', 'keyup', 's', 'ctrl']]),
+        # Typing can stop between a key's press and release; X would then repeat the key without end.
+        (TypeText(text='Yay'), [['xdotool', 'keyup', 'Shift_L', 'ISO_Level3_Shift', 'U0059', 'U0061', 'U0079']]),
         (Click(x=1, y=2), []),
     ],
 )
@@ -201,6 +219,25 @@ async def test_x11_computer_releases_held_keys_when_cancelled() -> None:
         ['xdotool', 'keydown', 'shift', 'sleep', '5.0', 'keyup', 'shift'],
         ['xdotool', 'keyup', 'shift'],
     ]
+
+
+async def test_x11_computer_releases_typed_keys_when_cancelled() -> None:
+    commands = BlockingCommands()
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(X11Computer(commands).act, TypeText(text='é'))
+        await commands.started.wait()
+        tg.cancel_scope.cancel()
+    assert commands.argvs[1:] == [['xdotool', 'keyup', 'Shift_L', 'ISO_Level3_Shift', 'U00E9']]
+
+
+async def test_x11_computer_captures_a_scaled_screenshot() -> None:
+    commands = ScriptedCommands(
+        CommandResult(exit_code=0, stdout=base64.b64encode(FAKE_SCREENSHOT).decode(), stderr='')
+    )
+    assert await X11Computer(commands).scaled_screenshot(640, 400) == FAKE_SCREENSHOT
+    ((sh, _, script, _, size),) = commands.argvs
+    assert (sh, size) == ('sh', '640x400')
+    assert 'scrot -t "$1"' in script
 
 
 async def test_x11_computer_reads_the_display_size_and_screenshot_on_its_display() -> None:

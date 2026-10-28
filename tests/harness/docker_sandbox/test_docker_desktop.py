@@ -126,16 +126,39 @@ async def test_concurrent_first_uses_start_one_display(docker: FakeDocker, conta
 
 
 async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, container_dir: Path) -> None:
-    workspace = Workspace(_desktop(container_dir, image='my-desktop'))
+    backend = _desktop(container_dir, image='my-desktop')
+    workspace = Workspace(backend)
     await workspace.display_size()
     assert docker.xvfb_starts == 0  # the display was already up
+    assert backend.display is not None and backend.display.take_fresh_start() is False
 
     docker.remove_display()
-    with pytest.raises(WorkspaceError, match="Can't open display"):
+    with pytest.raises(
+        WorkspaceError, match=r'^The display had stopped, so the action did not run; it was started again'
+    ):
         await workspace.act(Click(x=1, y=1))
     await workspace.act(Click(x=1, y=1))
 
     assert docker.xvfb_starts == 1
+    # Once: the windows that were open are gone.
+    assert backend.display.take_fresh_start() is True
+    assert backend.display.take_fresh_start() is False
+
+
+async def test_an_action_that_fails_on_a_running_display_says_why(docker: FakeDocker, container_dir: Path) -> None:
+    workspace = Workspace(_desktop(container_dir, image='my-desktop'))
+    await workspace.display_size()
+    (docker.bin_dir / 'xdotool').write_text('#!/bin/sh\n[ "$1" != mousemove ] || { echo BadWindow >&2; exit 1; }\n')
+
+    with pytest.raises(WorkspaceError, match='BadWindow'):
+        await workspace.act(Click(x=1, y=1))
+    assert docker.xvfb_starts == 0
+
+
+async def test_a_scaled_screenshot_comes_from_the_display(docker: FakeDocker, container_dir: Path) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    assert backend.display is not None
+    assert await backend.display.scaled_screenshot(640, 400) == FAKE_SCREENSHOT
 
 
 async def test_a_look_at_a_display_that_went_away_starts_it_and_looks_again(
@@ -159,6 +182,20 @@ async def test_a_lock_left_by_a_stopped_container_does_not_stop_the_display(
     docker.leave_x_lock(backend.ref.id)
 
     assert await Workspace(backend).display_size() == (1280, 800)
+    assert not docker.x_lock_exists(backend.ref.id)
+
+
+async def test_a_running_x_server_keeps_its_lock(docker: FakeDocker, container_dir: Path) -> None:
+    # An image's own X server that refuses the probe, such as a VNC server with authentication on.
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    docker.remove_display()
+    docker.leave_x_lock(backend.ref.id, owner='Xvnc')
+
+    with pytest.raises(WorkspaceUnavailableError, match='Server is already active'):
+        await Workspace(backend).display_size()
+    assert docker.x_lock_exists(backend.ref.id)
 
 
 async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, container_dir: Path) -> None:
@@ -174,8 +211,11 @@ async def test_a_refused_key_does_not_restart_the_display(docker: FakeDocker, co
     await workspace.display_size()
     checks = docker.xdotool_calls.count(':1 getdisplaygeometry')
 
-    with pytest.raises(WorkspaceUnsupportedActionError, match="cannot press the key '!'"):
-        await workspace.act(PressKeys(keys=('!',)))
+    # A key the display doesn't know, which validation would refuse.
+    unknown = PressKeys(keys=('a',))
+    object.__setattr__(unknown, 'keys', ('NoSuchKey',))
+    with pytest.raises(WorkspaceUnsupportedActionError, match='cannot press that key'):
+        await workspace.act(unknown)
     await workspace.act(Click(x=1, y=1))
 
     # The start script, which first checks the display with `getdisplaygeometry`, did not run again.
