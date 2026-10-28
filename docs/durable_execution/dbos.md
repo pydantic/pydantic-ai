@@ -261,7 +261,7 @@ A waiting workflow stays open, so it only recovers on the DBOS application versi
 
 ### Delegation and Nested Agents
 
-A function tool can delegate to another agent. Give the delegate its own [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] and a unique `name`, and its model requests and durable tool calls become steps in the enclosing workflow's history, alongside the parent's. There is no child workflow: one workflow recovers both agents, and each agent's steps are namespaced by its `name` (`lead__model.request`, `researcher__model.request`).
+A function tool can delegate to another agent. Give the delegate its own [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] and a unique `name`, and its model requests and durable tool calls become steps in the enclosing workflow's history, alongside the parent's. The integration does not start a child workflow: one workflow recovers both agents, and each agent's steps are namespaced by its `name` (`lead__model.request`, `researcher__model.request`).
 
 ```python {title="dbos_nested_agents.py" test="skip"}
 from dbos import DBOS
