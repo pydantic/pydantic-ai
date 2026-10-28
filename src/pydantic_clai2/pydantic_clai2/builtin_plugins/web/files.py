@@ -79,7 +79,7 @@ async def _git_files(folder: Path) -> list[str] | None:
         rest = b''
         async for chunk in process.stdout:
             *listed, rest = (rest + chunk).split(b'\0')
-            names.update(dict.fromkeys(name.decode(errors='replace') for name in listed if name))
+            names.update(dict.fromkeys(name.decode(errors='replace') for name in listed))
             if len(names) >= FILE_LIMIT:
                 # A huge untracked folder, such as a home directory under Git, need not be listed to the end.
                 with suppress(ProcessLookupError):  # Git may have just finished on its own.
