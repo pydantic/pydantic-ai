@@ -192,6 +192,24 @@ class AnthropicModelProfile(ModelProfile, total=False):
     guide](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
     """
 
+    anthropic_distrusts_system_after_tool_result: bool
+    """Whether the model can read a mid-conversation `system` entry that directly follows a tool result as tool output. Default: `False`.
+
+    Claude Haiku 5.5 is trained to resist prompt injection through tool results, so it can ignore an instruction
+    in a `{'role': 'system'}` entry that comes right after a `tool_result`, as [Anthropic's
+    docs](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#placement-after-tool-results)
+    warn. That's where a loaded on-demand capability's instructions and an instruction change during a tool loop
+    land. When True, `AnthropicModel` ends that user turn with a short text block saying the tool results end
+    there and the system message comes from the application.
+
+    Measured live on Claude Haiku 5.5 (2026-10-28, 64 runs per cell), with the block against without it: French
+    loaded with a capability 64/64 against 51/64, a capability withdrawing a rule 64/64 against 12/64, an
+    instruction added after a tool result 64/64 against 42/64, a withdrawn instruction 64/64 against 31/64. Asked to
+    lift a restriction, Haiku 5.5 refuses wherever the entry sits, after a user prompt too. Claude Sonnet 5.5, which
+    the same docs name, and Claude Opus 5.5 followed every instruction without the block (16 runs per cell), so it's
+    off for them.
+    """
+
     anthropic_accepts_file_and_container_ids: bool
     """Whether the API accepts Anthropic Files API file IDs and code execution container IDs. Default: `True`.
 
@@ -462,6 +480,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # Sonnet 5.5 rejects `{'type': 'disabled'}` with a 400 that names `{'type': 'between_tools'}` as the way to turn
     # thinking off, and accepts it live on the Anthropic API and Bedrock.
     disables_thinking_with_between_tools = model_name.startswith('claude-sonnet-5-5')
+    distrusts_system_after_tool_result = model_name.startswith('claude-haiku-5-5')
 
     # The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` (`any`/`tool`) outright, unlike
     # other Anthropic models which only reject forcing alongside extended thinking. Anthropic's
@@ -569,6 +588,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
         anthropic_disallows_top_effort_when_thinking_disabled=disallows_top_effort_when_thinking_disabled,
         anthropic_disables_thinking_with_between_tools=disables_thinking_with_between_tools,
+        anthropic_distrusts_system_after_tool_result=distrusts_system_after_tool_result,
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
