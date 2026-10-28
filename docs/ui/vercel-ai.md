@@ -241,9 +241,29 @@ When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` 
 
 Vercel AI's request `messages` array is fully client-controlled, and the protocol round-trips approval responses and tool results through the message history. The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), workspace references ([`strip_workspace_refs`][pydantic_ai.ui.UIAdapter.strip_workspace_refs]), and unresolved tool calls. Those defaults don't make client-submitted history authentic — see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history).
 
+## Keeping the history on the server
+
+With [`manage_message_history='server'`](./overview.md#keeping-the-history-on-the-server), the adapter uses only the new turn from the messages `useChat` sends, so `useChat` can keep sending its whole history. To send only the last message instead, customize the request in `prepareSendMessagesRequest`. Keep the `messages` array: unlike the request in the AI SDK's own persistence guide, the adapter's request body requires it.
+
+```ts
+import { useChat } from '@ai-sdk/react';
+import { DefaultChatTransport } from 'ai';
+
+const { messages, sendMessage } = useChat({
+  transport: new DefaultChatTransport({
+    api: '/api/chat',
+    prepareSendMessagesRequest: ({ id, messages, trigger, messageId, body }) => ({
+      body: { ...body, id, trigger, messageId, messages: messages.slice(-1) },
+    }),
+  }),
+});
+```
+
+The last message is all a turn needs: the user's new or edited message, the user message a regenerate answers again, or the assistant message carrying a frontend tool's output or a [tool approval](#tool-approval). Assistant message ids don't matter here: `useChat` makes up its own unless you pass `server_message_id`, and the adapter only matches the user message ids, which the stored history keeps.
+
 ## Compaction
 
-[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through Vercel AI data parts (`data-compaction`), so [compacted](../capabilities/compaction.md) conversations keep working when a frontend such as `useChat` holds the message history. A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (the [server-side persistence pattern](./overview.md#trust-model-for-client-submitted-messages)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
+[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through Vercel AI data parts (`data-compaction`), so [compacted](../capabilities/compaction.md) conversations keep working when a frontend such as `useChat` holds the message history. A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (see [Keeping the history on the server](#keeping-the-history-on-the-server)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
 
 ## Structured content
 

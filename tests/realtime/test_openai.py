@@ -3082,7 +3082,7 @@ async def test_function_call_only_response_without_usage_finalizes_before_answer
     assert isinstance(tool_result, ModelRequest)
     assert isinstance(tool_result.parts[0], ToolReturnPart)
     assert isinstance(answer, ModelResponse)
-    assert answer.parts == [SpeechPart(speaker='assistant', transcript='Sunny')]
+    assert answer.parts == [SpeechPart(speaker='assistant', transcript='Sunny', id='answer-1', provider_name='openai')]
     assert answer.usage == RequestUsage(output_tokens=3)
 
 
@@ -3131,7 +3131,7 @@ async def test_session_stamps_openai_response_metadata(
     assert response.provider_details == expected_details
     speech = response.parts[0]
     assert isinstance(speech, SpeechPart)
-    assert (speech.id, speech.provider_name) == (None, None)
+    assert (speech.id, speech.provider_name) == ('item-1', 'openai')
 
 
 @pytest.mark.parametrize(

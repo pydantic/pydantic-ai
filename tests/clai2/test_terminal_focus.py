@@ -20,6 +20,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent, ModelMessage, UserContent, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2 import chat
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -104,6 +105,11 @@ async def test_resume_of_a_session_live_in_the_browser_shows_it_without_forking(
         await started['b'].wait()
         assert ' 2 live' in toolbar(home)
         conversation = b.conversation.conversation_id
+        # A copy saved to continue it while another process ran it: the live session holding it still wins.
+        await desk.process.conversations.save(
+            summary=ConversationSummary(workspace=str(desk.folder('b')), title='Copy', forked_from=conversation),
+            messages=[],
+        )
         home.send_input(f'/resume {conversation}')
         await until(desk.live, lambda: terminal.shown is other and home.idle)
         assert desk.live.focused == b.id and other.terminal is terminal and home.terminal is None
