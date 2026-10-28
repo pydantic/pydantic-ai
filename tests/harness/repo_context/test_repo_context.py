@@ -293,10 +293,11 @@ root
 Instruction files (`AGENTS.md`, `CLAUDE.md`) apply to the directory they are in and everything below it. Where instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions take precedence over all of them.\
 """)
 
-    async def test_nested_traversal_without_autoload_keeps_the_statement_static(self) -> None:
+    def test_nested_traversal_without_autoload_keeps_the_statement_static(self) -> None:
         instructions = RepoContext[object](autoload_instructions=False, nested_traversal=True).get_instructions()
-        assert isinstance(instructions, str)
-        assert instructions.startswith('Instruction files (`CLAUDE.md`, `AGENTS.md`) apply to the directory')
+        assert instructions == snapshot(
+            "Instruction files (`CLAUDE.md`, `AGENTS.md`) apply to the directory they are in and everything below it. Where instruction files conflict, the more deeply nested one takes precedence, and the user's direct instructions take precedence over all of them."
+        )
 
     async def test_no_statement_without_nested_traversal(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'AGENTS.md', 'root')

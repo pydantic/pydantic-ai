@@ -133,7 +133,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     nested_traversal: bool = False
     """Strategy 3: surface a directory's instruction file when the model lists or
-    reads that directory. Off by default -- it couples to the list/read tools."""
+    reads that directory. Off by default -- it couples to the list/read tools. With
+    it on, the instructions also state how instruction files relate."""
 
     nested_inject: Literal['pointer', 'contents'] = 'pointer'
     """For Strategy 3: append a one-line `pointer`, or inline the file `contents`."""
