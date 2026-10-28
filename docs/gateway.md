@@ -431,7 +431,7 @@ Only Pydantic AI can follow a fallback like this, so other clients skip the prov
 - The response names the model that answered, and lists the attempt the Gateway handed back in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts]. When the agent is [instrumented](logfire.md), that attempt gets its own `model request attempt` span with an ERROR status. See [Failed attempts and telemetry](capabilities/model-fallback.md#failed-attempts-and-telemetry).
 - A [`ModelFallback`](capabilities/model-fallback.md) on the agent takes over once the Gateway's chain has failed, rather than on the first hand-back.
 - A streamed request is handed back before any output reaches you, so it's followed too.
-- Requests outside an agent run, like a direct [`Model.request()`][pydantic_ai.models.Model.request] call or [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]'s candidates, [batch requests](batch.md), and runs under [durable execution](durable_execution/overview.md), aren't handed back: the Gateway falls back within the request's API format only, as it does for other clients.
+- Direct [`Model.request()`][pydantic_ai.models.Model.request] calls, the candidates of a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] (use [`ModelFallback`](capabilities/model-fallback.md) instead), [batch requests](batch.md), and runs under [durable execution](durable_execution/overview.md) aren't handed back: the Gateway falls back within the request's API format only, as it does for other clients.
 - Embedding requests are never handed back: embeddings from different models can't be compared with each other.
 
 ## Troubleshooting

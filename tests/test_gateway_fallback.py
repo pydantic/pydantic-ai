@@ -33,6 +33,7 @@ from .conftest import try_import
 from .durable_exec.test_durable_exec_compat import JournalDurability
 
 with try_import() as imports_successful:
+    import google.genai  # noqa: F401  # advertised as `gemini`, so `ADVERTISED` needs it
     from botocore.awsrequest import AWSResponse, HTTPHeaders
 
     # Imported here rather than when the gateway hands a request to an Anthropic model, which is in the event loop.
@@ -50,7 +51,9 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 if not imports_successful():
-    pytest.skip('openai, anthropic or boto3 not installed', allow_module_level=True)  # pragma: lax no cover
+    pytest.skip(
+        'openai, anthropic, google-genai or boto3 not installed', allow_module_level=True
+    )  # pragma: lax no cover
 
 
 API_KEY = 'pylf_v1_us_test'
@@ -461,31 +464,35 @@ def test_deprecated_durable_agents_dont_refuse_the_headers_wrapper():
 
 
 @pytest.mark.parametrize(
-    'client, upstream, shared',
+    'client_type, upstream, shared',
     [
-        pytest.param(httpx2.AsyncClient(), 'openai-chat', True, id='openai-httpx2'),
-        pytest.param(httpx.AsyncClient(), 'google', True, id='google-httpx'),
-        pytest.param(httpx2.AsyncClient(), 'anthropic', True, id='anthropic-httpx2'),
-        pytest.param(httpx.AsyncClient(), 'anthropic', False, id='anthropic-httpx'),
-        pytest.param(httpx.AsyncClient(), 'groq', True, id='groq-httpx'),
-        pytest.param(httpx2.AsyncClient(), 'groq', False, id='groq-httpx2'),
-        pytest.param(httpx2.AsyncClient(), 'bedrock', False, id='bedrock'),
+        pytest.param(httpx2.AsyncClient, 'openai-chat', True, id='openai-httpx2'),
+        pytest.param(httpx.AsyncClient, 'google', True, id='google-httpx'),
+        pytest.param(httpx2.AsyncClient, 'anthropic', True, id='anthropic-httpx2'),
+        pytest.param(httpx.AsyncClient, 'anthropic', False, id='anthropic-httpx'),
+        pytest.param(httpx.AsyncClient, 'groq', True, id='groq-httpx'),
+        pytest.param(httpx2.AsyncClient, 'groq', False, id='groq-httpx2'),
+        pytest.param(httpx2.AsyncClient, 'bedrock', False, id='bedrock'),
     ],
 )
-def test_the_callers_http_client_is_shared_where_the_sdk_accepts_it(
-    client: httpx.AsyncClient | httpx2.AsyncClient, upstream: str, shared: bool
+async def test_the_callers_http_client_is_shared_where_the_sdk_accepts_it(
+    client_type: type[httpx.AsyncClient] | type[httpx2.AsyncClient], upstream: str, shared: bool
 ):
     """Which SDK takes which client is checked directly: the fake gateway only serves clients it gave the provider."""
-    assert (_shareable_http_client(normalize_gateway_provider(upstream), client) is client) is shared
+    async with client_type() as client:
+        assert (_shareable_http_client(normalize_gateway_provider(upstream), client) is client) is shared
 
 
-def test_the_next_provider_keeps_the_route_and_base_url():
+def test_the_next_provider_is_created_once_per_format():
+    """Checked directly, as reusing a provider isn't visible on the wire: the requests go to the same URL either way.
+
+    That the next provider keeps the route and key is tested through the agent, above.
+    """
     original = gateway_provider('openai', route='my-endpoint', api_key=API_KEY, base_url=BASE_URL)
 
     fallback = _fallback_provider(original, 'anthropic')
-    assert fallback.base_url == f'{BASE_URL}/my-endpoint/'
-    # Created once, so the requests handed back from `original` share its client.
     assert _fallback_provider(original, 'anthropic') is fallback
+    assert _fallback_provider(original, 'bedrock') is not fallback
 
 
 @contextmanager
@@ -543,6 +550,11 @@ async def test_converse_requests_advertise_too(allow_model_requests: None):
     assert seen == [ADVERTISED, {}]
 
 
-def test_the_capability_is_not_spec_constructible():
-    """`GatewayFallback` is auto-injected only, so it can't be in an `AgentSpec`."""
+def test_the_capability_is_not_in_agent_specs():
+    """`GatewayFallback` is auto-injected only, so an `AgentSpec` can't name it."""
+    with pytest.raises(
+        ValueError, match="Capability 'GatewayFallback' is not in the provided `custom_capability_types`"
+    ):
+        Agent.from_spec({'model': 'test', 'capabilities': [{'GatewayFallback': {}}]})
+    # Nor could it be passed as a custom capability type: it has no name to load it by.
     assert GatewayFallback.get_serialization_name() is None
