@@ -418,13 +418,13 @@ class Workspace(WorkspaceBackend):
 
     @property
     def has_display(self) -> bool:
-        """Whether the backend has a display to control, so `screenshot` and `act` can work. Does no I/O."""
-        return self._backend_display is not None
+        """Whether the backend has a display to control, so `screenshot` and `act` can work. Does no I/O.
 
-    @property
-    def display(self) -> Display | None:
-        """This workspace, when its backend has a display, so wrappers around it reach the display through it."""
-        return self if self.has_display else None
+        The display is the provider backend's `display`: check optional protocols such as `SupportsZoom` on it, not
+        on the workspace.
+        """
+        backend = self._backend
+        return backend.has_display if isinstance(backend, Workspace) else self._backend_display is not None
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -551,11 +551,12 @@ class Workspace(WorkspaceBackend):
 
     @property
     def _display(self) -> Display:
-        if (display := self._backend_display) is not None:
-            return display
         backend = self._backend
         if isinstance(backend, Workspace):
-            return backend  # it raises its own reason, such as `WorkspaceUnavailableError`
+            # Through the wrapper, so its policy applies and it raises its own reason, such as `WorkspaceUnavailableError`.
+            return backend
+        if (display := self._backend_display) is not None:
+            return display
         if isinstance(backend, UnavailableWorkspace):
             raise WorkspaceUnavailableError(backend.reason)
         raise UserError(
