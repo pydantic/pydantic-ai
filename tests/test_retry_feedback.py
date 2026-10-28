@@ -1154,8 +1154,7 @@ class PositiveOnly:
     a: int
 
     def __post_init__(self):
-        if self.a < 1:
-            raise ValueError('a must be positive')
+        raise ValueError('a must be positive')
 
 
 async def test_a_validation_error_whose_input_is_not_json_is_retried():
