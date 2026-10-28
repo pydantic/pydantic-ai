@@ -462,10 +462,11 @@ _CACHE_DIAGNOSTICS_UNSUPPORTED_CLIENTS = (
 _STRICT_SCHEMA_LIMITS_UNVERIFIED_CLIENTS = (AsyncAnthropicFoundry, AsyncAnthropicVertex)
 # A `container` on a request without code execution was verified live to be rejected by the Claude API
 # (`Container identifier can only be provided when using the code execution tool`). Claude Platform on AWS
-# (`AsyncAnthropicAWS`) is an `AsyncAnthropic` subclass, so it gets the same behavior. The legacy Bedrock InvokeModel
-# API rejects any `container`. Vertex and the Bedrock Messages API couldn't be reached to check, and Foundry wasn't
-# tried. Vertex and Foundry send no container at all (`_FILE_AND_CONTAINER_IDS_UNSUPPORTED_CLIENTS`), so this only
-# keeps the Bedrock Messages API sending the history container.
+# (`AsyncAnthropicAWS`) and on Google Cloud (`AsyncAnthropicGoogleCloud`) serve the Claude API through `AsyncAnthropic`
+# subclasses, so they get the same behavior. The legacy Bedrock InvokeModel API rejects any `container`. Vertex and the
+# Bedrock Messages API couldn't be reached to check, and Foundry wasn't tried. Vertex and Foundry send no container at
+# all (`_FILE_AND_CONTAINER_IDS_UNSUPPORTED_CLIENTS`), so this only keeps the Bedrock Messages API sending the history
+# container.
 _CONTAINER_WITHOUT_CODE_EXECUTION_UNVERIFIED_CLIENTS = (
     AsyncAnthropicBedrockMantle,
     AsyncAnthropicFoundry,
@@ -645,15 +646,15 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
     By default, if previous messages contain a container_id (from a prior response),
     it will be reused automatically on requests that have code execution: `CodeExecutionTool`,
-    or the `20260209` version of `WebSearchTool` or `WebFetchTool`, which the model calls from
-    code execution by default. The Anthropic API rejects a container on any other request, so
-    Pydantic AI doesn't send it there. Tools passed in `extra_body['tools']` aren't read, so a
-    request that carries them still sends it. An id recovered from history is the only container
-    Pydantic AI may replace on its own: if a request carrying both that id and
-    `CodeExecutionTool` uploads comes back `500`, the id is dropped and the request is
-    sent once more so the upload lands in a fresh container. Nothing else is replaced —
-    not a container you set here, and not the id used to reconnect a paused turn — so a
-    request pinning a container the API will not accept raises instead.
+    or `WebSearchTool` or `WebFetchTool` on models with dynamic filtering, whose `20260209` web
+    tools the model calls from code execution by default. The Anthropic API rejects a container
+    on any other request, so Pydantic AI doesn't send it there. Tools passed in
+    `extra_body['tools']` aren't read, so a request that carries them still sends it. An id
+    recovered from history is the only container Pydantic AI may replace on its own: if a
+    request carrying both that id and `CodeExecutionTool` uploads comes back `500`, the id is
+    dropped and the request is sent once more so the upload lands in a fresh container.
+    Nothing else is replaced — not a container you set here, and not the id used to reconnect
+    a paused turn — so a request pinning a container the API will not accept raises instead.
 
     Set to `False` to force a fresh container (ignore any `container_id` from history).
     Set to a container id string (e.g. `'container_xxx'`) to explicitly reuse a container,

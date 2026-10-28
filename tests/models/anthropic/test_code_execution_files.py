@@ -540,7 +540,7 @@ def _pause_turn_segment(blocks: list[dict[str, Any]], stop_reason: str, stream: 
     """One segment of a turn whose code execution container is `container_A`."""
     container = {'id': 'container_A', 'expires_at': '2026-11-01T00:00:00Z'}
     usage = {'input_tokens': 5, 'output_tokens': 1}
-    message = {
+    response_message = {
         'id': f'msg_{stop_reason}',
         'type': 'message',
         'role': 'assistant',
@@ -549,9 +549,9 @@ def _pause_turn_segment(blocks: list[dict[str, Any]], stop_reason: str, stream: 
         'container': container,
     }
     if not stream:
-        return httpx2.Response(200, json={**message, 'content': blocks, 'stop_reason': stop_reason})
+        return httpx2.Response(200, json={**response_message, 'content': blocks, 'stop_reason': stop_reason})
     events: list[dict[str, Any]] = [
-        {'type': 'message_start', 'message': {**message, 'content': [], 'stop_reason': None}}
+        {'type': 'message_start', 'message': {**response_message, 'content': [], 'stop_reason': None}}
     ]
     for index, block in enumerate(blocks):
         if block['type'] == 'text':
