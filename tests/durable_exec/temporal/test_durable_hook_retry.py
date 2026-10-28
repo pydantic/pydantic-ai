@@ -13,9 +13,10 @@ import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, TextPart
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest
+from pydantic_ai.exceptions import RetryModelRequest
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 
 try:
     from temporalio import workflow
@@ -29,10 +30,6 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
 pytestmark = [pytest.mark.xdist_group(name='temporal-durability')]
-
-
-def _failing_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    raise ModelAPIError(model_name='failing', message='boom')
 
 
 def _rerouted_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -52,7 +49,8 @@ class _RerouteFirstAttempt(AbstractCapability[Any]):
 
 
 _reroute_agent = Agent(
-    FunctionModel(_failing_model_fn, model_name='failing'),
+    # Never called: the hook moves the first attempt to the rerouted model before anything is sent.
+    TestModel(),
     name='durable_hook_reroute',
     capabilities=[
         _RerouteFirstAttempt(),
