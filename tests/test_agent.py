@@ -10503,7 +10503,7 @@ async def test_streaming_handoff_survives_absorbed_cancellation():
     completing — the documented behavior of Temporal's cooperative activity cancellation, as
     routed through `model.request_stream` — `_streaming_handler` is left parked on
     `stream_done.wait()`. Unless the handoff cleanup sets `stream_done` before draining
-    `wrap_task`, the run task deadlocks. `SwallowOneCancelModel` reproduces that at the
+    `wrap.task`, the run task deadlocks. `SwallowOneCancelModel` reproduces that at the
     `request_stream` await boundary.
     """
 

@@ -1777,7 +1777,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             # the stream closes; it continues with the response `wrap_model_request` returns instead.
                             _stream_cut_short = await agent_stream._abandon_model_stream(_wrap_response)  # pyright: ignore[reportPrivateUsage]
                         # Report TTFT in a `finally` so it also lands when the consumer raises
-                        # mid-iteration and graph teardown cancels `wrap_task` at the `wait()` above,
+                        # mid-iteration and graph teardown cancels `wrap.task` at the `wait()` above,
                         # mirroring `InstrumentedModel.request_stream`. On
                         # that cancelled path `finish` is never reached today (no metrics of any
                         # kind are recorded), so this is symmetry rather than an observable fix.
@@ -1821,7 +1821,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # The stream teardown waits for the request through `ScopedTask`, so a cancelled `anyio` scope around the
         # consumer can't cut the model stream's shielded close short.
         wrap = ScopedTask(wrap_awaitable)
-        wrap_task = wrap.task
 
         async def _wrap_response() -> _messages.ModelResponse | None:
             """The response `wrap_model_request` finishes with after abandoning the stream.
@@ -1830,8 +1829,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             stream, except `ModelRetry`, which ends the stream for the retry below.
             """
             try:
-                # Shielded so a cancelled consumer leaves `wrap_task` to the stream teardown below.
-                return await asyncio.shield(wrap_task)
+                # Shielded so a cancelled consumer leaves `wrap.task` to the stream teardown below.
+                return await asyncio.shield(wrap.task)
             except exceptions.SkipModelRequest as e:
                 return e.response
             except exceptions.ModelRetry:
@@ -1842,21 +1841,21 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # so the user's `wrap_model_request` cleanup runs instead of orphaning.
         ready_waiter = asyncio.create_task(stream_ready.wait())
         try:
-            await asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait({ready_waiter, wrap.task}, return_when=asyncio.FIRST_COMPLETED)
         except BaseException:
             # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
             # so both tasks are still ours; drain them so cleanup runs before we re-raise.
             #
-            # Unblock `_streaming_handler` before draining: if wrap_task's model
+            # Unblock `_streaming_handler` before draining: if `wrap.task`'s model
             # absorbed the CancelledError (e.g. Temporal's cooperative cancellation),
             # the handler is parked on `stream_done.wait()`. Setting stream_done lets
             # it exit so cancel_and_drain's gather can complete. Harmless no-op when
             # the task was actually cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
             stream_done.set()
-            await cancel_and_drain(ready_waiter, wrap_task)
+            await cancel_and_drain(ready_waiter, wrap.task)
             raise
         else:
-            # Handoff succeeded: `wrap_task` is owned by the rest of the streaming
+            # Handoff succeeded: `wrap.task` is owned by the rest of the streaming
             # lifecycle below. Only the throwaway readiness waiter is ours to clean up.
             await cancel_and_drain(ready_waiter)
 
@@ -1865,11 +1864,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # to the graph task, where later tool, output, and run hooks execute.
         _apply_context_changes(before_model_request_context)
 
-        if wrap_task.done() and not stream_ready.is_set():
+        if wrap.task.done() and not stream_ready.is_set():
             # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
             try:
                 try:
-                    model_response = wrap_task.result()
+                    model_response = wrap.task.result()
                 except exceptions.SkipModelRequest as e:
                     model_response = e.response
             except exceptions.ModelRetry as e:
@@ -1921,7 +1920,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 if stream_error is not None:
                     # Graph teardown may already be under cancellation. Drain the wrapper task so its model
                     # stream cleanup finishes before the event iterator is closed below.
-                    await cancel_and_drain(wrap_task)
+                    await cancel_and_drain(wrap.task)
                     # Capture the partial response so `capture_run_messages` and `all_messages()`
                     # include what was streamed before the interruption.
                     # We append directly rather than via `_append_response` to skip the usage-limit
@@ -1954,8 +1953,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             # cancellation instead, an `anyio` one or a native one that never reached the hook: record
                             # the response before the cancellation propagates. Skip the usage-limit check; raising
                             # `UsageLimitExceeded` here would mask the cancellation.
-                            if not wrap_task.cancelled():
-                                model_response = wrap_task.result()
+                            if not wrap.task.cancelled():
+                                model_response = wrap.task.result()
                                 if not _handler_usage_recorded:
                                     self._record_response_usage(ctx, model_response)
                                 self._append_response(ctx, model_response, record_usage=False)

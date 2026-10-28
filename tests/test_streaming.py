@@ -7712,8 +7712,8 @@ async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
 async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_outer_cancellation():
     """Outer cancellation while waiting for streaming model wrapper readiness should clean up the wrapper task.
 
-    Target boundary: `ModelRequestNode.stream()` creates `wrap_task` and `ready_waiter`, then waits for
-    `asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)`. If the outer task is
+    Target boundary: `ModelRequestNode.stream()` creates `wrap.task` and `ready_waiter`, then waits for
+    `asyncio.wait({ready_waiter, wrap.task}, return_when=asyncio.FIRST_COMPLETED)`. If the outer task is
     cancelled while parked on that wait, the wrapper task must be drained; otherwise the user's
     `wrap_model_request` cleanup never runs.
     """
@@ -7732,7 +7732,7 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
             try:
                 started.set()
                 # Suspend before calling handler() so we sit inside the readiness wait at
-                # `_agent_graph.py:asyncio.wait({ready_waiter, wrap_task}, ...)`.
+                # `_agent_graph.py:asyncio.wait({ready_waiter, wrap.task}, ...)`.
                 return await never_finishes
             finally:
                 # Without the drain on the readiness wait, this finally never runs.
