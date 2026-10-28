@@ -92,8 +92,8 @@ class Coder(CombinedCapability[AgentDepsT]):
     `repo_context=False` leaves out the bundled `RepoContext`, for hosts that
     bind their own and would otherwise load the instruction files twice. Pass a
     `RepoContext` instead to use it in the bundled one's place, keeping the
-    project-directory note: `repo_context=RepoContext(expose_inventory_tool=False)`
-    restores the configuration before it walked up to the repository root.
+    project-directory note; e.g. `repo_context=RepoContext(expose_inventory_tool=False)`
+    loads only the working directory's instruction files.
 
     `sub_agents=True` adds `delegate_task`, which hands a self-contained sub-task
     to a fresh run of the same agent `Coder` is bound to, so the delegate has
