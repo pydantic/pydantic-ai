@@ -276,6 +276,13 @@ def test_wheel_and_sdist_ship_every_doc_outside_the_package() -> None:
         assert (PROJECT / source).is_file()
 
 
+def test_every_clai_user_doc_is_cataloged() -> None:
+    user_docs = {path.relative_to(PROJECT).as_posix() for path in (PROJECT / 'docs').rglob('*.md')}
+    user_docs.update({'README.md', 'PLUGINS.md'})
+    sources = {source for source, _ in _CLAI_DOCS.values()}
+    assert user_docs <= sources
+
+
 def test_every_harness_capability_clai_imports_has_its_readme_listed() -> None:
     """A capability CLAI starts using gets its README into `_HARNESS_DOCS`; one it stops using leaves it."""
     imported: set[str] = set()
