@@ -100,7 +100,6 @@ from ._run_context import (
     AnchoredEvidence,
     EventStreamBuffer,
     dispatch_event_stream,
-    in_durable_unit,
     recorded_workspace_ref,
     set_current_run_context,
 )
@@ -3724,7 +3723,7 @@ class _GraphOutputSubmitter(Generic[DepsT]):
     async def submit(self, ctx: RunContext[Any], tool_name: str, args: dict[str, Any]) -> None:
         tool_call_id = ctx.tool_call_id
         assert tool_call_id is not None
-        if in_durable_unit():
+        if ctx._in_durable_unit:  # pyright: ignore[reportPrivateUsage]
             # The engine records the tool's return value, and replaying it wouldn't submit again.
             raise exceptions.UserError(
                 '`submit_output` cannot be called from a tool that runs as a durable step or task, '

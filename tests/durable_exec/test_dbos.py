@@ -2514,6 +2514,37 @@ async def test_dbos_durability_submit_output_from_a_function_tool(dbos: DBOS) ->
     assert await run_durable_agent() == 'submitted'
 
 
+@DBOS.step()
+async def _submit_output_in_a_step(ctx: RunContext[None]) -> str:
+    await ctx.submit_output('final_result', {'response': 'submitted'})
+    return 'done'
+
+
+async def test_dbos_durability_submit_output_refused_in_a_users_step(dbos: DBOS) -> None:
+    """A step the tool's own code runs records its result, and recovery wouldn't submit again, so it's refused."""
+
+    async def finish(ctx: RunContext[None]) -> str:
+        return await _submit_output_in_a_step(ctx)
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('finish', {})])
+
+    agent = Agent(
+        FunctionModel(model),
+        name='durability_submit_output_in_a_step',
+        deps_type=type(None),
+        tools=[finish],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Finish')).output
+
+    with pytest.raises(UserError, match='cannot be called from a tool that runs as a durable step or task'):
+        await run_durable_agent()
+
+
 async def test_dbos_durability_rejects_a_live_workspace_workflow_input(dbos: DBOS, tmp_path: Path) -> None:
     """A live backend passed into a workflow has no durable steps behind it, so the run refuses it.
 

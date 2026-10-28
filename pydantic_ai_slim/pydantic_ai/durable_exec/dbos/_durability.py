@@ -226,6 +226,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return DBOS.workflow_id is not None and DBOS.step_id is None
 
+    @property
+    def in_durable_unit(self) -> bool:
+        return DBOS.step_id is not None or super().in_durable_unit
+
     def get_default_run_id(self) -> str | None:
         if not self.in_durable_context:
             return None

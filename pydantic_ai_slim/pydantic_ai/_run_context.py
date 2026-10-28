@@ -598,13 +598,26 @@ class RunContext(Generic[RunContextAgentDepsT]):
         durability capability or is run outside a durable container. A Prefect task inherits its flow's
         context, so it is `True` there.
         """
+        durability = self._durability
+        return durability is not None and durability.in_durable_context
+
+    @property
+    def _in_durable_unit(self) -> bool:
+        """Whether this code runs inside a durable unit, like a step or task, whose result the engine records.
+
+        This includes units the user created, like a tool wrapped in its own DBOS step or Prefect task.
+        """
+        durability = self._durability
+        return durability.in_durable_unit if durability is not None else in_durable_unit()
+
+    @property
+    def _durability(self) -> BaseDurabilityCapability[object] | None:
         # Looked up through `sys.modules` like `realtime`: without the module, no durability capability exists.
         durable_exec = sys.modules.get('pydantic_ai.durable_exec._base')
         if durable_exec is None or self.agent is None:
-            return False
+            return None
         base: type[BaseDurabilityCapability[object]] = durable_exec.BaseDurabilityCapability
-        durability = base.from_agent(self.agent)
-        return durability is not None and durability.in_durable_context
+        return base.from_agent(self.agent)
 
     @property
     def last_attempt(self) -> bool:
@@ -883,8 +896,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
         Raises:
             UserError: If this isn't called from a tool call during an agent run in the same process as
-                the run itself (so not inside a Temporal activity), if the tool runs as a durable step or task
-                (such as a DBOS step or Prefect task), or if the tool call already submitted an output.
+                the run itself (so not inside a Temporal activity), if it's called from a durable step or task
+                (such as a DBOS step or Prefect task, including one the tool's own code runs), or if the tool call already submitted an output.
             ToolRetryError: If the submission was rejected, carrying the feedback for the model.
             UnexpectedModelBehavior: If the submission was rejected and the output retries ran out.
         """
