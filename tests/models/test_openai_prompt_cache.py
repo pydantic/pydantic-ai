@@ -2015,6 +2015,10 @@ _UNCACHED_SUFFIX = (
 """Hundreds of tokens after the `CachePoint`: a write that stops short of them shows the breakpoint was honored."""
 
 
+_AZURE_CACHE_MODELS = ['gpt-5.6-luna', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra']
+"""The models with explicit cache breakpoints that the Gateway's Azure route serves: all but `gpt-6.1-terra`."""
+
+
 def _azure_gateway_provider(gateway_api_key: str | None, request_capture: RequestCapture) -> AzureProvider:
     """Azure OpenAI's v1 API, reached through the Pydantic AI Gateway's `azure` route.
 
@@ -2060,19 +2064,28 @@ def _assert_azure_breakpoint_cached(first: RunUsage, second: RunUsage) -> None:
 
 
 @pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
+@pytest.mark.parametrize('model_name', _AZURE_CACHE_MODELS)
 @pytest.mark.vcr
 async def test_azure_chat_prompt_cache_e2e(
-    allow_model_requests: None, gateway_api_key: str | None, request_capture: RequestCapture, stream: bool
+    allow_model_requests: None,
+    gateway_api_key: str | None,
+    request_capture: RequestCapture,
+    model_name: str,
+    stream: bool,
 ):
-    """Azure OpenAI Chat honors the GPT-5.6 cache fields and reports cache write and read usage.
+    """Azure OpenAI Chat honors the explicit cache fields on GPT-5.6 and later, and reports cache write and read usage.
 
     With `mode='explicit'` only the prefix up to the `CachePoint` is written, so a write that stops
     short of the whole prompt shows Azure honored the breakpoint rather than caching implicitly.
     """
-    model = OpenAIChatModel('gpt-5.6-luna', provider=_azure_gateway_provider(gateway_api_key, request_capture))
+    model = OpenAIChatModel(model_name, provider=_azure_gateway_provider(gateway_api_key, request_capture))
     settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
     agent = Agent(model, model_settings=settings)
-    prompt = [f'Azure Chat cache e2e, stream={stream}.\n{_STABLE_PREFIX}', CachePoint(), _UNCACHED_SUFFIX]
+    prompt = [
+        f'Azure Chat cache e2e (take 2), {model_name}, stream={stream}.\n{_STABLE_PREFIX}',
+        CachePoint(),
+        _UNCACHED_SUFFIX,
+    ]
 
     first, second = await _run_twice(agent, prompt, stream)
 
@@ -2085,15 +2098,25 @@ async def test_azure_chat_prompt_cache_e2e(
 
 
 @pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
+@pytest.mark.parametrize('model_name', _AZURE_CACHE_MODELS)
 @pytest.mark.vcr
 async def test_azure_responses_prompt_cache_e2e(
-    allow_model_requests: None, gateway_api_key: str | None, request_capture: RequestCapture, stream: bool
+    allow_model_requests: None,
+    gateway_api_key: str | None,
+    request_capture: RequestCapture,
+    model_name: str,
+    stream: bool,
 ):
-    """Azure OpenAI Responses honors the GPT-5.6 cache fields and reports cache write and read usage."""
-    model = OpenAIResponsesModel('gpt-5.6-luna', provider=_azure_gateway_provider(gateway_api_key, request_capture))
+    """Azure OpenAI Responses honors the explicit cache fields on GPT-5.6 and later, and reports cache write and
+    read usage."""
+    model = OpenAIResponsesModel(model_name, provider=_azure_gateway_provider(gateway_api_key, request_capture))
     settings = OpenAIResponsesModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
     agent = Agent(model, model_settings=settings)
-    prompt = [f'Azure Responses cache e2e, stream={stream}.\n{_STABLE_PREFIX}', CachePoint(), _UNCACHED_SUFFIX]
+    prompt = [
+        f'Azure Responses cache e2e (take 2), {model_name}, stream={stream}.\n{_STABLE_PREFIX}',
+        CachePoint(),
+        _UNCACHED_SUFFIX,
+    ]
 
     first, second = await _run_twice(agent, prompt, stream)
 
@@ -2105,18 +2128,23 @@ async def test_azure_responses_prompt_cache_e2e(
     _assert_azure_breakpoint_cached(first, second)
 
 
+@pytest.mark.parametrize('model_name', _AZURE_CACHE_MODELS)
 @pytest.mark.vcr
 async def test_azure_responses_cache_instructions_e2e(
-    allow_model_requests: None, gateway_api_key: str | None, request_capture: RequestCapture
+    allow_model_requests: None, gateway_api_key: str | None, request_capture: RequestCapture, model_name: str
 ):
     """Azure OpenAI Responses honors an instruction breakpoint with the implicit-mode options, the settings
     `cache=True` maps to on the OpenAI API, and the second request reads the cache the first wrote."""
-    model = OpenAIResponsesModel('gpt-5.6-luna', provider=_azure_gateway_provider(gateway_api_key, request_capture))
+    model = OpenAIResponsesModel(model_name, provider=_azure_gateway_provider(gateway_api_key, request_capture))
     settings = OpenAIResponsesModelSettings(
         openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}, openai_cache_instructions=True
     )
     # Change the instructions' last line to re-record within the 30-minute TTL.
-    agent = Agent(model, instructions=_STABLE_PREFIX + '\n(Azure instruction breakpoint)', model_settings=settings)
+    agent = Agent(
+        model,
+        instructions=_STABLE_PREFIX + f'\n(Azure instruction breakpoint, take 2, {model_name})',
+        model_settings=settings,
+    )
 
     first = await agent.run('Reply with exactly: OK')
     second = await agent.run('Reply with exactly: OK')

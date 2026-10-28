@@ -145,7 +145,7 @@ agent = Agent(model, instructions='...', model_settings=settings)
 ...
 ```
 
-This has been verified on the v1 API only, not on [`api-version`-based deployments](#connecting-to-an-existing-api-version-based-deployment).
+This has been verified on the v1 API with `gpt-5.6-luna`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6.1-sol` and `gpt-6-astra`. It hasn't been verified with `gpt-6.1-terra`, which wasn't available to test, or on [`api-version`-based deployments](#connecting-to-an-existing-api-version-based-deployment).
 
 ## Grok tool schemas
 

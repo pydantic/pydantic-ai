@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "13060"
+      - "13078"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        model: gpt-5.6-luna
+        model: gpt-6-luna
         stream: false
         include:
         - reasoning.encrypted_content
@@ -189,7 +189,7 @@ interactions:
               Entry 0157: shelf 19, aisle 3, volume 157, catalogued under subject heading 3.
               Entry 0158: shelf 20, aisle 4, volume 158, catalogued under subject heading 4.
               Entry 0159: shelf 21, aisle 5, volume 159, catalogued under subject heading 5.
-              (Azure instruction breakpoint)
+              (Azure instruction breakpoint, take 2, gpt-6-luna)
             prompt_cache_breakpoint:
               mode: explicit
         - role: user
@@ -203,9 +203,9 @@ interactions:
     status: 200
     headers:
       alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      - h3=":443"; ma=2592000
       apim-request-id:
-      - 65741159-fb62-4d8c-8b4a-9c4558382024
+      - d94e68e4-aa3d-4510-95dc-5c8c7c8323c8
       azureai-fe-is-streaming:
       - "False"
       azureai-fe-offer-type:
@@ -213,11 +213,11 @@ interactions:
       content-type:
       - application/json
       logfire-ai-gateway-cost:
-      - 0.0010131USD
+      - 0.000512925USD
       pydantic-ai-gateway-active-provider:
       - azure
       pydantic-ai-gateway-price-estimate:
-      - 0.0010USD
+      - 0.0005USD
       skip-error-remapping:
       - "true"
       strict-transport-security:
@@ -229,13 +229,13 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0b0596f3b5f6957c006ae0c91c7bd48196b4ab90770eb139d7
+        id: resp_0cfbfb06b6b9f4b6006ae257a340208196be54d33655ecbdb1
         object: response
-        created_at: 1793116444
+        created_at: 1793218467
         status: completed
         access_programs: null
         background: false
-        completed_at: 1793116445
+        completed_at: 1793218468
         content_filters:
         - blocked: false
           source_type: prompt
@@ -284,7 +284,7 @@ interactions:
               severity: safe
           content_filter_offsets:
             start_offset: 0
-            end_offset: 2
+            end_offset: 21
             check_offset: 0
         error: null
         frequency_penalty: 0
@@ -292,10 +292,16 @@ interactions:
         instructions: null
         max_output_tokens: null
         max_tool_calls: null
-        model: gpt-5.6-luna
+        model: gpt-6-luna
         moderation: null
         output:
-        - id: msg_0b0596f3b5f6957c006ae0c91d28c88196acf018b22fd5101c
+        - id: rs_0cfbfb06b6b9f4b6006ae257a43a5c81968f4df3d33969bdff
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABq4lekO1B7MxIC3N63ChpIGQV_-mlFygQ7sSpLnKy3ExEotkTtAT0O1hvs_9Jyk6xjG_3gf3jDhaxmT7W_E2_Su7VNCjuszLGRGXekU5VtnXNW5r5CSOYMnbrnN95t7CDfzKFunyl-Vo5KI3pmA8Js62XH8dHescE6XvEmIQm4hZdcZyFn5ftg1FYUjwp61WbNJCo1p2wQo-imdJ80AHi_4gWfTzy6WbkK5-uYZEyGaIjZMYP7EFNhZHgcApH_oC3aDsOr-kUztSl4QBSRhh8tTce0oyMQQTf0JnYrOjmwIpK2NtL8H3d8lP6FF-hpz1ahb3Q_JKPBmqnjCA1qLueOlb2xagHA1uEq4b5oNPuTNhnQF9FMS095PW5lMZ8LAUi6cFGlxz80xWwj4JVQQJBbvqbH9DOAmj1akOmW8k4oBI7GUtjcCSDB_lgPASEDKYQbX2JQNAt1NScjWzYsgxffwQAsJfJcySeCmiExEdt9G0uhXNZadSE_2tQdDP8RyNK69sgewxmHTzNt7YL9TBREdufSpozTonaVhMTCM96J1NeCo9KHCoRAvpInkjIrxHHHp6YpjS4lYGrmQmGUwauYYcSctenf_ANbkcHHAobIKAFY_MB16UgEOT3wfQrobkO8llg8KXjKb3fLs2jraCz-Nk21IN2QEGJyZMAh1Ob6mQmhNLTPqsFOEHWNc7bQRFw9no8h5QUPoY1Rt17-22k3VUvEIVuJFblon0HbB4gH86nhk2KyDO3FQ9doAymUueXlDbs36L_7UWH7NyQxMfufUZDCf6WU7whGJups205Xp-cPP9AscaQqUJPdpbnuAKQ407cyt5Av1IFuoWUfeG09xy_S-GuAHLRc2F4lf24CaEHwSfzB2x5bhfIWS6aHK0wRjnss7SN4n25IpGR2BOmOzqp3GlJoB9U8oi1bRcmR5W9uMfbymPciJEhpbOgmm49Le9o5JtUwJTqaf0Xt4R0fMPlBwWf9kTFnXqMc9mkGngKEoFzGr1Z_CNwwx9BOZqNdpHXNK-8n5ICYMr_oGy9BIa-HHyz4IFPwgyn-rJFhNYEozPzuBgVeTdUJq9nKwXdrCLv6PDNiiFh9vL1xyP0T_KC_R4V2ig4Zc6s48beOybg2SigkDbVVlbEELMRRhMk2M_OEHkDteU9ggkVRsaJ94Zvk7A==
+          summary: []
+        - id: msg_0cfbfb06b6b9f4b6006ae257a44a848196b576e327ed290ffd
           type: message
           status: completed
           content:
@@ -345,21 +351,21 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 4029
+          input_tokens: 4040
           input_tokens_details:
-            cache_write_tokens: 4026
+            cache_write_tokens: 4037
             cached_tokens: 0
-          output_tokens: 5
+          output_tokens: 16
           output_tokens_details:
-            reasoning_tokens: 0
-          total_tokens: 4034
+            reasoning_tokens: 9
+          total_tokens: 4056
           logfire_ai_gateway:
-            cost: "0.0010131"
+            cost: "0.000512925"
           pydantic_ai_gateway:
-            cost_estimate: "0.0010131"
+            cost_estimate: "0.000512925"
         user: null
         metadata: {}
-  recorded_at: 2026-10-27T15:54:05.686621+00:00
+  recorded_at: 2026-10-28T20:14:28.624936+00:00
 - request:
     method: POST
     uri: https://gateway.pydantic.info/proxy/azure/openai/v1/responses
@@ -371,7 +377,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "13060"
+      - "13078"
       content-type:
       - application/json
       host:
@@ -379,7 +385,7 @@ interactions:
     body:
       type: json
       content:
-        model: gpt-5.6-luna
+        model: gpt-6-luna
         stream: false
         include:
         - reasoning.encrypted_content
@@ -549,7 +555,7 @@ interactions:
               Entry 0157: shelf 19, aisle 3, volume 157, catalogued under subject heading 3.
               Entry 0158: shelf 20, aisle 4, volume 158, catalogued under subject heading 4.
               Entry 0159: shelf 21, aisle 5, volume 159, catalogued under subject heading 5.
-              (Azure instruction breakpoint)
+              (Azure instruction breakpoint, take 2, gpt-6-luna)
             prompt_cache_breakpoint:
               mode: explicit
         - role: user
@@ -563,9 +569,9 @@ interactions:
     status: 200
     headers:
       alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      - h3=":443"; ma=2592000
       apim-request-id:
-      - 80c20588-d24d-4b15-8b38-3e05dc3c2b58
+      - deca0492-d3b7-4263-a741-821a05ad5247
       azureai-fe-is-streaming:
       - "False"
       azureai-fe-offer-type:
@@ -573,11 +579,11 @@ interactions:
       content-type:
       - application/json
       logfire-ai-gateway-cost:
-      - 0.00008712USD
+      - 0.00004317USD
       pydantic-ai-gateway-active-provider:
       - azure
       pydantic-ai-gateway-price-estimate:
-      - 0.0001USD
+      - 0.0000USD
       skip-error-remapping:
       - "true"
       strict-transport-security:
@@ -589,13 +595,13 @@ interactions:
     body:
       type: json
       content:
-        id: resp_060ef142b7caed8c006ae0c91e7b9081958141b9859334b1f5
+        id: resp_0a5b2027ed998c0d006ae257a4ef888193a3fe6df2883b9ac6
         object: response
-        created_at: 1793116446
+        created_at: 1793218468
         status: completed
         access_programs: null
         background: false
-        completed_at: 1793116447
+        completed_at: 1793218470
         content_filters:
         - blocked: false
           source_type: prompt
@@ -624,10 +630,10 @@ interactions:
           source_type: completion
           content_filter_raw: []
           content_filter_results:
-            protected_material_code:
+            protected_material_text:
               detected: false
               filtered: false
-            protected_material_text:
+            protected_material_code:
               detected: false
               filtered: false
             hate:
@@ -652,10 +658,10 @@ interactions:
         instructions: null
         max_output_tokens: null
         max_tool_calls: null
-        model: gpt-5.6-luna
+        model: gpt-6-luna
         moderation: null
         output:
-        - id: msg_060ef142b7caed8c006ae0c91f0b588195becc0a1f43d8a8da
+        - id: msg_0a5b2027ed998c0d006ae257a5d6888193ba2a805d348927d3
           type: message
           status: completed
           content:
@@ -705,18 +711,18 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 4029
+          input_tokens: 4040
           input_tokens_details:
             cache_write_tokens: 0
-            cached_tokens: 4026
+            cached_tokens: 4037
           output_tokens: 5
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 4034
+          total_tokens: 4045
           logfire_ai_gateway:
-            cost: "0.00008712"
+            cost: "0.00004317"
           pydantic_ai_gateway:
-            cost_estimate: "0.00008712"
+            cost_estimate: "0.00004317"
         user: null
         metadata: {}
-  recorded_at: 2026-10-27T15:54:07.379038+00:00
+  recorded_at: 2026-10-28T20:14:30.360689+00:00

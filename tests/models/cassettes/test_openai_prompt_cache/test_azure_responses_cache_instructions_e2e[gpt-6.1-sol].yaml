@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "15389"
+      - "13080"
       content-type:
       - application/json
       host:
@@ -19,15 +19,15 @@ interactions:
     body:
       type: json
       content:
-        model: gpt-5.6-luna
-        stream: true
+        model: gpt-6.1-sol
+        stream: false
         include:
         - reasoning.encrypted_content
         input:
-        - role: user
+        - role: system
           content:
-          - text: |-
-              Azure Responses cache e2e, stream=True.
+          - type: input_text
+            text: |-
               Reference catalogue for the prompt cache test corpus.
               Entry 0000: shelf 0, aisle 0, volume 0, catalogued under subject heading 0.
               Entry 0001: shelf 1, aisle 1, volume 1, catalogued under subject heading 1.
@@ -189,54 +189,13 @@ interactions:
               Entry 0157: shelf 19, aisle 3, volume 157, catalogued under subject heading 3.
               Entry 0158: shelf 20, aisle 4, volume 158, catalogued under subject heading 4.
               Entry 0159: shelf 21, aisle 5, volume 159, catalogued under subject heading 5.
-            type: input_text
+              (Azure instruction breakpoint, take 2, gpt-6.1-sol)
             prompt_cache_breakpoint:
               mode: explicit
-          - text: |-
-              Margin note 000: this line follows the cache breakpoint.
-              Margin note 001: this line follows the cache breakpoint.
-              Margin note 002: this line follows the cache breakpoint.
-              Margin note 003: this line follows the cache breakpoint.
-              Margin note 004: this line follows the cache breakpoint.
-              Margin note 005: this line follows the cache breakpoint.
-              Margin note 006: this line follows the cache breakpoint.
-              Margin note 007: this line follows the cache breakpoint.
-              Margin note 008: this line follows the cache breakpoint.
-              Margin note 009: this line follows the cache breakpoint.
-              Margin note 010: this line follows the cache breakpoint.
-              Margin note 011: this line follows the cache breakpoint.
-              Margin note 012: this line follows the cache breakpoint.
-              Margin note 013: this line follows the cache breakpoint.
-              Margin note 014: this line follows the cache breakpoint.
-              Margin note 015: this line follows the cache breakpoint.
-              Margin note 016: this line follows the cache breakpoint.
-              Margin note 017: this line follows the cache breakpoint.
-              Margin note 018: this line follows the cache breakpoint.
-              Margin note 019: this line follows the cache breakpoint.
-              Margin note 020: this line follows the cache breakpoint.
-              Margin note 021: this line follows the cache breakpoint.
-              Margin note 022: this line follows the cache breakpoint.
-              Margin note 023: this line follows the cache breakpoint.
-              Margin note 024: this line follows the cache breakpoint.
-              Margin note 025: this line follows the cache breakpoint.
-              Margin note 026: this line follows the cache breakpoint.
-              Margin note 027: this line follows the cache breakpoint.
-              Margin note 028: this line follows the cache breakpoint.
-              Margin note 029: this line follows the cache breakpoint.
-              Margin note 030: this line follows the cache breakpoint.
-              Margin note 031: this line follows the cache breakpoint.
-              Margin note 032: this line follows the cache breakpoint.
-              Margin note 033: this line follows the cache breakpoint.
-              Margin note 034: this line follows the cache breakpoint.
-              Margin note 035: this line follows the cache breakpoint.
-              Margin note 036: this line follows the cache breakpoint.
-              Margin note 037: this line follows the cache breakpoint.
-              Margin note 038: this line follows the cache breakpoint.
-              Margin note 039: this line follows the cache breakpoint.
-              Reply with exactly: OK
-            type: input_text
+        - role: user
+          content: "Reply with exactly: OK"
         prompt_cache_options:
-          mode: explicit
+          mode: implicit
           ttl: 30m
         reasoning:
           context: all_turns
@@ -246,15 +205,19 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000
       apim-request-id:
-      - 59b4bbf3-436f-467d-9853-a2ff0217aee6
+      - 58661608-1106-4e79-a9e6-2f6b65b388c7
       azureai-fe-is-streaming:
-      - "True"
+      - "False"
       azureai-fe-offer-type:
       - paygo
       content-type:
-      - text/event-stream; charset=utf-8
+      - application/json
+      logfire-ai-gateway-cost:
+      - 0.010151USD
       pydantic-ai-gateway-active-provider:
       - azure
+      pydantic-ai-gateway-price-estimate:
+      - 0.0102USD
       skip-error-remapping:
       - "true"
       strict-transport-security:
@@ -264,42 +227,139 @@ interactions:
       vary:
       - Origin
     body:
-      type: text
-      content: |+
-        event: response.created
-        data: {"type":"response.created","response":{"id":"resp_00365fad7654d939006ae00e7c495081969776a2b5a81d4747","object":"response","created_at":1793068668,"status":"in_progress","access_programs":null,"background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-luna","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_options":{"mode":"explicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
-
-        event: response.in_progress
-        data: {"type":"response.in_progress","response":{"id":"resp_00365fad7654d939006ae00e7c495081969776a2b5a81d4747","object":"response","created_at":1793068668,"status":"in_progress","access_programs":null,"background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-luna","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_options":{"mode":"explicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
-
-        event: response.output_item.added
-        data: {"type":"response.output_item.added","item":{"id":"rs_00365fad7654d939006ae00e7cbc748196bc4dc86068819d8e","type":"reasoning","content":[],"encrypted_content":"gAAAAABq4A58OMMBMjwFEemhc2sKKLLH9TGjGzV3j896AuEM3fJxilkCRVAt9jzda9zWSP8fPeReWfQ00mV67sCIfTjVcT-SQwhxQN7F6HHweEuO4WZJ8NR6PGlF9NMikZDVwRhbGVzZbj684o1fUGK8bmn-sUY1t04dH5ts_onCVZH_0Li_D9lj8gzmQ7l7FBAko-rFuud15Kp40vuo-c1eugXA5Ermx__CeWCD0BFNr_YCoijzKX2ZVojJ_sN530H9hdTX41m6EzK8HhpnjsUiNOM8Kizvl_-vP73TBI5HRPj_vdmcqp7DwIIK2ByYL8rUZJiC992Qb_VOH553u84C8cSWDHjQktPSqP3uNF3gC6lTl78uCQtksALxmUDHH983-eN5f_c71iomMjJM6-ubQsdIuSHA5JHAJHErgRHK0R3pgnvYCAWTySIhK-PGBZJXxTF0MEj347rsWQwsdEx9ZE4SPa1AH7xogKp18uxhWA8Gz0vCDuT9-W1xhWVIpr4LL8qQefqtGW9A60dKiBZtjiuWa-gEyFnUCD59C3p2hmep-TUzB6BzOaQ84K1vlqoSTinnQCJc9OmjfXnYQvJMoa20Iid3JUM5bkYrLaia5lF0JrTEx9Hdc94Kq3ElHaNDaVE4TsbpZaFQ9Ga4RdOsigDw96Dq2gqeCiPY_YGZiR_d7OKbuSSeWb2LFb-MPa2V6wXvU-iiy_0LXWbT24vhoTb8YwP6SO4Gmf__-acOsYCVrC9PlGqDnS2qXSv8v0T6qTCWSrkNkpyZVXL4QKnPtyQDIJF3nrjrScwGxaNj6oRkaltDFyVEk2WHFz6IIKz0GZq-HDeiB_I06Ms6OMRIEir5LQtMOQTEhoJ_t2S3-pMcDYH0Mi9GiUNTw_iJOLFBVpdkdUZOSNdMK7QVXwjVeR1YOwqZcmbAvoWOjMveoiG__os3LFvLBkaVOQxvv69EQbCdNjJkwuFDbpSBbPhEijQJCarad5JUpE4Jt4cv1DgXshVxnS067jxlZ-wJj2bTuxR5UrppBIOHNpO9TnOGfOQR12yfP3DueteUQweVVtt-aitFofBqltUmNec0g-GyP4oZpMesbqRfdHuLsPOVt37S6BMLjxOLte7h1B_Zerjp8_gYNyeCugjc7l1Uf9M9pcZTXubi","summary":[]},"output_index":0,"sequence_number":2}
-
-        event: response.output_item.done
-        data: {"type":"response.output_item.done","item":{"id":"rs_00365fad7654d939006ae00e7cbc748196bc4dc86068819d8e","type":"reasoning","content":[],"encrypted_content":"gAAAAABq4A58gn-hua_i0pxPx6HbHQIII4G3nOHbupPerHnU3TKACpFIqDB4G28YsJ6ASsb9wMKrqa26AJUfN0fgpbey1WoHm69OClm1VNDaI06p7DgctPxmoPHgrBkJuu2Ko-6ZNDo77vBvovRXHyjIoyo-sk7U-mFuz9GlVOFtDk4bVLjN5-iBrhSIhpS4uHHlNlZhyoG8yd73f18M_hCT7BKaJApiLcpMtvD3HAD26ypu9jKQBlIX25Uvi0QFdC1PBhj3eO2LTJGbP2U5sh7TgZoZVUpIlaVr_stZ-mirWGiRre4OYBtICjBXlRdpoo85yNnqqq7wTng1wIGGXx79dy3Bohiy7j1ncOl7-q-fVWlz_NKBNL7MvXGQ8V-pbmZDj-lItj23j-pIZb7n9PMY002_s5yMaBYZNwkq7BTXAWoDsZQZSf7i3mnen3diLUoxkef5WKbUFttc1olosBE13_Z2wvYr2NID4M-Arta7kufsjh2CpiewdlcJw6k4L4u5RAVsbmWhihkeJm25Eo7GqQF8ANk159UPHwr2zSsgV3ddGO7E8-sVgVjeDPgKoMb-qz9MRxCI8LAri09OQ7weWmApfSYcGYQdxz6sj0LFkljrZtikwjKRUwvfEDNPSddUxNWtamez-rlo189_sgp5CTnqiQAIjQ4JSN5JH-EjZEfznNM59Nz5Y4gv0-DrvrQrT8fcDnx8cNTB-x2q095tQi0o8RqikOE-ExsaHlisGFqM6Du_uOAYEQ5ktcerKFy3bhNStj1Ayjk-J1m4sAbJg-nsbAajC-zu3KP1-63DS09uuEPiaVpgnVd1phWJkxhFuEH5c9cFIDwifyeaq0QBbvzy9JL9vZc3McPuzZovqVmP35OR4_oeazPorGfOqd2bxfo9I98fM-ugG32D5EM8jqDGSsjSqVUTCVjtJYhB7-6Koc_7jA1r6VIXk3_TRnDdnCNiL4JC26DJe9N4oaK0ekQFoOZxab_IXrLLIsnwrswulieUC4DF4Jppg5wjyIegjhcjmzBD470xOS__j7skzH3lt0Fbedn9gcz6AqxHM5rj14LXs2eMDZ4Ynj_26N9WJXqoNfzkfLFEHXWRPH10a-daYBhXUzjyZ7iV8ghWAyMps_CFD8skUMCv2I195YQ4kshg9uAm9fXe5625XdZUZWosD65wtk-2TYkuWLtCP6YZJ4NrZMc=","summary":[]},"output_index":0,"sequence_number":3}
-
-        event: response.output_item.added
-        data: {"type":"response.output_item.added","item":{"id":"msg_00365fad7654d939006ae00e7ccf3c8196b2a0791023713b17","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":4}
-
-        event: response.content_part.added
-        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_00365fad7654d939006ae00e7ccf3c8196b2a0791023713b17","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":5}
-
-        event: response.output_text.delta
-        data: {"type":"response.output_text.delta","content_index":0,"delta":"OK","item_id":"msg_00365fad7654d939006ae00e7ccf3c8196b2a0791023713b17","logprobs":[],"obfuscation":"VAdZdDsxJs45nh","output_index":1,"sequence_number":6}
-
-        event: response.output_text.done
-        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_00365fad7654d939006ae00e7ccf3c8196b2a0791023713b17","logprobs":[],"output_index":1,"sequence_number":7,"text":"OK"}
-
-        event: response.content_part.done
-        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_00365fad7654d939006ae00e7ccf3c8196b2a0791023713b17","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"OK"},"sequence_number":8}
-
-        event: response.output_item.done
-        data: {"type":"response.output_item.done","item":{"id":"msg_00365fad7654d939006ae00e7ccf3c8196b2a0791023713b17","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"OK"}],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":9}
-
-        event: response.completed
-        data: {"type":"response.completed","response":{"id":"resp_00365fad7654d939006ae00e7c495081969776a2b5a81d4747","object":"response","created_at":1793068668,"status":"completed","access_programs":null,"background":false,"completed_at":1793068668,"content_filters":[{"blocked":false,"source_type":"prompt","content_filter_raw":[],"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"jailbreak":{"detected":false,"filtered":false}},"content_filter_offsets":{"start_offset":0,"end_offset":15848,"check_offset":0}},{"blocked":false,"source_type":"completion","content_filter_raw":[],"content_filter_results":{"protected_material_text":{"detected":false,"filtered":false},"protected_material_code":{"detected":false,"filtered":false},"hate":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"}},"content_filter_offsets":{"start_offset":0,"end_offset":26,"check_offset":0}}],"error":null,"frequency_penalty":0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-luna","moderation":null,"output":[{"id":"rs_00365fad7654d939006ae00e7cbc748196bc4dc86068819d8e","type":"reasoning","content":[],"encrypted_content":"gAAAAABq4A58GftnAbhsIEEAMwbIP056_tMTEjxiy2QMC2_AW1fJQ0IobfEwot1gXOzwbOhK0SrWDT1QOtUlMMWvTVXg-nUiI_CnC91UULyo8HL8p9BBmlOJKfZ44nkB1VaWc8Tz29dzXa_WKVjKJDZ5bRnYOE-AkXlqbJNN-atDIflPtdcNR4HdkwmhCz-0W-u6NDU8rA_y-Xeg02Q0gI65EgTwuvB-lh1mMN2Il4ZiDsFN2VGiyCGvY9phYSE6xCKPIGN8mLlFtVL4SjBcqA87nrAOK5A1BRyHPGvN3T0BexcuXMVl8BLUEtwTtmy_CLQyHVMdcnb_kwJvXb2rGbIqc7MaQtRtZ1K77UC3r7OBQ8_5b6qHlmvJdWb76xO1cjy213_yMhVLxl09eLfCIskB608851hIKxWdzstzGEydckLvSX0Vt9ZrBDb0j8SL7zed9UTgLzfC2_QWNRkf3YibMlt_IzfS77hQ1nQGzVaE3eJt4Oatoa977rFI0fjGqEA__ESG2ei7u38_QVLMF6YBT8pTnMe79cFMHPfxCdBEGdB5B09O3rLPGFmkDgZJm9VkJveqd-3ywvrxRWeE8KO4VEaCCn5RdifrDqUMZxfVNfOsAvM5YQtlCYBASyshzyZmDkzsNL5CozvSorCp8AeNJeWY9RNWbFVcxUyR6nUEoRyRZRsLH7d3q9IbPsgEQ_htbymk1-DMheb3zuRUomTGaVMBvZ_pzOh_eYqG7cRwC-WQAXIwwzT1y4c7VOWvH_uh2NaEpjr9WcNA8JzW9nCww2N7GbmbbjkxyLa3C1usmDgM-_Z9sAF2NSEaJ1nYrrF7yWtW-M5GgO9rNRaP4tEeDf82SZSGyH9D8xgL3M5HxdR4_nLvOgj1JraSn9gS9Fk-3l5tYYuC9ydimv7T0benuS5BT4lLqBZX3I541FnYgc8xlSqDCLBqRe7meWmhUKnhMeJ-V1rb5FFD4_i7D_GjYdpb2y-PryzUrTPBQAMCGnGifbvf2z-W4i1M70mRdOJt2EjEMmZy64hkP965So7_X-WZ0JtPw0rJQCEubFvj9KyKqA2O05_Bl_ac6flfe22KSm7H0Oh5QhYCAZAhdjCgJg14g8xi20r895s3FbU5aYd9Y-6z49mtFj7zG0IYm7GOgQdYNjXoq272513Pky7sjEsQaMQJk8Ro7CZME0r7q1PQeYnJKv0=","summary":[]},{"id":"msg_00365fad7654d939006ae00e7ccf3c8196b2a0791023713b17","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"OK"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_options":{"mode":"explicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"default","store":true,"temperature":1,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":4510,"input_tokens_details":{"cache_write_tokens":4022,"cached_tokens":0},"output_tokens":17,"output_tokens_details":{"reasoning_tokens":10},"total_tokens":4527,"logfire_ai_gateway":{"cost":"0.0011235"},"pydantic_ai_gateway":{"cost_estimate":"0.0011235"}},"user":null,"metadata":{}},"sequence_number":10}
-
-  recorded_at: 2026-10-27T02:37:49.163190+00:00
+      type: json
+      content:
+        id: resp_009d3b803b5c51c0006ae257c796e88195a5fae7ec79442656
+        object: response
+        created_at: 1793218503
+        status: completed
+        access_programs: null
+        background: false
+        completed_at: 1793218506
+        content_filters:
+        - blocked: false
+          source_type: prompt
+          content_filter_raw: []
+          content_filter_results:
+            hate:
+              filtered: false
+              severity: safe
+            sexual:
+              filtered: false
+              severity: safe
+            violence:
+              filtered: false
+              severity: safe
+            self_harm:
+              filtered: false
+              severity: safe
+            jailbreak:
+              detected: false
+              filtered: false
+          content_filter_offsets:
+            start_offset: 0
+            end_offset: 800
+            check_offset: 0
+        - blocked: false
+          source_type: completion
+          content_filter_raw: []
+          content_filter_results:
+            protected_material_text:
+              detected: false
+              filtered: false
+            protected_material_code:
+              detected: false
+              filtered: false
+            hate:
+              filtered: false
+              severity: safe
+            sexual:
+              filtered: false
+              severity: safe
+            violence:
+              filtered: false
+              severity: safe
+            self_harm:
+              filtered: false
+              severity: safe
+          content_filter_offsets:
+            start_offset: 0
+            end_offset: 2
+            check_offset: 0
+        error: null
+        frequency_penalty: 0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6.1-sol
+        moderation: null
+        output:
+        - id: msg_009d3b803b5c51c0006ae257ca50e08195a4df284b3d502f3d
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: OK
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_options:
+          mode: implicit
+          ttl: 30m
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: scrubbed
+        service_tier: default
+        store: true
+        temperature: 1
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 4041
+          input_tokens_details:
+            cache_write_tokens: 4038
+            cached_tokens: 0
+          output_tokens: 5
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 4046
+          logfire_ai_gateway:
+            cost: "0.010151"
+          pydantic_ai_gateway:
+            cost_estimate: "0.010151"
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-28T20:15:06.622228+00:00
 - request:
     method: POST
     uri: https://gateway.pydantic.info/proxy/azure/openai/v1/responses
@@ -311,7 +371,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "15389"
+      - "13080"
       content-type:
       - application/json
       host:
@@ -319,15 +379,15 @@ interactions:
     body:
       type: json
       content:
-        model: gpt-5.6-luna
-        stream: true
+        model: gpt-6.1-sol
+        stream: false
         include:
         - reasoning.encrypted_content
         input:
-        - role: user
+        - role: system
           content:
-          - text: |-
-              Azure Responses cache e2e, stream=True.
+          - type: input_text
+            text: |-
               Reference catalogue for the prompt cache test corpus.
               Entry 0000: shelf 0, aisle 0, volume 0, catalogued under subject heading 0.
               Entry 0001: shelf 1, aisle 1, volume 1, catalogued under subject heading 1.
@@ -489,54 +549,13 @@ interactions:
               Entry 0157: shelf 19, aisle 3, volume 157, catalogued under subject heading 3.
               Entry 0158: shelf 20, aisle 4, volume 158, catalogued under subject heading 4.
               Entry 0159: shelf 21, aisle 5, volume 159, catalogued under subject heading 5.
-            type: input_text
+              (Azure instruction breakpoint, take 2, gpt-6.1-sol)
             prompt_cache_breakpoint:
               mode: explicit
-          - text: |-
-              Margin note 000: this line follows the cache breakpoint.
-              Margin note 001: this line follows the cache breakpoint.
-              Margin note 002: this line follows the cache breakpoint.
-              Margin note 003: this line follows the cache breakpoint.
-              Margin note 004: this line follows the cache breakpoint.
-              Margin note 005: this line follows the cache breakpoint.
-              Margin note 006: this line follows the cache breakpoint.
-              Margin note 007: this line follows the cache breakpoint.
-              Margin note 008: this line follows the cache breakpoint.
-              Margin note 009: this line follows the cache breakpoint.
-              Margin note 010: this line follows the cache breakpoint.
-              Margin note 011: this line follows the cache breakpoint.
-              Margin note 012: this line follows the cache breakpoint.
-              Margin note 013: this line follows the cache breakpoint.
-              Margin note 014: this line follows the cache breakpoint.
-              Margin note 015: this line follows the cache breakpoint.
-              Margin note 016: this line follows the cache breakpoint.
-              Margin note 017: this line follows the cache breakpoint.
-              Margin note 018: this line follows the cache breakpoint.
-              Margin note 019: this line follows the cache breakpoint.
-              Margin note 020: this line follows the cache breakpoint.
-              Margin note 021: this line follows the cache breakpoint.
-              Margin note 022: this line follows the cache breakpoint.
-              Margin note 023: this line follows the cache breakpoint.
-              Margin note 024: this line follows the cache breakpoint.
-              Margin note 025: this line follows the cache breakpoint.
-              Margin note 026: this line follows the cache breakpoint.
-              Margin note 027: this line follows the cache breakpoint.
-              Margin note 028: this line follows the cache breakpoint.
-              Margin note 029: this line follows the cache breakpoint.
-              Margin note 030: this line follows the cache breakpoint.
-              Margin note 031: this line follows the cache breakpoint.
-              Margin note 032: this line follows the cache breakpoint.
-              Margin note 033: this line follows the cache breakpoint.
-              Margin note 034: this line follows the cache breakpoint.
-              Margin note 035: this line follows the cache breakpoint.
-              Margin note 036: this line follows the cache breakpoint.
-              Margin note 037: this line follows the cache breakpoint.
-              Margin note 038: this line follows the cache breakpoint.
-              Margin note 039: this line follows the cache breakpoint.
-              Reply with exactly: OK
-            type: input_text
+        - role: user
+          content: "Reply with exactly: OK"
         prompt_cache_options:
-          mode: explicit
+          mode: implicit
           ttl: 30m
         reasoning:
           context: all_turns
@@ -546,15 +565,19 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000
       apim-request-id:
-      - ba776e4f-4026-462c-9315-d95d49b793ca
+      - 5ba9fe4b-145b-43c2-8a70-83b5fa449b86
       azureai-fe-is-streaming:
-      - "True"
+      - "False"
       azureai-fe-offer-type:
       - paygo
       content-type:
-      - text/event-stream; charset=utf-8
+      - application/json
+      logfire-ai-gateway-cost:
+      - 0.0004598USD
       pydantic-ai-gateway-active-provider:
       - azure
+      pydantic-ai-gateway-price-estimate:
+      - 0.0005USD
       skip-error-remapping:
       - "true"
       strict-transport-security:
@@ -564,39 +587,136 @@ interactions:
       vary:
       - Origin
     body:
-      type: text
-      content: |+
-        event: response.created
-        data: {"type":"response.created","response":{"id":"resp_0e308c59b2a8ab0b006ae00e7d5d7481908f00f05565fc3679","object":"response","created_at":1793068669,"status":"in_progress","access_programs":null,"background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-luna","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_options":{"mode":"explicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
-
-        event: response.in_progress
-        data: {"type":"response.in_progress","response":{"id":"resp_0e308c59b2a8ab0b006ae00e7d5d7481908f00f05565fc3679","object":"response","created_at":1793068669,"status":"in_progress","access_programs":null,"background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-luna","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_options":{"mode":"explicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
-
-        event: response.output_item.added
-        data: {"type":"response.output_item.added","item":{"id":"rs_0e308c59b2a8ab0b006ae00e7dc4ec8190877aa1c3d65ee751","type":"reasoning","content":[],"encrypted_content":"gAAAAABq4A59S7KjyAU6Nw1XXGu3QFDJtOjL08YI2rk5cEPg7cvJgaOe0hLvABkG9YP4KE0UKRGjfwPjDHfxRyRwRdhKNvTnUhRUPhgZ1W0Ce0k05XvzCQmFnd90dzHk-xbeYKea-yMvUBWbtDhQdy5ITL0KE110swEE8RUVCi2UVcaCQDrVE2Q3oMqB5AdXRIcBb6gLk9ygtcj8AoUY58frUuMcl28kaYm-trcI33XTbbl_sips8hrCOPKWZcCN-BqER3F5BfvJOXftsbfBbnUMFl0-Bb6jHwFh6UBoGMD27LuSAXLxcsfdPfI8s6G27dS7z_ouerK8hsVfF0G5RvzGfkusRgIDcAF89a-90i_x9pPzhn97K3xuemq7FeymFgLt6_XR3uFmXkZWlVn-55FxBaWva-EjbP2yXQ7acUnP-ujGUVZJXrcvHlF4V4s58qG9QF9DS5QCUcNob1k4vZb9iXEmgpJcY4k7B8EKdp_I8WvCO5aQllDVhgS9p4C9gqRM6qIrkXnlvgz1wQKf2VQpYmtK_9I6G8UsZhgsMz343RUgnae-yvt2gX3GeEzJNb0LewYJ4JCh-m9YlGSnL1Zky2n5pCyrO5ktnKIjYZArCVgOOLx4za6b4mPvRVlS40NNEnWHd3xgaBoA0TMGDwuxGFwCzdM6O_vg4xY0NAYu9ESPQRAb8TsmncDIMDLp2rBI0L5IymA0TeYW9zyXKIr_cFv_BfhewvyyPfYqt694SR5QXOCwMZ8p3zG4hRbb87KbqjCmiSlKnwb2YGR0ptvYpWUVrXNBLYxbtgJ8pQzurrzRI6oWJ1oLl4gtJce-kbFeLji42OFHiBsWiUv2vxqfy3eQPYksEnJD5u_3DA3RF9qsglpbIZZKLgOu6PP-D6yr_09yYAPjepNxiHjvACeimnM60PO6M8S0qzfXf9GnF97b6fowjBoB2VEbvlI6lTktoXC01EGh97VwLdDuSntnCv-PaD10YTVKFbRH_iGyjOdydDBvt9Jj090xxKYFgCKDPgVsTX_8IjuKvlc_6h2MuMix6Xjw1KXSKXd1Te0IkKzrwJ48yONlmCFw3zkhNfYPVG2EpSUG1RuUDbyX8cnC6z08W5lZiZhm349ONz3qeoNlmyTP6ENp11GV33lwTKhQtpckyRFs","summary":[]},"output_index":0,"sequence_number":2}
-
-        event: response.output_item.done
-        data: {"type":"response.output_item.done","item":{"id":"rs_0e308c59b2a8ab0b006ae00e7dc4ec8190877aa1c3d65ee751","type":"reasoning","content":[],"encrypted_content":"gAAAAABq4A59Xc_8-weFsOtq5erZbX5tcFZhWJ8ZF2WogG6blw9Av8hN_4djMOw846OzjaNLuG5KLDgmx-ra8aToT7fI5pu31qGodx-fvCh667vkcKU8Hbcb7bKybYwz90J3IhomzeEYu-oNI7QARSAappfLqov7TdOTHrsmWdE0b9ZsvWPMiFfy4Z6ceOHrRVXslHLR1MTqc9T-9eVNxJG1SIcFVwQ_4ZrL24o_FHSG5Ko5GzkWymFoYrygd1TPzFEijV_-ZDTbeIgqgCa-ELFZD8f9OI01jZbQTv_q5xysPlwIGlAz5Wjfa98hB_NA5m21z8uHY_xR1St_-L6HDmEes90SUpz-rgaJW-rMhbAFW3XtGXD5pt0YvMb-GS75y_6jlVHlr_agWyRrfbAPb2KVgUNdYFXSw_HGwLCSJYnXEp6SXogaAVBtIdaq4rlxDNursUxoA3GdoLaOhNIQpe_0GCU6mju1eD_uKUFK9v_efHkj5L-48nUvAh7OhyFAGr2v5AYHNKChCxQKkavuN8-v3yh2APCz8-cWECidieWNHyvHqMCSLS5nfKJZXUlR2pLUfjuJk9Oei5OADgM3uHpfoZRjPuK6tfwBuaBfINCoxsaQc33SpZdrqYeWylMVh1FXQSNSUpZbKzKxI1PAJk7KcPy5WkUSowZFfr8SOCgfbEzk2uW-dwoMRzcGdMd2jV7n5x-vZUBOSOhdSBHHTi6ME6WY4a48qQRBprhAFvblkQwfVHgkpjNCmGl3oJCqmFm7h0N60PaDC9wzgCO3p8hW-zmjA8PZ-L40FM2MmCDGlFf6cPIZYGzIxq-4-yReqaNyQb3zCCHhRCj0QevlD5GRqk3dK8qJz68vajBzGBx_0b-cleEWJjDXhCBuyyymeOQwgVegEzFoXZJmrDm_Z9qx0g-ltF0BxZddyUOvV_0QgwM-eTcG1IQ_j4RQN66dkSl9yVYX2anfdxFK84rzmmNx7qyhwVSg4hGcfBUg-dntcfPo_jIR48qiBVT3tmNBBW41Kyz3OwjoxcjdXg4GWajBv2f7cMMzQaUPIjKVtPdDgyQcVsaZ5YdXlDanpv3OwxDgyd_wVlWMjebYe7KQcLJmyzOgoUODo4l1lF5upjiW8cHDIOUDJ4gWhjoOsiL_yfinRtKnDSzGbERDgX5k2Q3uS4CLtFq7GaZA2YUHFNAEzmPiIRc_aOg=","summary":[]},"output_index":0,"sequence_number":3}
-
-        event: response.output_item.added
-        data: {"type":"response.output_item.added","item":{"id":"msg_0e308c59b2a8ab0b006ae00e7dde0c8190815e77fd81bad6a1","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":4}
-
-        event: response.content_part.added
-        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0e308c59b2a8ab0b006ae00e7dde0c8190815e77fd81bad6a1","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":5}
-
-        event: response.output_text.delta
-        data: {"type":"response.output_text.delta","content_index":0,"delta":"OK","item_id":"msg_0e308c59b2a8ab0b006ae00e7dde0c8190815e77fd81bad6a1","logprobs":[],"obfuscation":"wMM38fHutMTSDZ","output_index":1,"sequence_number":6}
-
-        event: response.output_text.done
-        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0e308c59b2a8ab0b006ae00e7dde0c8190815e77fd81bad6a1","logprobs":[],"output_index":1,"sequence_number":7,"text":"OK"}
-
-        event: response.content_part.done
-        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0e308c59b2a8ab0b006ae00e7dde0c8190815e77fd81bad6a1","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"OK"},"sequence_number":8}
-
-        event: response.output_item.done
-        data: {"type":"response.output_item.done","item":{"id":"msg_0e308c59b2a8ab0b006ae00e7dde0c8190815e77fd81bad6a1","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"OK"}],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":9}
-
-        event: response.completed
-        data: {"type":"response.completed","response":{"id":"resp_0e308c59b2a8ab0b006ae00e7d5d7481908f00f05565fc3679","object":"response","created_at":1793068669,"status":"completed","access_programs":null,"background":false,"completed_at":1793068669,"content_filters":[{"blocked":false,"source_type":"prompt","content_filter_raw":[],"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"},"jailbreak":{"detected":false,"filtered":false}},"content_filter_offsets":{"start_offset":0,"end_offset":15848,"check_offset":0}},{"blocked":false,"source_type":"completion","content_filter_raw":[],"content_filter_results":{"protected_material_text":{"detected":false,"filtered":false},"protected_material_code":{"detected":false,"filtered":false},"hate":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"},"self_harm":{"filtered":false,"severity":"safe"}},"content_filter_offsets":{"start_offset":0,"end_offset":26,"check_offset":0}}],"error":null,"frequency_penalty":0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-luna","moderation":null,"output":[{"id":"rs_0e308c59b2a8ab0b006ae00e7dc4ec8190877aa1c3d65ee751","type":"reasoning","content":[],"encrypted_content":"gAAAAABq4A59FBfKGPgfA46WXWfv_e7zBRlBNjooUTf83yyXQQvCCzsWviQmMAylg-94YrMkm9oy2UBG6wqzG6-0lEmPeZTqB2a0qCLzd3drIKdtWBbcPSCrhPzt4xUk0IuOAu7IBXS9gyEdl_Nko3o6fXBlcIS_Qui7UvuNyjnqk78O2wrbkz-0R6alYd4hE0Oa9UFDXqL1BC4gVFGUPbhHeAd9aq_VDM6t9mmpdGj_QRjG25vyjVEHLJj1ZPY5RRge35a0x6i4P5T4utG6tOZdF7HeNBewMua6eSj3jfI4RpJbtRC4G92eJCPGyInLCSsZPgbwrKg8x_QMxybunowIlIu7ojf9ZumUa2YHqN0Cug9s8dbe74xKilCBogIEP9cvcU9mGHaLJmq8eZpyEM4WwuGgI7iUn1Njxg9G1afqvoNN51OitNKM-ftqdnmRptkd5E3iB2XJVfd1xL-nGMts5lMlQZsnLJ5M_tMbPQhA55aoC7EL_fwcIuuVKUOHIFUXXOeIDapxkV-9CjU9g7M-yUlyAsdtlGE0EssN0U3csxH2IMjaeA7_c1nfdYSfax-la70PjWDk2z8rU1tQ2pmbCmL7RDFgNmG2PIoxvEKWjFh39BIy-hHhe_8eQxKnh-MMXAnFnOjt-Mlo4HHaN3VE9-9VaaNeRQqYle2DZV14lI0wm3MfyixmQhgCDq2ROOLqcGEKRsKf0XsslLCpB4X10X6skNc9p77OQG1tZD-1_Gl1MqUvQ5NEQsG4H1U9sFEiAt644vHArhAwhOf_reu107i1GJJ41QeHfI7VyFjaTroXKocZuEQ3U74stamV1HB-FszR7NpS-QLLmuEtwvSHo-gK7sh6QugFfMCSI763DBkU4zYXuB_5_BZbrWvOspzsb_RMON-ST9JyCrbTbfmgmsWs45pMYBzUhZdTgmYTDhF_-audRmNkSG-OVN5o4-cAEAyONnR1GNxrmqzb-kSM8LzXANDTiEY_nEvgYQ6RLUvoTDIlV3c1q63zq1fiVE9NBHCa2XHQ-P-jM2UXKshk2jfm5T1sVs_jtv_ckSMyuy_0X0eSlDqVyzvXzjp2jXthDf5qAz6vxb1yYcj1d-ydK9m_ZtRhdIHaepmFpOAnIzxhSvLUgJkffip_KAmLOdYffyLJAl6GSKzFz9rsSb-jOtMp44hpX5mjtF5t7e3W51ErDBV75Og=","summary":[]},{"id":"msg_0e308c59b2a8ab0b006ae00e7dde0c8190815e77fd81bad6a1","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"OK"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_options":{"mode":"explicit","ttl":"30m"},"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"default","store":true,"temperature":1,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":4510,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":4022},"output_tokens":17,"output_tokens_details":{"reasoning_tokens":10},"total_tokens":4527,"logfire_ai_gateway":{"cost":"0.00019844"},"pydantic_ai_gateway":{"cost_estimate":"0.00019844"}},"user":null,"metadata":{}},"sequence_number":10}
-
-  recorded_at: 2026-10-27T02:37:50.106388+00:00
+      type: json
+      content:
+        id: resp_08dc08ddc20708e6006ae257caf18881908cbb8dfe6d49d99c
+        object: response
+        created_at: 1793218507
+        status: completed
+        access_programs: null
+        background: false
+        completed_at: 1793218509
+        content_filters:
+        - blocked: false
+          source_type: prompt
+          content_filter_raw: []
+          content_filter_results:
+            hate:
+              filtered: false
+              severity: safe
+            sexual:
+              filtered: false
+              severity: safe
+            violence:
+              filtered: false
+              severity: safe
+            self_harm:
+              filtered: false
+              severity: safe
+            jailbreak:
+              detected: false
+              filtered: false
+          content_filter_offsets:
+            start_offset: 0
+            end_offset: 800
+            check_offset: 0
+        - blocked: false
+          source_type: completion
+          content_filter_raw: []
+          content_filter_results:
+            protected_material_text:
+              detected: false
+              filtered: false
+            protected_material_code:
+              detected: false
+              filtered: false
+            hate:
+              filtered: false
+              severity: safe
+            sexual:
+              filtered: false
+              severity: safe
+            violence:
+              filtered: false
+              severity: safe
+            self_harm:
+              filtered: false
+              severity: safe
+          content_filter_offsets:
+            start_offset: 0
+            end_offset: 2
+            check_offset: 0
+        error: null
+        frequency_penalty: 0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6.1-sol
+        moderation: null
+        output:
+        - id: msg_08dc08ddc20708e6006ae257cd8b6c8190af7cedfcb69a302b
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: OK
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_options:
+          mode: implicit
+          ttl: 30m
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: scrubbed
+        service_tier: default
+        store: true
+        temperature: 1
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 4041
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 4038
+          output_tokens: 5
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 4046
+          logfire_ai_gateway:
+            cost: "0.0004598"
+          pydantic_ai_gateway:
+            cost_estimate: "0.0004598"
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-28T20:15:10.051039+00:00

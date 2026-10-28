@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "15299"
+      - "15358"
       content-type:
       - application/json
       host:
@@ -19,13 +19,13 @@ interactions:
     body:
       type: json
       content:
-        model: gpt-5.6-luna
-        stream: false
+        model: gpt-6-astra
+        stream: true
         messages:
         - role: user
           content:
           - text: |-
-              Azure Chat cache e2e, stream=False.
+              Azure Chat cache e2e (take 2), gpt-6-astra, stream=True.
               Reference catalogue for the prompt cache test corpus.
               Entry 0000: shelf 0, aisle 0, volume 0, catalogued under subject heading 0.
               Entry 0001: shelf 1, aisle 1, volume 1, catalogued under subject heading 1.
@@ -236,27 +236,25 @@ interactions:
         prompt_cache_options:
           mode: explicit
           ttl: 30m
+        stream_options:
+          include_usage: true
   response:
     status: 200
     headers:
       alt-svc:
       - h3=":443"; ma=2592000
       apim-request-id:
-      - 5832d826-3639-492b-b9fe-53881713dfa4
+      - f69a4af1-ac63-4487-b737-25c97c5c760f
       azureai-fe-is-streaming:
-      - "False"
+      - "True"
       azureai-fe-offer-type:
       - paygo
       azureml-model-session:
-      - d20261019001926-09281b15
+      - d20261015073548-afac08a8
       content-type:
-      - application/json
-      logfire-ai-gateway-cost:
-      - 0.0011223USD
+      - text/event-stream; charset=utf-8
       pydantic-ai-gateway-active-provider:
       - azure
-      pydantic-ai-gateway-price-estimate:
-      - 0.0011USD
       skip-error-remapping:
       - "true"
       strict-transport-security:
@@ -266,89 +264,21 @@ interactions:
       vary:
       - Origin
     body:
-      type: json
-      content:
-        choices:
-        - content_filter_results:
-            hate:
-              filtered: false
-              severity: safe
-            protected_material_code:
-              detected: false
-              filtered: false
-            protected_material_text:
-              detected: false
-              filtered: false
-            self_harm:
-              filtered: false
-              severity: safe
-            sexual:
-              filtered: false
-              severity: safe
-            violence:
-              filtered: false
-              severity: safe
-          finish_reason: stop
-          index: 0
-          logprobs: null
-          message:
-            annotations: []
-            content: OK
-            refusal: null
-            role: assistant
-        created: 1793068471
-        id: chatcmpl-EdRJ9nJOz0YQKCW6pG9H9VD3wHPly
-        model: gpt-5.6-luna-2026-07-09
-        object: chat.completion
-        prompt_filter_results:
-        - prompt_index: 0
-          content_filter_results:
-            hate:
-              filtered: false
-              severity: safe
-            jailbreak:
-              detected: false
-              filtered: false
-            self_harm:
-              filtered: false
-              severity: safe
-            sexual:
-              filtered: false
-              severity: safe
-            violence:
-              filtered: false
-              severity: safe
-        routing:
-          serving_pipereplica: d20261019001926-09281b15-prefill-r14-dp0-prefill
-        service_tier: default
-        system_fingerprint: null
-        usage:
-          completion_tokens: 16
-          completion_tokens_details:
-            accepted_prediction_tokens: 0
-            audio_tokens: 0
-            reasoning_tokens: 6
-            rejected_prediction_tokens: 0
-          latency_checkpoint:
-            engine_tbt_ms: 11
-            engine_ttft_ms: 72
-            engine_ttlt_ms: 255
-            pre_inference_ms: 105
-            service_tbt_ms: 12
-            service_ttft_ms: 300
-            service_ttlt_ms: 489
-            user_visible_ttft_ms: 196
-          prompt_tokens: 4510
-          prompt_tokens_details:
-            audio_tokens: 0
-            cache_write_tokens: 4022
-            cached_tokens: 0
-          total_tokens: 4526
-          logfire_ai_gateway:
-            cost: "0.0011223"
-          pydantic_ai_gateway:
-            cost_estimate: "0.0011223"
-  recorded_at: 2026-10-27T02:34:32.149190+00:00
+      type: text
+      content: |+
+        data: {"choices":[],"created":0,"id":"","model":"","object":"","prompt_filter_results":[{"prompt_index":0,"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"jailbreak":{"detected":false,"filtered":false},"self_harm":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}}}]}
+
+        data: {"choices":[{"content_filter_results":{},"delta":{"content":"","refusal":null,"role":"assistant"},"finish_reason":null,"index":0,"logprobs":null}],"created":1793217977,"id":"chatcmpl-Ee4CXudZWwXHS3gDR1Gt8cWDBXvV8","model":"gpt-6-astra-2026-09-03","obfuscation":"KEqB","object":"chat.completion.chunk","service_tier":"default","system_fingerprint":null,"usage":null}
+
+        data: {"choices":[{"content_filter_results":{"protected_material_text":{"detected":false,"filtered":false}},"delta":{"content":"OK"},"finish_reason":null,"index":0,"logprobs":null}],"created":1793217977,"id":"chatcmpl-Ee4CXudZWwXHS3gDR1Gt8cWDBXvV8","model":"gpt-6-astra-2026-09-03","obfuscation":"Pc1V","object":"chat.completion.chunk","service_tier":"default","system_fingerprint":null,"usage":null}
+
+        data: {"choices":[{"content_filter_results":{},"delta":{},"finish_reason":"stop","index":0,"logprobs":null}],"created":1793217977,"id":"chatcmpl-Ee4CXudZWwXHS3gDR1Gt8cWDBXvV8","model":"gpt-6-astra-2026-09-03","obfuscation":"","object":"chat.completion.chunk","service_tier":"default","system_fingerprint":null,"usage":null}
+
+        data: {"choices":[],"created":1793217977,"id":"chatcmpl-Ee4CXudZWwXHS3gDR1Gt8cWDBXvV8","latency_checkpoint":{"engine_tbt_ms":17,"engine_ttft_ms":1083,"engine_ttlt_ms":1166,"pre_inference_ms":83,"service_tbt_ms":22,"service_ttft_ms":2602,"service_ttlt_ms":2692,"user_visible_ttft_ms":2519},"model":"gpt-6-astra-2026-09-03","obfuscation":"BDPk3lIY7D","object":"chat.completion.chunk","routing":{"serving_pipereplica":"d20261015073548-afac08a8-prefill-r7-dp0-prefill"},"service_tier":"default","system_fingerprint":null,"usage":{"completion_tokens":4,"completion_tokens_details":{"accepted_prediction_tokens":0,"audio_tokens":0,"reasoning_tokens":0,"rejected_prediction_tokens":0},"prompt_tokens":4521,"prompt_tokens_details":{"audio_tokens":0,"cache_write_tokens":4033,"cached_tokens":0},"total_tokens":4525,"logfire_ai_gateway":{"cost":"0.0554925"},"pydantic_ai_gateway":{"cost_estimate":"0.0554925"}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-28T20:06:20.193345+00:00
 - request:
     method: POST
     uri: https://gateway.pydantic.info/proxy/azure/openai/v1/chat/completions
@@ -360,7 +290,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "15299"
+      - "15358"
       content-type:
       - application/json
       host:
@@ -368,13 +298,13 @@ interactions:
     body:
       type: json
       content:
-        model: gpt-5.6-luna
-        stream: false
+        model: gpt-6-astra
+        stream: true
         messages:
         - role: user
           content:
           - text: |-
-              Azure Chat cache e2e, stream=False.
+              Azure Chat cache e2e (take 2), gpt-6-astra, stream=True.
               Reference catalogue for the prompt cache test corpus.
               Entry 0000: shelf 0, aisle 0, volume 0, catalogued under subject heading 0.
               Entry 0001: shelf 1, aisle 1, volume 1, catalogued under subject heading 1.
@@ -585,27 +515,25 @@ interactions:
         prompt_cache_options:
           mode: explicit
           ttl: 30m
+        stream_options:
+          include_usage: true
   response:
     status: 200
     headers:
       alt-svc:
       - h3=":443"; ma=2592000
       apim-request-id:
-      - 466b09a8-5768-492c-9a3d-dc437ed416f2
+      - f4864524-7074-4a85-812b-a50a7e9b15ae
       azureai-fe-is-streaming:
-      - "False"
+      - "True"
       azureai-fe-offer-type:
       - paygo
       azureml-model-session:
-      - d20261019001926-09281b15
+      - d20261015073548-afac08a8
       content-type:
-      - application/json
-      logfire-ai-gateway-cost:
-      - 0.00018284USD
+      - text/event-stream; charset=utf-8
       pydantic-ai-gateway-active-provider:
       - azure
-      pydantic-ai-gateway-price-estimate:
-      - 0.0002USD
       skip-error-remapping:
       - "true"
       strict-transport-security:
@@ -615,86 +543,18 @@ interactions:
       vary:
       - Origin
     body:
-      type: json
-      content:
-        choices:
-        - content_filter_results:
-            hate:
-              filtered: false
-              severity: safe
-            protected_material_code:
-              detected: false
-              filtered: false
-            protected_material_text:
-              detected: false
-              filtered: false
-            self_harm:
-              filtered: false
-              severity: safe
-            sexual:
-              filtered: false
-              severity: safe
-            violence:
-              filtered: false
-              severity: safe
-          finish_reason: stop
-          index: 0
-          logprobs: null
-          message:
-            annotations: []
-            content: OK
-            refusal: null
-            role: assistant
-        created: 1793068472
-        id: chatcmpl-EdRJAQ8Ek3Uq2BhT3uDwZ17YuNlm5
-        model: gpt-5.6-luna-2026-07-09
-        object: chat.completion
-        prompt_filter_results:
-        - prompt_index: 0
-          content_filter_results:
-            hate:
-              filtered: false
-              severity: safe
-            jailbreak:
-              detected: false
-              filtered: false
-            self_harm:
-              filtered: false
-              severity: safe
-            sexual:
-              filtered: false
-              severity: safe
-            violence:
-              filtered: false
-              severity: safe
-        routing:
-          serving_pipereplica: d20261019001926-09281b15-prefill-r14-dp0-prefill
-        service_tier: default
-        system_fingerprint: null
-        usage:
-          completion_tokens: 4
-          completion_tokens_details:
-            accepted_prediction_tokens: 0
-            audio_tokens: 0
-            reasoning_tokens: 0
-            rejected_prediction_tokens: 0
-          latency_checkpoint:
-            engine_tbt_ms: 9
-            engine_ttft_ms: 88
-            engine_ttlt_ms: 135
-            pre_inference_ms: 73
-            service_tbt_ms: 7
-            service_ttft_ms: 286
-            service_ttlt_ms: 314
-            user_visible_ttft_ms: 214
-          prompt_tokens: 4510
-          prompt_tokens_details:
-            audio_tokens: 0
-            cache_write_tokens: 0
-            cached_tokens: 4022
-          total_tokens: 4514
-          logfire_ai_gateway:
-            cost: "0.00018284"
-          pydantic_ai_gateway:
-            cost_estimate: "0.00018284"
-  recorded_at: 2026-10-27T02:34:33.509637+00:00
+      type: text
+      content: |+
+        data: {"choices":[],"created":0,"id":"","model":"","object":"","prompt_filter_results":[{"prompt_index":0,"content_filter_results":{"hate":{"filtered":false,"severity":"safe"},"jailbreak":{"detected":false,"filtered":false},"self_harm":{"filtered":false,"severity":"safe"},"sexual":{"filtered":false,"severity":"safe"},"violence":{"filtered":false,"severity":"safe"}}}]}
+
+        data: {"choices":[{"content_filter_results":{},"delta":{"content":"","refusal":null,"role":"assistant"},"finish_reason":null,"index":0,"logprobs":null}],"created":1793217980,"id":"chatcmpl-Ee4Cafan2AzDTpwIYyUviRYVwKkYg","model":"gpt-6-astra-2026-09-03","obfuscation":"7RIx","object":"chat.completion.chunk","service_tier":"default","system_fingerprint":null,"usage":null}
+
+        data: {"choices":[{"content_filter_results":{"protected_material_text":{"detected":false,"filtered":false}},"delta":{"content":"OK"},"finish_reason":null,"index":0,"logprobs":null}],"created":1793217980,"id":"chatcmpl-Ee4Cafan2AzDTpwIYyUviRYVwKkYg","model":"gpt-6-astra-2026-09-03","obfuscation":"pjcA","object":"chat.completion.chunk","service_tier":"default","system_fingerprint":null,"usage":null}
+
+        data: {"choices":[{"content_filter_results":{},"delta":{},"finish_reason":"stop","index":0,"logprobs":null}],"created":1793217980,"id":"chatcmpl-Ee4Cafan2AzDTpwIYyUviRYVwKkYg","model":"gpt-6-astra-2026-09-03","obfuscation":"","object":"chat.completion.chunk","service_tier":"default","system_fingerprint":null,"usage":null}
+
+        data: {"choices":[],"created":1793217980,"id":"chatcmpl-Ee4Cafan2AzDTpwIYyUviRYVwKkYg","latency_checkpoint":{"engine_tbt_ms":17,"engine_ttft_ms":864,"engine_ttlt_ms":948,"pre_inference_ms":76,"service_tbt_ms":22,"service_ttft_ms":1556,"service_ttlt_ms":1643,"user_visible_ttft_ms":1480},"model":"gpt-6-astra-2026-09-03","obfuscation":"jnu3JU4oqv4e","object":"chat.completion.chunk","routing":{"serving_pipereplica":"d20261015073548-afac08a8-prefill-r7-dp0-prefill"},"service_tier":"default","system_fingerprint":null,"usage":{"completion_tokens":4,"completion_tokens_details":{"accepted_prediction_tokens":0,"audio_tokens":0,"reasoning_tokens":0,"rejected_prediction_tokens":0},"prompt_tokens":4521,"prompt_tokens_details":{"audio_tokens":0,"cache_write_tokens":0,"cached_tokens":4033},"total_tokens":4525,"logfire_ai_gateway":{"cost":"0.009113"},"pydantic_ai_gateway":{"cost_estimate":"0.009113"}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-28T20:06:22.161146+00:00
