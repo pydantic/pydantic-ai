@@ -1,6 +1,17 @@
 --- expected
 +++ actual
-@@ -224,0 +225,18 @@
+@@ -217,0 +218,22 @@
++    },
++    {
++     "text": "<system><context id=\"capability:refunds\">\nQuote the refund policy.\n</context></system>",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
 +     "text": "The refund is on its way.",
 +     "type": "text"
 +    }
@@ -12,14 +23,13 @@
 +    {
 +     "text": "Question 2",
 +     "type": "text"
-+    }
-+   ]
-+  },
-+  {
-+   "role": "assistant",
-+   "content": [
-+    {
-@@ -255,18 +272,0 @@
+@@ -249,22 +270,0 @@
+-    },
+-    {
+-     "text": "<system><context id=\"capability:refunds\">\nQuote the refund policy.\n</context></system>",
+-     "type": "text"
+-    }
+-   ]
 -  },
 -  {
 -   "role": "assistant",
@@ -36,8 +46,6 @@
 -    {
 -     "text": "Question 2",
 -     "type": "text"
--    }
--   ]
 @@ -305,161 +304,0 @@
 -{
 - "system": [

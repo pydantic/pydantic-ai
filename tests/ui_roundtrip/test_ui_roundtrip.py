@@ -645,11 +645,6 @@ _APPEND_INSTRUCTIONS = (
     "which the adapter strips from client history in `manage_system_prompt='server'`, so every turn re-renders "
     'the baseline from current state and rewrites the prefix; no issue yet'
 )
-_LOADED_INSTRUCTIONS = (
-    "a loaded capability's instructions are stated as an `InstructionDeltaPart`, system voice the adapter strips "
-    'from client history, so the next request states them again after its last message instead of after the load; '
-    '#11771'
-)
 _FEEDBACK_NOT_STREAMED = (
     "retry feedback (`RetryFeedbackPart`) isn't streamed, so the client keeps the rejected and the accepted "
     'answer as one response; no issue yet'
@@ -745,7 +740,6 @@ SCENARIOS = [
                 ('wire', 'dump', 'agui'),
                 ('wire', 'stream', 'agui'),
             ),
-            **_gaps(_LOADED_INSTRUCTIONS, ('wire', 'dump', 'vercel'), ('wire', 'stream', 'vercel')),
         },
     ),
     Scenario(
