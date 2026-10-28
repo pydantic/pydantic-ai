@@ -327,9 +327,20 @@ ends with &lt;/context-file
         cap = RepoContext[object](root_markers=('.git',))
         ctx = _run_context(workspace=Workspace(LocalWorkspaceBackend(repo / 'packages' / 'foo')))
         await cap.before_run(ctx)
-        rendered = _render_capability_instructions(cap, ctx) or ''
-        bodies = [block.split('\n')[1] for block in rendered.split('\n\n')]
-        assert bodies == ['repo root', 'packages', 'foo package']
+        rendered = (_render_capability_instructions(cap, ctx) or '').replace(str(repo), '<repo>')
+        assert rendered == snapshot("""\
+<context-file path="<repo>/AGENTS.md">
+repo root
+</context-file>
+
+<context-file path="<repo>/packages/AGENTS.md">
+packages
+</context-file>
+
+<context-file path="AGENTS.md">
+foo package
+</context-file>\
+""")
 
     async def test_root_markers_without_a_marked_ancestor_scan_only_the_working_dir(self, tmp_path: Path) -> None:
         _write(tmp_path / 'AGENTS.md', 'parent')
