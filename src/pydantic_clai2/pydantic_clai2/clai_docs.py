@@ -121,7 +121,7 @@ class _Doc:
 @cache
 def _doc(doc_id: str) -> _Doc:
     if doc_id in _CLAI_DOCS:
-        source = _CLAI_DOCS[doc_id][0]
+        source, description = _CLAI_DOCS[doc_id]
         package = files('pydantic_clai2')
         relative = PurePosixPath(source)
         if relative.parts[0] == 'pydantic_clai2':
@@ -136,6 +136,9 @@ def _doc(doc_id: str) -> _Doc:
     else:
         name = doc_id.removeprefix('harness/')
         text = files('pydantic_ai_harness').joinpath(name).joinpath('README.md').read_text(encoding='utf-8')
+        # A harness README's first sentence, past its title, notes, and links.
+        prose = next(block for block in text.split('\n\n') if not block.lstrip().startswith(('#', '>', '[', '!', '|')))
+        description = ' '.join(prose.split()).split('. ')[0].rstrip('.') + '.'
     lines = text.splitlines(keepends=True)
     headings: list[tuple[int, int, str]] = []
     fence = ''
@@ -167,12 +170,6 @@ def _doc(doc_id: str) -> _Doc:
                 end=end,
             )
         )
-    if doc_id in _CLAI_DOCS:
-        description = _CLAI_DOCS[doc_id][1]
-    else:
-        # A harness README's first sentence, past its title, notes, and links.
-        prose = next(block for block in text.split('\n\n') if not block.lstrip().startswith(('#', '>', '[', '!', '|')))
-        description = ' '.join(prose.split()).split('. ')[0].rstrip('.') + '.'
     return _Doc(id=doc_id, description=description, lines=lines, sections=sections)
 
 
