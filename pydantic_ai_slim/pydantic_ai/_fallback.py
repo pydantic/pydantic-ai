@@ -27,7 +27,13 @@ from opentelemetry.trace import Span, Tracer
 from ._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
 from ._utils import PeekableAsyncStream, await_maybe, get_first_param_type, is_str_dict
 from .exceptions import FallbackExceptionGroup, UserError
-from .messages import ModelMessage, ModelRequestAttempt, ModelResponse, ModelResponseStreamEvent
+from .messages import (
+    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
+    ModelMessage,
+    ModelRequestAttempt,
+    ModelResponse,
+    ModelResponseStreamEvent,
+)
 from .models._request_timeout import stream_under_deadline
 
 if TYPE_CHECKING:
@@ -53,7 +59,6 @@ __all__ = (
     'FALLBACK_CAPABILITY_PIN_KEY',
 )
 
-_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 FALLBACK_MODEL_PIN_KEY = 'fallback_model_id'
 """Where `FallbackModel` pins a suspended response to the inner model that started it."""
 FALLBACK_CAPABILITY_PIN_KEY = 'fallback_candidate'
@@ -107,19 +112,6 @@ class ResponseRejected(Exception):
 
     def __init__(self, rejected_count: int):
         super().__init__(f'{rejected_count} model response(s) rejected by fallback_on handler')
-
-
-def _is_response_handler(handler: Callable[..., Any]) -> bool:
-    """Check if a callable is a response handler based on type hints.
-
-    Returns True if the first parameter is type-hinted as ModelResponse.
-    Returns False otherwise (including if there are no type hints).
-    """
-    first_param_type = get_first_param_type(handler)
-    if first_param_type is None:
-        return False
-    # Only support exact ModelResponse type (no Optional, no subclasses)
-    return first_param_type is ModelResponse
 
 
 def _is_exception_type(value: Any) -> TypeGuard[type[Exception]]:
@@ -179,7 +171,9 @@ class FallbackPredicates:
 
     def _add_handler(self, handler: Callable[..., Any]) -> None:
         """Add a handler, auto-detecting its type by inspecting type hints."""
-        if _is_response_handler(handler):
+        # A response handler's first parameter is annotated as exactly `ModelResponse` (no `Optional`, no subclass);
+        # anything else, including no annotation, is an exception handler.
+        if get_first_param_type(handler) is ModelResponse:
             self.response_handlers.append(handler)
         else:
             self.exception_handlers.append(handler)
