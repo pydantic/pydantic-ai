@@ -14,6 +14,7 @@ the real APIs.
 
 from __future__ import annotations as _annotations
 
+import json
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Literal, cast
@@ -2349,6 +2350,7 @@ async def test_azure_unified_cache(
         assert model.resolve_cache_retention({'cache': '1h'}) == timedelta(minutes=30)
     else:
         assert 'prompt_cache_options' not in body
+        assert 'prompt_cache_breakpoint' not in json.dumps(body)
         assert model.resolve_cache_retention({'cache': True}) is None
 
 
