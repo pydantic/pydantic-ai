@@ -263,7 +263,7 @@ It never fires while the cache is warm, so keep a size-based strategy too.
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Caching, NativeCompaction
 
-from pydantic_ai_harness.compaction import CompactOnCacheExpiry
+from pydantic_ai_harness import CompactOnCacheExpiry
 
 agent = Agent(
     'test',

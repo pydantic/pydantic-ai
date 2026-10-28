@@ -415,7 +415,7 @@ Editing history invalidates the provider's prompt cache from the edit onward, so
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Caching, NativeCompaction
-from pydantic_ai_harness.compaction import CompactOnCacheExpiry
+from pydantic_ai_harness import CompactOnCacheExpiry
 
 agent = Agent(
     'anthropic:claude-sonnet-5',

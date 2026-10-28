@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from .compaction import (
         ClampOversizedMessages,
         ClearToolResults,
+        CompactOnCacheExpiry,
         CompactOnRequest,
         DeduplicateFileReads,
         FallbackCompaction,
@@ -102,6 +103,7 @@ __all__ = [
     'ClearToolResults',
     'CodeMode',
     'Coder',
+    'CompactOnCacheExpiry',
     'CompactOnRequest',
     'ConversationSearch',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
@@ -194,6 +196,7 @@ _CAPABILITY_EXPORTS = {
     'ClearToolResults': 'compaction',
     'CodeMode': 'code_mode',
     'Coder': 'coder',
+    'CompactOnCacheExpiry': 'compaction',
     'CompactOnRequest': 'compaction',
     'ConversationSearch': 'conversation_search',
     'DayAI': 'day_ai',

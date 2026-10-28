@@ -787,8 +787,15 @@ class TestDecision:
         [
             ({'fallback_retention': timedelta(0)}, 'fallback_retention must be positive.'),
             ({'max_tokens': 10, 'max_fraction': 0.5}, 'Set at most one of max_tokens or max_fraction.'),
+            # An explicit fraction equal to the default still conflicts with `max_tokens`.
+            ({'max_tokens': 10, 'max_fraction': 0.2}, 'Set at most one of max_tokens or max_fraction.'),
         ],
     )
     def test_invalid_configuration(self, kwargs: dict[str, Any], message: str) -> None:
         with pytest.raises(ValueError, match=message):
             CompactOnCacheExpiry(**kwargs)
+
+    def test_the_default_fraction_gives_way_to_max_tokens(self) -> None:
+        assert CompactOnCacheExpiry[None]().max_fraction == 0.2
+        assert CompactOnCacheExpiry[None](max_tokens=10).max_fraction is None
+        assert CompactOnCacheExpiry[None](max_fraction=None).max_fraction is None

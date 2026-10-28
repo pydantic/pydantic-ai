@@ -37,6 +37,18 @@ if TYPE_CHECKING:
 DEFAULT_MAX_FRACTION = 0.2
 """Default size, as a fraction of the context window, below which an expired history is left alone."""
 
+
+class _DefaultFraction(float):
+    """The default `max_fraction`, told apart from an explicit `0.2` so one beside `max_tokens` is still rejected."""
+
+
+# Type checkers see the plain default; at runtime the sentinel tells an omitted `max_fraction` from an explicit one,
+# so the public field type stays what callers can pass.
+if TYPE_CHECKING:
+    _DEFAULT_FRACTION: float = DEFAULT_MAX_FRACTION
+else:
+    _DEFAULT_FRACTION = _DefaultFraction(DEFAULT_MAX_FRACTION)
+
 CLEARED_TOOL_RESULT_HINT = '[Tool result cleared to save context. Call the tool again if you need it.]'
 """Placeholder the default fallback leaves in place of a cleared tool result.
 
@@ -84,7 +96,7 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
         ```python
         from pydantic_ai import Agent
         from pydantic_ai.capabilities import Caching, NativeCompaction
-        from pydantic_ai_harness.compaction import CompactOnCacheExpiry
+        from pydantic_ai_harness import CompactOnCacheExpiry
 
         agent = Agent(
             'anthropic:claude-sonnet-5',
@@ -104,7 +116,7 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
 
     Replaces the default `max_fraction`."""
 
-    max_fraction: float | None = field(default=DEFAULT_MAX_FRACTION, kw_only=True)
+    max_fraction: float | None = field(default=_DEFAULT_FRACTION, kw_only=True)
     """Only compact an expired history above this fraction of the request model's window.
 
     Defaults to `0.2`, so compacting reclaims enough to be worth the lost content. `None` compacts
@@ -133,8 +145,9 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
     operation, which needs a stable id."""
 
     def __post_init__(self) -> None:
-        if self.max_tokens is not None and self.max_fraction == DEFAULT_MAX_FRACTION:
-            self.max_fraction = None
+        if self.max_fraction is _DEFAULT_FRACTION:
+            # Left at its default, it gives way to `max_tokens`; stated explicitly beside it, it's a conflict.
+            self.max_fraction = None if self.max_tokens is not None else DEFAULT_MAX_FRACTION
         validate_token_trigger(self.max_tokens, self.max_fraction, self.fallback_context_window, self.context_window)
         if self.fallback_retention is not None and self.fallback_retention <= timedelta(0):
             raise ValueError('fallback_retention must be positive.')
