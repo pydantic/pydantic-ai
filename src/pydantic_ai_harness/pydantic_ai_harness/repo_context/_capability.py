@@ -318,7 +318,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         Files are enqueued shallowest first, so the most specific file is the latest one the model reads.
         """
         working_dir = await self._working_dir(ctx.workspace)
-        in_history = self._surfaced_in_history(ctx.messages)
+        in_history = self._sync_surfaced_dirs(ctx.messages)
         for current in _directories_down_to(working_dir, directory):
             await self._enqueue_directory(ctx, current, in_history)
 
@@ -336,8 +336,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     def _surfaced(self, key: str, in_history: set[str]) -> bool:
         return key in self._loaded_dirs or key in self._pending_dirs or key in in_history
 
-    def _surfaced_in_history(self, messages: Sequence[ModelMessage]) -> set[str]:
-        """The directories whose nested note the model can still see, in the post-compaction window.
+    def _sync_surfaced_dirs(self, messages: Sequence[ModelMessage]) -> set[str]:
+        """Update the pending notes against history, and return the directories whose note is in the window.
+
+        Call it once per traversal, before any `_surfaced` check.
 
         A note survives in history until compaction summarizes it away, so this is derived from the window
         rather than remembered, and it covers notes from earlier runs of the conversation. Notes enqueued but
