@@ -52,6 +52,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
 from pydantic_clai2.builtin_plugins.web.sidebar import completions
 from pydantic_clai2.builtin_plugins.web.workspaces import open_workspace
+from pydantic_clai2.runtime import git_actions
+from pydantic_clai2.runtime.git_actions import GitStatus, PullRequestDraft
 from pydantic_clai2.runtime.image_codec import decode_images
 
 STATIC = Path(__file__).with_name('static')
@@ -209,6 +211,50 @@ class NewSession(BaseModel):
     workspace: str | None = Field(default=None, max_length=4096)
 
 
+class CommitFiles(BaseModel):
+    """The changed files to commit, by path; `None` for every one."""
+
+    files: list[str] | None = None
+
+
+class CommitRequest(CommitFiles):
+    """A commit to make: its message, and the files it takes."""
+
+    message: str = Field(max_length=100_000)
+
+
+class PushRequest(BaseModel):
+    """`confirmed` allows pushing the default branch."""
+
+    confirmed: bool = False
+
+
+class PullRequestRequest(BaseModel):
+    """The pull request to open."""
+
+    title: str = Field(max_length=200)
+    body: str = Field(default='', max_length=100_000)
+
+
+class GitDone(BaseModel):
+    """What a git action did, in a line, and the repository after it."""
+
+    message: str
+    status: GitStatus | None
+
+
+class CommitDraft(BaseModel):
+    """The commit message the session's model drafted."""
+
+    message: str
+
+
+class PullRequestOpened(BaseModel):
+    """The pull request `gh` opened."""
+
+    url: str
+
+
 class Opened(BaseModel):
     """The conversation of the live session that opening or starting a session gave."""
 
@@ -252,6 +298,7 @@ def create_app(*, service: WebService, token: str, hosts: frozenset[str], static
     _tasks(app, service)
     _panels(app, service)
     _workspaces(app, service)
+    _git(app, service)
     _orchestrator(app, service.orchestrator)
     _events(app, service)
     return Guard(app, token=token, hosts=hosts)
@@ -352,7 +399,7 @@ def _page(app: FastAPI, *, token: str, static: Path, assets: Assets) -> None:
 
 
 def _prompt(app: FastAPI, service: WebService) -> None:
-    """What the composer does: enter input, interrupt, complete, pick a model, answer questions.
+    """What the composer does: enter input, interrupt, complete, find `@` files, pick a model, answer questions.
 
     Each route is there twice: under `/api/sessions/ID/` for the live session holding conversation ID,
     and unprefixed for the default session, as before CLAI ran several.
@@ -375,6 +422,9 @@ def _prompt(app: FastAPI, service: WebService) -> None:
 
     async def complete(text: str, conversation_id: str | None = None) -> list[CompletionInfo]:
         return await session(conversation_id).complete(text)
+
+    async def files(q: str = '', conversation_id: str | None = None) -> list[CompletionInfo]:
+        return await session(conversation_id).files(q)
 
     async def model(body: ModelChoice, conversation_id: str | None = None) -> None:
         channel = session(conversation_id)
@@ -402,6 +452,7 @@ def _prompt(app: FastAPI, service: WebService) -> None:
         app.post(f'{prefix}/input')(send)
         app.post(f'{prefix}/interrupt')(interrupt)
         app.get(f'{prefix}/complete')(complete)
+        app.get(f'{prefix}/files')(files)
         app.post(f'{prefix}/model', status_code=204)(model)
         app.post(f'{prefix}/switch', status_code=204)(switch)
         app.post(f'{prefix}/questions/{{request_id}}', status_code=204)(answer)
@@ -636,6 +687,51 @@ def _workspaces(app: FastAPI, service: WebService) -> None:
     @app.post('/api/workspaces/{workspace_id}/open')
     async def open_one(workspace_id: str) -> Opened:
         return Opened(id=await _wait(open_workspace(service, workspace_id)))
+
+
+def _git(app: FastAPI, service: WebService) -> None:
+    """The git chip and its dialog: a live session's repository, and committing, pushing, or opening a pull request.
+
+    Each acts in the session's own directory, and refuses one that no longer exists.
+    """
+
+    def workspace(conversation_id: str) -> Path:
+        return _run(lambda: service.session(conversation_id)).session.workspace
+
+    def model(conversation_id: str) -> git_actions.ModelSource:
+        return _run(lambda: service.session(conversation_id)).session.conversation.resolved_model
+
+    @app.get('/api/sessions/{conversation_id}/git')
+    async def status(conversation_id: str) -> GitStatus | None:
+        return await _wait(git_actions.git_status(workspace(conversation_id)))
+
+    @app.post('/api/sessions/{conversation_id}/git/commit/draft')
+    async def draft_commit(conversation_id: str, body: CommitFiles) -> CommitDraft:
+        drafted = git_actions.draft_commit_message(
+            workspace(conversation_id), model=model(conversation_id), files=body.files
+        )
+        return CommitDraft(message=await _wait(drafted))
+
+    @app.post('/api/sessions/{conversation_id}/git/commit')
+    async def commit(conversation_id: str, body: CommitRequest) -> GitDone:
+        directory = workspace(conversation_id)
+        done = await _wait(git_actions.commit(directory, message=body.message, files=body.files))
+        return GitDone(message=done, status=await _wait(git_actions.git_status(directory)))
+
+    @app.post('/api/sessions/{conversation_id}/git/push')
+    async def push(conversation_id: str, body: PushRequest) -> GitDone:
+        directory = workspace(conversation_id)
+        done = await _wait(git_actions.push(directory, confirmed=body.confirmed))
+        return GitDone(message=done, status=await _wait(git_actions.git_status(directory)))
+
+    @app.post('/api/sessions/{conversation_id}/git/pr/draft')
+    async def draft_pull_request(conversation_id: str) -> PullRequestDraft:
+        return await _wait(git_actions.draft_pull_request(workspace(conversation_id), model=model(conversation_id)))
+
+    @app.post('/api/sessions/{conversation_id}/git/pr')
+    async def pull_request(conversation_id: str, body: PullRequestRequest) -> PullRequestOpened:
+        opened = git_actions.open_pull_request(workspace(conversation_id), title=body.title, body=body.body)
+        return PullRequestOpened(url=await _wait(opened))
 
 
 def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:

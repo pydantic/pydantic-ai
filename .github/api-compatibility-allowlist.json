@@ -56,9 +56,9 @@
     },
     {
       "against": "v2.62.0",
-      "fingerprint": "8cb8cd8599117122d06cdb06c3f0113ddd97f018c56417a2dd65310dd85c2439",
-      "reason": "clai2 0.x: adds the built-in `hooks` declaration to `DEFAULT_PLUGINS`; every existing declaration is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11423"
+      "fingerprint": "f68f11981b239bbeb67fb773b7b3867dae32610591a7dc708b398d14e003ba28",
+      "reason": "clai2 0.x: intentional default change enabling the guarded `herdr` integration. Saved disabled declarations are preserved; `/plugins disable herdr` opts out. Also retains the `hooks` declaration approved in #11423; every other declaration is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11661"
     },
     {
       "against": "v2.61.0",
@@ -379,7 +379,7 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11334"
     },
     {
-      "against": "v2.62.0",
+      "against": "v2.63.0",
       "fingerprint": "ba357493cc5988982484475597d4666626d566ac71a2317e5e91af3c243c196e",
       "reason": "`RepoContextSettings.nested_traversal` keeps its type and default; only its `Field` description changed, to describe nested traversal surfacing every directory between the traversed one and the workspace.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11687"
