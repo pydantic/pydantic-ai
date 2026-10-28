@@ -1371,3 +1371,138 @@ async def test_failed_draft_cleanup_stays_pending_until_retried(page: Page, web_
     await open_draft_session(page, 'Browser Gamma')
     await wait_for_draft(page, web_ui.beta, None)
     await expect(page.get_by_role('alert', name='Draft storage')).to_have_count(0)
+
+
+async def monitor_draft_checks(page: Page) -> None:
+    await page.add_init_script("""
+        window.draftChecks = window.draftChecksDone = window.draftWrites = 0;
+        const fetch = window.fetch;
+        window.fetch = (url, options) => {
+            if (url !== '/api/sessions?q=&include_archived=true') return fetch(url, options);
+            window.draftChecks++;
+            return fetch(url, options).finally(() => window.draftChecksDone++);
+        };
+        const Socket = window.WebSocket;
+        window.WebSocket = class extends Socket {
+            constructor(...args) {
+                super(...args);
+                window.draftSocket = this;
+                this.addEventListener('message', event => {
+                    const message = JSON.parse(event.data);
+                    if (message.type === 'live') window.draftLive = message;
+                });
+            }
+        };
+        const put = IDBObjectStore.prototype.put;
+        IDBObjectStore.prototype.put = function(...args) {
+            if (this.name === 'drafts') window.draftWrites++;
+            return put.apply(this, args);
+        };
+    """)
+
+
+async def seed_draft(page: Page, conversation: str) -> None:
+    await page.evaluate(
+        """id => new Promise((resolve, reject) => {
+            const request = indexedDB.open('clai-drafts', 1);
+            request.onsuccess = () => {
+                const db = request.result;
+                const tx = db.transaction('drafts', 'readwrite');
+                tx.objectStore('drafts').put({id, text: 'recover this draft', attachments: []});
+                tx.oncomplete = () => { db.close(); resolve(); };
+                tx.onabort = () => { db.close(); reject(tx.error); };
+            };
+        })""",
+        conversation,
+    )
+
+
+async def draft_checks_settled(page: Page) -> None:
+    # App batches socket messages on a frame; let its resulting effects run before counting requests.
+    await page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+    await page.wait_for_function('() => window.draftChecks === window.draftChecksDone')
+
+
+async def test_draft_checks_ignore_activity_and_stop_after_discard(page: Page, web_ui: WebUI) -> None:
+    await monitor_draft_checks(page)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await open_draft_session(page, 'Browser Beta')
+    await seed_draft(page, 'missing-session')
+    await page.reload()
+    alert = page.get_by_role('alert').filter(has_text="This draft's session is unavailable")
+    await expect(alert).to_be_visible()
+    await draft_checks_settled(page)
+    checks = await page.evaluate('window.draftChecks')
+    await page.evaluate(
+        """id => {
+            const sessions = window.draftLive.sessions.map(entry => entry.id === id ? {...entry, state: 'running'} : entry);
+            window.draftSocket.dispatchEvent(new MessageEvent('message', {data: JSON.stringify({type: 'live', sessions})}));
+        }""",
+        web_ui.beta,
+    )
+    await expect(page.locator('.session.current').get_by_role('img', name='Running', exact=True)).to_be_visible()
+    await draft_checks_settled(page)
+    assert await page.evaluate('window.draftChecks') == checks
+    # Opening the original session removes it from the check set and clears its warning without a request.
+    await page.evaluate("""() => {
+        const sessions = [...window.draftLive.sessions, {id: 'missing-session', state: 'idle', title: null, workspace: ''}];
+        window.draftSocket.dispatchEvent(new MessageEvent('message', {data: JSON.stringify({type: 'live', sessions})}));
+    }""")
+    await expect(alert).to_have_count(0)
+    await draft_checks_settled(page)
+    assert await page.evaluate('window.draftChecks') == checks
+    # Closing it checks again; its unsent draft has not been discarded.
+    await page.evaluate("""() => {
+        const sessions = window.draftLive.sessions.filter(entry => entry.id !== 'missing-session');
+        window.draftSocket.dispatchEvent(new MessageEvent('message', {data: JSON.stringify({type: 'live', sessions})}));
+    }""")
+    await expect(alert).to_be_visible()
+    await draft_checks_settled(page)
+    assert await page.evaluate('window.draftChecks') == checks + 1
+    checks += 1
+    # A session-list change still checks whether the original conversation has become available.
+    await page.evaluate(
+        'window.draftSocket.dispatchEvent(new MessageEvent(\'message\', {data: \'{"type":"sessions"}\'}))'
+    )
+    await page.wait_for_function('previous => window.draftChecks > previous', arg=checks)
+    await draft_checks_settled(page)
+    checks = await page.evaluate('window.draftChecks')
+    await page.get_by_role('button', name='Discard draft', exact=True).click()
+    await wait_for_draft(page, 'missing-session', None)
+    await expect(alert).to_have_count(0)
+    await page.evaluate(
+        'window.draftSocket.dispatchEvent(new MessageEvent(\'message\', {data: \'{"type":"sessions"}\'}))'
+    )
+    await draft_checks_settled(page)
+    assert await page.evaluate('window.draftChecks') == checks
+
+
+async def test_draft_checks_include_archived_sessions_during_sidebar_search(page: Page, web_ui: WebUI) -> None:
+    await monitor_draft_checks(page)
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await open_draft_session(page, 'Browser Gamma')
+    await seed_draft(page, web_ui.moved)
+    response = await page.request.post(f'{web_ui.url}/api/sessions/{web_ui.moved}/archive', headers={HEADER: TOKEN})
+    assert response.ok
+    try:
+        await page.reload()
+        await page.wait_for_function('() => window.draftChecks > 0')
+        await draft_checks_settled(page)
+        alert = page.get_by_role('alert').filter(has_text="This draft's session is unavailable")
+        await expect(alert).to_have_count(0)
+        await expect(page.locator('.sidebar').get_by_text('Browser Moved', exact=True)).to_have_count(0)
+        search = page.get_by_role('textbox', name='Search sessions', exact=True)
+        await search.fill('Beta')
+        await expect(page.locator('.sidebar').get_by_text('Browser Gamma', exact=True)).to_have_count(0)
+        async with page.expect_response('**/api/sessions?q=Beta&include_archived=true'):
+            await page.get_by_role('button', name='Archived', exact=True).click()
+        await draft_checks_settled(page)
+        await expect(alert).to_have_count(0)
+        await wait_for_draft(page, web_ui.moved, 'recover this draft')
+        # Hydration shares the attachment arrays with its saved baseline; it must not rewrite them.
+        assert await page.evaluate('window.draftWrites') == 0
+    finally:
+        response = await page.request.post(
+            f'{web_ui.url}/api/sessions/{web_ui.moved}/unarchive', headers={HEADER: TOKEN}
+        )
+        assert response.ok

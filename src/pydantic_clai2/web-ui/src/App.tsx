@@ -25,7 +25,7 @@ import { MAC, MOD, STEER_KEY } from './platform'
 import { isLight, paletteVariables } from './palette'
 import { initial, initialOrchestrator, reduce, reduceOrchestrator, shownChat, type Action, type Chat } from './state'
 import { WorkersContext } from './workers'
-import { useDraftStorage, type Draft } from './drafts'
+import { useDraftStorage } from './drafts'
 
 type Theme = 'dark' | 'light'
 /** What the main pane shows: the session, or the orchestrator chat. */
@@ -138,10 +138,10 @@ export function App() {
   const [attached, setAttached] = useState<Record<string, readonly Attachment[]>>({})
   const attachments = attached[shown ?? ''] ?? NO_ATTACHMENTS
   const [recovered, setRecovered] = useState<string[]>([])
-  const restoreDrafts = useCallback((found: Draft[]) => {
-    setDrafts(Object.fromEntries(found.map((draft) => [draft.id, draft.text])))
-    setAttached(Object.fromEntries(found.map((draft) => [draft.id, draft.attachments])))
-    setRecovered(found.map((draft) => draft.id))
+  const restoreDrafts = useCallback((texts: Record<string, string>, images: Record<string, readonly Attachment[]>) => {
+    setDrafts(texts)
+    setAttached(images)
+    setRecovered(Object.keys(texts))
   }, [])
   const { ready: draftsReady, unsaved, error: draftError, flush: flushDrafts } = useDraftStorage(drafts, attached, restoreDrafts)
   const setDraft = useCallback((text: string) => {
@@ -181,8 +181,14 @@ export function App() {
     }
   }, [shown, flushDrafts, discardDraft])
   const [unavailableDrafts, setUnavailableDrafts] = useState<string[]>([])
+  // Only membership matters: a live session becoming busy does not change which drafts need checking.
+  const checkDrafts = recovered.filter((id) => !(id in live) && (drafts[id] || attached[id]?.length)).sort().join(' ')
   useEffect(() => {
-    if (connection !== 'open' || recovered.length === 0) return
+    if (connection !== 'open') return
+    if (!checkDrafts) {
+      setUnavailableDrafts([])
+      return
+    }
     let stopped = false
     // Include archived sessions. An idle session absent from `live` can still be resumed.
     void api.sessions('', true).then((projects) => {
@@ -190,10 +196,10 @@ export function App() {
       const resumable = new Set(projects.flatMap((project) => project.worktrees.flatMap((tree) =>
         tree.sessions.filter((entry) => entry.openable).map((entry) => entry.id),
       )))
-      setUnavailableDrafts(recovered.filter((id) => !(id in live) && !resumable.has(id)))
+      setUnavailableDrafts(checkDrafts.split(' ').filter((id) => !resumable.has(id)))
     }, () => undefined) // A failed listing says nothing about whether a saved session exists.
     return () => { stopped = true }
-  }, [connection, recovered, live, state.sessionsVersion])
+  }, [connection, checkDrafts, state.sessionsVersion])
   const composer = useRef<ComposerHandle>(null)
   // A file dropped beside the composer must not open in the tab, losing every session's draft.
   useEffect(() => {
@@ -710,7 +716,7 @@ export function App() {
             <span>{draftError ?? (draftsReady ? 'Saving drafts…' : 'Restoring drafts…')}</span>
           </div>
         )}
-        {unavailableDrafts.filter((id) => drafts[id] || attached[id]?.length).map((id) => (
+        {unavailableDrafts.filter((id) => !(id in live) && (drafts[id] || attached[id]?.length)).map((id) => (
           <div className="preview-banner" role="alert" key={id}>
             <span>
               This draft's session is unavailable. It is kept in this browser: {drafts[id]?.slice(0, 80) || `${attached[id]?.length ?? 0} images`}

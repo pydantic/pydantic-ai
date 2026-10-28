@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Attachment } from './attachments'
 
-export interface Draft {
+interface Draft {
   id: string
   text: string
   attachments: readonly Attachment[]
@@ -13,7 +13,7 @@ const EMPTY: readonly Attachment[] = []
 export function useDraftStorage(
   drafts: Record<string, string>,
   attached: Record<string, readonly Attachment[]>,
-  restore: (found: Draft[]) => void,
+  restore: (drafts: Record<string, string>, attached: Record<string, readonly Attachment[]>) => void,
 ) {
   const [ready, setReady] = useState(false)
   const [unsaved, setUnsaved] = useState(false)
@@ -102,7 +102,7 @@ export function useDraftStorage(
               attached: Object.fromEntries(found.map((draft) => [draft.id, draft.attachments])),
             }
             db.current = opened
-            restore(found)
+            restore(previous.current.drafts, previous.current.attached)
             setReady(true)
           }
         } catch {
