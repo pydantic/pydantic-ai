@@ -65,6 +65,7 @@ from pydantic_ai.realtime.lifecycle import (
     AnswersRevised,
     InputAdded,
     InputLost,
+    OutputItemCut,
     RealtimeFrame,
     ResponseEnded,
     ResponseStarted,
@@ -2720,32 +2721,33 @@ async def test_a_barge_in_drops_the_timestamps_of_the_words_not_heard(when: str)
     ]
 
 
-async def test_only_recent_messages_keep_their_word_timestamps() -> None:
-    """A barge-in cuts the messages of the turn under way, so the words of older ones aren't kept."""
+async def test_a_barge_in_finds_the_words_of_recent_messages_only() -> None:
+    """A barge-in cuts the messages of the turn under way, so the words of older ones aren't kept to cut."""
     incoming: list[dict[str, Any]] = []
     for turn in range(10):
         incoming += [
-            _aligned_audio('Hi. ', event_id=turn),
+            _aligned_audio('Hi there.', event_id=turn),
             {
                 'type': 'agent_response',
-                'agent_response_event': {'agent_response': 'Hi.', 'event_id': turn, 'response_id': f'resp_{turn}'},
+                'agent_response_event': {
+                    'agent_response': 'Hi there.',
+                    'event_id': turn,
+                    'response_id': f'resp_{turn}',
+                },
             },
             _VOICED,
         ]
+    incoming += [
+        {'type': 'interruption', 'interruption_event': {'event_id': 10}},
+        _correction('resp_0', 'Hi there.', 'Hi...'),
+        _correction('resp_9', 'Hi there.', 'Hi...'),
+    ]
     connection = _timed_connection(incoming)
-    await collect_codec_events(connection)
-    assert list(connection._timed_messages) == [f'resp_{turn}' for turn in range(2, 10)]  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_the_output_speech_timestamps_setting_reaches_the_connection() -> None:
-    model = _model(RestRecorder(agent_json()))
-    for settings, timed in [
-        (ElevenLabsAgentsRealtimeModelSettings(), False),
-        (ElevenLabsAgentsRealtimeModelSettings(output_speech_timestamps=True), True),
-    ]:
-        with patched_connect(FakeWebSocket([HANDSHAKE_FRAME])):
-            async with _connect(model, model_settings=settings) as connection:
-                assert (connection._word_timer is not None) is timed  # pyright: ignore[reportPrivateUsage]
+    cuts = [event async for frame in connection.frames() for event in frame if isinstance(event, OutputItemCut)]
+    assert cuts == [
+        OutputItemCut(item_id='resp_0', heard_transcript='Hi...'),
+        OutputItemCut(item_id='resp_9', heard_transcript='Hi...', heard_ms=300),
+    ]
 
 
 async def test_client_tool_call_maps_to_tool_call_with_serialized_args() -> None:
