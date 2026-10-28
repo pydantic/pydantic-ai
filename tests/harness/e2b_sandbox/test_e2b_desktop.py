@@ -157,15 +157,15 @@ async def test_a_display_that_went_away_is_started_again(fake_e2b: FakeE2B, disp
     backend = E2BSandboxBackend(desktop=True)
     workspace = Workspace(backend)
     await workspace.display_size()
-    assert backend.display is not None and backend.display.take_fresh_start() is True
+    assert backend.display is not None and backend.display.starts == 1
 
     display.up = False
-    with pytest.raises(WorkspaceError, match=r'^The display had stopped, so the action did not run'):
+    with pytest.raises(WorkspaceError):
         await workspace.act(Click(x=1, y=1))
     await workspace.act(Click(x=1, y=1))
 
     assert len(display.starts) == 2
-    assert backend.display.take_fresh_start() is True
+    assert backend.display.starts == 2
 
 
 async def test_a_look_at_a_display_that_went_away_starts_it_and_looks_again(

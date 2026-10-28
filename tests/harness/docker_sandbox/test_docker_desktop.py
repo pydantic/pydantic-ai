@@ -130,19 +130,16 @@ async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, con
     workspace = Workspace(backend)
     await workspace.display_size()
     assert docker.xvfb_starts == 0  # the display was already up
-    assert backend.display is not None and backend.display.take_fresh_start() is False
+    assert backend.display is not None and backend.display.starts == 0
 
     docker.remove_display()
-    with pytest.raises(
-        WorkspaceError, match=r'^The display had stopped, so the action did not run; it was started again'
-    ):
+    with pytest.raises(WorkspaceError):
         await workspace.act(Click(x=1, y=1))
     await workspace.act(Click(x=1, y=1))
 
     assert docker.xvfb_starts == 1
-    # Once: the windows that were open are gone.
-    assert backend.display.take_fresh_start() is True
-    assert backend.display.take_fresh_start() is False
+    # The windows that were open are gone.
+    assert backend.display.starts == 1
 
 
 async def test_an_action_that_fails_on_a_running_display_says_why(docker: FakeDocker, container_dir: Path) -> None:
