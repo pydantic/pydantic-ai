@@ -13,6 +13,7 @@ from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
@@ -1297,6 +1298,8 @@ async def test_a_process_plugin_follows_the_session_being_handled(
             host.submit_prompt('submitted')
             host.interrupt()
             calls.append(f'{host.workspace.name} {host.setting("theme")} {host.tasks}')
+            assert await host.resolve_model('chosen') == f'{host.workspace.name}:chosen'
+            assert host.model_settings('chosen') == {'temperature': 0.1 if host.workspace.name == 'a' else 0.2}
 
     Follows.__module__ = module.__name__
     module.__dict__['Follows'] = Follows
@@ -1305,6 +1308,9 @@ async def test_a_process_plugin_follows_the_session_being_handled(
     process = ProcessPlugins[None](store=store, builtin=(PluginSettings(id='follows', factory=module.__name__),))
 
     def session(name: str) -> PluginLoader[None]:
+        async def resolve_model(model: str) -> str:
+            return f'{name}:{model}'
+
         commands = Commands()
         commands.register(Command(name='help', description='Built in', handler=lambda _: ''))
         return PluginLoader(
@@ -1319,6 +1325,8 @@ async def test_a_process_plugin_follows_the_session_being_handled(
             workspace=lambda: tmp_path / name,
             running=lambda: name == 'b',
             live_id=name,
+            resolve_model=resolve_model,
+            model_settings=lambda model: ModelSettings(temperature=0.1 if name == 'a' else 0.2),
         )
 
     a, b = session('a'), session('b')
@@ -1331,6 +1339,8 @@ async def test_a_process_plugin_follows_the_session_being_handled(
         live = a.entries()[0].loaded
         assert live is not None and live.plugin.host.live is not None
         assert live.plugin.host.live.current() is a.live_session
+        assert await live.plugin.host.resolve_model('chosen') == 'a:chosen'
+        assert live.plugin.host.model_settings('chosen') == {'temperature': 0.1}
     other = process.live.get('b')
     assert (other.running, other.workspace, other.tasks, other.sessions) == (True, tmp_path / 'b', None, None)
     assert other.conversation is not a.live_session.conversation and other.status is not a.live_session.status

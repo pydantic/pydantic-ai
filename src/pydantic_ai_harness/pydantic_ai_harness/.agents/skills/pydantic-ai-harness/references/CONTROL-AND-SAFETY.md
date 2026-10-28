@@ -420,9 +420,11 @@ Gotchas:
 - Omitted usage increments `response.usage.unmeasured_requests`. When `price` is unset or returns `None`,
   any known cost subtotal still accrues, but the response remains unpriced and `on_unpriced` applies.
   Known token and cost totals are lower bounds.
-- The built-in stores are `InMemorySpendStore` (default; per process and instance, lost on restart)
-  and `RedisSpendStore` (shared across workers; install `redis` yourself, `RedisClient` is a protocol).
-  For a restart-safe budget on one machine without Redis, implement `BatchSpendStore`:
+- The built-in stores are `InMemorySpendStore` (default; per process and instance, lost on restart),
+  `RedisSpendStore` (shared across workers; install `redis` yourself, `RedisClient` is a protocol), and
+  `PostgresSpendStore(pool, table='spend')` (shared across workers; pass a caller-owned `asyncpg` pool,
+  tables `{table}_counters` and `{table}_dedup` are created on first use). For another backend, implement
+  `BatchSpendStore`:
   `get_many(keys) -> Mapping[str, Spent]` (unknown keys read as zero) and `add_many(entries:
   Sequence[SpendEntry]) -> Mapping[str, Spent]` (new totals; skip an entry whose `token` was already
   applied to its `key`, honour `ttl`), both async. `SpendStore` (`get`/`add`) is deprecated. Pass the
@@ -496,10 +498,12 @@ print(agent.run_sync('Set up storage').output)
 ## SystemReminders
 
 Enqueues reminders at the tail of each model request as a request-scoped `SystemPromptPart`
-(`scope='request'`): the model sees each one for that request only, it's kept in message history,
-and it sits after the cached prefix, so it doesn't invalidate it. Turn on caching on the model
+(`scope='request'`): the model sees each one only in the model request it's part of, and the next
+request, even the next step of the same run, no longer shows it. It's kept in message history, and
+it sits after the cached prefix, so it doesn't invalidate it. Turn on caching on the model
 (e.g. `anthropic_cache`); its breakpoint lands before the reminder. `cache_ttl` is deprecated and
-has no effect.
+has no effect. With `interval>1` the model sees a reminder only on the requests where it fires, so
+text it must follow at every step belongs in the agent's instructions, not in a `Reminder`.
 
 ```python
 from pydantic_ai import Agent
@@ -539,11 +543,13 @@ agent = Agent(
   text on the user channel (`<generated_reminder model="...">`), kept in history together as one record.
   A plain `str` a dynamic reminder returns is operator text in system voice. Framing tags in quoted
   text are escaped.
-- `LLMReminder(model=...)` (model required) makes one extra model call per request; its agent is
-  built on first use, so no provider key is needed at construction. On any error it sends
-  `GoalReanchor` text instead, logging a warning with the traceback once per run under
-  `pydantic_ai_harness.system_reminders`; only a budget too tight for the extra request is silent.
-  Gate it with your own cadence wrapper.
+- `LLMReminder(model=..., interval=10)` (model required) makes one extra model call every `interval`
+  requests (10th, 20th, ...; pass `interval` explicitly: left unset it warns that the default used to
+  be `1`). Each firing adds a note and the generated text to history for good, so a run of R requests
+  gains `2 * (R // interval)` parts. Its agent is built on first use, so no provider key is needed at
+  construction. On any error it sends `GoalReanchor` text instead, logging a warning with the
+  traceback once per run under `pydantic_ai_harness.system_reminders`; only a budget too tight for
+  the extra request is silent. A wrapper that gates it itself should pass `interval=1`.
 - Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
   (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
   gone without a warning, so turn on caching on the model (such as `anthropic_cache`).

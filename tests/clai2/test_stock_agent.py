@@ -22,7 +22,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolCallInfo, ToolGuardrail
-from pydantic_clai2 import _app, open_stock_agent
+from pydantic_clai2 import app, open_stock_agent
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
@@ -276,7 +276,7 @@ async def test_plugins_get_their_settings_and_close_on_exit(
     stock = PluginSettings(
         id='compaction', factory='lifecycle', path=str(plugin), settings={'greeting': 'stock', 'target': 'stock'}
     )
-    monkeypatch.setattr(_app, 'STOCK_PLUGINS', (stock,))
+    monkeypatch.setattr(app, 'STOCK_PLUGINS', (stock,))
     with pytest.raises(RuntimeError, match='host failed') if fail else nullcontext():
         async with open_stock_agent(workspace=tmp_path, plugin_settings={'compaction': {'target': 'host'}}):
             assert log.read_text() == 'stock host'
