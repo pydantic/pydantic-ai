@@ -326,12 +326,6 @@
     },
     {
       "against": "v2.62.0",
-      "fingerprint": "8b92a867f76936c9143e827278e4f72d5caab6e79fa737ed0eb1de483ef2a457",
-      "reason": "Adds the `mcp-defer-loading` feature name to `SUPPORTED_FEATURES`; every existing name is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11656"
-    },
-    {
-      "against": "v2.62.0",
       "fingerprint": "395a2aa1ebaab1b2b172e166494deecabd8c7b335623a14487ff2fefb40f8668",
       "reason": "Intentional default change: `CodeMode.dynamic_catalog` now defaults to `True`, so revealed tools are appended instead of rewriting the cached prompt. `dynamic_catalog=False` restores the previous behavior.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11358"
