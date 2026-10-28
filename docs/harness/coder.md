@@ -265,7 +265,7 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 
 ## Upgrading
 
-`json-repair` moved from the base install to the `coder` extra. If you install plain `pydantic-ai-harness`, importing `Coder`, `coder_agent` or `RepairToolArguments` raises an `ImportError`; install `pydantic-ai-harness[coder]`, or add `coder` to the extras you already use.
+`json-repair` moved from the base install to the `coder` and `repair-tool-arguments` extras. If you install plain `pydantic-ai-harness`, importing `Coder` or `coder_agent` raises an `ImportError`: install `pydantic-ai-harness[coder]`, or add `coder` to the extras you already use. If you use `RepairToolArguments` on its own, install `pydantic-ai-harness[repair-tool-arguments]`.
 
 `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
 
