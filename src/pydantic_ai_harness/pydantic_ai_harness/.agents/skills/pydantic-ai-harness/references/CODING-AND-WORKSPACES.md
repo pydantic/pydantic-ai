@@ -445,6 +445,18 @@ Python up to 3.14.
   it; a custom `image` needs Xvfb, `xdotool`, `scrot` and `setsid`. Under durable execution, build the image first and
   pass it as `image`.
 
+### LocalDesktop
+
+`LocalDesktop(working_dir, *, size=(1280, 800), real_screen=False, ...)` (backend `LocalDesktopBackend`) is a
+`LocalWorkspace` with a screen for `ComputerUse()`, on Linux only. Needs `apt install xvfb fluxbox x11-utils xdotool
+x11-xserver-utils scrot`.
+
+- By default the screen is a private Xvfb display with a window manager, started on first use and shared by later and
+  concurrent runs of the capability; it stops when the program exits. Commands run on it, so apps the agent starts open there.
+- `real_screen=True` drives the X screen you're logged in to; pair with `ComputerUse(requires_approval=True)`. A Wayland
+  session or a missing `DISPLAY` raises on first use.
+- Commands and files are on this machine, as with `LocalWorkspace`: no isolation.
+
 ## Remote hosts and bubblewrap
 
 ### SSHWorkspace

@@ -16,6 +16,9 @@ or the screen you're logged in to.
 
 ```bash
 pip/uv-add "pydantic-ai-harness[anthropic]"
+```
+
+```bash
 sudo apt install xvfb fluxbox x11-utils xdotool x11-xserver-utils scrot
 ```
 

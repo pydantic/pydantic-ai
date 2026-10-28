@@ -148,7 +148,9 @@ class LocalDesktopBackend(LocalWorkspaceBackend):
 
     async def _display_env(self) -> dict[str, str]:
         if sys.platform != 'linux':
-            raise WorkspaceError('A local desktop needs Linux. Use `DockerSandbox(desktop=True)` for one on this machine.')
+            raise WorkspaceError(
+                'A local desktop needs Linux. Use `DockerSandbox(desktop=True)` for one on this machine.'
+            )
         return _session_env() if self._screen is None else {'DISPLAY': await self._screen.display()}
 
     async def run(
