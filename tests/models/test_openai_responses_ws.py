@@ -3136,3 +3136,29 @@ async def test_workload_identity_cannot_enable_a_socket(http: HTTPResponses, pro
     client = AsyncOpenAI(workload_identity=identity, http_client=http.client)
     model = websocket_model(OpenAIProvider(openai_client=client), profile=profile)
     assert model.profile.get('openai_responses_supports_websocket') is False
+
+
+@pytest.mark.parametrize('profile', [None, WEBSOCKET_PROFILE])
+async def test_http_auth_added_after_socket_open_is_honored(
+    allow_model_requests: None, sockets: SocketHarness, profile: OpenAIModelProfile | None
+):
+    socket = sockets.pending[0]
+    socket.responses.append(text_events('unexpected second response', 'resp_second'))
+    authentication: list[str] = []
+
+    def reject(request: httpx2.Request) -> httpx2.Response:
+        authentication.append(request.headers['authorization'])
+        return httpx2.Response(401, json={'error': {'message': 'denied', 'type': 'invalid_api_key'}})
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(reject)) as client:
+        sdk = AsyncOpenAI(api_key='first', http_client=client, max_retries=0)
+        model = websocket_model(OpenAIProvider(openai_client=sdk), profile=profile)
+        async with Agent(model) as agent:
+            assert (await agent.run('first user')).output == 'ready'
+            client.auth = httpx2.BasicAuth('denied', 'secret')
+            with pytest.warns(UnsupportedSettingWarning), pytest.raises(ModelHTTPError) as rejected:
+                await agent.run('second user')
+            assert rejected.value.status_code == 401
+    assert authentication == ['Basic ZGVuaWVkOnNlY3JldA==']
+    assert len(socket.sent) == 1
+    assert sockets.connect_count == 1

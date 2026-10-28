@@ -3359,7 +3359,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return _with_profile_unsupported_settings(self.unsupported_settings, self.profile)
 
     def _websocket_unsupported_reason(self) -> str | None:
-        """Why this model can never send a request over a Responses WebSocket, or `None` when it can."""
+        """Why this request cannot use a Responses WebSocket, or `None` when it can."""
         if not self.profile.get('openai_responses_supports_websocket', True):
             return (
                 'its profile sets `openai_responses_supports_websocket=False`, as its provider, SDK client or model '
@@ -3367,6 +3367,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 'with static credentials, pass '
                 '`profile=OpenAIModelProfile(openai_responses_supports_websocket=True)` to the model.'
             )
+        # Profiles are cached, but the HTTP client's authentication can change after the socket opened.
+        if non_static_auth_source(self._provider.client) is not None:
+            return 'the SDK client resolves authentication per request; use HTTP to apply its current credentials.'
         try:
             importlib.import_module('pydantic_ai.models._openai_responses_websocket')
         except ImportError:
