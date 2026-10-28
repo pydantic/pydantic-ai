@@ -31,6 +31,7 @@ from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
+from .._framing import neutralize_voice_tag
 from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -410,7 +411,7 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
-OpenAIModelName = str | AllModels | Literal['gpt-6.1-sol']
+OpenAIModelName = str | AllModels | Literal['gpt-6.1-sol', 'gpt-6.1-terra']
 """
 Possible OpenAI model names.
 
@@ -421,9 +422,11 @@ See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
 
-The id in the local `Literal` is bridged because `AllModels` doesn't list it at the floor the
+`gpt-6.1-sol` is bridged because `AllModels` doesn't list it at the floor the
 `openai` extra declares; it arrived in `openai` 3.21.0
 (https://github.com/openai/openai-python/pull/3986). Drop it once the floor is bumped past it.
+`gpt-6.1-terra` is also bridged: it is not yet listed in `openai` 3.31.0.
+Drop its bridge once the SDK floor includes the release that adds it.
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
@@ -1857,6 +1860,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 provider_response_id=response.id or None,
                 provider_name=self._provider.name,
                 provider_url=self._provider.base_url,
+                canonical_system=self._canonical_system_stamp,
                 finish_reason='content_filter',
             )
 
@@ -1905,6 +1909,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             provider_response_id=response.id or None,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
+            canonical_system=self._canonical_system_stamp,
             finish_reason=finish_reason,
         )
 
@@ -1965,7 +1970,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # so we set it from a later chunk in `OpenAIChatStreamedResponse`.
         model_name = first_chunk.model or self.model_name
 
-        return self._streamed_response_cls(
+        streamed_response = self._streamed_response_cls(
             model_request_parameters=model_request_parameters,
             _model_name=model_name,
             _model_profile=self.profile,
@@ -1975,6 +1980,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             _provider_url=self._provider.base_url,
             _model_settings=model_settings,
         )
+        streamed_response.canonical_system = self._canonical_system_stamp
+        return streamed_response
 
     @property
     def _streamed_response_cls(self) -> type[OpenAIStreamedResponse]:
@@ -2115,8 +2122,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(
             default_factory=list[ChatCompletionMessageFunctionToolCallParam]
         )
+        message: ModelResponse | None = field(default=None, init=False)
+        """The response being mapped, set by `map_assistant_message`, for deciding which of its stateless data to send back."""
 
         def map_assistant_message(self, message: ModelResponse) -> chat.ChatCompletionAssistantMessageParam | None:
+            self.message = message
             for item in message.parts:
                 if isinstance(item, TextPart):
                     self._map_response_text_part(item)
@@ -2211,6 +2221,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 if field:  # pragma: no branch
                     self.thinkings.setdefault(field, []).append(item.content)
 
+        def accepts_stateless_artifacts(self, item: ModelResponsePart) -> bool:
+            """Whether the model sends back the stateless signed or encrypted data `item` carries.
+
+            See [`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts].
+            """
+            assert self.message is not None, '`map_assistant_message` sets the response before mapping its parts'
+            return self._model.accepts_stateless_artifacts(self.message, item)
+
         def _map_response_thinking_as_text(self, item: ThinkingPart) -> None:
             text, carry_in_user_turn = render_replayed_thinking(item.content, self._model.profile)
             if not carry_in_user_turn:
@@ -2227,9 +2245,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             """
             tool_call = self._model._map_tool_call(item)
             if (
-                item.provider_name == self._model.system
-                and item.provider_details
+                item.provider_details
                 and (extra_content := item.provider_details.get('extra_content'))
+                and self.accepts_stateless_artifacts(item)
             ):
                 tool_call = _ChatCompletionMessageFunctionToolCallParam(**tool_call, extra_content=extra_content)
             self.tool_calls.append(tool_call)
@@ -2677,8 +2695,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             f'The {self._provider.name!r} provider does not support document input via the Chat Completions API.'
         )
 
-    @staticmethod
-    def _inline_text_file_part(text: str, *, media_type: str, identifier: str) -> ChatCompletionContentPartTextParam:
+    def _inline_text_file_part(
+        self, text: str, *, media_type: str, identifier: str
+    ) -> ChatCompletionContentPartTextParam:
+        if not self.profile.get('supports_inline_system_prompts', False):
+            # Inlined as user text, where the framework's own voice is `<system>`-tagged user text too.
+            text = neutralize_voice_tag(text)
         return ChatCompletionContentPartTextParam(
             text=_format_inlined_text_file(text, media_type=media_type, identifier=identifier),
             type='text',
@@ -2991,6 +3013,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     # keeps serving them: a latent directive that never fired before the boundary still governs
     # post-compaction replies without being re-sent (live-verified).
     compaction_retains_standing_prompt = True
+    _honors_compaction_boundaries = True
     # Audio content goes nowhere the API reads it and video has no input type, so neither is sent.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
 
@@ -3248,6 +3271,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             timestamp=_now_utc(),
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
+            canonical_system=self._canonical_system_stamp,
         )
 
     async def _responses_compact(
@@ -3713,6 +3737,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             timestamp=_now_utc(),
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
+            canonical_system=self._canonical_system_stamp,
             finish_reason=finish_reason,
             state=state,
             provider_details=provider_details or None,
@@ -3776,6 +3801,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
             _process_provider_details=self._process_provider_details,
         )
+        streamed_response.canonical_system = self._canonical_system_stamp
         if tool_call_ids_are_response_scoped:
             # Response-scoped tool-call IDs are qualified with the response ID as chunks arrive, so the
             # ID must be known before iteration. This is only needed (and only set eagerly) for the
@@ -4949,7 +4975,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 param['namespace'] = synthesized_ns
                             openai_messages.append(param)
                     elif isinstance(item, NativeToolCallPart):
-                        if from_same_provider and item.tool_name == ToolSearchTool.kind and item.tool_call_id:
+                        # Hosted tool-search items carry their state inline, so they replay to any provider
+                        # that accepts this one's stateless data; their IDs stay with the same provider.
+                        if (
+                            (from_same_provider or self.accepts_stateless_artifacts(message, item))
+                            and item.tool_name == ToolSearchTool.kind
+                            and item.tool_call_id
+                        ):
                             call_id, status, _ = _tool_search_replay_details(item)
                             tool_search_call = responses.response_input_item_param.ToolSearchCall(
                                 call_id=call_id,
@@ -5052,7 +5084,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
                     elif isinstance(item, NativeToolReturnPart):
                         if (
-                            from_same_provider
+                            (from_same_provider or self.accepts_stateless_artifacts(message, item))
                             and isinstance(item, NativeToolSearchReturnPart)
                             and not _lacks_tool_search_output_identity(item)
                         ):
@@ -5100,15 +5132,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         # collide with one of those sentinels without carrying native wire data.
                         synthetic_chat_reasoning = item.id in ('content', 'reasoning', 'reasoning_content')
                         native_reasoning = not synthetic_chat_reasoning or bool(item.signature or raw_content)
-                        if item.id and native_reasoning and (should_send_item_id or raw_content):
-                            signature: str | None = None
-                            if (
-                                item.signature
-                                and item.provider_name == self.system
-                                and profile.get('openai_supports_encrypted_reasoning_content', False)
-                            ):
-                                signature = item.signature
-
+                        # Encrypted reasoning carries its state inline, so it's also sent back to a provider
+                        # that accepts this one's encrypted data, with the item ID it was issued under.
+                        signature: str | None = None
+                        if (
+                            item.signature
+                            and profile.get('openai_supports_encrypted_reasoning_content', False)
+                            and self.accepts_stateless_artifacts(message, item)
+                        ):
+                            signature = item.signature
+                        if (
+                            item.id
+                            and native_reasoning
+                            and (should_send_item_id or raw_content or (send_item_ids and signature))
+                        ):
                             if (reasoning_item is None or reasoning_item['id'] != item.id) and (
                                 signature or item.content or raw_content
                             ):  # pragma: no branch
@@ -5144,8 +5181,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 # An empty wrapper in the user turn would tell the model the assistant thought nothing.
                                 carried_thinkings.append(thinking_text)
                     elif isinstance(item, CompactionPart):
+                        # The same predicate `_trim_before_compaction` drops history before a compaction part by.
                         if (
-                            item.provider_name == self.system
+                            self.accepts_stateless_artifacts(message, item)
                             and item.provider_details
                             and 'encrypted_content' in item.provider_details
                         ):
@@ -5714,6 +5752,7 @@ class _ModelResponseStreamedResponse(StreamedResponse):
         self._usage = self._model_response.usage
         self.provider_response_id = self._model_response.provider_response_id
         self.provider_details = self._model_response.provider_details
+        self.canonical_system = self._model_response.canonical_system
         self.finish_reason = self._model_response.finish_reason
         self.state = self._model_response.state
         self.metadata = self._model_response.metadata

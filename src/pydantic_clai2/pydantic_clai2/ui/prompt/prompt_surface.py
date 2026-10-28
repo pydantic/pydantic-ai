@@ -38,7 +38,7 @@ _UNFINISHED_OSC = re.compile(r'(?:\x1b\][^\x07\x1b]*\x1b?|\x1b)\Z')
 MAX_HELD_OSC = 4096
 """An unterminated control longer than this is malformed and dropped, as the transcript does."""
 TRANSCRIPT_KEYS = frozenset({'pageup', 'pagedown', 'mouse'})
-"""Decoded keys that scroll or select the transcript rather than reach the widget pinned under it."""
+"""Decoded keys that scroll the transcript or select painted text rather than act as widget input."""
 WHEEL_ROWS = 3
 
 
@@ -90,7 +90,9 @@ class PromptSurface(io.StringIO):
         self._frame: ScreenBuffer | None = None
         """The cells last painted, which a selection copies from."""
         self._transcript_rows = 0
-        """How many of the frame's top rows show the transcript, the only ones a selection covers."""
+        """How many of the frame's top rows show the transcript."""
+        self._select_pinned = False
+        """Whether a drag can also highlight and copy pinned rows, not only the transcript."""
         self._paint_scheduled = False
         self._paint_delayed = False
         """A paint waits for the frame interval to end; see `changed`."""
@@ -221,7 +223,9 @@ class PromptSurface(io.StringIO):
         with self._lock:
             clicked = report.released and report.button == LEFT and self.selection.held and self.selection.head is None
             if self.selection.feed(report) and self._frame is not None:
-                text = self.selection.text(self._frame, rows=self._transcript_rows)
+                text = self.selection.text(
+                    self._frame, rows=self._frame.height if self._select_pinned else self._transcript_rows
+                )
                 if text.strip():
                     copy_text(text, output=self.output)
                     return text
@@ -282,14 +286,21 @@ class PromptSurface(io.StringIO):
         width, height = self.size()
         return max(1, width), max(2, height)
 
-    def paint(self, rows: tuple[str, ...]) -> None:
+    def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
         """Pin `rows` under the transcript and enable the editor's input modes.
+
+        `select_pinned` lets a drag highlight and copy the pinned rows too. The default excludes
+        editor and status rows from selection.
 
         The editor also repaints on a timer to pick up status changes, so a frame identical to the
         last one is skipped rather than rebuilt and diffed cell by cell.
         """
         with self._lock:
             width, height = self._geometry()
+            if select_pinned != self._select_pinned:
+                self.selection.clear()
+                self._dirty = True
+            self._select_pinned = select_pinned
             pinned = tuple(truncate(row, width) for row in rows[-(height - 2) :]) if height > 2 else ()
             unchanged = (
                 pinned == self._rows
@@ -319,7 +330,7 @@ class PromptSurface(io.StringIO):
         self.view.draw(frame.region(Rect(0, 0, width, bottom)), False)
         for index, row in enumerate(rows):
             frame.region(Rect(0, bottom + index, width, 1)).ansi(0, 0, row)
-        self.selection.highlight(frame, rows=bottom, previous=self._frame)
+        self.selection.highlight(frame, rows=height if self._select_pinned else bottom, previous=self._frame)
         parts.append(render_diff(self._previous, frame))
         self._previous = self._frame = frame
         self._transcript_rows = bottom

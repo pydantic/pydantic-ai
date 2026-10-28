@@ -568,6 +568,14 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     adopted_response: _messages.ModelResponse | None = None
     """The trailing history response a no-prompt run continues from, which records this run's ref like its own."""
 
+    accepted_pending: tuple[ModelRequestContext, _messages.ModelResponse] | None = dataclasses.field(
+        default=None, repr=False
+    )
+    """The pending response a model request returned and its hooks accepted, settled once the run ends.
+
+    Runtime-only: `settle_accepted_pending` leaves it for a later run only if the run ends with it as its output.
+    """
+
     @property
     def workspace_ref(self) -> WorkspaceRef | None:
         """The `workspace_ref` this run records on its responses."""
@@ -810,15 +818,17 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if not run_context:
             run_context = build_run_context(ctx)
 
-        if messages:
-            await self._reevaluate_dynamic_prompts(messages, run_context)
-
+        # Re-evaluated together, so an appended change is compared against the latest value in either.
+        reevaluated: list[_messages.ModelMessage] = [*messages, *([next_message] if next_message else [])]
+        appended_system_prompts = await self._reevaluate_dynamic_prompts(reevaluated, run_context)
         if next_message:
-            reevaluated: list[_messages.ModelMessage] = [next_message]
-            await self._reevaluate_dynamic_prompts(reevaluated, run_context)
-            next_message = cast(_messages.ModelRequest, reevaluated[0])
+            messages[:] = reevaluated[:-1]
+            next_message = cast(_messages.ModelRequest, reevaluated[-1])
+            if appended_system_prompts:
+                next_message = _with_system_prompt_statements(next_message, appended_system_prompts)
         else:
-            parts: list[_messages.ModelRequestPart] = []
+            messages[:] = reevaluated
+            parts: list[_messages.ModelRequestPart] = [*appended_system_prompts]
             if not messages:
                 parts.extend(await self._sys_parts(run_context))
 
@@ -887,9 +897,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _reevaluate_dynamic_prompts(
         self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT]
-    ) -> None:
+    ) -> list[_messages.SystemPromptPart]:
         """Reevaluate any `SystemPromptPart` with dynamic_ref in the provided messages by running the associated runner function."""
-        await _system_prompt.reevaluate_dynamic_system_prompts(
+        return await _system_prompt.reevaluate_dynamic_system_prompts(
             messages, self.system_prompt_dynamic_functions, run_context
         )
 
@@ -900,6 +910,33 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         )
 
     __repr__ = dataclasses_no_defaults_repr
+
+
+def _with_system_prompt_statements(
+    request: _messages.ModelRequest, statements: list[_messages.SystemPromptPart]
+) -> _messages.ModelRequest:
+    """Add the changed statements of appending dynamic system prompts to a request that's about to be sent.
+
+    Each one goes right after its prompt's latest statement when that is in this request, which no model has
+    answered yet, so the new value still comes after the one it replaces. The others open the request.
+    """
+    parts = list(request.parts)
+    opening: list[_messages.ModelRequestPart] = []
+    for statement in statements:
+        latest = next(
+            (
+                index
+                for index in range(len(parts) - 1, -1, -1)
+                if isinstance(part := parts[index], _messages.SystemPromptPart)
+                and part.dynamic_ref == statement.dynamic_ref
+            ),
+            None,
+        )
+        if latest is None:
+            opening.append(statement)
+        else:
+            parts.insert(latest + 1, statement)
+    return replace(request, parts=[*opening, *parts])
 
 
 def _repair_interrupted_tail(
@@ -1011,21 +1048,22 @@ async def _get_instructions(
 async def _get_loaded_instructions(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     run_context: RunContext[DepsT],
-) -> list[_messages.InstructionPart]:
-    """Resolve the instructions of the deferred capabilities the model has loaded, in the order it loaded them.
+    capability_ids: Iterable[str],
+) -> dict[str, list[_messages.InstructionPart]]:
+    """Resolve the instructions of the deferred capabilities in `capability_ids`, the ones the model has loaded.
 
     They reach the model through history, stated after the `load_capability` return, rather than in the
     prefix: they go into `instruction_parts` so `before_model_request` hooks see them, marked `'via_history'`
     in `instruction_visibility`, and `update_loaded_instruction_history` records their changes.
     """
-    parts: list[_messages.InstructionPart] = []
-    for capability_id in LoadedInstructionValues.of(ctx.state.message_history).values:
+    resolved: dict[str, list[_messages.InstructionPart]] = {}
+    for capability_id in capability_ids:
         capability = run_context.capabilities.get(capability_id)
         if capability is not None and capability.defer_loading is True:
-            parts.extend(
-                await resolve_loaded_capability_instructions(capability_id, ctx.deps.tool_manager.toolset, run_context)
+            resolved[capability_id] = await resolve_loaded_capability_instructions(
+                capability_id, ctx.deps.tool_manager.toolset, run_context
             )
-    return parts
+    return resolved
 
 
 def _split_loaded_instruction_parts(
@@ -1225,32 +1263,51 @@ def _pending_snapshot(
     return request_context, replace(response, provider_details=deepcopy(response.provider_details))
 
 
-async def _settle_pending(
-    pending: tuple[ModelRequestContext, _messages.ModelResponse] | None, accepted: _messages.ModelResponse | None
-) -> None:
-    """Leave the pending response a request returned for a later run if the run ends with it, or withdraw it if not.
-
-    The run only ends with a [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] once every model request
-    hook has passed the response on, so that's when its request is left for a later run to collect. One a hook
-    rejected, by raising or by replacing it, is cancelled if the model says nothing else would collect it.
-    """
-    if pending is None:
-        return
+def _is_kept(
+    pending: tuple[ModelRequestContext, _messages.ModelResponse], accepted: _messages.ModelResponse | None
+) -> bool:
+    """Whether `accepted` is still the pending response a request returned, as a later run would continue it."""
     request_context, response = pending
-    if (
+    return (
         accepted is not None
         and accepted.state == 'suspended'
         and accepted.provider_response_id == response.provider_response_id
         # Still the job a later run continues: a hook may have kept the response but dropped what resumes it.
         and request_context.model.continuation_delay(accepted) is not None
-    ):
+    )
+
+
+async def _settle_pending(
+    pending: tuple[ModelRequestContext, _messages.ModelResponse] | None, accepted: _messages.ModelResponse | None
+) -> None:
+    """Leave the pending response a request returned for a later run if the run ends with it, or withdraw it if not.
+
+    One the run doesn't end with, because a hook rejected it by raising or by replacing it, or the run ended another
+    way, is cancelled if the model says nothing else would collect it.
+    """
+    if pending is None:
+        return
+    request_context, response = pending
+    if _is_kept(pending, accepted):
         request_context.model._release_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
     elif request_context.model._withdraws_rejected_suspended_response(response):  # pyright: ignore[reportPrivateUsage]
         await _cancel_interrupted_job(request_context, response)
 
 
+async def settle_accepted_pending(deps: GraphAgentDeps[Any, Any], output: object, *, failed: bool) -> None:
+    """Settle the pending response the run's last model request returned, now that the run has ended.
+
+    Only a run that ends with it as its [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] output
+    leaves it for a later run: one that fails or is cancelled after the request, or ends with another output (e.g.
+    from `after_run`), withdraws it, as does an `iter` run its caller stopped before it ended.
+    """
+    pending, deps.accepted_pending = deps.accepted_pending, None
+    accepted = output.response if not failed and isinstance(output, PendingModelResponse) else None
+    await _settle_pending(pending, accepted)
+
+
 async def _cancel_interrupted_job(request_context: ModelRequestContext, response: _messages.ModelResponse) -> None:
-    """Cancel the job of a suspended response a stream was interrupted on or a hook rejected, through its model.
+    """Cancel the job of a suspended response a stream was interrupted on or the run didn't end with, through its model.
 
     A capability's wrapper around that model was exited with the stream, so it's entered again for the cancellation,
     as for each call it serves, shielded as graph teardown may be under cancellation. Like the cancellation itself,
@@ -1627,10 +1684,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     )
     _did_stream: bool = field(repr=False, init=False, default=False)
     last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
-    _resolved_loaded_parts: list[_messages.InstructionPart] = field(
-        repr=False, init=False, default_factory=list[_messages.InstructionPart]
+    _resolved_loaded_parts: dict[str, list[_messages.InstructionPart]] = field(
+        repr=False, init=False, default_factory=dict[str, list[_messages.InstructionPart]]
     )
-    """The loaded capabilities' instruction parts this request resolved, before the hooks ran."""
+    """The loaded capabilities' instruction parts this request resolved, before the hooks ran, by capability id."""
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -2137,9 +2194,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
-        loaded_instruction_parts = await _get_loaded_instructions(ctx, run_context)
-        self._resolved_loaded_parts = loaded_instruction_parts
-        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts, loaded_instruction_parts)
+        self._resolved_loaded_parts = await _get_loaded_instructions(
+            ctx, run_context, LoadedInstructionValues.of(ctx.state.message_history).values
+        )
+        model_request_parameters = await _prepare_request_parameters(
+            ctx, instruction_parts, [part for parts in self._resolved_loaded_parts.values() for part in parts]
+        )
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
         run_context.model_settings = model_settings
 
@@ -2316,8 +2376,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # anchor the prefix.
             # Loaded capabilities' instructions reach the model through history: changes to them are appended
             # after the prefix's, and they leave the parts the model is sent.
+            loaded_capability_ids = LoadedInstructionValues.of(messages).values
+            # A hook that added a `load_capability` exchange loaded a capability after the instructions were
+            # resolved. Its instructions are resolved now, so they're stated on the request that reveals its tools.
+            self._resolved_loaded_parts |= await _get_loaded_instructions(
+                ctx,
+                run_context,
+                [
+                    capability_id
+                    for capability_id in loaded_capability_ids
+                    if capability_id not in self._resolved_loaded_parts
+                ],
+            )
             prefix_parts, loaded_parts = _split_loaded_instruction_parts(
-                model_request_parameters, self._resolved_loaded_parts, LoadedInstructionValues.of(messages).values
+                model_request_parameters,
+                [part for parts in self._resolved_loaded_parts.values() for part in parts],
+                loaded_capability_ids,
             )
             recording_targets = _history_recording_targets(ctx, messages)
             model_request_parameters = replace(
@@ -2335,7 +2409,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     if capability.defer_loading is not True
                 },
             )
-            _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
+            # A hook that rewrote the history (`ctx.messages[:] = ...`) with a copy of this request left
+            # `self.request` out of it, so the instructions sent are recorded where the history now holds them.
+            for target in (
+                [self.request]
+                if any(message is self.request for message in ctx.state.message_history)
+                else recording_targets
+            ):
+                _apply_instruction_parts(target, model_request_parameters.instruction_parts)
             _record_model_settings_changes(
                 ctx,
                 model,
@@ -2508,14 +2589,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         record_usage: bool,
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
-        """`_finish_handling`, then settle the pending response the request returned, if any, with `response`."""
+        """`_finish_handling`, then settle the pending response the request returned, if any, with `response`.
+
+        A pending response the hooks accepted is only settled once the run ends, as the run may still end another way.
+        """
         try:
             next_node = await self._finish_handling(ctx, response, accounted_responses, record_usage=record_usage)
         except BaseException:
             # A usage limit the response crossed stops the run, so nothing will collect it.
             await _settle_pending(pending, None)
             raise
-        await _settle_pending(pending, response)
+        if pending is not None and _is_kept(pending, response):
+            # A hook that sent the run back to the model, rather than letting it end, superseded the one it accepted.
+            await _settle_pending(ctx.deps.accepted_pending, None)
+            ctx.deps.accepted_pending = pending
+        else:
+            await _settle_pending(pending, response)
         return next_node
 
     async def _finish_handling(
@@ -2961,7 +3050,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         run_context = build_run_context(ctx)
         evidence_window = _messages._post_compaction_window_for_response(  # pyright: ignore[reportPrivateUsage]
-            ctx.state.message_history, self.model_response
+            ctx.state.message_history,
+            self.model_response,
+            ctx.deps.model._compaction_window_predicate(self.model_response),  # pyright: ignore[reportPrivateUsage]
         )
         # Held in a local because it lands in two places below.
         anchored_evidence = AnchoredEvidence(
@@ -3483,45 +3574,34 @@ def _record_model_settings_changes(
     names a level.
 
     Reading history makes this idempotent, like `_record_tool_population_changes`: a retried request finds the
-    part it already recorded. A part on this step's own request is replaced rather than followed by another,
-    since no response has answered it yet.
+    part it already recorded. A part no response has answered yet (on this step's own request, when the run continues
+    a history that ends in one) stays, and the change this request makes follows it: a UI client that rebuilt the
+    history from the event stream keeps that part too, and learns of a change only from its event. A model with a
+    channel collapses the parts no response separates into the last one.
     """
     # Resolved by the model, with its own `settings` (each candidate's, for a `FallbackModel`) and provider-specific
     # overrides taken into account, so a request never records an effort it doesn't send.
     wanted = model._unified_effort(model_settings)  # pyright: ignore[reportPrivateUsage]
-    targets = list(requests)
     # A compaction replaces what came before it, including the changes recorded there, so the effort in
     # effect is read from the window after it, and the next request that names a level opens a new one.
-    recorded = [
-        (message, part)
-        for message in _messages.post_compaction_window(messages)
-        if isinstance(message, _messages.ModelRequest)
-        for part in message.parts
-        if isinstance(part, _messages.ModelSettingsDeltaPart) and 'thinking' in part.settings
-    ]
-    # A part on this step's own request hasn't been answered yet, so this step changed its mind (a hook, or a
-    # retry with different settings): it's replaced, and the request records only what it ends up sending.
-    unanswered: _messages.ModelSettingsDeltaPart | None = None
-    if recorded and any(recorded[-1][0] is target for target in targets):
-        unanswered = recorded.pop()[1]
-    current = recorded[-1][1] if recorded else None
+    current = next(
+        (
+            part
+            for message in reversed(_messages.post_compaction_window(messages))
+            if isinstance(message, _messages.ModelRequest)
+            for part in reversed(message.parts)
+            if isinstance(part, _messages.ModelSettingsDeltaPart) and 'thinking' in part.settings
+        ),
+        None,
+    )
     current_effort = current.settings.get('thinking') if current is not None else None
     if current_effort == wanted:
-        delta = None
-    else:
-        top_level = current is None or current_effort is None or wanted is None
-        delta = _messages.ModelSettingsDeltaPart(settings={'thinking': wanted}, top_level=top_level)
-    if unanswered is not None:
-        if delta == unanswered:
-            return
-        replacement = [] if delta is None else [delta]
-        for request in targets:
-            request.parts = [new for part in request.parts for new in (replacement if part is unanswered else [part])]
-    elif delta is not None:
-        for request in targets:
-            request.parts = [*request.parts, delta]
-    if delta is not None:
-        ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
+        return
+    top_level = current is None or current_effort is None or wanted is None
+    delta = _messages.ModelSettingsDeltaPart(settings={'thinking': wanted}, top_level=top_level)
+    for request in requests:
+        request.parts = [*request.parts, delta]
+    ctx.state.event_stream_buffer.append(_messages.ModelSettingsDeltaEvent(part=delta))
 
 
 def _with_outgoing_reveal_state(

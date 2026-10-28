@@ -11,7 +11,7 @@ Harness capabilities are real code (they write files, run commands, call answere
 model with a `FunctionModel` and let the capabilities execute against temp directories and in-memory
 stores. `Agent.override(model=..., workspace=...)` swaps both without touching the production agent;
 `workspace=` takes a backend such as `LocalWorkspaceBackend(tmp_dir)`. This also works on an agent
-with `ModalSandbox`/`E2BSandbox`/`SpritesSandbox`/`DaytonaSandbox` attached: no sandbox is created, no factory needed.
+with `ModalSandbox`/`E2BSandbox`/`SpritesSandbox`/`DaytonaSandbox`/`BoxdSandbox` attached: no sandbox is created, no factory needed.
 
 - `FunctionModel`: return a `ToolCallPart` on the first request and a `TextPart` once results are in.
 - `TestModel(call_tools=[])`: smoke test that the agent builds and runs. Plain `TestModel()` calls every
@@ -330,7 +330,8 @@ the install command, e.g. `pydantic-monty is required for CodeMode. Install it w
 sees only the current one, as `<system>`-tagged user text at the end of the last request. An
 `LLMReminder` firing is instead a lasting record: a `SystemPromptPart` note (no `scope='request'`) and
 the generated text as user-channel `TextContent` in `<generated_reminder model="...">`, both re-sent on
-every later request. `interval` counts model requests from 1.
+every later request. `interval` counts model requests from 1; `LLMReminder` fires only every
+`interval` requests (10 by default), so a short scripted run needs `LLMReminder(..., interval=1)`.
 
 **Looks like it never fires.** Context-window-driven capabilities (the compaction family) cannot
 resolve a window for `TestModel`, so thresholds default high; pass `context_window=` or
