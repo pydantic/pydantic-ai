@@ -83,10 +83,11 @@ far: on Claude, a run costs several times more without it. Set `cache=False` in 
 
 A model's profile can limit the size of the screenshots it takes, as `computer_use_screenshot_limit`: Claude Opus 4.7,
 Opus 4.8 and the Claude 5 models take up to 2576 pixels on the longer side, earlier Claude models 1568 pixels and
-about 1.15 megapixels. A 1280x800 screen fits every model. On a larger screen, `ComputerUse` sends the model the
-screenshot scaled down and scales its positions back up, when the display can scale its screenshots; otherwise the
-run stops with an error naming the largest screen that fits. A zoom into a region larger than the limit fails that
-action, so the model zooms into a smaller one.
+about 1.15 megapixels, and GPT 2560x1440, since it clicks less accurately on a larger screen. A 1280x800 screen fits
+every model. On a larger screen, `ComputerUse` sends the model the screenshot scaled down and scales its positions
+back up, when the display can scale its screenshots (`SupportsScaledScreenshot`); otherwise the run stops with an error naming the largest
+screen that fits. A zoom into a region larger than the limit fails the call before anything runs, and the result
+names the largest zoom of that shape that fits.
 
 ## When an action fails
 
@@ -94,8 +95,10 @@ The actions in a call run in order, and one that fails stops the call: the actio
 result says which action failed and why, ends with a screenshot as usual, and has the error in its `metadata`, a
 `ComputerResult`. A position outside the screen fails the whole call before anything runs.
 When the environment is gone, the run ends with `WorkspaceUnavailableError`.
-When the display restarted since the model's last screenshot, such as after its sandbox was stopped, the next result
-tells the model that the windows that were open are gone.
+When the display restarted since the model's last screenshot, such as after its sandbox was stopped, the next call
+runs none of its actions, which would land on whatever took the place of the windows the model saw, and its result
+tells the model those windows are gone. Under Temporal, Prefect and Render the tool runs in workflow code, which can't
+tell that the display restarted, so the model gets no such notice there.
 
 ## Watching a run
 
@@ -128,6 +131,8 @@ async def main():
 - Each `computer` call is one model request, so a long task can reach the default
   [`request_limit`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) of 50. Pass higher [`UsageLimits`](https://pydantic.dev/docs/ai/api/pydantic-ai/usage/#pydantic_ai.usage.UsageLimits) for
   long tasks.
+- Under durable execution, use `TemporalDurability`, `PrefectDurability` or `DBOSDurability`: the deprecated
+  `TemporalAgent`, `PrefectAgent` and `DBOSAgent` refuse a workspace, so they can't run `ComputerUse`.
 - Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), a retried action may repeat a click that already
   happened. Temporal, Prefect and Render retry each action on its own; DBOS, Absurd and pgtask retry the whole call.
 - Every screenshot rides in each model request, so under Temporal a run passes the 2 MB payload limit after a few

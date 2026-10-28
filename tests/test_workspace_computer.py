@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import struct
 from typing import Any
 
 import pytest
@@ -147,6 +148,7 @@ async def test_unavailable_workspace_reports_its_reason_for_display_calls() -> N
         workspace.screenshot(),
         workspace.act(MouseUp()),
         workspace.zoom(region),
+        workspace.scaled_screenshot(4, 4),
         workspace.cursor_position(),
     )
     for call in calls:
@@ -161,12 +163,13 @@ async def test_read_only_workspace_allows_screenshots_and_refuses_actions() -> N
     assert await workspace.screenshot() == FAKE_SCREENSHOT
     assert await workspace.cursor_position() == Point(x=640, y=400)
     assert len(await workspace.zoom(Region(left=0, top=0, right=4, bottom=4))) > 0
+    assert (await workspace.scaled_screenshot(64, 40))[16:24] == struct.pack('>II', 64, 40)
     with pytest.raises(WorkspaceReadOnlyError, match='acting on the display'):
         await workspace.act(Click())
     assert provider.actions == []
 
 
-async def test_a_display_without_zoom_or_cursor_position_refuses_them() -> None:
+async def test_a_display_without_zoom_scaling_or_cursor_position_refuses_them() -> None:
     provider = InMemoryProvider()
     workspace = Workspace(DisplayOnlyBackend(provider.backend(None)))
     assert await workspace.display_size() == (1280, 800)
@@ -175,6 +178,8 @@ async def test_a_display_without_zoom_or_cursor_position_refuses_them() -> None:
     assert provider.actions == [MouseUp()]
     with pytest.raises(WorkspaceUnsupportedActionError, match='cannot zoom'):
         await workspace.zoom(Region(left=0, top=0, right=4, bottom=4))
+    with pytest.raises(WorkspaceUnsupportedActionError, match='cannot scale screenshots'):
+        await workspace.scaled_screenshot(64, 40)
     with pytest.raises(WorkspaceUnsupportedActionError, match='cannot report the pointer position'):
         await workspace.cursor_position()
 
