@@ -27,7 +27,7 @@ from pydantic import StrictFloat, StrictInt, TypeAdapter, ValidationError
 from pydantic_ai._http import create_async_httpx2_client
 from pydantic_ai.exceptions import ModelAPIError, UserError
 
-from ._openai_compatible import AsyncHTTPClient, OpenAICompatibleProvider
+from ._openai_compatible import AsyncHTTPClient, _OpenAISDKProvider  # pyright: ignore[reportPrivateUsage]
 
 __all__ = (
     'CredentialsPersistenceError',
@@ -242,7 +242,7 @@ class OAuthCredentialsAuth(httpx2.Auth):
         yield request  # replay exactly once; its response goes back to the caller
 
 
-class OAuthCredentialsProvider(OpenAICompatibleProvider, ABC, Generic[CredentialsT]):
+class OAuthCredentialsProvider(_OpenAISDKProvider, ABC, Generic[CredentialsT]):
     """An OpenAI SDK provider that injects refreshable OAuth credentials instead of an API key.
 
     One provider instance carries one set of credentials (there is no process-global cache). The

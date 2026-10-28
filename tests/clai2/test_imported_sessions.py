@@ -34,7 +34,11 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, is_task_report
@@ -306,6 +310,16 @@ def context(part: ModelRequestPart | ModelResponsePart) -> tuple[str, str]:
     return metadata['kind'], item.content
 
 
+class ClaudeCodeProvider(AnthropicProvider):
+    @property
+    def name(self) -> str:
+        return 'claude-code'
+
+
+def openai_model() -> OpenAIResponsesModel:
+    return OpenAIResponsesModel('gpt-6-astra', provider=OpenAIProvider(api_key='key'))
+
+
 def test_claude_code_transcript_continues_the_last_branch(tmp_path: Path) -> None:
     path = claude_session(tmp_path)
     messages = claude_code_sessions.messages(path)
@@ -333,6 +347,12 @@ def test_claude_code_transcript_continues_the_last_branch(tmp_path: Path) -> Non
     assert response.model_name == 'claude-sonnet-4-5' and response.provider_name == 'anthropic'
     assert response.usage == RequestUsage(
         input_tokens=115, cache_read_tokens=100, cache_write_tokens=5, output_tokens=7
+    )
+    # A provider that only renames `AnthropicProvider`, such as one signing in with Claude Code's subscription,
+    # continues from the signed thinking too.
+    claude_code = AnthropicModel('claude-sonnet-4-5', provider=ClaudeCodeProvider(api_key='key'))
+    assert all(
+        claude_code.accepts_stateless_artifacts(response, part) for part in (response.parts[0], response.parts[3])
     )
     first, second, prompt = results.parts
     assert isinstance(first, ToolReturnPart) and (first.tool_name, first.content) == ('Read', 'file text')
@@ -694,6 +714,8 @@ def test_codex_import_keeps_what_the_model_saw(tmp_path: Path) -> None:
         ToolCallPart('apply_patch', {'input': '*** Begin Patch'}, tool_call_id='c2', provider_name='openai-codex'),
     ]
     assert response.model_name == 'gpt-6-astra' and response.provider_name == 'openai-codex'
+    # The OpenAI API reads Codex's encrypted reasoning too.
+    assert openai_model().accepts_stateless_artifacts(response, response.parts[0])
     assert response.usage == RequestUsage(input_tokens=50, cache_read_tokens=40, output_tokens=3)
     assert [(p.tool_name, p.content) for p in results.parts if isinstance(p, ToolReturnPart)] == [
         ('exec_command', 'a.py'),
@@ -828,7 +850,11 @@ def test_codex_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> N
     for body, image in (('See', 'https://example.com/d.png'), ('out', 'https://example.com/c.png')):
         [kept] = [p for p in requests if is_imported_context(p) and context(p)[1] == body]
         assert isinstance(kept, UserPromptPart) and kept.content[1:] == [ImageUrl(image)]
-    # A boundary for `openai-codex` models, which continue from the summary as Codex's did; others read past it.
+    # A boundary for OpenAI models, `openai-codex` or `openai`, which continue from the summary as Codex's did;
+    # others read past it.
+    compacted = messages[5]
+    assert isinstance(compacted, ModelResponse)
+    assert openai_model().accepts_stateless_artifacts(compacted, compacted.parts[0])
     assert messages[5].parts == [
         CompactionPart(
             None,
