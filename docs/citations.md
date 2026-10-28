@@ -154,8 +154,8 @@ Anthropic cites [web search](native-tools.md#web-search-tool) results whenever t
 with web search the markup can show up in structured output, with or without `Citations()`. The same goes for
 [web fetch](native-tools.md#web-fetch-tool) when you set `enable_citations=True` on the tool. On models with the
 `20260209` web tools, which the model calls from code execution by default, results are usually uncited unless the
-model calls the tool directly, as it does when you ask for citations; see
-[Web Tool Callers](models/anthropic.md#web-tool-callers).
+model calls the tool directly, as it does when you ask for citations on a request that doesn't need code execution;
+see [Web Tool Callers](models/anthropic.md#web-tool-callers).
 
 On other providers, `Citations()` has no effect on structured output. With `NativeOutput` or `PromptedOutput` the
 output is JSON text, so web search citations can come back on it, with positions in the JSON text rather than in your
@@ -203,7 +203,7 @@ The [Vercel AI adapter](ui/vercel-ai.md#citations) keeps citations when the fron
 
 | Provider | Citations | How to turn them on | Notes |
 | --- | --- | --- | --- |
-| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web search, web fetch and documents | Web search: always on direct calls. On models with the `20260209` web tools, which the model calls from code execution by default, results are usually uncited unless `Citations()` has the model call the tool directly ([Web Tool Callers](models/anthropic.md#web-tool-callers)). Web fetch and documents, including documents returned by tools: `Citations()`. [`WebFetchTool(enable_citations=True)`][pydantic_ai.native_tools.WebFetchTool.enable_citations] turns them on for web fetch only | Anchors cover whole text parts. A fetched PDF is a document source. Citations of search results you provide yourself aren't included |
+| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web search, web fetch and documents | Web search: always on direct calls. On models with the `20260209` web tools, which the model calls from code execution by default, results are usually uncited unless `Citations()` has the model call the tool directly, which it doesn't on a request that needs code execution ([Web Tool Callers](models/anthropic.md#web-tool-callers)). Web fetch and documents, including documents returned by tools: `Citations()`. [`WebFetchTool(enable_citations=True)`][pydantic_ai.native_tools.WebFetchTool.enable_citations] turns them on for web fetch only | Anchors cover whole text parts. A fetched PDF is a document source. Citations of search results you provide yourself aren't included |
 | [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_CitationsContentBlock.html) | Documents, on Anthropic models | `Citations()`, for text and PDF documents, including documents returned by tools | Other models on Bedrock don't support citations, so they ignore the setting. Anchors cover whole text parts. A document's title is the name Pydantic AI gives it, such as `Document 1`. Documents read from S3 aren't cited, as Bedrock doesn't allow it. With citations on, a text document must be UTF-8, or Pydantic AI raises a `UserError` |
 | [Google Gemini API](https://ai.google.dev/gemini-api/docs/google-search) | Google Search, file search and web fetch | Turn on the tool | Google Search URLs are Google redirect links, and titles are often just the site's domain |
 | [Google Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/grounding/overview) | Google Search | Turn on the tool | Same as the Gemini API |

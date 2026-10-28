@@ -13,18 +13,19 @@ from inline_snapshot import snapshot
 from pydantic import JsonValue
 
 from pydantic_ai import Agent, ModelHTTPError
-from pydantic_ai.capabilities import AbstractCapability, NativeTool
+from pydantic_ai.capabilities import AbstractCapability, Citations, NativeTool
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
     TextPart,
     UploadedFile,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebSearchTool
+from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 
 from ...conftest import RequestCapture, message, try_import
 from ..conftest import AnthropicModelFactory, cache_breakpoints, content_blocks, message_shape
@@ -498,6 +499,32 @@ HISTORY_CONTAINER_CASES = [
         expected_tools=[('web_fetch_20260309', None)],
     ),
     HistoryContainerCase(
+        'api-extra-body-dict-values',
+        'api',
+        'claude-sonnet-4-6',
+        container_sent=True,
+        model_settings={'extra_body': {'tools': {'tool': _CODE_EXECUTION_WIRE_TOOL}.values()}},
+        expected_tools=[('code_execution_20250825', None)],
+    ),
+    HistoryContainerCase(
+        'api-extra-body-frozenset-callers',
+        'api',
+        'claude-sonnet-4-6',
+        container_sent=True,
+        model_settings={
+            'extra_body': {
+                'tools': [
+                    {
+                        'type': 'web_search_20250305',
+                        'name': 'web_search',
+                        'allowed_callers': frozenset({'code_execution_20260120'}),
+                    }
+                ]
+            }
+        },
+        expected_tools=[('web_search_20250305', ['code_execution_20260120'])],
+    ),
+    HistoryContainerCase(
         'api-empty-callers',
         'api',
         'claude-sonnet-4-6',
@@ -574,8 +601,8 @@ async def test_anthropic_history_container_without_code_execution_by_client(
     assert [(tool['type'], tool.get('allowed_callers')) for tool in tools] == case.expected_tools
 
 
-def _pause_turn_segment(block: dict[str, Any], stop_reason: str, stream: bool) -> httpx2.Response:
-    """One segment, holding one content block, of a turn whose code execution container is `container_A`."""
+def _pause_turn_segment(blocks: list[dict[str, Any]], stop_reason: str, stream: bool) -> httpx2.Response:
+    """One segment of a turn whose code execution container is `container_A`."""
     container = {'id': 'container_A', 'expires_at': '2026-11-01T00:00:00Z'}
     usage = {'input_tokens': 5, 'output_tokens': 1}
     message = {
@@ -587,18 +614,24 @@ def _pause_turn_segment(block: dict[str, Any], stop_reason: str, stream: bool) -
         'container': container,
     }
     if not stream:
-        return httpx2.Response(200, json={**message, 'content': [block], 'stop_reason': stop_reason})
-    if block['type'] == 'text':
-        start: dict[str, Any] = {'type': 'text', 'text': ''}
-        delta: dict[str, Any] = {'type': 'text_delta', 'text': block['text']}
-    else:
-        start = {**block, 'input': {}}
-        delta = {'type': 'input_json_delta', 'partial_json': json.dumps(block['input'])}
+        return httpx2.Response(200, json={**message, 'content': blocks, 'stop_reason': stop_reason})
     events: list[dict[str, Any]] = [
-        {'type': 'message_start', 'message': {**message, 'content': [], 'stop_reason': None}},
-        {'type': 'content_block_start', 'index': 0, 'content_block': start},
-        {'type': 'content_block_delta', 'index': 0, 'delta': delta},
-        {'type': 'content_block_stop', 'index': 0},
+        {'type': 'message_start', 'message': {**message, 'content': [], 'stop_reason': None}}
+    ]
+    for index, block in enumerate(blocks):
+        if block['type'] == 'text':
+            start: dict[str, Any] = {'type': 'text', 'text': ''}
+            delta: dict[str, Any] | None = {'type': 'text_delta', 'text': block['text']}
+        elif block['type'] == 'server_tool_use':
+            start = {**block, 'input': {}}
+            delta = {'type': 'input_json_delta', 'partial_json': json.dumps(block['input'])}
+        else:
+            start, delta = block, None
+        events.append({'type': 'content_block_start', 'index': index, 'content_block': start})
+        if delta is not None:
+            events.append({'type': 'content_block_delta', 'index': index, 'delta': delta})
+        events.append({'type': 'content_block_stop', 'index': index})
+    events += [
         {'type': 'message_delta', 'delta': {'stop_reason': stop_reason, 'stop_sequence': None}, 'usage': usage},
         {'type': 'message_stop'},
     ]
@@ -642,8 +675,8 @@ async def test_anthropic_pause_turn_reconnect_keeps_extra_body_code_execution_co
     bodies: list[dict[str, Any]] = []
     segments = iter(
         [
-            ({'type': 'server_tool_use', 'id': 'srvtoolu_1', 'name': name, 'input': input}, 'pause_turn'),
-            ({'type': 'text', 'text': 'Done.'}, 'end_turn'),
+            ([{'type': 'server_tool_use', 'id': 'srvtoolu_1', 'name': name, 'input': input}], 'pause_turn'),
+            ([{'type': 'text', 'text': 'Done.'}], 'end_turn'),
         ]
     )
 
@@ -676,6 +709,105 @@ async def test_anthropic_pause_turn_reconnect_keeps_extra_body_code_execution_co
         for block in message['content']
         if block['type'] == 'server_tool_use'
     ] == [name]
+
+
+_PENDING_CODE_EXECUTION_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='Search the web for X.')]),
+    ModelResponse(
+        parts=[
+            TextPart(content='Searching.'),
+            NativeToolCallPart(
+                tool_name='code_execution',
+                args={'code': 'r = await web_search({"query": "X"})'},
+                tool_call_id='srvtoolu_pending',
+                provider_name='anthropic',
+            ),
+        ],
+        provider_name='anthropic',
+        provider_details={'container_id': 'container_A'},
+        state='suspended',
+    ),
+]
+
+
+@pytest.mark.parametrize('stream', [pytest.param(False, id='request'), pytest.param(True, id='stream')])
+@pytest.mark.parametrize(
+    'native_tool,container,history,expected_container',
+    [
+        pytest.param(WebSearchTool(), 'container_A', None, 'container_A', id='explicit-container-web-search'),
+        pytest.param(WebFetchTool(), 'container_A', None, 'container_A', id='explicit-container-web-fetch'),
+        pytest.param(
+            WebSearchTool(),
+            {'skills': [{'type': 'anthropic', 'skill_id': 'xlsx', 'version': 'latest'}]},
+            None,
+            {'skills': [{'type': 'anthropic', 'skill_id': 'xlsx', 'version': 'latest'}]},
+            id='skills-container',
+        ),
+        pytest.param(
+            WebSearchTool(), None, _PENDING_CODE_EXECUTION_HISTORY, 'container_A', id='resumed-pending-code-execution'
+        ),
+    ],
+)
+async def test_anthropic_citations_keep_default_web_tool_callers_when_the_request_needs_code_execution(
+    allow_model_requests: None,
+    stream: bool,
+    native_tool: AbstractNativeTool,
+    container: BetaContainerParams | str | None,
+    history: list[ModelMessage] | None,
+    expected_container: BetaContainerParams | str,
+):
+    """`Citations()` leaves the web tools on Anthropic's default caller when the request depends on code execution.
+
+    An explicit or Skills container, or a resumed turn whose code execution call is still pending, needs the
+    sandbox: routing the web tools to direct calls would leave a container on a request without code execution,
+    which Anthropic rejects. Their results come back uncited, as they do without this setting. The response's sandbox
+    calls are kept, streamed too.
+
+    Unit test: the claim is the request shape and the response filter, and recording these needs a live container.
+    """
+    bodies: list[dict[str, Any]] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        blocks: list[dict[str, Any]] = [
+            {'type': 'server_tool_use', 'id': 'srvtoolu_1', 'name': 'code_execution', 'input': {'code': 'print(1)'}},
+            {
+                'type': 'code_execution_tool_result',
+                'tool_use_id': 'srvtoolu_1',
+                'content': {
+                    'type': 'code_execution_result',
+                    'stdout': '1',
+                    'stderr': '',
+                    'return_code': 0,
+                    'content': [],
+                },
+            },
+            {'type': 'text', 'text': 'Done.'},
+        ]
+        return _pause_turn_segment(blocks, 'end_turn', stream=stream)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http_client:
+        model = AnthropicModel(
+            'claude-sonnet-4-6',
+            provider=AnthropicProvider(anthropic_client=AsyncAnthropic(api_key='x', http_client=http_client)),
+        )
+        settings: AnthropicModelSettings = {'max_tokens': 1024}
+        if container is not None:
+            settings['anthropic_container'] = container
+        agent = Agent(model, capabilities=[NativeTool(native_tool), Citations()], model_settings=settings)
+        prompt = None if history else 'Look it up.'
+        if stream:
+            async with agent.run_stream(prompt, message_history=history) as result:
+                await result.get_output()
+                messages = result.all_messages()
+        else:
+            messages = (await agent.run(prompt, message_history=history)).all_messages()
+
+    [body] = bodies
+    assert [tool.get('allowed_callers') for tool in body['tools']] == [None]
+    assert body['container'] == expected_container
+    response = message(messages, ModelResponse, index=-1)
+    assert [part.tool_call_id for part in response.parts if isinstance(part, NativeToolCallPart)][-1] == 'srvtoolu_1'
 
 
 async def test_anthropic_container_from_message_history_not_sent_for_function_tool(allow_model_requests: None):

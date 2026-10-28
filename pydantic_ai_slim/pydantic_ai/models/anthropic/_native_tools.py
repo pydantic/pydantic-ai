@@ -57,6 +57,8 @@ from pydantic import TypeAdapter
 
 from ... import _utils
 from ...messages import (
+    ModelMessage,
+    ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
     NativeToolSearchCallPart,
@@ -128,6 +130,19 @@ def provisions_code_execution(tools: Sequence[Mapping[str, object]]) -> bool:
         elif is_str_sequence(callers) and any(caller != 'direct' for caller in callers):
             return True
     return False
+
+
+def ends_in_pending_code_execution(messages: Sequence[ModelMessage]) -> bool:
+    """Whether the history ends in a response with a code execution call that has no result yet, as a paused turn can."""
+    if not messages or not isinstance(last := messages[-1], ModelResponse):
+        return False
+    returned = {part.tool_call_id for part in last.parts if isinstance(part, NativeToolReturnPart)}
+    return any(
+        isinstance(part, NativeToolCallPart)
+        and part.tool_name == CodeExecutionTool.kind
+        and part.tool_call_id not in returned
+        for part in last.parts
+    )
 
 
 def build_custom_tool_search_replay_blocks(

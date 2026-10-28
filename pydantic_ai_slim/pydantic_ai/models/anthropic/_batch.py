@@ -41,6 +41,7 @@ from .._batch_codec import (
 )
 from ..batch import Batch, BatchRequest, BatchResult, BatchStatus, EncodedBatchRequest
 from ._errors import ERROR_TYPE_STATUS_CODES, api_error
+from ._native_tools import ends_in_pending_code_execution
 
 if TYPE_CHECKING:
     from . import AnthropicModel, AnthropicModelSettings
@@ -174,7 +175,10 @@ def batch_decode(model: AnthropicModel, result: BatchResult, request: BatchReque
         message = BetaMessageBatchSucceededResult.model_validate_json(result.body).message
         prepared_settings, model_request_parameters = prepare_decode(model, request)
         response = model._process_response(  # pyright: ignore[reportPrivateUsage]
-            message, model_request_parameters, cast('AnthropicModelSettings', prepared_settings or {})
+            message,
+            model_request_parameters,
+            cast('AnthropicModelSettings', prepared_settings or {}),
+            code_execution_pending=ends_in_pending_code_execution(request.messages),
         )
         return batch_priced(response)
     if result.status == 'errored':

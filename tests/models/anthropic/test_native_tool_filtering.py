@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from types import MappingProxyType
 from typing import Literal
 
 import pytest
@@ -18,6 +20,8 @@ from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_co
 with try_import() as imports_successful:
     from anthropic.types.beta import (
         BetaCodeExecutionResultBlock,
+        BetaCodeExecutionTool20250825,
+        BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionToolResultBlock,
         BetaDirectCaller,
         BetaInputJSONDelta,
@@ -33,6 +37,7 @@ with try_import() as imports_successful:
         BetaServerToolUseBlock,
         BetaTextBlock,
         BetaUsage,
+        BetaWebSearchTool20250305,
     )
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
@@ -355,6 +360,72 @@ async def test_anthropic_extra_body_tool_versions_gate_implicit_code_execution(
         '{"command":"ls"}',
         native_tools,
         {'extra_body': {'tools': [tool]}},
+    )
+    assert [call.tool_name for call in calls] == (['code_execution'] if expected_call else [])
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize(
+    ('tools', 'expected_call'),
+    [
+        pytest.param(
+            lambda: [BetaCodeExecutionTool20250825Param(type='code_execution_20250825', name='code_execution')],
+            True,
+            id='typed-dict',
+        ),
+        pytest.param(
+            lambda: [BetaCodeExecutionTool20250825(type='code_execution_20250825', name='code_execution')],
+            True,
+            id='sdk-model',
+        ),
+        pytest.param(
+            lambda: [
+                BetaWebSearchTool20250305(
+                    type='web_search_20250305', name='web_search', allowed_callers=['code_execution_20260120']
+                )
+            ],
+            True,
+            id='sdk-model-code-execution-caller',
+        ),
+        pytest.param(lambda: {'tool': _CODE_EXECUTION_WIRE_TOOL}.values(), True, id='dict-values'),
+        pytest.param(lambda: [MappingProxyType(_CODE_EXECUTION_WIRE_TOOL)], True, id='mapping-proxy'),
+        pytest.param(
+            lambda: [
+                {
+                    'type': 'web_search_20250305',
+                    'name': 'web_search',
+                    'allowed_callers': frozenset({'code_execution_20260120'}),
+                }
+            ],
+            True,
+            id='frozenset-callers',
+        ),
+        pytest.param(
+            lambda: [{'type': 'web_search_20260209', 'name': 'web_search', 'allowed_callers': frozenset({'direct'})}],
+            False,
+            id='frozenset-direct-callers',
+        ),
+        pytest.param(lambda: (tool for tool in [_CODE_EXECUTION_WIRE_TOOL]), True, id='generator'),
+        pytest.param(lambda: [object()], True, id='unserializable'),
+    ],
+)
+async def test_anthropic_extra_body_tool_shapes_gate_implicit_code_execution(
+    allow_model_requests: None, stream: bool, tools: Callable[[], object], expected_call: bool
+):
+    """`extra_body['tools']` is read as the JSON the SDK sends, so every shape the SDK accepts is recognized.
+
+    A one-shot iterator can't be read without emptying it before the SDK sends it, and a value the SDK can't encode
+    fails the request anyway, so both are taken to provision code execution, as Pydantic AI did before it read them.
+
+    Unit test: these Python shapes never reach a recording, which holds the JSON.
+    """
+    calls = await _server_tool_calls_kept(
+        stream,
+        'bash_code_execution',
+        {'command': 'ls'},
+        '{"command":"ls"}',
+        [],
+        {'extra_body': {'tools': tools()}},
     )
     assert [call.tool_name for call in calls] == (['code_execution'] if expected_call else [])
 
