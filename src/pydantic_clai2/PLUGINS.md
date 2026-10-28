@@ -272,10 +272,12 @@ Bare `/login` asks which sign-in to run.
 
 ## Herdr integration
 
-The built-in `herdr` plugin (`pydantic_clai2.builtin_plugins.herdr`) starts disabled.
-Run `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane. Use
-`/plugins disable herdr` to release the pane and stop reporting. No herdr-side
-integration install is needed. The plugin requires `HERDR_ENV=1`,
+The built-in `herdr` plugin (`pydantic_clai2.builtin_plugins.herdr`) is enabled
+by default and reports automatically inside a [herdr](https://herdr.dev) pane.
+Use `/plugins disable herdr` to release the pane and persistently stop reporting;
+`/plugins enable herdr` restores it. On upgrade, eligible panes that used the
+previous disabled default begin reporting; an existing saved opt-out stays disabled.
+No herdr-side integration install is needed. The plugin requires `HERDR_ENV=1`,
 `HERDR_SOCKET_PATH`, and `HERDR_PANE_ID`; optional `HERDR_TAB_ID` enables tab titles.
 Outside herdr, on Windows, or in a session without a terminal (such as `clai2 --web`),
 it contributes nothing and starts no worker.
@@ -287,9 +289,10 @@ request ID. Tool names supply activity text, never tool arguments or results.
 User-opened menus do not report `blocked`. `AskUser` is the only built-in
 question that waits for the user during a run, since CLAI2 asks for no tool
 approvals; a third-party plugin's own approval UI is not tracked. Herdr owns
-attention notifications; this plugin sends none. To avoid duplicate desktop
-alerts, separately disable CLAI2's `notifications` plugin if you prefer herdr's
-alerts.
+attention notifications; this plugin sends none. CLAI2's separate `notifications`
+plugin remains enabled by default and is not automatically disabled inside herdr.
+To avoid duplicate desktop alerts, use `/plugins disable notifications` if you
+prefer herdr's alerts.
 
 Reports use the source `clai2`. Persisted sessions report their stable
 conversation ID and SQLite database path, not a per-run ID, along with the
@@ -1516,7 +1519,7 @@ multi-line dialog (`Dialogs.text(multiline=True)`), a paragraph to append, and t
 prompt the model last received in a read-only one (`Dialogs.view`). **About** is `/update`'s
 menu, the one bare `/update` opens in the terminal: the running version with a note saying whether
 a newer CLAI is out, whose **Update…** asks before it enters `/update now`, and the
-`updates.channel` setting. `/usage` and `/cost`
+`updates.channel` setting. A refused **Update…** fails with an error and saves nothing. `/usage` and `/cost`
 results carry their figures (`Notice.usage`, from the `session_usage` the commands report), which
 the page shows as a card; the terminal prints them as before. The command palette (⌘⇧P, or bare
 `/help` in the composer) lists every command `host.complete('/')` offers, plugin and skill
@@ -1596,7 +1599,10 @@ The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment va
 you can read and CLAI removes before anything else runs, never on its command line, which `ps`
 shows every user. Like any command, `/update now` entered while a turn runs waits for the turn to end.
 In a terminal, `/update now` and `/reload` are refused while other live sessions run turns, which
-the restart would end; bare `/update` can still open its menu in the shown session.
+the restart would end; bare `/update` can still open its menu in the shown session, whose
+**Update…** then shows why and stays in the menu. In `host.command_menu('update')`, the menu the
+page's Settings > About shows, a refused **Update…** action raises `ValueError` with the reason
+instead, which the page shows as an error.
 Installing from another folder shown in the terminal is refused, as CLAI
 restarts in the folder it started in.
 

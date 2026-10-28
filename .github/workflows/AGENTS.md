@@ -17,7 +17,7 @@ The `douwebot:review-agent-config` label requests one review only from its first
 
 Removing the approval label cancels in-flight work on a best-effort basis; cancellation may not stop a reviewer that has already started. Both review labels share the per-PR concurrency group, so removing the approval label can also cancel an ordinary review, and reapplying it starts another workflow run that uses that shared slot.
 
-Other label removals use unique concurrency groups so their no-op runs cannot replace queued review requests.
+Unrelated label additions and removals use unique concurrency groups so their no-op runs cannot replace queued review requests.
 
 **They are independent.** Neither reads the other's state, and the label suppresses
 nothing: `douwebot` is an on-demand deep pass on top of `CI Review`, requested when a
@@ -53,6 +53,13 @@ PR has closed or moved to a new head. The engine's gh-aw harness must exit on a 
 `src/pydantic_ai_harness/gh-aw/pydantic.md`, must do the same, or every stale run
 spends a full review. The `noop` does not skip the `detection` job, which still runs
 one threat-detection pass outside the agent slot.
+
+Both review workflows require a formal review from this run on the reviewed head.
+Their shim completion validator rejects placeholder noops and missing-data signals alone.
+After safe outputs, the [host verifier](shared/review-publication.md) checks GitHub for the exact workflow marker, run URL and head.
+A missing publication fails the workflow and marks the current PR head with its failure label.
+A host-verified closed PR or changed head needs no review and cannot alter the newer head's label.
+UI Security uses a formal `COMMENT` even with no new findings; incomplete coverage is `SECURITY: INCOMPLETE`.
 
 gh-aw drops its default agent group for a workflow with `pull_request*` triggers, and
 allows one `engine` across a workflow and its imports. `CI Review` therefore inlines the
@@ -176,6 +183,30 @@ Two consequences of the trigger, both easy to get backwards:
   While the check is merely advisory such a PR shows no guard run and no failing check, so
   it reads as clean. Marking the check **required** is what closes that: a check that never
   ran stays pending and blocks the merge.
+
+# `PR Gates` answer merge questions from PR metadata
+
+`pr-gates.yml` runs one job per gate, and each job's check is the gate. The logic lives in
+`.github/scripts/pr_gates.py`. The workflow runs on `pull_request` with a read-only token, so a
+PR that changes either runs its own copy. `.github/CODEOWNERS` owns both, so that change needs a
+code owner's approval; keep them owned.
+
+| Check | Fails when |
+|---|---|
+| `Gate: compatibility waiver labeled` | the PR adds a waiver to `.github/api-compatibility-allowlist.json` without `compatibility impact` |
+
+# Code owners approve dependency and CI config changes
+
+`.github/CODEOWNERS` owns every `pyproject.toml` and `uv.lock`, `.github/workflows/`,
+`.github/actions/`, `.github/scripts/`, `.pre-commit-config.yaml`, `Makefile`, and itself. The
+`main` ruleset requires an approving review from a code owner on a PR that changes any of them, and
+dismisses it when a later push changes the diff. GitHub enforces both, so no workflow keeps the
+approval current.
+
+- A PR's author cannot approve it, so an owner's own PR needs another owner. An owner who pushes
+  to someone else's PR can still approve that push.
+- GitHub reads `CODEOWNERS` from the PR's base branch. A PR that edits it is judged by the
+  current owners.
 
 # Agentic workflows (`gh-aw`)
 

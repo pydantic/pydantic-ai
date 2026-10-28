@@ -285,7 +285,9 @@ run yourself, in PowerShell syntax on Windows. For `main` installs, it also
 writes the overrides file and includes its path in the printed command.
 
 In the web UI, `/update` opens the same menu as the Settings window's **About** section, whose
-**Update…** button asks before it runs `/update now`.
+**Update…** button asks before it runs `/update now`. When CLAI can't restart from that session, for
+example while another live session runs a turn, **Update…** shows the reason as an error instead and
+saves nothing; in the terminal, the menu shows the reason and stays open.
 
 ### Environment variables
 
@@ -2714,10 +2716,14 @@ emitted.
 
 ### Herdr integration
 
-Enable `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane to report
-CLAI2's state, session reference, model/token metadata, and conversation title,
-and to let herdr reopen the conversation after a herdr restart. It starts
-disabled and does nothing outside herdr. See
+The built-in `herdr` plugin is enabled by default inside a [herdr](https://herdr.dev)
+pane. It reports CLAI2's state, session reference, model/token metadata, and
+conversation title, and lets herdr reopen the conversation after a herdr restart.
+It does nothing outside herdr, on Windows, or without a terminal. Use
+`/plugins disable herdr` to opt out. The new default also applies on upgrade;
+an existing saved opt-out is preserved.
+CLAI2's separate `notifications` plugin is unchanged; use
+`/plugins disable notifications` if you prefer only herdr's alerts. See
 [the plugin guide](../PLUGINS.md#herdr-integration) for details and limitations.
 
 ### Agent of Empires integration
