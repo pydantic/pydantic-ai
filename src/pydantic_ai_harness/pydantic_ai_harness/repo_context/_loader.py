@@ -121,25 +121,22 @@ async def discover_instruction_files(
     return found
 
 
-async def has_context_file(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> bool:
-    """Whether `directory` holds an instruction file, without reading it."""
+async def dir_context_file_path(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> Path | None:
+    """Return the path of the first existing instruction file in `directory`, without reading it."""
     for filename in filenames:
-        if await _real_file(workspace, directory / filename) is not None:
-            return True
-    return False
+        candidate = await _real_file(workspace, directory / filename)
+        if candidate is not None:
+            return candidate
+    return None
 
 
 async def find_dir_context_file(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> ContextFile | None:
     """Return the first existing instruction file in `directory`, or `None`."""
-    for filename in filenames:
-        candidate = await _real_file(workspace, directory / filename)
-        if candidate is not None:
-            return ContextFile(
-                directory=directory,
-                path=candidate,
-                content=(await workspace.read_bytes(str(candidate))).decode('utf-8', errors='replace'),
-            )
-    return None
+    path = await dir_context_file_path(workspace, directory, filenames)
+    if path is None:
+        return None
+    content = (await workspace.read_bytes(str(path))).decode('utf-8', errors='replace')
+    return ContextFile(directory=directory, path=path, content=content)
 
 
 def render_context_file(file: ContextFile, *, label: str) -> str:

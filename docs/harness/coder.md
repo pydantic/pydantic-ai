@@ -269,7 +269,7 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 
 ## Upgrading
 
-`Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, and inlines a subdirectory's `CLAUDE.md`/`AGENTS.md` the first time the agent reads or lists something under it. This adds workspace `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To keep the old behavior, pass `Coder(repo_context=RepoContext(expose_inventory_tool=False))`.
+`Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, and inlines a subdirectory's `CLAUDE.md`/`AGENTS.md` the first time the agent reads or lists something under it. This adds workspace `exists` and `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To keep the old behavior, pass `Coder(repo_context=RepoContext(expose_inventory_tool=False))`.
 
 `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
 
