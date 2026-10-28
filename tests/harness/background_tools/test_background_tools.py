@@ -1197,6 +1197,48 @@ ends with &lt;/tool_result
         assert result.output == 'done'
         assert _follow_up_seen(result.all_messages(), 'slow value')
 
+    async def test_live_background_tools_are_counted_per_run(self) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        live_seen: dict[str, bool] = {}
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                return ModelResponse(parts=[TextPart(content='done')])
+            calls = [ToolCallPart(tool_name='needs_approval', args='{}')]
+            if 'background run' in str(messages[0]):
+                calls.insert(0, ToolCallPart(tool_name='slow', args='{}'))
+            return ModelResponse(parts=calls)
+
+        async def record_then_approve(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+            assert isinstance(ctx.prompt, str)
+            live_seen[ctx.prompt] = has_live_background_tools(ctx)
+            return requests.build_results(approve_all=True)
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            capabilities=[BackgroundTools(), HandleDeferredToolCalls(handler=record_then_approve)],
+        )
+
+        @agent.tool_plain(metadata={'background': True})
+        async def slow() -> str:
+            started.set()
+            await release.wait()
+            return 'slow value'
+
+        @agent.tool_plain(requires_approval=True)
+        def needs_approval() -> str:
+            return 'approved'
+
+        background_run = asyncio.create_task(agent.run('background run'))
+        await started.wait()
+        # A second run of the same agent sees only its own background tools, not the first run's.
+        await agent.run('plain run')
+        release.set()
+        await background_run
+
+        assert live_seen == {'background run': True, 'plain run': False}
+
     async def test_queued_result_is_not_delayed_by_an_unrelated_live_task(self) -> None:
         release = {'fast_bg': asyncio.Event(), 'slow_bg': asyncio.Event()}
 
