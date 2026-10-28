@@ -2,6 +2,11 @@
 
 The attempt loop it drives (`prepare_model_request`, `RetryModelRequest`) is tested in
 `test_model_request_attempts.py`.
+
+These are offline tests with `FunctionModel` rather than recorded requests to providers: which model is attempted
+next, and what each attempt is sent and records, doesn't depend on the provider, and scripted models can fail, reject
+or suspend on cue. A few read internals no request shows, such as a model's provider name, the post-compaction window
+tool dispatch uses, and a run's cancellation.
 """
 
 from __future__ import annotations
