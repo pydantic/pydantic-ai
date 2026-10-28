@@ -127,7 +127,8 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
 4. [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/)`(expose_inventory_tool=False, root_markers=('.git',), nested_traversal=True, nested_inject='contents')`
    for repository instructions: the `CLAUDE.md`/`AGENTS.md` files from the repository root down to the working directory
    at run start, and those in subdirectories when the agent first reads or lists something under them.
-   Pass `repo_context=False` to leave it out when the agent already binds its own `RepoContext`, so the
+   Pass your own `RepoContext` as `repo_context=` to use it in this one's place, or `repo_context=False` to leave
+   it out when the agent already binds its own `RepoContext`, so the
    instruction files are not loaded twice.
 5. [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/)`(include_self=True, agent_folders=None)`, so the agent can hand a self-contained
    sub-task to a fresh run of itself (see below). Pass `sub_agents=False` to leave it out.
@@ -266,7 +267,7 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 
 ## Upgrading
 
-`Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, and inlines a subdirectory's `CLAUDE.md`/`AGENTS.md` the first time the agent reads or lists something under it. This adds workspace `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To keep the old behavior, pass `Coder(repo_context=False)` and add your own `RepoContext(expose_inventory_tool=False)`.
+`Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, and inlines a subdirectory's `CLAUDE.md`/`AGENTS.md` the first time the agent reads or lists something under it. This adds workspace `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To keep the old behavior, pass `Coder(repo_context=RepoContext(expose_inventory_tool=False))`.
 
 `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
 
