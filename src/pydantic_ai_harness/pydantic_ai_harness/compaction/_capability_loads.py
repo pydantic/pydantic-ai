@@ -238,6 +238,8 @@ def keep_tool_discoveries(
     puts its records. A tool a capability load revealed is left to that load: it is recorded with it, or
     unloaded with it. A no-op when nothing was lost, including on its own result.
     """
+    # Every reveal counts, a plain tool's cache-safe addition included: each records what the model was shown.
+    # Tools the run no longer registers aren't filtered out, as adapters drop names a request doesn't declare.
     after = parse_discovered_tools(compacted)
     by_loads = _load_reveals(original)
     lost = [name for name in discovered_tool_names_in_order(original) if name not in after and name not in by_loads]

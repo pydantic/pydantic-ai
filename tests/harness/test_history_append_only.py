@@ -475,6 +475,8 @@ ALLOWED: dict[str, Allowed] = {
     'SummarizingCompaction': Allowed(_COMPACTION, _HISTORY),
     # The compaction, and on Chat Completions, which has no deferred-tool channel, the first run's reveal adding
     # `forecast` to `tools` (docs/tools-advanced.md). The reveal recorded after the summary must move nothing more.
+    # Only Chat Completions needs the second move: Anthropic and OpenAI Responses move once, for the compaction,
+    # but `Allowed` can't vary `max_moves` by provider.
     'SummarizingCompaction+ToolSearch': Allowed(
         f'{_COMPACTION}; on Chat Completions a local reveal also adds the tool to `tools`, as documented',
         (*_HISTORY, ('tools', 'tool:search_tools')),
