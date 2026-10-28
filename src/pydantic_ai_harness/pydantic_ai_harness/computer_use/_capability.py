@@ -3,9 +3,9 @@
 from __future__ import annotations as _annotations
 
 import weakref
-from collections.abc import Collection, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Annotated, Any, cast, get_args
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import anyio
 from pydantic import Field
@@ -40,11 +40,13 @@ from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import (
     Click,
+    Display,
     Drag,
     MoveMouse,
     Point,
     Region,
     Scroll,
+    SupportsDisplay,
     WorkspaceError,
     WorkspaceUnavailableError,
 )
@@ -103,12 +105,8 @@ _OBSERVING_ACTIONS = frozenset({'wait', 'screenshot', 'zoom', 'cursor_position'}
 """Action types that change nothing on the screen, so `requires_approval` lets them through."""
 
 _DISPLAY_LOCKS: dict[int, anyio.Lock] = {}
-"""One lock per display backend, by `id`: agents sharing a workspace, such as parallel sub-agents, take turns at its
-display a whole call at a time, so one's clicks and typing never land between another's."""
-
-_ACTION_TYPES = frozenset(action.type for action in get_args(get_args(ComputerToolAction)[0]))
-
-_ACTING_ACTIONS = _ACTION_TYPES - _OBSERVING_ACTIONS
+"""One lock per display, by `id`: agents sharing a screen, such as parallel sub-agents, take turns at it a whole call
+at a time, so one's clicks and typing never land between another's."""
 
 
 def _profile(model: Any) -> ModelProfile:
@@ -248,15 +246,18 @@ def _needs_settling(performed: list[ComputerToolAction]) -> bool:
 
 def _display_lock(ctx: RunContext[Any]) -> anyio.Lock:
     try:
-        display: object = ctx.workspace.backend
+        backend = ctx.workspace.backend
     except UserError:
         # Durable workflow code can't reach the backend; agents sharing the run's workspace share this object.
-        display = ctx.workspace
-    key = id(display)
+        backend = None
+    display = backend.display if isinstance(backend, SupportsDisplay) else None
+    # Backends on one screen share its display, the same object for each backend's lifetime.
+    screen: object = display if isinstance(display, Display) else ctx.workspace
+    key = id(screen)
     if (lock := _DISPLAY_LOCKS.get(key)) is None:
         lock = _DISPLAY_LOCKS[key] = anyio.Lock()
-        # The id can be reused once the backend is gone, so its lock goes with it.
-        weakref.finalize(display, _DISPLAY_LOCKS.pop, key, None)
+        # The id can be reused once the display is gone, so its lock goes with it.
+        weakref.finalize(screen, _DISPLAY_LOCKS.pop, key, None)
     return lock
 
 
@@ -277,13 +278,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
 
-    requires_approval: bool | Collection[str] = False
-    """Ask for approval before a call that changes the screen, so the run needs a deferred tool handler.
-
-    `True` asks before any call that does more than look, zoom or wait. A collection of action types asks only
-    before calls with one of them: `click`, `move`, `drag`, `mouse_down`, `mouse_up`, `scroll`, `type`, `keypress`
-    and `hold_key`. For example, `{'type', 'keypress', 'hold_key'}` asks before keyboard input.
-    """
+    requires_approval: bool = False
+    """Ask for approval before any call that does more than look, zoom or wait, so the run needs a deferred tool
+    handler."""
 
     settle_seconds: float = 0.5
     """Pause after the last action before the closing screenshot, so animations and page loads can finish."""
@@ -305,13 +302,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         if self.keep_screenshots is not None and self.keep_screenshots < 1:
             raise UserError('`keep_screenshots` must be at least 1, or `None` to keep every screenshot.')
-        if isinstance(self.requires_approval, str):
-            raise UserError('`requires_approval` takes `True` or a collection of action types, such as `{"click"}`.')
-        if not isinstance(self.requires_approval, bool) and (unknown := set(self.requires_approval) - _ACTING_ACTIONS):
-            raise UserError(
-                f'`requires_approval` has {", ".join(sorted(map(repr, unknown)))}, which are not action types that '
-                f'change the screen. They are: {", ".join(sorted(_ACTING_ACTIONS))}.'
-            )
         tool = Tool[AgentDepsT](
             self._computer,
             name='computer',
@@ -339,7 +329,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             ),
         ],
     ) -> ToolReturn:
-        if not ctx.tool_call_approved and any(self._needs_approval(action.type) for action in actions):
+        acts = any(action.type not in _OBSERVING_ACTIONS for action in actions)
+        if self.requires_approval and acts and not ctx.tool_call_approved:
             raise ApprovalRequired
         grid = _grid(ctx.model)
         if any(_points(action) for action in actions):
@@ -393,22 +384,17 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         content = [' '.join(summary), *outputs, BinaryImage(data=png, media_type='image/png')]
         return ToolReturn(content, metadata=result)
 
-    def _needs_approval(self, action_type: str) -> bool:
-        return action_type in (_ACTING_ACTIONS if self.requires_approval is True else self.requires_approval or ())
-
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """One display: the later configuration wins, but a restriction either states survives.
 
-        Approval is required for what any of them asks it for, and the fewest kept screenshots apply.
+        Approval is required if any of them requires it, and the fewest kept screenshots apply.
         """
         combined = cast(list[ComputerUse[AgentDepsT]], list(capabilities))
         kept = [c.keep_screenshots for c in combined if c.keep_screenshots is not None]
-        approvals = [c.requires_approval for c in combined]
-        action_types = frozenset[str]().union(*(a for a in approvals if not isinstance(a, bool)))
         return replace(
             combined[-1],
-            requires_approval=True if True in approvals else action_types or False,
+            requires_approval=any(c.requires_approval for c in combined),
             keep_screenshots=min(kept) if kept else None,
         )
 

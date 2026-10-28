@@ -233,27 +233,10 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         )
         assert provider.actions == [Click(x=1, y=1)]
 
-    async def test_requires_approval_can_name_the_action_types_to_ask_about(self) -> None:
-        provider = InMemoryProvider()
-        agent = Agent(
-            _scripted([{'type': 'click', 'x': 1, 'y': 1}], [{'type': 'type', 'text': 'hi'}]),
-            capabilities=[provider.capability(), ComputerUse(requires_approval={'type', 'keypress'}, settle_seconds=0)],
-            output_type=[str, DeferredToolRequests],
-        )
-        result = await agent.run('Go.')
-
-        assert isinstance(result.output, DeferredToolRequests)
-        assert [call.args_as_dict() for call in result.output.approvals] == [
-            {'actions': [{'type': 'type', 'text': 'hi'}]}
-        ]
-        assert provider.actions == [Click(x=1, y=1)]
-
-    def test_combined_approvals_ask_about_every_action_type_either_names(self) -> None:
-        combined = ComputerUse.combine(
-            [ComputerUse[Any](requires_approval={'type'}), ComputerUse[Any](requires_approval={'keypress'})]
-        )
+    def test_combined_approval_is_required_if_either_requires_it(self) -> None:
+        combined = ComputerUse.combine([ComputerUse[Any](requires_approval=True), ComputerUse[Any]()])
         assert isinstance(combined, ComputerUse)
-        assert combined.requires_approval == {'type', 'keypress'}
+        assert combined.requires_approval is True
         none = ComputerUse.combine([ComputerUse[Any](), ComputerUse[Any]()])
         assert isinstance(none, ComputerUse)
         assert none.requires_approval is False
@@ -361,7 +344,13 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                 await super().act(action)
 
         provider = InMemoryProvider()
-        backend = SlowDisplay(provider, None)
+        screen = SlowDisplay(provider, None)
+
+        class OnTheScreen(ProviderBackend):
+            @property
+            def display(self) -> SlowDisplay:
+                return screen
+
         agents = [
             Agent(
                 _scripted([{'type': 'click', 'x': x, 'y': 1}, {'type': 'type', 'text': text}]),
@@ -371,7 +360,8 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         ]
 
         async def run(agent: Agent[None, str]) -> None:
-            await agent.run('Go.', workspace=backend)
+            # Each agent has its own backend; the display they share is the screen.
+            await agent.run('Go.', workspace=OnTheScreen(provider, None))
 
         async with anyio.create_task_group() as tg:
             for agent in agents:
@@ -634,12 +624,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
     def test_keep_screenshots_is_checked(self) -> None:
         with pytest.raises(UserError, match='`keep_screenshots` must be at least 1'):
             ComputerUse(keep_screenshots=0)
-
-    def test_requires_approval_only_takes_action_types_that_change_the_screen(self) -> None:
-        with pytest.raises(UserError, match="has 'clik', 'zoom', which are not action types that change the screen"):
-            ComputerUse(requires_approval={'clik', 'zoom', 'type'})
-        with pytest.raises(UserError, match='takes `True` or a collection of action types'):
-            ComputerUse(requires_approval='click')
 
     @pytest.mark.parametrize(
         'settings,cache',
