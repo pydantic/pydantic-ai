@@ -27,9 +27,8 @@ from pydantic import BaseModel, Field, field_validator
 from triage_models import AgentItem, agent_items, item_labels
 
 REPO = 'pydantic/pydantic-ai'
-# The triage agent applies `pydanty:feature`; older and human-triaged requests
-# carry plain `feature`. Both pools are eligible.
-FEATURE_LABELS = ('pydanty:feature', 'feature')
+# Feature and integration requests share the weekly planning digest.
+FEATURE_LABELS = ('feature', 'integration-request')
 MODEL_REQUEST_LABEL = 'pydanty:model-request'
 CONSIDERED_LABEL = 'digest:considered'
 _CONSIDERED_COLOR = 'c2e0c6'

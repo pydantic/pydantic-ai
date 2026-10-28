@@ -206,12 +206,12 @@ CodeMode(
 )
 ```
 
-- `dynamic_catalog=True` (default): moves sandboxed-tool signatures out of `run_code`'s description into an instruction block (`toolset:code_mode:catalog`, `on_change='append'`), keeps deferred tools that `run_code` will take over off the wire until they're found, and appends the updated catalog when one is found (plus a short announcement when Tool Search found it), so discoveries don't rewrite the cached prompt. Discovery then goes through the local `search_tools` or `load_capability`; with the `'bm25'`/`'regex'` strategies, or a selector that keeps another deferred tool native, such tools are still declared for the native search. The catalog takes the toolset id `code_mode`, so another instruction-contributing toolset with that id raises a duplicate-id `UserError`; rename it. A callable selector must give the same answer for a tool before and after it's revealed, or the cache moves. `dynamic_catalog=False` keeps the catalog in `run_code`'s description instead (the default in earlier releases), so a reveal rewrites the description and the cached prompt.
+- `dynamic_catalog=True` (default): moves sandboxed-tool signatures out of `run_code`'s description into an instruction block (`toolset:code_mode:catalog`, `on_change='append'`), keeps deferred tools that `run_code` will take over off the wire until they're found, and appends the updated catalog when one is found (plus a short announcement when Tool Search found it), so discoveries don't rewrite the cached prompt. Discovery then goes through the local `search_tools` or `load_capability`, which also searches deferred tools a selector keeps native (the native tool search isn't sent then); with the `'bm25'`/`'regex'` strategies, such tools are still declared for the native search. The catalog takes the toolset id `code_mode`, so another instruction-contributing toolset with that id raises a duplicate-id `UserError`; rename it. A callable selector must give the same answer for a tool before and after it's revealed, or the cache moves. `dynamic_catalog=False` keeps the catalog in `run_code`'s description instead (the default in earlier releases), so a reveal rewrites the description and the cached prompt.
 - `eager=True`: side effects from early statements cannot be rolled back, and hooks/approval on `run_code` run only after the call finishes streaming. Only applies when `run_code` is the first tool call in the response.
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
-- `monty_sandbox`: a `ws://`/`wss://` URL (no key) or a sync or async function returning an `AsyncMontyWebsocket`, to run code on a remote Monty worker; a function's pool limits code between tool calls with its `request_timeout` (10 s default) instead of `max_duration_secs`. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. `monty_sandbox_url` is the deprecated form.
+- `monty_sandbox`: a `ws://`/`wss://` URL (no key) or a sync or async function returning an `AsyncMontyWebsocket`, to run code on a remote Monty worker; a function's pool limits code between tool calls with its `request_timeout` (10 s default) instead of `max_duration_secs`. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.4.0`, the version whose importable modules the `run_code` description lists. `monty_sandbox_url` is the deprecated form.
 
 ## Durable Execution
 
@@ -272,8 +272,37 @@ async def wrap_tool_execute(self, ctx, *, call, tool_def, args, handler):
 `run_code` parts recorded before the kind existed load as plain `ToolCallPart`s;
 `ToolCallPart.narrow_type(part, tool_kind='code_mode.run_code')` promotes one.
 
+## IPython Code Mode (local agents only)
+
+`IPythonCodeMode` gives the model the same `run_code` tool backed by a persistent IPython kernel: full
+CPython, any installed package, and state kept for the whole run. It is not a sandbox: model-written code
+runs with the agent process's permissions. Never use it in a webserver or on untrusted input unless the
+whole agent runs in a container or VM; use `CodeMode` there.
+
+```bash
+uv add "pydantic-ai-harness[ipython]"
+```
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import IPythonCodeMode
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[IPythonCodeMode()])
+```
+
+- Tools become synchronous, keyword-only functions in the kernel; calls run one at a time and a failed
+  call raises `ToolCallError`. `tools=` and `max_tool_calls=` work as in `CodeMode`.
+- `timeout=` (default 60 s, tool time excluded) interrupts long cells and keeps the kernel's state; a cell
+  that ignores the interrupt or a kernel that exits gets a fresh kernel on the next call.
+- Each run starts a kernel on first use and stops it at the end. To keep state across runs, pass
+  `kernel=IPythonKernel()` (from `pydantic_ai_harness.ipython_code_mode`) and shut it down yourself,
+  e.g. with `async with IPythonKernel() as kernel:`.
+- Not supported: `eager`, `speculate`, `dynamic_catalog`, durable execution, `mount`/`os_access`.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/code-mode/
+- https://pydantic.dev/docs/ai/harness/ipython-code-mode/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/

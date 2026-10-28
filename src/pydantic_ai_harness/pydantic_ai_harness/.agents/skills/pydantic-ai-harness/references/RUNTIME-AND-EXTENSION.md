@@ -119,8 +119,10 @@ async def resume(run_id: str):
 Gotchas:
 
 - Shapes a test sees: when a streamed model request fails, the saved history (default read included)
-  ends with an empty or partial-text `ModelResponse`. With `Planning`, a scripted model receives a
-  plan-reminder `UserPromptPart` led by a `CachePoint` at the end of the last request (not stored).
+  ends with an empty or partial-text `ModelResponse`. With `Planning`, each plan tool's `ToolReturnPart`
+  ends with the plan in a `<plan_reminder>` tag and carries
+  `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`; a user-channel plan
+  record with that origin appears only when the latest plan isn't visible (after compaction, say).
   Assert on the parts you need, not exact message shapes.
 - `run_id` is per `Agent.run`. Reusing one instance with the same explicit `run_id` raises `ValueError`.
   Group turns with `conversation_id=` on `Agent.run`.
