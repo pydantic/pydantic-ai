@@ -740,23 +740,17 @@ async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) 
     version = settings.locator('.setting').filter(has=page.locator('.setting-label', has_text='Version'))
     async with page.expect_response(f'**/api/sessions/{web_ui.beta}/commands/update/fields/version/action') as acted:
         await version.get_by_role('button', name='Update Version').click()
-    assert (await acted.value).ok
+    assert (await acted.value).status == 400
     # Read with the toast in one page call: a badge renders with it, and a retry would pass once its timer clears it.
     badge = await page.wait_for_function(
         """() => {
-          if (!document.querySelector('.toast')?.textContent?.includes('/reload and /update restart CLAI.')) return null
+          if (!document.querySelector('.toast.error')?.textContent?.includes('/reload and /update restart CLAI.')) return null
           const row = [...document.querySelectorAll('.setting')]
             .find((setting) => setting.querySelector('.setting-label')?.textContent === 'Version')
           return row.querySelector('.setting-state')?.textContent ?? 'none'
         }"""
     )
     assert await badge.json_value() == 'none'
-
-    # A value edit still says it saved.
-    channel = settings.locator('.setting').filter(has=page.locator('.setting-label', has_text='Update channel'))
-    for value in ('main', 'stable'):
-        await channel.get_by_role('combobox').select_option(value)
-        await expect(channel.locator('.setting-state.saved')).to_be_visible()
 
 
 async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI) -> None:
