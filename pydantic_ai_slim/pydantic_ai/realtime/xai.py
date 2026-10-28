@@ -910,7 +910,10 @@ class XaiRealtimeModel(RealtimeModel):
                 model_name_getter=model_name_getter,
                 conversation_id=conversation_id,
                 manual_turns=session_config['turn_detection'] is None,
-                output_speech_timestamps=settings.get('output_speech_timestamps', False),
+                # Only where the session doesn't warn that it carries none: a profile can say the model reports none.
+                output_speech_timestamps=bool(
+                    settings.get('output_speech_timestamps') and self._output_speech_timestamp_granularity(settings)
+                ),
             )
             return connection
 

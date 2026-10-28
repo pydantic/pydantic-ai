@@ -740,6 +740,36 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
     assert update['session']['voice'] == 'eve'
 
 
+@pytest.mark.parametrize('granularity', ['segment', None])
+async def test_connect_times_speech_only_with_a_profile_that_reports_it(
+    monkeypatch: pytest.MonkeyPatch, granularity: Literal['segment'] | None
+) -> None:
+    """A profile overridden to report no timestamps gets none, matching the warning the session gives."""
+    frames = [
+        _created(),
+        _updated(),
+        _transcript_frame('resp-1', 'item-1', 'Hello', 0.0),
+        _audio_frame('resp-1', 'item-1', 500),
+        _speech_frame('response.output_audio.done', 'resp-1', 'item-1'),
+    ]
+    monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(FakeWebSocket(frames)))
+    model = XaiRealtimeModel(
+        'grok-voice-latest',
+        provider=XaiProvider(api_key='k'),
+        settings=rt_xai.XaiRealtimeModelSettings(output_speech_timestamps=True),
+        profile={'output_speech_timestamp_granularity': granularity},
+    )
+    async with _connect(model, 'x') as conn:
+        events = await collect_codec_events(conn)
+
+    timed = [event for event in events if isinstance(event, OutputSpeechTimestamps)]
+    assert timed == (
+        [OutputSpeechTimestamps([_segment('Hello', 0, 500)], item_id='item-1', response_id='resp-1')]
+        if granularity
+        else []
+    )
+
+
 async def test_connect_url_encodes_model_name(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = FakeWebSocket([_created(), _updated()])
     fake_connect = FakeConnect(ws)
