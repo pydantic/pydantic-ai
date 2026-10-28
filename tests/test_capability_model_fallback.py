@@ -7,7 +7,7 @@ The attempt loop it drives (`prepare_model_request`, `RetryModelRequest`) is tes
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -29,6 +29,7 @@ from pydantic_ai import (
     TextPart,
     UserPromptPart,
     capture_run_messages,
+    messages as _messages,
 )
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -51,7 +52,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import ModelRequestAttempt
+from pydantic_ai.messages import CompactionPart, ModelRequestAttempt, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -846,6 +847,69 @@ async def test_a_native_tool_a_hook_removed_stays_removed_for_other_models():
     assert (await agent.run('x')).output == 'hello'
     assert seen == [('primary', []), ('backup', [])]
     assert evaluated == ['anthropic']
+
+
+class _TrimmingFunctionModel(FunctionModel):
+    """A model that drops the history before a compaction part it accepts, as the OpenAI Responses API does."""
+
+    _honors_compaction_boundaries = True
+
+
+@pytest.mark.parametrize('fallback', ['capability', 'model'])
+async def test_tool_calls_are_judged_by_the_history_the_answering_model_was_sent(
+    fallback: str, monkeypatch: pytest.MonkeyPatch
+):
+    """Which earlier tools a call may rely on is decided by the model that answered, not the step's model.
+
+    The answering model accepts a compaction from a compatible system, and only saw the history after it, so
+    the call's evidence starts there. `FallbackModel` asks the model that produced the response, and so does
+    `ModelFallback`.
+    """
+
+    def respond(name: str, system: str, *, fail: bool) -> FunctionModel:
+        def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if fail:
+                raise ModelAPIError(model_name=name, message='boom')
+            if isinstance(messages[-1].parts[0], ToolReturnPart):
+                return ModelResponse(parts=[TextPart('done')], provider_name=system)
+            return ModelResponse(parts=[ToolCallPart('tool', {})], provider_name=system)
+
+        model = _TrimmingFunctionModel(call_tool, model_name=name)
+        model._system = system  # pyright: ignore[reportPrivateUsage]
+        return model
+
+    windows: list[list[ModelMessage]] = []
+    window_for_response = _messages._post_compaction_window_for_response  # pyright: ignore[reportPrivateUsage]
+
+    def record_window(
+        messages: Sequence[ModelMessage], serving_response: ModelResponse, accepts: Any = None
+    ) -> list[ModelMessage]:
+        windows.append(window := window_for_response(messages, serving_response, accepts))
+        return window
+
+    monkeypatch.setattr(_messages, '_post_compaction_window_for_response', record_window)
+
+    primary, backup = respond('primary', 'anthropic', fail=True), respond('backup', 'openai', fail=False)
+    agent = (
+        Agent(primary, capabilities=[ModelFallback(backup)])
+        if fallback == 'capability'
+        else Agent(FallbackModel(primary, backup))
+    )
+
+    @agent.tool_plain
+    def tool() -> str:
+        return 'ok'
+
+    compaction = CompactionPart(
+        content=None, id='cmp_1', provider_name='openai-codex', provider_details={'encrypted_content': 'encrypted'}
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('before the compaction')]),
+        ModelResponse(parts=[compaction], provider_name='openai-codex', canonical_system='openai'),
+    ]
+    result = await agent.run('after the compaction', message_history=history)
+    assert result.output == 'done'
+    assert windows[0][0].parts == [compaction]
 
 
 async def test_a_usage_limit_exceeded_by_a_suspended_response_is_not_fallen_back_from():

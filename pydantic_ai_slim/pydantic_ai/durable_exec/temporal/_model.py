@@ -16,7 +16,7 @@ from pydantic_ai._instrumentation import model_request_telemetry_url_ids
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import repair_messages
+from pydantic_ai.messages import ModelResponsePart, repair_messages
 from pydantic_ai.models import (
     CompletedStreamedResponse,
     Model,
@@ -425,6 +425,30 @@ class TemporalModel(WrapperModel):
             provider_name, _ = parse_model_id(current)
             return provider_name or self.wrapped.system
         return current.system
+
+    @property
+    def canonical_system(self) -> str:
+        """The currently active model's, like `system`; an unregistered model ID's provider name."""
+        current = self._current_model()
+        return self.system if isinstance(current, str) else current.canonical_system
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        """The currently active model's, like `system`; none for an unregistered model ID."""
+        current = self._current_model()
+        return frozenset() if isinstance(current, str) else current.compatible_systems
+
+    def accepts_stateless_artifacts(self, response: ModelResponse, part: ModelResponsePart | None = None) -> bool:
+        """The currently active model's answer, like `system`."""
+        current = self._current_model()
+        if isinstance(current, str):
+            # No model to ask, so judge by the provider name in the ID, as `Model` does.
+            return models.Model.accepts_stateless_artifacts(self, response, part)
+        return current.accepts_stateless_artifacts(response, part)
+
+    def _model_for_response(self, response: ModelResponse) -> models.Model:
+        current = self._current_model()
+        return self if isinstance(current, str) else current._model_for_response(response)
 
     @property
     def model_id(self) -> str:
