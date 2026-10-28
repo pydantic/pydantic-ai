@@ -170,7 +170,7 @@ from .abstract import (
     _RealtimeSessionLifecycle,  # pyright: ignore[reportPrivateUsage]
     _RealtimeSessionResolution,  # pyright: ignore[reportPrivateUsage]
 )
-from .spec import AgentSpec, get_capability_registry
+from .spec import AgentSpec, ModelSpec, OpenAICompatibleModelSpec, get_capability_registry, model_from_spec
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
@@ -206,6 +206,8 @@ __all__ = (
     'EventStreamProcessor',
     'InstrumentationSettings',
     'ModelRequestNode',
+    'ModelSpec',
+    'OpenAICompatibleModelSpec',
     'ParallelExecutionMode',
     'UserPromptNode',
     'WrapperAgent',
@@ -510,7 +512,7 @@ class _ResolvedSpec:
 
     capability: CombinedCapability[Any] | None
     instructions: list[_instructions.AgentInstruction[Any]]
-    model: str | None
+    model: ModelSpec | None
     model_settings: ModelSettings | None
     metadata: dict[str, Any] | None
     name: str | None
@@ -1121,7 +1123,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if capabilities:
             all_capabilities.extend(capabilities)
 
-        effective_model = model or validated_spec.model
+        effective_model = model or (model_from_spec(validated_spec.model) if validated_spec.model is not None else None)
 
         agent = Agent(
             model=effective_model,
@@ -1683,7 +1685,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None:
             # Model: spec as fallback (run param > spec > agent)
             if model is None and resolved.model is not None:
-                model = resolved.model
+                model = model_from_spec(resolved.model)
             # Output retries: run param > spec > agent default
             if effective_output_retries is None and resolved.output_retries is not None:
                 effective_output_retries = resolved.output_retries
@@ -2460,7 +2462,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if not _utils.is_set(name) and resolved.name is not None:
                 name = resolved.name
             if not _utils.is_set(model) and resolved.model is not None:
-                model = resolved.model
+                model = model_from_spec(resolved.model)
             if not _utils.is_set(instructions) and resolved.instructions:
                 instructions = resolved.instructions
             if not _utils.is_set(model_settings) and resolved.model_settings is not None:
