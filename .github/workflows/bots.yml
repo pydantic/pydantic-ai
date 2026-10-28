@@ -592,6 +592,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Publish structured review from trusted default-branch code
+        id: publish
         if: needs.review.result == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -615,7 +616,7 @@ jobs:
       # identical from the PR: the label is gone either way and no comment lands.
       # A silent breakage went unnoticed for three weeks that way.
       - name: Report review failure
-        if: (failure() || needs.review.result != 'success') && github.event.action == 'labeled' && github.event.label.name == 'douwebot'
+        if: always() && (needs.review.result == 'failure' || steps.publish.outcome == 'failure') && github.event.action == 'labeled' && github.event.label.name == 'douwebot'
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
             "The \`douwebot\` run failed — see [the run](${RUN_URL}) for why. This is not a verdict on this PR. If the cause was transient, re-apply the \`douwebot\` label to retry."
@@ -624,7 +625,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Report approval request failure
-        if: (failure() || needs.review.result != 'success') && github.event.action == 'labeled' && github.event.label.name == 'douwebot:review-agent-config'
+        if: always() && (needs.review.result == 'failure' || steps.publish.outcome == 'failure') && github.event.action == 'labeled' && github.event.label.name == 'douwebot:review-agent-config'
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
             "The \`douwebot:review-agent-config\` run failed — see [the run](${RUN_URL}) for why. This is not a verdict on this PR. To retry, remove and reapply the label; the original event cannot be rerun."

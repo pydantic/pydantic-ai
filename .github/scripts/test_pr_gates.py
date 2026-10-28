@@ -136,6 +136,8 @@ class _Trigger(BaseModel):
 
 
 class _Step(BaseModel):
+    id: str = ''
+    name: str = ''
     condition: str = Field(default='', alias='if')
     run: str = ''
     uses: str = ''
@@ -206,6 +208,78 @@ def test_review_observer_is_read_only_and_schema_matches_the_trusted_publisher()
         )
     )
     assert json.loads(args[args.index('--json-schema') + 1]) == ReviewResult.model_json_schema()
+
+
+def test_review_failure_reports_distinguish_cancellation_from_failure():
+    workflow = _Workflow.model_validate(yaml.load(WORKFLOW.with_name('bots.yml').read_text(), Loader=yaml.BaseLoader))
+    steps = workflow.jobs['publish-review'].steps
+    report = next(step.condition for step in steps if step.name == 'Report review failure')
+    config_report = next(step.condition for step in steps if step.name == 'Report approval request failure')
+    # An explicit status function avoids GitHub's implicit success() guard after a failed step.
+    assert all(condition.startswith('always() &&') for condition in [report, config_report])
+    cleanup = next(step.condition for step in steps if step.name == 'Remove douwebot label')
+    publisher = next(
+        step for step in steps if step.name == 'Publish structured review from trusted default-branch code'
+    )
+    # Evaluate the checked-in workflow conditions with the runner's terminal states.
+    harness = (
+        """
+let needs, steps, github;
+const always = () => true;
+const failure = () => needs.review.result === 'failure' || steps.publish.outcome === 'failure';
+const report = () => (
+"""
+        + report
+        + """
+);
+const configReport = () => (
+"""
+        + config_report
+        + """
+);
+const cleanup = () => (
+"""
+        + cleanup
+        + """
+);
+const results = [];
+for (const [result, outcome] of JSON.parse(process.argv[1])) {
+  needs = {review: {result}};
+  steps = {publish: {outcome}};
+  for (const label of ['douwebot', 'douwebot:review-agent-config']) {
+    github = {event: {action: 'labeled', label: {name: label}}};
+    results.push([report(), configReport(), cleanup()]);
+  }
+}
+console.log(JSON.stringify(results));
+"""
+    )
+    states: list[tuple[str, str]] = [
+        ('success', 'success'),
+        ('failure', 'skipped'),
+        ('cancelled', 'skipped'),
+        ('success', 'failure'),
+        ('success', 'cancelled'),
+        ('skipped', 'skipped'),
+    ]
+    result = subprocess.run(
+        ['node', '--input-type=module', '-e', harness, json.dumps(states)], check=True, capture_output=True, text=True
+    )
+    assert json.loads(result.stdout) == [
+        [False, False, True],
+        [False, False, False],
+        [True, False, True],
+        [False, True, False],
+        [False, False, True],
+        [False, False, False],
+        [True, False, True],
+        [False, True, False],
+        [False, False, True],
+        [False, False, False],
+        [False, False, True],
+        [False, False, False],
+    ]
+    assert publisher.id == 'publish'
 
 
 @pytest.mark.parametrize(
@@ -664,6 +738,87 @@ def test_publisher_checks_live_head_before_publication(monkeypatch: pytest.Monke
     else:
         publish_douwebot_review.main()
         assert len(calls) == 2
+
+
+@pytest.mark.parametrize(
+    ('verdict', 'moved'), [('APPROVE', False), ('REQUEST_CHANGES', False), ('REQUEST_CHANGES', True)]
+)
+def test_rejected_inline_positions_preserve_the_review(monkeypatch: pytest.MonkeyPatch, verdict: str, moved: bool):
+    result = ReviewResult.model_validate(
+        {
+            'verdict': verdict,
+            'comments': [{'path': 'a.py', 'line': 999, 'side': 'RIGHT', 'body': 'Finding details'}],
+            'discussion': 'Existing discussion',
+        }
+    )
+    for key, value in {
+        **ENV,
+        'GITHUB_RUN_ID': '20',
+        'PR_NUMBER': '7',
+        'REVIEW_RESULT': result.model_dump_json(),
+    }.items():
+        monkeypatch.setenv(key, value)
+    posted: list[str] = []
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[-1].startswith('"'):
+            return subprocess.CompletedProcess(args, 0, f'open at {OLD_HEAD if moved and posted else HEAD}', '')
+        assert args[-1] == 'repos/o/r/pulls/7/reviews'
+        payload = kwargs['input']
+        assert isinstance(payload, str)
+        posted.append(payload)
+        response = (
+            subprocess.CompletedProcess(args, 1, '', 'gh: Validation Failed (HTTP 422)')
+            if len(posted) == 1
+            else subprocess.CompletedProcess(args, 0, '', '')
+        )
+        if kwargs.get('check'):
+            response.check_returncode()
+        return response
+
+    monkeypatch.setattr(publish_douwebot_review.subprocess, 'run', fake_run)
+    publish_douwebot_review.main()
+    if moved:
+        assert len(posted) == 1
+    else:
+        assert len(posted) == 2
+        fallback = json.loads(posted[-1])
+        assert fallback['comments'] == []
+        assert fallback['commit_id'] == HEAD
+        assert fallback['event'] == verdict
+        assert all(text in fallback['body'] for text in ['a.py:999', 'Finding details', 'Existing discussion'])
+        parent = review(body=fallback['body'], state='APPROVED' if verdict == 'APPROVE' else 'CHANGES_REQUESTED')
+        assert verdicts(ReviewGitHub(current_reviews=[parent]))['douwebot'].failures
+
+
+@pytest.mark.parametrize(
+    ('status', 'comments', 'attempts'), [(403, True, 1), (500, True, 1), (422, False, 1), (422, True, 2)]
+)
+def test_review_publication_errors_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, status: int, comments: bool, attempts: int
+):
+    result = ReviewResult(
+        verdict='APPROVE',
+        discussion='',
+        comments=[Finding(path='a.py', line=999, side='RIGHT', body='Finding')] if comments else [],
+    )
+    for key, value in {**ENV, 'PR_NUMBER': '7', 'REVIEW_RESULT': result.model_dump_json()}.items():
+        monkeypatch.setenv(key, value)
+    posts: list[list[str]] = []
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if args[-1].startswith('"'):
+            return subprocess.CompletedProcess(args, 0, f'open at {HEAD}', '')
+        posts.append(args)
+        response = subprocess.CompletedProcess(args, 1, '', f'gh: Error (HTTP {status})')
+        if kwargs.get('check'):
+            response.check_returncode()
+        return response
+
+    monkeypatch.setattr(publish_douwebot_review.subprocess, 'run', fake_run)
+    with pytest.raises(subprocess.CalledProcessError):
+        publish_douwebot_review.main()
+    assert len(posts) == attempts
 
 
 @pytest.mark.parametrize(
