@@ -1310,6 +1310,39 @@ async def test_speech_segments_are_timed_once_they_end(output_speech_timestamps:
     ]
 
 
+async def test_speech_segment_of_a_reply_xai_drops_is_timed_where_its_audio_stopped() -> None:
+    """xAI drops the reply it started at a stop the user speaks on past, with no `response.done` for it.
+
+    The reply ends there all the same (see `_XaiVadLifecycle`), and so does the segment its audio was in.
+    """
+    frames = [
+        json.dumps(
+            {'type': 'input_audio_buffer.speech_started', 'event_id': 'e1', 'audio_start_ms': 0, 'item_id': 'u1'}
+        ),
+        json.dumps(
+            {'type': 'input_audio_buffer.speech_stopped', 'event_id': 'e2', 'audio_end_ms': 900, 'item_id': 'u1'}
+        ),
+        json.dumps(
+            {
+                'type': 'response.created',
+                'event_id': 'e3',
+                'response': {'id': 'resp-dropped', 'object': 'realtime.response', 'status': 'in_progress'},
+            }
+        ),
+        _transcript_frame('resp-dropped', 'item-1', 'Sure,', 0.0),
+        _audio_frame('resp-dropped', 'item-1', 400),
+        json.dumps(
+            {'type': 'input_audio_buffer.speech_started', 'event_id': 'e4', 'audio_start_ms': 1200, 'item_id': 'u1'}
+        ),
+    ]
+    conn = XaiRealtimeConnection(FakeWebSocket(frames), output_speech_timestamps=True)  # type: ignore[arg-type]
+    events = await collect_codec_events(conn)
+
+    assert [event for event in events if isinstance(event, OutputSpeechTimestamps)] == [
+        OutputSpeechTimestamps([_segment('Sure,', 0, 400)], item_id='item-1', response_id='resp-dropped')
+    ]
+
+
 async def test_billable_audio_seconds_running_total_is_split_per_response() -> None:
     """xAI reports the session's running total; each response is credited only its own increase.
 

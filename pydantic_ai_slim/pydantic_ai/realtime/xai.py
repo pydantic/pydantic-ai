@@ -70,8 +70,8 @@ from ..models import ModelRequestParameters
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._lifecycle import InputId, LifecycleEvent, ResponseStarted
-from ._openai_lifecycle import AudioCommit, OpenAILifecycle, frame_response_id
+from ._lifecycle import InputId, LifecycleEvent, ResponseEnded, ResponseStarted
+from ._openai_lifecycle import AudioCommit, OpenAILifecycle
 from ._openai_protocol import (
     INPUT_AUDIO_BUFFER_APPEND_EVENT,
     INPUT_AUDIO_BUFFER_CLEAR_EVENT,
@@ -229,7 +229,7 @@ class _SpeechSegmentTimer:
 
     A delta covers a few words to a sentence, so it times a `'segment'`. It ends where the next one starts, or else
     where the item's audio ends, so it's reported once that is known: at the next delta, the end of the item's
-    audio, or the end of its response, which a barge-in cuts short.
+    audio, or the end of its response, which can cut the audio short.
     """
 
     def __init__(self) -> None:
@@ -256,16 +256,19 @@ class _SpeechSegmentTimer:
             item_id = ResponseAudioDoneEvent.model_validate(data).item_id
             if (item := self._items.pop(item_id, None)) is not None:
                 return self._end_segment(item_id, item, item.audio_ms)
-        elif event_type == 'response.done':
-            # Items whose audio never got its `.done`, as when a barge-in cancels the response.
-            response_id = frame_response_id(event_type, data)
-            ended: list[OutputSpeechTimestamps] = []
-            for item_id, item in list(self._items.items()):
-                if item.response_id == response_id:
-                    del self._items[item_id]
-                    ended.extend(self._end_segment(item_id, item, item.audio_ms))
-            return ended
         return []
+
+    def response_ended(self, response_id: str) -> list[OutputSpeechTimestamps]:
+        """End the segments of a response's items whose audio never got its `.done`, where their audio stopped.
+
+        As when a barge-in cancels the response, or xAI drops it unended (see `_XaiVadLifecycle`).
+        """
+        ended: list[OutputSpeechTimestamps] = []
+        for item_id, item in list(self._items.items()):
+            if item.response_id == response_id:
+                del self._items[item_id]
+                ended.extend(self._end_segment(item_id, item, item.audio_ms))
+        return ended
 
     def _item(self, item_id: str, response_id: str | None) -> _SpokenItem:
         if (item := self._items.get(item_id)) is None:
@@ -621,7 +624,11 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
     async def _decode_frame(self, raw: str) -> _DecodedFrame:
         self._timed_speech.clear()
         events = await super()._decode_frame(raw)
-        # Ahead of the frame's own events, so a segment its response's end times lands before the response closes.
+        if self._speech_timer is not None:
+            for lifecycle_event in events.after:
+                if isinstance(lifecycle_event, ResponseEnded):
+                    self._timed_speech.extend(self._speech_timer.response_ended(lifecycle_event.response_id))
+        # Ahead of the frame's own events, so the segments a response's end times land before the response closes.
         events.codec[:0] = self._timed_speech
         if any(_is_recoverable_max_duration(event) for event in events.codec):
             # Nothing more goes out on this socket: the re-dial replaces it.
