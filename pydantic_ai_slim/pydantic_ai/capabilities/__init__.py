@@ -91,6 +91,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         Instrumentation,
         LocalWorkspace,
         MCP,
+        ModelFallback,
         PrefixTools,
         PrepareTools,
         ProcessHistory,
