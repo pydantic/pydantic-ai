@@ -7,9 +7,11 @@ cannot be recorded on demand. SDK sleep interception keeps these tests instant.
 import io
 import json
 from collections.abc import AsyncGenerator, AsyncIterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Literal
 
 import httpx2
 import pytest
@@ -114,48 +116,87 @@ def sdk_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     return waits
 
 
+@dataclass(frozen=True, kw_only=True)
+class Case:
+    id: str
+    headers: dict[str, str]
+    vetoed: bool
+    sdk_sleep: float | Literal['backoff'] | None
+    estimate: str | None = None
+
+
+CASES = [
+    Case(
+        id='long-quota',
+        headers={
+            'retry-after': '10511',
+            'x-should-retry': 'true',
+            'request-id': 'kept',
+            'anthropic-ratelimit-unified-7d-status': 'rejected',
+            'anthropic-ratelimit-unified-7d-reset': '1793059200',
+        },
+        vetoed=True,
+        sdk_sleep=None,
+        estimate='2h 55m',
+    ),
+    Case(id='exactly-sixty-seconds', headers={'retry-after': '60'}, vetoed=False, sdk_sleep=60.0),
+    Case(id='fractional-seconds', headers={'retry-after': '60.1'}, vetoed=True, sdk_sleep=None, estimate='1m 1s'),
+    Case(id='day-scale', headers={'retry-after': '172801'}, vetoed=True, sdk_sleep=None, estimate='2d 0h'),
+    Case(
+        id='milliseconds-over-limit', headers={'retry-after-ms': '60001'}, vetoed=True, sdk_sleep=None, estimate='1m 1s'
+    ),
+    Case(
+        id='milliseconds-precedence',
+        headers={'retry-after-ms': '1000', 'retry-after': '10511'},
+        vetoed=False,
+        sdk_sleep=1.0,
+    ),
+    Case(
+        id='invalid-milliseconds-fallthrough',
+        headers={'retry-after-ms': 'bad', 'retry-after': '10511'},
+        vetoed=True,
+        sdk_sleep=None,
+        estimate='2h 55m',
+    ),
+    Case(
+        id='future-http-date',
+        headers={'retry-after': 'Fri, 23 Oct 2026 00:02:00 GMT'},
+        vetoed=True,
+        sdk_sleep=None,
+        estimate='2m',
+    ),
+    Case(
+        id='past-http-date', headers={'retry-after': 'Thu, 22 Oct 2026 00:00:00 GMT'}, vetoed=False, sdk_sleep='backoff'
+    ),
+    Case(id='malformed-seconds', headers={'retry-after': 'bad'}, vetoed=False, sdk_sleep='backoff'),
+    Case(id='missing-delay', headers={}, vetoed=False, sdk_sleep='backoff'),
+    Case(id='negative-seconds', headers={'retry-after': '-1'}, vetoed=False, sdk_sleep='backoff'),
+    Case(id='zero-seconds', headers={'retry-after': '0'}, vetoed=False, sdk_sleep='backoff'),
+    Case(id='nan-seconds', headers={'retry-after': 'nan'}, vetoed=False, sdk_sleep='backoff'),
+    Case(id='infinite-delay-no-estimate', headers={'retry-after': 'inf'}, vetoed=True, sdk_sleep=None),
+    Case(
+        id='nan-milliseconds-no-fallthrough',
+        headers={'retry-after-ms': 'nan', 'retry-after': '10511'},
+        vetoed=False,
+        sdk_sleep='backoff',
+    ),
+    Case(
+        id='negative-milliseconds-no-fallthrough',
+        headers={'retry-after-ms': '-1', 'retry-after': '10511'},
+        vetoed=False,
+        sdk_sleep='backoff',
+    ),
+]
+
+
 @pytest.mark.parametrize('stream', [False, True])
-@pytest.mark.parametrize(
-    ('headers', 'notice', 'delay'),
-    [
-        (
-            {
-                'retry-after': '10511',
-                'x-should-retry': 'true',
-                'request-id': 'kept',
-                'anthropic-ratelimit-unified-7d-status': 'rejected',
-                'anthropic-ratelimit-unified-7d-reset': '1793059200',
-            },
-            '2h 55m',
-            None,
-        ),
-        ({'retry-after': '60'}, None, 60.0),
-        ({'retry-after': '60.1'}, '1m 1s', None),
-        ({'retry-after': '172801'}, '2d 0h', None),
-        ({'retry-after-ms': '60001'}, '1m 1s', None),
-        ({'retry-after-ms': '1000', 'retry-after': '10511'}, None, 1.0),
-        ({'retry-after-ms': 'bad', 'retry-after': '10511'}, '2h 55m', None),
-        ({'retry-after': 'Fri, 23 Oct 2026 00:02:00 GMT'}, '2m', None),
-        ({'retry-after': 'Thu, 22 Oct 2026 00:00:00 GMT'}, None, None),
-        ({'retry-after': 'bad'}, None, None),
-        ({}, None, None),
-        ({'retry-after': '-1'}, None, None),
-        ({'retry-after': '0'}, None, None),
-        ({'retry-after': 'nan'}, None, None),
-        ({'retry-after': 'inf'}, '', None),
-        ({'retry-after-ms': 'nan', 'retry-after': '10511'}, None, None),
-        ({'retry-after-ms': '-1', 'retry-after': '10511'}, None, None),
-    ],
-)
-async def test_claude_code_retry_budget(
-    headers: dict[str, str], notice: str | None, delay: float | None, stream: bool, sdk_sleeps: list[float]
-) -> None:
-    blocked = notice is not None
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
+async def test_claude_code_retry_budget(case: Case, stream: bool, sdk_sleeps: list[float]) -> None:
     calls: list[str | None] = []
 
     def respond(request: httpx2.Request) -> httpx2.Response:
         calls.append(request.headers.get('authorization'))
-        response = rejection(headers=headers) if len(calls) == 1 else success(stream=stream)
+        response = rejection(headers=case.headers) if len(calls) == 1 else success(stream=stream)
         return response
 
     observed: list[int] = []
@@ -177,7 +218,7 @@ async def test_claude_code_retry_budget(
         assert client.auth is auth
         assert model.client.max_retries == 2
         with override_allow_model_requests(True):
-            if blocked:
+            if case.vetoed:
                 with pytest.raises(ModelRateLimitError) as caught:
                     await Agent(model).run(
                         'go',
@@ -193,13 +234,15 @@ async def test_claude_code_retry_budget(
                 }
                 assert error.provider_error_type == 'rate_limit_error'
                 assert error.headers is not None
-                assert all(error.headers[key] == value for key, value in headers.items() if key != 'x-should-retry')
+                assert all(
+                    error.headers[key] == value for key, value in case.headers.items() if key != 'x-should-retry'
+                )
                 assert error.headers['x-should-retry'] == 'false'
                 message = error_message(error)
                 assert 'Claude Code rate limit (HTTP 429)' in message
                 assert '/model' in message
-                if notice:
-                    assert f'Retry after about {notice}.' in message
+                if case.estimate is not None:
+                    assert f'Retry after about {case.estimate}.' in message
                 else:
                     assert 'Retry after' not in message
                 assert sdk_sleeps == []
@@ -211,12 +254,12 @@ async def test_claude_code_retry_budget(
                 )
                 assert result.output == 'ok'
                 assert len(sdk_sleeps) == 1
-                if delay is not None:
-                    assert sdk_sleeps == [delay]
+                if case.sdk_sleep != 'backoff':
+                    assert sdk_sleeps == [case.sdk_sleep]
                 else:
                     assert 0 < sdk_sleeps[0] <= 0.5
-        assert calls == ['Bearer subscription'] * (1 if blocked else 2)
-        assert observed == ([429] if blocked else [429, 200])
+        assert calls == ['Bearer subscription'] * (1 if case.vetoed else 2)
+        assert observed == ([429] if case.vetoed else [429, 200])
         assert not client.is_closed
 
 
