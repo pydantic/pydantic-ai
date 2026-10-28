@@ -246,7 +246,6 @@ Close the aligned issue for a nontrivial change; omit the closing placeholder fo
 
 ## Independent candidate gate
 
-The implementation workflow's review does not review future generated PRs.
 Require one fresh independent pre-push review for each candidate before calling the PR safe output.
 This is the mandatory candidate gate, not an optional second opinion.
 Do not use an audit delegate that already studied the proposed change as the reviewer.
