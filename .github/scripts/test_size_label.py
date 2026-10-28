@@ -198,7 +198,7 @@ def test_label_updates(tmp_path: Path, script: str, initial_sizes: list[str], wr
             97,  # 80 code + floor(25 docs / 2) + floor(11 tests / 2).
             'size: S',
         ),
-        ([('tests/README.md', 200, 0)], 200, 'size: M'),
+        ([('tests/README.md', 200, 0)], 100, 'size: S'),
     ],
 )
 def test_scoring(tmp_path: Path, script: str, files: list[tuple[str, int, int]], score: int, target: str):
