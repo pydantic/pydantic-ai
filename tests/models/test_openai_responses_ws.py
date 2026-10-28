@@ -3201,7 +3201,11 @@ async def test_http_auth_added_after_socket_open_is_honored(
 
 @pytest.mark.parametrize('profile', [None, WEBSOCKET_PROFILE])
 async def test_removing_http_auth_can_use_socket_after_profile_cached(
-    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, profile: OpenAIModelProfile | None
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    http: HTTPResponses,
+    monkeypatch: pytest.MonkeyPatch,
+    profile: OpenAIModelProfile | None,
 ):
     socket = sockets.pending[0]
     http.client.auth = httpx2.BasicAuth('dynamic', 'secret')
@@ -3212,7 +3216,8 @@ async def test_removing_http_auth_can_use_socket_after_profile_cached(
     async with Agent(model) as agent:
         with pytest.warns(UnsupportedSettingWarning):
             assert (await agent.run('authenticate over HTTP')).output == 'from HTTP'
-        http.client.auth = None
+        # The setter accepts None at runtime, but its annotation omits it.
+        monkeypatch.setattr(http.client, 'auth', None)
         assert (await agent.run('use static credentials')).output == 'ready'
     assert len(http.requests) == 1
     assert http.requests[0].headers['authorization'].startswith('Basic ')
