@@ -355,7 +355,7 @@ class ScopedTask(Generic[T]):
         async def run() -> T:
             with scope:
                 return await awaitable
-            # The scope caught the cancellation `wait()` passed on: end cancelled, as a native cancellation would.
+            # The scope caught the cancellation passed on to it: end cancelled, as a native cancellation would.
             raise asyncio.CancelledError
 
         self.task = asyncio.create_task(run())
@@ -373,7 +373,7 @@ class ScopedTask(Generic[T]):
         The outcome is read before it's discarded: until it's read, a cancelled task keeps its `CancelledError`, whose
         traceback holds the task's frames.
         """
-        cancellation = await self._wait_passing_on_cancellation()
+        cancellation = await self.wait_passing_on_cancellation()
         with suppress(asyncio.CancelledError):
             self.task.exception()
         if cancellation is not None:
@@ -392,7 +392,7 @@ class ScopedTask(Generic[T]):
         instead of a result, since finalizing under the cancelled scope would raise a `CancelledError` the scope doesn't
         catch. An awaiter that must keep that result reads it from `task`.
         """
-        cancellation = await self._wait_passing_on_cancellation()
+        cancellation = await self.wait_passing_on_cancellation()
         if cancellation is not None and (
             self.task.cancelled() or (self.task.exception() is None and not self._native_cancel_passed_on)
         ):
@@ -403,16 +403,20 @@ class ScopedTask(Generic[T]):
                 raise cancellation
             finally:
                 del cancellation
-        # A local that keeps the awaiter's cancellation would cycle through the traceback of the error raised below.
+        # On some CPython versions, such as 3.12.15 and 3.13.3, the cancellation's traceback keeps the frame of
+        # `wait_passing_on_cancellation()` linked to this one through `f_back`, so a local that keeps the cancellation
+        # here would cycle with it after the task absorbed it and returned.
         del cancellation
         return self.task.result()
 
-    async def _wait_passing_on_cancellation(self) -> asyncio.CancelledError | None:
+    async def wait_passing_on_cancellation(self) -> asyncio.CancelledError | None:
         """Wait for the task to finish, pass each cancellation of the awaiter on to it, and return the first one.
 
-        Returning it rather than re-raising it lets callers read the task's outcome outside this `except` block: a
-        `CancelledError` the task raised, which may be the run's own error, would otherwise be chained to the awaiter's
-        through `__context__`.
+        It returns the cancellation instead of raising it, so callers can read the task's outcome outside this `except`
+        block: a `CancelledError` the task raised, which may be the run's own error, would otherwise be chained to the
+        awaiter's through `__context__`. A caller must `del` the returned cancellation in the frame that raises it or
+        returns: the cancellation's traceback can reach that frame, so a local that keeps it there would cycle with it
+        and keep the task's frames alive until garbage collection.
         """
         try:
             await asyncio.wait((self.task,))
