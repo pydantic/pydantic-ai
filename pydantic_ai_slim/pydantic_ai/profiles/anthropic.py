@@ -563,6 +563,13 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
     if supports_tool_search:
         profile['tool_deferral_mode'] = 'standalone'
+    # The largest screenshot each model takes, measured live 2026-10-28: the toolset refuses a larger one (at most
+    # 2576 px on the longer side and 4784 tiles of 28 px, kept below with room for rounding), and the earlier tools
+    # send it scaled down while Claude answers in the smaller image's pixels.
+    if computer_tool_version == 'computer_toolset_20260801' or model_name.startswith('claude-opus-4-7'):
+        profile['computer_use_screenshot_limit'] = (2576, 3_600_000)
+    elif computer_tool_version is not None:
+        profile['computer_use_screenshot_limit'] = (1568, 1_150_000)
     return profile
 
 

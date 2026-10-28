@@ -176,6 +176,33 @@ async def test_a_reviewer_sees_the_safety_checks_and_approving_acknowledges_them
         assert provider.actions == []
 
 
+async def test_an_approved_call_in_a_conversation_acknowledges_its_safety_checks(allow_model_requests: None) -> None:
+    provider = InMemoryProvider()
+    first = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}, safety_checks=[CHECK])
+    first.conversation = Conversation(id='conv_1')
+    client = MockOpenAIResponses.create_mock([first, _done()])
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    agent = Agent(
+        model,
+        toolsets=[computer_toolset(requires_approval=True)],
+        capabilities=[provider.capability()],
+        output_type=[str, DeferredToolRequests],
+        model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_1'),
+    )
+    paused = await agent.run('Go.')
+    assert isinstance(paused.output, DeferredToolRequests)
+    (approval,) = paused.output.approvals
+
+    await agent.run(
+        message_history=paused.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={approval.tool_call_id: True}),
+    )
+    _, second = get_mock_responses_kwargs(client)
+    # The call stays in the conversation; its output still acknowledges the checks.
+    (output,) = second['input']
+    assert output['acknowledged_safety_checks'] == [CHECK]
+
+
 @pytest.mark.parametrize(
     'settings',
     [{'openai_previous_response_id': 'auto'}, {'openai_conversation_id': 'conv_1'}],
@@ -280,12 +307,24 @@ def test_the_last_image_goes_out_as_the_screen_at_full_detail() -> None:
     assert output['output'] == {'type': 'computer_screenshot', 'image_url': screen.data_uri, 'detail': 'original'}
 
 
-def test_a_result_without_metadata_also_sends_its_text() -> None:
-    # As from a UI that rebuilt the result: its text may say an action failed.
+@pytest.mark.parametrize(
+    'text,metadata',
+    [
+        # As from a UI that rebuilt the result: its text may say an action failed.
+        pytest.param('Action 1 of 1 (click) failed: busy.', None, id='no-metadata'),
+        # Otherwise the model would take its own actions to have run.
+        pytest.param(
+            'Before it ran, this call was changed to: [...]. Ran 1 action.',
+            {'performed': 1, 'changed': True},
+            id='changed-before-it-ran',
+        ),
+    ],
+)
+def test_a_result_the_screenshot_does_not_tell_also_sends_its_text(text: str, metadata: dict[str, Any] | None) -> None:
     screen = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
-    part = ToolReturnPart('computer', ['Action 1 of 1 (click) failed: busy.', screen], tool_call_id='call_1')
+    part = ToolReturnPart('computer', [text, screen], tool_call_id='call_1', metadata=metadata)
     _, message = cast(list[dict[str, Any]], _map_computer_call_output(part, 'call_1', None))
-    assert message == {'role': 'user', 'content': 'Action 1 of 1 (click) failed: busy.'}
+    assert message == {'role': 'user', 'content': text}
 
 
 async def test_an_incomplete_call_runs_nothing(allow_model_requests: None) -> None:
@@ -425,6 +464,11 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
         ({'type': 'type', 'text': 'hi'}, {'type': 'type', 'text': 'hi'}),
         ({'type': 'wait'}, {'type': 'wait'}),
         ({'type': 'teleport', 'x': 1}, {'type': 'teleport', 'unsupported_fields': ['x']}),
+        # Under the tool's own type, so the retry names the field rather than refusing the type.
+        (
+            {'type': 'double_click', 'x': 1, 'y': 2, 'duration_ms': 5},
+            {'type': 'click', 'unsupported_fields': ['duration_ms']},
+        ),
         (
             {'type': 'drag', 'path': [{'x': 1, 'y': 2}, {'x': 3, 'y': 4, 'pressure': 1}]},
             {'type': 'drag', 'unsupported_fields': ['path']},
