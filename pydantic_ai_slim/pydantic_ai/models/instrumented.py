@@ -264,8 +264,8 @@ class InstrumentationSettings:
                             otel_parts = part.otel_message_parts(self)
                             if index < current_request_start and _is_request_scoped(part):
                                 for otel_part in otel_parts:
-                                    if otel_part['type'] == 'text':  # pragma: no branch
-                                        otel_part['visible'] = False
+                                    assert otel_part['type'] == 'text'
+                                    otel_part['visible'] = False
                             message_parts.extend(otel_parts)
 
                     result.append(_otel_messages.ChatMessage(role=role, parts=message_parts))
