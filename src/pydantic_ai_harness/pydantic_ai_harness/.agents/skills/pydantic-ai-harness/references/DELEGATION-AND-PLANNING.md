@@ -392,6 +392,9 @@ Gotchas:
   `run()`, `run_sync()`, `run_stream_events()`, or fully consume `agent.iter()`.
 - The run waits for pending tools; a pause or early stop cancels them. Async tools must honour
   cancellation; sync tools cannot be interrupted.
+- A `HandleDeferredToolCalls` handler can call `has_live_background_tools(ctx)`
+  (`pydantic_ai_harness.background_tools`) to wait for running background tools before resolving, since
+  a deferred-tool pause would cancel them.
 - Delivered results skip tool-result/tool-error hooks; an unexpected tool failure shows the model only the error type.
 - Sequential tools and realtime sessions run normally. Do not call `ctx.enqueue()` inside a durable
   activity.

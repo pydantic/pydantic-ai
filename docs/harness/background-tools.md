@@ -137,6 +137,12 @@ cancelled, and results that have not been delivered yet are dropped, even from t
 Resuming the run does not deliver them. Async tools must allow cancellation; ignoring it can prevent
 the run from stopping.
 
+To keep background tools running while a decision is pending, resolve the deferred calls with a
+[`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler instead of
+pausing: `has_live_background_tools(ctx)`, from `pydantic_ai_harness.background_tools`, reports
+whether any are still running, so the handler can wait for them, or for the decision, before it
+returns.
+
 !!! warning
     Python cannot stop a synchronous tool before it returns. Cancelling the run will still wait for
     that tool.

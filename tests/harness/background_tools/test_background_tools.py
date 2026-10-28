@@ -16,7 +16,7 @@ from inline_snapshot import snapshot
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, UsageLimits
-from pydantic_ai.capabilities import AbstractCapability, SetToolMetadata
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, SetToolMetadata
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -56,9 +56,10 @@ from pydantic_ai.realtime.codec import (
 )
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, RunContext, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import BackgroundTools, CodeMode
+from pydantic_ai_harness.background_tools import has_live_background_tools
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 from tests.harness.conftest import IsStr
 
@@ -1153,6 +1154,48 @@ ends with &lt;/tool_result
         assert isinstance(result.output, DeferredToolRequests)
         assert result.output.approvals[0].tool_name == 'needs_approval'
         assert model_calls == 1
+
+    async def test_deferred_tool_handler_can_wait_for_live_background_tools(self) -> None:
+        release = asyncio.Event()
+        live_seen: list[bool] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='slow', args='{}'),
+                        ToolCallPart(tool_name='needs_approval', args='{}'),
+                    ]
+                )
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        async def wait_then_approve(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+            live_seen.append(has_live_background_tools(ctx))
+            release.set()
+            while has_live_background_tools(ctx):
+                await anyio.lowlevel.checkpoint()
+            live_seen.append(has_live_background_tools(ctx))
+            return requests.build_results(approve_all=True)
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            capabilities=[BackgroundTools(), HandleDeferredToolCalls(handler=wait_then_approve)],
+        )
+
+        @agent.tool_plain(metadata={'background': True})
+        async def slow() -> str:
+            await release.wait()
+            return 'slow value'
+
+        @agent.tool_plain(requires_approval=True)
+        def needs_approval() -> str:
+            return 'approved'
+
+        result = await agent.run('go')
+
+        assert live_seen == [True, False]
+        assert result.output == 'done'
+        assert _follow_up_seen(result.all_messages(), 'slow value')
 
     async def test_queued_result_is_not_delayed_by_an_unrelated_live_task(self) -> None:
         release = {'fast_bg': asyncio.Event(), 'slow_bg': asyncio.Event()}
