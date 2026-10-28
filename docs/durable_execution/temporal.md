@@ -714,7 +714,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from pydantic_ai import Agent
-from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
+from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 model = OpenAIResponsesModel(
@@ -725,7 +725,9 @@ agent = Agent(model, name='triage', capabilities=[TemporalDurability()])
 
 
 @workflow.defn
-class TriageWorkflow:
+class TriageWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         return (await agent.run(prompt)).output
@@ -734,13 +736,13 @@ class TriageWorkflow:
 async def main():
     client = await Client.connect('localhost:7233', plugins=[PydanticAIPlugin()])
     async with model:
-        worker = Worker(
-            client,
-            task_queue='triage',
-            workflows=[TriageWorkflow],
-            plugins=[AgentPlugin(agent)],
-        )
-        await worker.run()
+        async with Worker(client, task_queue='triage', workflows=[TriageWorkflow]):
+            await client.execute_workflow(
+                TriageWorkflow.run,
+                'Triage this request.',
+                id='triage-1',
+                task_queue='triage',
+            )
 ```
 
 Each activity still checkpoints its result independently. Activities borrow the socket only on the event loop

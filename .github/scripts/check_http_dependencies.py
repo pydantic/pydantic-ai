@@ -9,7 +9,6 @@ from packaging.requirements import Requirement
 
 
 def wheel_requirements(pattern: str) -> list[Requirement]:
-    """Read the requirements from a built wheel matching `pattern`."""
     wheel = next(Path('dist').glob(pattern))
     with zipfile.ZipFile(wheel) as archive:
         metadata_path = next(name for name in archive.namelist() if name.endswith('.dist-info/METADATA'))
@@ -45,13 +44,10 @@ openai_extras = {
 }
 openai_requirements = [requirement for requirement in slim if requirement.name == 'openai']
 assert len(openai_requirements) == len(openai_extras)
-openai_extra_requirements: dict[str, set[frozenset[str]]] = {}
 for requirement in openai_requirements:
+    assert not requirement.extras
     assert requirement.marker is not None
-    extra = str(requirement.marker).removeprefix('extra == ').strip('"')
-    assert extra in openai_extras
-    openai_extra_requirements.setdefault(extra, set()).add(frozenset(requirement.extras))
-assert openai_extra_requirements == {extra: {frozenset()} for extra in openai_extras}
+    assert str(requirement.marker).removeprefix('extra == ').strip('"') in openai_extras
 
 openai_dependencies = [Requirement(value) for value in requires('openai') or []]
 assert not any(requirement.name == 'httpx' for requirement in openai_dependencies)
