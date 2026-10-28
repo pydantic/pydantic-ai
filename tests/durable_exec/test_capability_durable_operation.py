@@ -31,6 +31,7 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
+    CapabilityMethodDeclaration,
     CapabilityOperationParams,
     CapabilityOperationResult,
     ModelRequestContextProjection,
@@ -1939,6 +1940,67 @@ def test_before_model_request_context_parameter_can_have_any_name() -> None:
     assert declaration.ctx_parameter == 'run_context'
     assert declaration.model_request_hook
     assert not collect_capability_operations(Operations())['calculate'].model_request_hook
+
+
+def _define_prepare_capabilities() -> tuple[type[AbstractCapability[Any]], type[AbstractCapability[Any]]]:
+    """Define the classes afresh, as Temporal's sandbox does each time it re-imports a workflow module."""
+
+    class Prepare(AbstractCapability[Any]):
+        id = 'prepare'
+
+        @durable_operation('before_model_request')
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            request_context.messages = [ModelRequest(parts=[UserPromptPart('prepared')])]
+            return request_context
+
+    class PrepareWithNote(AbstractCapability[Any]):
+        id = 'prepare_with_note'
+
+        @durable_operation('rewrite')
+        async def rewrite(self, ctx: RunContext[Any], request: ModelRequestContext, note: str) -> ModelRequestContext:
+            raise NotImplementedError
+
+    return Prepare, PrepareWithNote
+
+
+async def test_model_request_operation_schema_is_reused_when_the_capability_is_redefined() -> None:
+    """Building an agent with a durable `before_model_request` reuses the request projection's schema.
+
+    Generating that schema covers every message type, and a module-level agent in a Temporal workflow
+    module is rebuilt on every workflow run.
+    """
+
+    def build_agent() -> Agent[None, str]:
+        prepare, _ = _define_prepare_capabilities()
+        return Agent(TestModel(), name='prepare', capabilities=[prepare(), RecordingDurability()])
+
+    def declaration(agent: Agent[None, str]) -> CapabilityMethodDeclaration:
+        durability = RecordingDurability.from_agent(agent)
+        assert durability is not None
+        return durability._capability_declarations[('prepare', 'before_model_request')]  # pyright: ignore[reportPrivateUsage]
+
+    first_agent = build_agent()
+    second_agent = build_agent()
+    first, second = declaration(first_agent), declaration(second_agent)
+
+    assert first.function is not second.function
+    assert second.schema.validator is first.schema.validator
+    assert second.schema.function is not first.schema.function
+
+    await second_agent.run('test')
+    durability = RecordingDurability.from_agent(second_agent)
+    assert durability is not None
+    model_call = next(cache_key for name, cache_key in durability.calls if name == 'prepare__model.request')
+    sent_request = cast(list[ModelMessage], model_call[1])[-1]
+    assert isinstance(sent_request, ModelRequest)
+    assert isinstance(sent_request.parts[0], UserPromptPart)
+    assert sent_request.parts[0].content == 'prepared'
+
+    # An operation that also takes a user-typed argument rebuilds its schema every time.
+    rewrites = [collect_capability_operations(_define_prepare_capabilities()[1]())['rewrite'] for _ in range(2)]
+    assert rewrites[0].schema.validator is not rewrites[1].schema.validator
 
 
 def test_recording_config_has_no_per_tool_override() -> None:
