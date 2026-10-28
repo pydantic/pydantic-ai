@@ -1621,7 +1621,7 @@ These system prompt functions run once, when a conversation starts. Register one
 
 ### Appending system prompt changes {#appending-system-prompt-changes}
 
-For context that changes between runs of a conversation, we recommend [instructions with `on_change='append'`](#appending-instruction-changes): `@agent.instructions(name=..., on_change='append')`. Instructions are re-evaluated before every request, and only the current agent's are sent. If you need a system prompt instead, because the history is continued by other agents that should keep receiving it, register it with `on_change='append'`:
+For context that changes between runs of a conversation, we recommend [instructions with `on_change='append'`](#appending-instruction-changes): `@agent.instructions(name=..., on_change='append')`. Instructions are re-evaluated before every request, and only the current agent's are sent. If you need a system prompt instead, because the history is continued by other agents that should keep receiving it, register it with `on_change='append'`, which makes it dynamic:
 
 ```python {title="system_prompt_changes.py"}
 from pydantic_ai import Agent, RunContext
@@ -1631,7 +1631,7 @@ from pydantic_ai.models.test import TestModel
 agent = Agent(TestModel(), deps_type=str)
 
 
-@agent.system_prompt(dynamic=True, on_change='append')
+@agent.system_prompt(on_change='append')
 def user_name(ctx: RunContext[str]) -> str:
     return f"The user's name is {ctx.deps}."
 
@@ -1652,6 +1652,8 @@ print(prompts)
 The first value stays where it was, and a changed value is added to the history as a new `SystemPromptPart` at the start of the run that saw it, so the start of the conversation stays the same. A run in which the value is unchanged adds nothing. Returning `None` or an empty string withdraws the prompt. The function still runs once per run, not before every request.
 
 The model gets the prompt with the same replacement semantics as [appending instruction changes](#appending-instruction-changes). Each statement is sent inside a `<context id="system_prompt:<name>">` element, and the model is told once per request that a later element with the same id replaces the earlier one. A change is sent as a new element with that id, and a withdrawal as an element saying the prompt is withdrawn. The model sees this id: `<name>` is the function's `__name__` unless you pass `name=` (which has no effect without `on_change='append'`), and must be unique among the agent's appending system prompts. Each part records its id as [`SystemPromptPart.context_id`][pydantic_ai.messages.SystemPromptPart.context_id], so an agent that continues the history without the function sends the parts the same way.
+
+Like any dynamic system prompt, the prompt is tied to existing histories by its function's `__qualname__` (recorded as [`SystemPromptPart.dynamic_ref`][pydantic_ai.messages.SystemPromptPart.dynamic_ref]), whether or not you pass `name=`. Renaming or moving the function disconnects it from them: the old part keeps its last value, and the renamed function isn't sent in conversations that continue them.
 
 Realtime sessions don't support this option: they warn and rewrite the prompt in place.
 

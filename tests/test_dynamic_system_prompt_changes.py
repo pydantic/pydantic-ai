@@ -70,7 +70,7 @@ def _system_prompts(messages: list[ModelMessage]) -> list[list[SystemPromptPart]
 def _user_name_agent(recorder: Recorder, **kwargs: str) -> Agent[str | None, str]:
     agent = Agent(recorder.model(), deps_type=str | None)
 
-    @agent.system_prompt(dynamic=True, on_change='append', **kwargs)
+    @agent.system_prompt(on_change='append', **kwargs)
     def user_name(ctx: RunContext[str | None]) -> str | None:
         return f"The user's name is {ctx.deps}." if ctx.deps else None
 
@@ -580,10 +580,77 @@ A later <context> element with the same id replaces the earlier one and stays in
     )
 
 
-def test_append_requires_dynamic():
+def test_append_implies_dynamic():
+    """`on_change='append'` makes the prompt dynamic, so a later run sends the change."""
+    recorder = Recorder()
+    _converse(_user_name_agent(recorder), 'Frank', 'Bob')
+
+    assert recorder.requests[-1] == snapshot(
+        [
+            (
+                'system-prompt',
+                """\
+<context id="system_prompt:user_name">
+The user's name is Frank.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+            ),
+            ('user-prompt', 'Hi!'),
+            (
+                'system-prompt',
+                """\
+<context id="system_prompt:user_name">
+The user's name is Bob.
+</context>\
+""",
+            ),
+            ('user-prompt', 'Hi!'),
+        ]
+    )
+
+
+def test_append_rejects_explicit_static():
     agent = Agent('test')
     with pytest.raises(UserError, match="`on_change='append'` only applies to a dynamic system prompt"):
-        agent.system_prompt(on_change='append')
+        agent.system_prompt(dynamic=False, on_change='append')
+
+
+def test_renamed_function_is_disconnected_from_history():
+    """History ties the prompt to its function's `__qualname__`, even with `name=`, so a renamed function isn't sent."""
+    first = Agent(Recorder().model(), deps_type=str)
+
+    @first.system_prompt(on_change='append', name='user')
+    def user_name(ctx: RunContext[str]) -> str:
+        return f"The user's name is {ctx.deps}."
+
+    recorder = Recorder()
+    second = Agent(recorder.model(), deps_type=str)
+
+    @second.system_prompt(on_change='append', name='user')
+    def renamed_user_name(ctx: RunContext[str]) -> str:
+        return f"The user's name is {ctx.deps}."  # pragma: no cover
+
+    history = first.run_sync('Hi!', deps='Frank').all_messages()
+    second.run_sync('Hi!', deps='Bob', message_history=history)
+
+    assert recorder.requests == snapshot(
+        [
+            [
+                (
+                    'system-prompt',
+                    """\
+<context id="system_prompt:user">
+The user's name is Frank.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                ),
+                ('user-prompt', 'Hi!'),
+                ('user-prompt', 'Hi!'),
+            ]
+        ]
+    )
 
 
 def test_name_without_append_has_no_effect():

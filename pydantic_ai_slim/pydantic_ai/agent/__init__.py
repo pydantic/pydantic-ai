@@ -2777,7 +2777,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         /,
         *,
-        dynamic: bool = False,
+        dynamic: bool | None = None,
         name: str | None = None,
         on_change: _messages.InstructionChangePolicy = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
@@ -2787,7 +2787,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         func: SystemPromptFunc[AgentDepsT] | None = None,
         /,
         *,
-        dynamic: bool = False,
+        dynamic: bool | None = None,
         name: str | None = None,
         on_change: _messages.InstructionChangePolicy = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
@@ -2805,15 +2805,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             func: The function to decorate
             dynamic: If True, the system prompt will be reevaluated even when `messages_history` is provided,
-                see [`SystemPromptPart.dynamic_ref`][pydantic_ai.messages.SystemPromptPart.dynamic_ref]
-            name: The name in the id `'system_prompt:<name>'` of the `<context>` element a dynamic system prompt
-                with `on_change='append'` is sent as, which the model sees. Defaults to the function's `__name__`.
-                It has no effect without `on_change='append'`.
+                see [`SystemPromptPart.dynamic_ref`][pydantic_ai.messages.SystemPromptPart.dynamic_ref].
+                Defaults to `False`, or to `True` with `on_change='append'`, which can't be combined with
+                `dynamic=False`.
+            name: The name in the id `'system_prompt:<name>'` of the `<context>` element a system prompt with
+                `on_change='append'` is sent as, which the model sees. Defaults to the function's `__name__`.
+                It has no effect without `on_change='append'`. Existing histories tie the prompt to the
+                function's `__qualname__` whether or not this is set, so renaming or moving the function
+                disconnects it from them: the old part keeps its last value, and the renamed function isn't sent
+                in conversations that continue them.
             on_change: Whether a dynamic system prompt whose value changed between runs rewrites its part in the
                 message history (the default), which changes the start of every later request and so misses the
                 provider's prompt cache, or is appended to the history as a replacement that keeps the cached
-                prefix. Appending sends the prompt inside a `<context>` element from the first request on; see
-                [appending system prompt changes](../agent.md#appending-system-prompt-changes).
+                prefix. `'append'` makes the prompt dynamic, and sends it inside a `<context>` element from the
+                first request on; see [appending system prompt changes](../agent.md#appending-system-prompt-changes).
 
         Example:
         ```python
@@ -2830,27 +2835,30 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return f'{ctx.deps} is the best'
         ```
         """
-        if on_change == 'append' and not dynamic:
+        if on_change == 'append' and dynamic is False:
             raise exceptions.UserError(
-                "`on_change='append'` only applies to a dynamic system prompt: pass `dynamic=True` as well."
+                "`on_change='append'` only applies to a dynamic system prompt: drop `dynamic=False`."
             )
+        is_dynamic = on_change == 'append' or bool(dynamic)
         if func is None:
 
             def decorator(
                 func_: SystemPromptFunc[AgentDepsT],
             ) -> SystemPromptFunc[AgentDepsT]:
                 runner = _system_prompt.SystemPromptRunner[AgentDepsT](
-                    func_, dynamic=dynamic, context_id=self._system_prompt_context_id(func_, name, on_change)
+                    func_, dynamic=is_dynamic, context_id=self._system_prompt_context_id(func_, name, on_change)
                 )
                 self._system_prompt_functions.append(runner)
-                if dynamic:  # pragma: lax no cover
+                if is_dynamic:  # pragma: lax no cover
                     self._system_prompt_dynamic_functions[func_.__qualname__] = runner
                 return func_
 
             return decorator
         else:
-            assert not dynamic, "dynamic can't be True in this case"
-            self._system_prompt_functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](func, dynamic=dynamic))
+            assert not is_dynamic, "dynamic can't be True in this case"
+            self._system_prompt_functions.append(
+                _system_prompt.SystemPromptRunner[AgentDepsT](func, dynamic=is_dynamic)
+            )
             return func
 
     def _system_prompt_context_id(
