@@ -7,6 +7,7 @@ from pydantic_ai_harness.ask_user._types import (
     MAX_QUESTIONS,
     TOOL_NAME,
     Answerer,
+    AnyAnswerer,
     AskUserAnswer,
     AskUserRequest,
     AskUserResponse,
@@ -19,6 +20,7 @@ from pydantic_ai_harness.ask_user._types import (
 __all__ = [
     'ASK_USER_EVENTS',
     'Answerer',
+    'AnyAnswerer',
     'AskUser',
     'AskUserAnswer',
     'AskUserAnsweredEvent',

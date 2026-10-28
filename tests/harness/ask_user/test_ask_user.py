@@ -35,6 +35,7 @@ from pydantic_ai_harness.ask_user import (
     DECLINED,
     TIMED_OUT,
     TOOL_NAME,
+    AnyAnswerer,
     AskUserAnswer,
     AskUserAnsweredEvent,
     AskUserRequest,
@@ -329,10 +330,11 @@ class TestContextAnswerer:
 
         model = FunctionModel(respond)
         history = [ModelRequest(parts=[UserPromptPart('Earlier context')]), ModelResponse(parts=[TextPart('Noted')])]
+        stored: AnyAnswerer[str] = answerer
         agent = Agent(
             model,
             deps_type=str,
-            capabilities=[AskUser(answerer=answerer)],
+            capabilities=[AskUser(answerer=stored)],
         )
         result = await agent.run('go', deps='session owner', message_history=history)
         assert result.output == 'answered'

@@ -79,6 +79,7 @@ functions and callable objects are supported, including two-argument lambdas.
 If a callable accepts both one and two positional arguments, annotate its first parameter as
 `RunContext[DepsT]` to select the context form; otherwise it receives only the request. Only the
 first annotation is inspected; an unresolved annotation naming `RunContext` also selects the context form.
+Use `AnyAnswerer[DepsT]` to annotate a stored callback that may use either signature.
 
 ```python
 from pydantic_ai import Agent, RunContext
@@ -266,7 +267,7 @@ to name.
 
 ## API
 
-`AskUser`, `Answerer`, `ContextAnswerer`, `AskUserRequest`, `AskUserResponse`, `AskUserAnswer`, `Question`,
+`AskUser`, `Answerer`, `ContextAnswerer`, `AnyAnswerer`, `AskUserRequest`, `AskUserResponse`, `AskUserAnswer`, `Question`,
 `QuestionOption`, `AskUserRequestedEvent`, `AskUserAnsweredEvent`, `check_response`, `ask_user_result`,
 `TOOL_NAME`, `DECLINED`, `TIMED_OUT`, and `MAX_QUESTIONS` are exported from `pydantic_ai_harness.ask_user`,
 along with `AskUserToolset`, the toolset `AskUser` registers, and `ASK_USER_EVENTS`, the namespace

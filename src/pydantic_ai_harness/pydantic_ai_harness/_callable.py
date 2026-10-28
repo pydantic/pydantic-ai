@@ -11,6 +11,8 @@ from typing import Annotated, Any, ForwardRef, Union, get_args, get_origin
 
 from pydantic_ai.tools import RunContext
 
+_RUN_CONTEXT_NAME = re.compile(r'(?<!\w)RunContext\b')
+
 
 def takes_context(func: Callable[..., object], *, parameters: Sequence[inspect.Parameter] | None = None) -> bool | None:
     """Return whether a callback takes `(ctx, value)`, or `None` when either shape is ambiguous.
@@ -81,4 +83,5 @@ def _has_forward_ref(annotation: object) -> bool:
 
 
 def _names_run_context(annotation: str) -> bool:
-    return re.search(r'(?<!\w)RunContext\b', annotation) is not None
+    """Match `RunContext` in qualified or compound annotations, but not in names such as `NotRunContext`."""
+    return _RUN_CONTEXT_NAME.search(annotation) is not None

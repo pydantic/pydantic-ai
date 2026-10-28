@@ -87,7 +87,9 @@ including two-argument lambdas.
 If a callable accepts both one and two positional arguments, annotate its first parameter as
 [`RunContext[DepsT]`][pydantic_ai.tools.RunContext] to select the context form; otherwise it receives
 only the request. Only the first annotation is inspected; an unresolved annotation naming
-`RunContext` also selects the context form.
+`RunContext` also selects the context form. Use
+[`AnyAnswerer[DepsT]`][pydantic_ai_harness.ask_user.AnyAnswerer] to annotate a stored callback that
+may use either signature.
 
 ```python
 from pydantic_ai import Agent, RunContext
@@ -284,6 +286,8 @@ registers, and `ASK_USER_EVENTS`, the namespace of both events.
 ::: pydantic_ai_harness.ask_user.Answerer
 
 ::: pydantic_ai_harness.ask_user.ContextAnswerer
+
+::: pydantic_ai_harness.ask_user.AnyAnswerer
 
 ::: pydantic_ai_harness.ask_user.AskUserRequest
 

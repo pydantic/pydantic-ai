@@ -480,6 +480,7 @@ print(agent.run_sync('Set up storage').output)
   Read the asking run's dependencies and messages through `ctx`, not the request.
   A delegated question receives the child's context. For durable field access, follow
   https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#agent-run-context-and-dependencies.
+- Type a stored callback as `AnyAnswerer[DepsT]` when either signature is possible.
 - Decline: return `AskUserResponse(cancelled=True)`; the model gets a "user declined" tool result.
 - Free text: `AskUserAnswer(header=..., custom_answer='...')` with `selected` empty.
 - An answer that does not fit (unknown header/label, several picks on single-select, missing

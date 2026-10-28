@@ -198,6 +198,10 @@ class ContextAnswerer(Protocol[AgentDepsT]):
 
 
 AnyAnswerer: TypeAlias = Answerer | ContextAnswerer[AgentDepsT]
+"""Either answerer signature, for hosts storing a callback to pass to `AskUser`.
+
+`Answerer` remains the request-only protocol; `ContextAnswerer` also receives the asking run's context.
+"""
 
 
 def check_response(request: AskUserRequest, response: AskUserResponse) -> None:
