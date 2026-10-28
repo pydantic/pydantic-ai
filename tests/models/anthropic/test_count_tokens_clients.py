@@ -16,7 +16,7 @@ import pytest
 
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.native_tools import CodeExecutionTool, MemoryTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
@@ -34,32 +34,64 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.profiles.anthropic import AnthropicModelProfile
-    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.anthropic import AnthropicProvider, AsyncAnthropicClient
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
 ]
 
 
+SERVER_TOOLS_DROPPED = [('get_exchange_rate', None), ('memory', 'memory_20250818')]
+SERVER_TOOLS_KEPT = [
+    *SERVER_TOOLS_DROPPED,
+    ('tool_search_tool_bm25', 'tool_search_tool_bm25_20251119'),
+    ('code_execution', 'code_execution_20260120'),
+]
+
+
 @pytest.mark.parametrize(
-    'client_name,profile,tool_names',
+    'client,profile,tools',
     [
-        pytest.param('api', None, ['get_exchange_rate', 'tool_search_tool_bm25', 'code_execution'], id='api'),
-        # Unverified on the platform count endpoints, so server tools stay off them.
-        pytest.param('bedrock', None, ['get_exchange_rate'], id='bedrock'),
-        pytest.param('mantle', None, ['get_exchange_rate'], id='mantle'),
-        pytest.param('vertex', None, ['get_exchange_rate'], id='vertex'),
-        pytest.param('foundry', None, ['get_exchange_rate'], id='foundry'),
+        pytest.param(lambda: AsyncAnthropic(api_key='x'), None, SERVER_TOOLS_KEPT, id='api'),
+        # Unverified on the platform count endpoints, so server tools stay off them. `MemoryTool` is client-side, so
+        # it stays on.
         pytest.param(
-            'vertex',
+            lambda: AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1'),
+            None,
+            SERVER_TOOLS_DROPPED,
+            id='bedrock',
+        ),
+        pytest.param(
+            lambda: AsyncAnthropicBedrockMantle(api_key='x', aws_region='us-east-1'),
+            None,
+            SERVER_TOOLS_DROPPED,
+            id='mantle',
+        ),
+        pytest.param(
+            lambda: AsyncAnthropicVertex(project_id='p', region='us-east5', access_token='x'),
+            None,
+            SERVER_TOOLS_DROPPED,
+            id='vertex',
+        ),
+        pytest.param(
+            lambda: AsyncAnthropicFoundry(api_key='x', base_url='https://example.com/anthropic'),
+            None,
+            SERVER_TOOLS_DROPPED,
+            id='foundry',
+        ),
+        pytest.param(
+            lambda: AsyncAnthropicVertex(project_id='p', region='us-east5', access_token='x'),
             {'anthropic_count_tokens_accepts_server_tools': True},
-            ['get_exchange_rate', 'tool_search_tool_bm25', 'code_execution'],
+            SERVER_TOOLS_KEPT,
             id='vertex-profile-on',
         ),
     ],
 )
 async def test_count_tokens_server_tools_by_client(
-    allow_model_requests: None, client_name: str, profile: AnthropicModelProfile | None, tool_names: list[str]
+    allow_model_requests: None,
+    client: Callable[[], AsyncAnthropicClient],
+    profile: AnthropicModelProfile | None,
+    tools: list[tuple[str, str | None]],
 ):
     """The profile's `anthropic_count_tokens_accepts_server_tools` decides whether `count_tokens` keeps server tools."""
     bodies: list[dict[str, Any]] = []
@@ -73,19 +105,10 @@ async def test_count_tokens_server_tools_by_client(
         return httpx2.Response(200, json={'input_tokens': 10, 'inputTokens': 10})
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http_client:
-        clients: dict[str, Callable[[], Any]] = {
-            'api': lambda: AsyncAnthropic(api_key='x', http_client=http_client),
-            'bedrock': lambda: AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1', http_client=http_client),
-            'mantle': lambda: AsyncAnthropicBedrockMantle(api_key='x', aws_region='us-east-1', http_client=http_client),
-            'vertex': lambda: AsyncAnthropicVertex(
-                project_id='p', region='us-east5', access_token='x', http_client=http_client
-            ),
-            'foundry': lambda: AsyncAnthropicFoundry(
-                api_key='x', base_url='https://example.com/anthropic', http_client=http_client
-            ),
-        }
         model = AnthropicModel(
-            'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=clients[client_name]()), profile=profile
+            'claude-sonnet-5-5',
+            provider=AnthropicProvider(anthropic_client=client().copy(http_client=http_client)),
+            profile=profile,
         )
         await model.count_tokens(
             [ModelRequest.user_text_prompt('What is the USD to EUR rate?')],
@@ -97,14 +120,15 @@ async def test_count_tokens_server_tools_by_client(
                         parameters_json_schema={'type': 'object'},
                         defer_loading=True,
                         with_native=ToolSearchTool.kind,
-                    )
+                    ),
+                    ToolDefinition(name='memory', parameters_json_schema={'type': 'object'}),
                 ],
-                native_tools=[ToolSearchTool(), CodeExecutionTool()],
+                native_tools=[MemoryTool(), ToolSearchTool(), CodeExecutionTool()],
             ),
         )
 
     [body] = bodies
-    assert [tool['name'] for tool in body['tools']] == tool_names
+    assert [(tool['name'], tool.get('type')) for tool in body['tools']] == tools
 
 
 def test_count_tokens_server_tools_provider_profile_wins():

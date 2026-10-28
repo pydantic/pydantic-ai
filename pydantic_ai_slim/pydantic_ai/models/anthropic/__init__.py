@@ -445,9 +445,10 @@ _CACHE_DIAGNOSTICS_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicVertex,
 )
 # The direct API's `count_tokens` accepts the web search, web fetch, code execution, tool search and advisor tools,
-# verified live. These clients' count endpoints aren't verified to accept them, so
+# verified live 2026-10-27 on the Claude 5.5 models. These clients' count endpoints aren't verified to accept them, so
 # `anthropic_count_tokens_accepts_server_tools` stays off for them. The legacy Bedrock one rejects `defer_loading`
-# with a 400 whether or not the search tool is sent.
+# with a 400 whether or not the search tool is sent. Claude Platform on AWS (`AsyncAnthropicAWS`, an `AsyncAnthropic`
+# subclass) is documented to serve the Claude API's own endpoints, so it keeps the flag on, unverified.
 _COUNT_TOKENS_SERVER_TOOLS_UNVERIFIED_CLIENTS = (
     AsyncAnthropicBedrock,
     AsyncAnthropicBedrockMantle,
@@ -1083,8 +1084,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `anthropic_supports_message_batches` follows the client class: only the Claude API's own client serves
         Message Batches, and not through the Pydantic AI Gateway, which doesn't serve them yet.
 
-        `anthropic_count_tokens_accepts_server_tools` is on only for the clients whose count endpoint is verified to
-        accept server tools, unless the provider's profile already sets it.
+        `anthropic_count_tokens_accepts_server_tools` is on for `AsyncAnthropic` clients and off for the platform
+        clients whose count endpoints aren't verified to accept server tools, unless the provider's profile already
+        sets it.
 
         The legacy InvokeModel API rejects top-level automatic caching with a 400 on the models it doesn't serve
         from the Messages API infrastructure, so `supports_auto_cache` is narrowed by model on the legacy Bedrock
@@ -1953,9 +1955,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # server tools where `anthropic_count_tokens_accepts_server_tools` says the endpoint takes them. Verified
         # 2026-10-27 on the Claude 5.5 models: with tool search, the advisor tool and its replayed history, or
         # any web search, web fetch or code execution version the SDK lists, the count equals the real request's
-        # `input_tokens`. Without a server tool, a request whose function tools are all deferred can't be
-        # counted: the endpoint rejects a `tools` list in which every tool is deferred. Where the flag is off,
-        # server tools are dropped, as the endpoint once rejected them
+        # `input_tokens`, though https://platform.claude.com/docs/en/build-with-claude/token-counting says the
+        # endpoint rejects every server tool but the advisor. Without a server tool, a request whose function tools
+        # are all deferred can't be counted: the endpoint rejects a `tools` list in which every tool is deferred.
+        # Where the flag is off, server tools are dropped, as the endpoint once rejected them
         # (https://github.com/pydantic/pydantic-ai/issues/5702), which undercounts the prompt by their definitions.
         # TODO: Send `mcp_servers` once the endpoint accepts it. Rechecked 2026-10-27, it rejects the param with a
         # 400: "The mcp_servers parameter is not supported on the count_tokens endpoint".

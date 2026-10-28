@@ -221,9 +221,10 @@ class AnthropicModelProfile(ModelProfile, total=False):
     When True, `AnthropicModel.count_tokens` sends those tools, and the advisor's history blocks, as the real request
     does, so the count matches its `input_tokens`. Without them, the count leaves out their definitions, and the
     Anthropic API rejects a count whose function tools are all deferred with a 400. When the provider's profile doesn't
-    set it, `AnthropicModel` turns it on for the `AsyncAnthropic` client, which serves the Anthropic API, Pydantic AI
-    Gateway and other proxies, and leaves it off for the Bedrock, Vertex AI and Foundry clients, whose count endpoints
-    haven't been verified to accept them.
+    set it, `AnthropicModel` turns it on for the `AsyncAnthropic` client and leaves it off for the Bedrock, Vertex AI
+    and Foundry clients, whose count endpoints haven't been verified to accept them. Of the endpoints an
+    `AsyncAnthropic` client reaches, the Anthropic API's and Pydantic AI Gateway's are verified: set it to `False` if
+    your client's `base_url` points at a proxy whose count endpoint rejects server tools.
     """
 
 
