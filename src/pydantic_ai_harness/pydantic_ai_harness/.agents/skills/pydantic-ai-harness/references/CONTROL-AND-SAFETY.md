@@ -553,8 +553,8 @@ agent = Agent(
 - Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
   (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
   gone without a warning, so turn on caching on the model (such as `anthropic_cache`).
-- `SystemReminders` adds no cache breakpoint; `Planning` adds one for its plan reminder, and
-  Anthropic allows 4.
+- Neither `SystemReminders` nor `Planning` adds a cache breakpoint; the model's caching settings
+  place them.
 - Not spec-serializable.
 
 ## TrajectoryJudge
