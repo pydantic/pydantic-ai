@@ -64,8 +64,8 @@ computer tool, the format they were trained on. Every other model that accepts i
 | Setting | Default | What it does |
 |---|---|---|
 | `requires_approval` | `False` | `True` asks before any call that does more than look, zoom or wait. Needs a [deferred tool handler](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval). Turn it on for anything you'd regret an agent clicking. |
-| `keep_screenshots` | `None` | Send at least the most recent N screenshots, dropping older ones 25 at a time so prompt caching keeps working; the run's history keeps all of them. Use it to bound the cost of long runs, but not on Claude Fable 5.1 or the Claude 5.5 models: dropping a screenshot makes Claude lose its earlier reasoning. With `None`, the oldest are still dropped once a request would carry more than 100 screenshots or about 15 MB of them, which providers refuse. |
-| `settle_seconds` | `0.5` | Pause after acting before the screenshot, so animations and page loads can finish. |
+| `keep_screenshots` | `None` | Send at least the most recent N images, screenshots and zooms, dropping older ones 25 at a time so prompt caching keeps working; the run's history keeps all of them. Use it to bound the cost of long runs, but not on Claude Fable 5.1 or the Claude 5.5 models: dropping a screenshot makes Claude lose its earlier reasoning. With `None`, the oldest are still dropped once a request would carry more than 100 images or about 15 MB of them, which providers refuse. |
+| `settle_seconds` | `0.5` | Pause after acting before the next zoom or the screenshot, so animations and page loads can finish. A `wait` the model asks for adds to it. |
 
 A call its provider flags with safety checks, as OpenAI does, needs approval even with `requires_approval=False`.
 Give such an agent a deferred tool handler, such as [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/); without one,
@@ -75,6 +75,22 @@ The actions to approve are in the model's coordinates: pixels in the latest scre
 
 `ComputerUse` turns on [prompt caching](https://pydantic.dev/docs/ai/capabilities/caching/), since every request carries the screenshots so
 far: on Claude, a run costs several times more without it. Set `cache=False` in the model settings to turn it off.
+
+## Screen size
+
+A model's profile can limit the size of the screenshots it takes, as `computer_use_screenshot_limit`. On a larger
+screen, `ComputerUse` sends the model the screenshot scaled down and scales its positions back up, when the display
+can scale its screenshots; otherwise the run stops with an error naming the largest screen that fits. A zoom into a
+region larger than the limit fails that action, so the model zooms into a smaller one.
+
+## When an action fails
+
+The actions in a call run in order, and one that fails stops the call: the actions after it don't run, and the
+result says which action failed and why, ends with a screenshot as usual, and has the error in its `metadata`, a
+`ComputerResult`. A position outside the screen fails the whole call before anything runs.
+When the environment is gone, the run ends with `WorkspaceUnavailableError`.
+When the display restarted since the model's last screenshot, such as after its sandbox was stopped, the next result
+tells the model that the windows that were open are gone.
 
 ## Watching a run
 
@@ -108,7 +124,7 @@ async def main():
   [`request_limit`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) of 50. Pass higher [`UsageLimits`](https://pydantic.dev/docs/ai/api/pydantic-ai/usage/#pydantic_ai.usage.UsageLimits) for
   long tasks.
 - Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), a retried action may repeat a click that already
-  happened. Temporal and Prefect retry each action on its own; DBOS, Absurd and pgtask retry the whole call.
+  happened. Temporal, Prefect and Render retry each action on its own; DBOS, Absurd and pgtask retry the whole call.
 - Every screenshot rides in each model request, so under Temporal a run passes the 2 MB payload limit after a few
   steps and then stops making progress. Configure Temporal's [external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads),
   which keeps large payloads outside the history. `keep_screenshots` doesn't avoid this: it drops screenshots 25 at a

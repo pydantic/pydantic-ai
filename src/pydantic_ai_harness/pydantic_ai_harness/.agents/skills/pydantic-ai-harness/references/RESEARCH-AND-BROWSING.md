@@ -351,9 +351,9 @@ from pydantic_ai_harness import ComputerUse, DockerSandbox
 agent = Agent('test', capabilities=[DockerSandbox(desktop=True), ComputerUse(requires_approval=True)])
 ```
 
-Fields: `requires_approval=False` (`True` defers every call that does more than look or wait; a set of action types defers only those),
-`settle_seconds=0.5` (pause before the closing screenshot), `keep_screenshots=None` (send at least the
-newest N screenshots, dropping older ones 25 at a time; history keeps all).
+Fields: `requires_approval=False` (`True` defers every call that does more than look, zoom or wait),
+`settle_seconds=0.5` (pause after acting before a zoom or the closing screenshot), `keep_screenshots=None` (send at
+least the newest N images, dropping older ones 25 at a time; history keeps all).
 
 Gotchas:
 
@@ -362,6 +362,8 @@ Gotchas:
   flagged call ends the run with an error.
 - Gemini 3 models get a 0-999 coordinate grid (profile `computer_use_coordinate_grid`), scaled to
   pixels; a `FallbackModel` keeps the grid only when every model in it uses the same one.
+- A screen larger than the model takes (profile `computer_use_screenshot_limit`) is sent scaled
+  down if the display can scale screenshots; otherwise the run stops with an error. 1280x800 fits every model.
 - Under durable execution a retried action may repeat a click that already happened.
 
 ## See also
