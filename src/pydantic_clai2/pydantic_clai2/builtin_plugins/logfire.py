@@ -547,15 +547,16 @@ def _variables_key(config: LogfireSettings, host: PluginHost[None]) -> str | Non
 
 
 def _shutdown(instance: logfire.Logfire) -> bool:
+    timeout_seconds = 3
     result: Future[bool] = Future()
 
     def shutdown() -> None:
         try:
             # SDK shutdown with flush=True can return on a flush timeout before stopping providers.
             try:
-                flushed = instance.force_flush(timeout_millis=3000)
+                flushed = instance.force_flush(timeout_millis=timeout_seconds * 1000)
             finally:
-                stopped = instance.shutdown(timeout_millis=3000, flush=False)
+                stopped = instance.shutdown(timeout_millis=timeout_seconds * 1000, flush=False)
             result.set_result(flushed and stopped)
         except BaseException as exc:  # noqa: BLE001 -- transfer worker failures back to the caller.
             result.set_exception(exc)
@@ -564,7 +565,7 @@ def _shutdown(instance: logfire.Logfire) -> bool:
     # A daemon lets cleanup finish later without adding an interpreter-exit thread join.
     worker = Thread(target=shutdown, name='clai2-logfire-shutdown', daemon=True)
     worker.start()
-    worker.join(3)
+    worker.join(timeout_seconds)
     if worker.is_alive():
         return False
     return result.result()

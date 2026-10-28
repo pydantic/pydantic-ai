@@ -4,7 +4,7 @@ import base64
 import io
 import json
 import warnings
-from collections.abc import Generator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from pathlib import Path
 from threading import Event, Thread
 from typing import Literal
@@ -15,7 +15,7 @@ import logfire
 import pytest
 from opentelemetry import metrics, propagate, trace
 from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor, HTTPXClientInstrumentor
-from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanExportResult
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import JsonValue, ValidationError
@@ -29,14 +29,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins import logfire as logfire_plugin
-from pydantic_clai2.builtin_plugins.logfire import (
-    CREDENTIALS_FILE,
-    PROJECT,
-    LogfirePlugin,
-    LogfireSource,
-    # Exercise the blocking SDK boundary directly.
-    _shutdown as shutdown_logfire,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_clai2.builtin_plugins.logfire import CREDENTIALS_FILE, PROJECT, LogfirePlugin, LogfireSource
 from pydantic_clai2.builtin_plugins.logfire_destination import logfire_dir
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings, Settings
@@ -62,6 +55,7 @@ class Exporter(InMemorySpanExporter):
 class Recorder:
     def __init__(self) -> None:
         self.configure_sdk = logfire.configure
+        self.span_processor: Callable[[Exporter], SpanProcessor] = SimpleSpanProcessor
         self.exporters: list[Exporter] = []
         self.instances: list[logfire.Logfire] = []
         self.options: list[dict[str, object]] = []
@@ -109,7 +103,7 @@ class Recorder:
             token=token,
             scrubbing=scrubbing,
             metrics=False,
-            additional_span_processors=[SimpleSpanProcessor(exporter)],
+            additional_span_processors=[self.span_processor(exporter)],
             advanced=logfire.AdvancedOptions(
                 emit_configuration_span=False, base_url=advanced.base_url if advanced else None
             ),
@@ -441,25 +435,30 @@ async def test_unload_finishes_inside_outer_cancellation(recorder: Recorder) -> 
 
 
 @pytest.mark.parametrize('blocked', ['export', 'shutdown'])
-def test_shutdown_wall_clock_bound(monkeypatch: pytest.MonkeyPatch, blocked: str) -> None:
+def test_shutdown_wall_clock_bound(recorder: Recorder, monkeypatch: pytest.MonkeyPatch, blocked: str) -> None:
     # Exercise the SDK ignoring its timeout, without waiting out a real export deadline.
     entered = Event()
     release = Event()
     workers: list[Thread] = []
-    results: list[bool] = []
+    completed = Event()
+    export = Exporter.export
+    shutdown = Exporter.shutdown
 
-    class BlockingExporter(Exporter):
-        def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
-            if blocked == 'export':
-                entered.set()
-                release.wait()
-            return super().export(spans)
+    def blocking_export(self: Exporter, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        if blocked == 'export':
+            entered.set()
+            release.wait()
+        return export(self, spans)
 
-        def shutdown(self) -> None:
-            if blocked == 'shutdown':
-                entered.set()
-                release.wait()
-            super().shutdown()
+    def blocking_shutdown(self: Exporter) -> None:
+        if blocked == 'shutdown':
+            entered.set()
+            release.wait()
+        shutdown(self)
+
+    monkeypatch.setattr(Exporter, 'export', blocking_export)
+    monkeypatch.setattr(Exporter, 'shutdown', blocking_shutdown)
+    recorder.span_processor = lambda exporter: BatchSpanProcessor(exporter, schedule_delay_millis=60_000)
 
     class DeadlineThread(Thread):
         def join(self, timeout: float | None = None) -> None:
@@ -469,23 +468,25 @@ def test_shutdown_wall_clock_bound(monkeypatch: pytest.MonkeyPatch, blocked: str
             assert entered.wait(10)
             # Advance the entire join deadline while the exporter remains blocked.
 
-    exporter = BlockingExporter()
-    instance = logfire.configure(
-        local=True,
-        send_to_logfire=False,
-        console=False,
-        metrics=False,
-        inspect_arguments=False,
-        additional_span_processors=[BatchSpanProcessor(exporter, schedule_delay_millis=60_000)],
-    )
-    instance.info('queued span')
-    monkeypatch.setattr(logfire_plugin, 'Thread', DeadlineThread, raising=False)
-    caller = Thread(target=lambda: results.append(shutdown_logfire(instance)), daemon=True)
+    host = make_host()
+    plugin = load_logfire(host)
+    exporter = recorder.exporters[0]
+    recorder.instances[0].info('queued span')
+    monkeypatch.setattr(logfire_plugin, 'Thread', DeadlineThread)
+
+    def unload() -> None:
+        anyio.run(close, plugin)
+        completed.set()
+
+    caller = Thread(target=unload, daemon=True)
     caller.start()
     try:
         caller.join(10)
         assert not caller.is_alive()
-        assert results == [False]
+        assert completed.is_set()
+        output = host.console.file
+        assert isinstance(output, io.StringIO)
+        assert 'Logfire shutdown timed out' in output.getvalue()
         assert len(workers) == 1
         assert workers[0].is_alive()
         assert not exporter.closed
@@ -495,27 +496,19 @@ def test_shutdown_wall_clock_bound(monkeypatch: pytest.MonkeyPatch, blocked: str
         for worker in workers:
             Thread.join(worker, 10)
             assert not worker.is_alive()
-        instance.shutdown()
     assert exporter.closed
 
 
-def test_shutdown_propagates_flush_error(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
-    exporter = Exporter()
-    instance = recorder.configure_sdk(
-        local=True,
-        send_to_logfire=False,
-        console=False,
-        metrics=False,
-        additional_span_processors=[SimpleSpanProcessor(exporter)],
-    )
+async def test_shutdown_propagates_flush_error(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin = load_logfire(make_host())
 
     def fail(*, timeout_millis: int) -> bool:
         raise RuntimeError('flush failed')
 
-    monkeypatch.setattr(instance, 'force_flush', fail)
+    monkeypatch.setattr(recorder.instances[0], 'force_flush', fail)
     with pytest.raises(RuntimeError, match='flush failed'):
-        shutdown_logfire(instance)
-    assert exporter.closed
+        await close(plugin)
+    assert recorder.exporters[0].closed
 
 
 async def test_shutdown_timeout_is_reported(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
