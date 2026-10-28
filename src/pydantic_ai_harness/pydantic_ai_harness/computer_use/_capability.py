@@ -4,14 +4,15 @@ from __future__ import annotations as _annotations
 
 import math
 import weakref
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Annotated, Any, Protocol, cast, runtime_checkable
 
 import anyio
+import anyio.lowlevel
 from pydantic import Field, TypeAdapter, ValidationError
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     DISPLAY_SIZE,
@@ -56,6 +57,7 @@ from pydantic_ai.workspaces import (
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
+    from pydantic_ai.agent import AgentRunResult
     from pydantic_ai.agent.abstract import AgentModelSettings
     from pydantic_ai.models import ModelRequestContext
 
@@ -101,9 +103,10 @@ _OBSERVING_ACTIONS = frozenset({'wait', 'screenshot', 'zoom', 'cursor_position'}
 """Action types that change nothing on the screen, so `requires_approval` lets them through."""
 
 _DISPLAY_LOCKS: weakref.WeakValueDictionary[object, anyio.Lock] = weakref.WeakValueDictionary()
-"""One lock per screen: agents sharing one, such as parallel sub-agents or runs attached to one sandbox, take turns at
-it a whole call at a time, so one's clicks and typing never land between another's. A lock goes once no call holds or
-waits for it."""
+"""One lock per screen and event loop: agents in one process sharing a screen, such as parallel sub-agents, take turns
+at it a whole call at a time, so one's clicks and typing never land between another's. A lock can't wake a waiter on
+another loop, so durable workflows, each on a loop of its own, don't take turns. A lock goes once no call holds or waits
+for it."""
 
 _CALL_SPACE = 'pydantic-ai-harness.computer-use.v1'
 """The `ModelResponse.metadata` key that records the coordinates of the response's `computer` calls: the grid the
@@ -126,11 +129,12 @@ class _HasScreenKey(Protocol):
 
 
 @runtime_checkable
-class _ReportsFreshStart(Protocol):
-    """A display that knows when it started fresh, without the windows that were open before."""
+class _CountsStarts(Protocol):
+    """A display that counts its starts, each without the windows that were open before."""
 
-    def take_fresh_start(self) -> bool:
-        """Whether the display started fresh since this was last asked."""
+    @property
+    def starts(self) -> int:
+        """How many times the display started."""
         ...
 
 
@@ -281,8 +285,12 @@ async def _perform(
     actions: list[ComputerToolAction],
     call: _Call,
     settle_seconds: float,
+    restarted: Callable[[], bool],
 ) -> tuple[int, str | None, list[str | BinaryImage]]:
     """Run the actions in order until one fails: how many ran, why the next one failed, and what they returned.
+
+    An action that changes the screen doesn't run once the display `restarted`: it would land on whatever took the
+    place of the windows the model saw. The error is then `None` and fewer actions ran than were asked.
 
     The screen settles for `settle_seconds` before anything that looks at it after an action, so a page load or an
     animation can finish; a `wait` the model asks for comes on top of it.
@@ -311,6 +319,8 @@ async def _perform(
                 case Screenshot():
                     pass
                 case _:
+                    if restarted():
+                        break
                     unsettled = True
                     await ctx.workspace.act(action)
         except WorkspaceUnavailableError:
@@ -405,6 +415,7 @@ def _display_lock(ctx: RunContext[Any]) -> anyio.Lock:
         key = ctx.workspace.ref
     if key is None:
         key = id(display if isinstance(display, Display) else ctx.workspace)
+    key = (anyio.lowlevel.current_token(), key)
     if (lock := _DISPLAY_LOCKS.get(key)) is None:
         lock = _DISPLAY_LOCKS[key] = anyio.Lock()
     return lock
@@ -466,6 +477,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     """One-off: an agent has a single display to control, so the id is fixed by default."""
 
     _toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False, compare=False)
+    _shown_starts: dict[str | None, int | None] = field(
+        default_factory=dict[str | None, int | None], init=False, repr=False, compare=False
+    )
+    """For each run going on, how many times the display had started when its model last saw it. Kept by run rather
+    than on a `for_run` copy: a copy would bring a toolset of its own, which durable execution refuses."""
 
     def __post_init__(self) -> None:
         if not isinstance(self.requires_approval, bool):
@@ -526,7 +542,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             actions = pixels
 
         async with _display_lock(ctx):
-            return await self._run_on_display(ctx, actions, call, acts=acts, limit=limit)
+            return await self._run_on_display(ctx, actions, call, limit=limit)
 
     async def _run_on_display(
         self,
@@ -534,24 +550,22 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         actions: list[ComputerToolAction],
         call: _Call,
         *,
-        acts: bool,
         limit: tuple[int, int] | None,
     ) -> ToolReturn:
         display = _display(ctx)
-        # Durable workflow code can't reach the display, so it can't tell; the screenshot still shows the screen.
-        seen_before = _last_screenshot_size(ctx.messages) is not None
+
+        def starts() -> int | None:
+            # Durable workflow code can't reach the display, so it can't tell; the screenshot still shows the screen.
+            return display.starts if isinstance(display, _CountsStarts) else None
+
+        # The model planned this call on its last screenshot, or on the screen as it is now if it has seen none.
+        seen = self._shown_starts.get(ctx.run_id) if _last_screenshot_size(ctx.messages) is not None else starts()
 
         def restarted() -> bool:
-            return isinstance(display, _ReportsFreshStart) and display.take_fresh_start() and seen_before
+            return starts() != seen
 
-        fresh = restarted()
-        # The windows the model meant to act on are gone: acting now would land on whatever took their place.
-        held = fresh and acts
-        if held:
-            performed, error, outputs = 0, None, []
-        else:
-            performed, error, outputs = await _perform(ctx, actions, call, self.settle_seconds)
-            fresh = restarted() or fresh
+        performed, error, outputs = await _perform(ctx, actions, call, self.settle_seconds, restarted)
+        held = error is None and performed < len(actions)
 
         result = ComputerResult(performed=performed)
         summary: list[str] = []
@@ -561,7 +575,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             result['changed'] = True
             summary.append(f'Before it ran, this call was changed to: {_ACTIONS.dump_json(call.changed).decode()}.')
         if held:
-            summary.append(f'{_FRESH_SCREEN} No action ran, so check this screenshot before acting.')
+            ran = 'No action ran' if not performed else f'Only {performed} of {len(actions)} actions ran'
+            summary.append(f'{_FRESH_SCREEN} {ran}, so check this screenshot before acting.')
         elif error is None:
             summary.append(f'Ran {_plural(len(actions), "action")}.')
         else:
@@ -582,8 +597,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if size is None:
             raise ToolFailed(' '.join([*summary, 'The screenshot was not a PNG.']))
         result['screenshot_size'] = size
-        if fresh and not held:
+        if restarted() and not held:
             summary.append(_FRESH_SCREEN)
+        self._shown_starts[ctx.run_id] = starts()
         # A grid model points on its grid, so the size in pixels would only invite pixel coordinates.
         summary.append('Screenshot attached.' if call.grid else f'Screenshot attached ({size[0]}x{size[1]}).')
         content = [' '.join(summary), *outputs, BinaryImage(data=png, media_type='image/png')]
@@ -626,6 +642,13 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         """Drop old screenshots from what is sent, after every other capability has prepared the request."""
         return _DropOldScreenshots(model, self.keep_screenshots)
 
+    async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        """Forget the screen the run's model last saw once the run ends."""
+        try:
+            return await handler()
+        finally:
+            self._shown_starts.pop(ctx.run_id, None)
+
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail the run at its start when its workspace has no display."""
         if not ctx.workspace.has_display:
@@ -633,6 +656,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 '`ComputerUse` needs a workspace with a display, such as a sandbox capability started with a '
                 "desktop. This run's workspace has none."
             )
+        # The model saw any screenshot in its history before this run, so only a start from now on is new to it.
+        display = _display(ctx)
+        self._shown_starts[ctx.run_id] = display.starts if isinstance(display, _CountsStarts) else None
 
     async def before_tool_execute(
         self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
@@ -666,8 +692,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             record['coordinate_grid'] = grid
         if (seen := _last_screenshot_size(request_context.messages)) is not None:
             record['screenshot_size'] = seen
-        if not record:
-            return response
+        # Even an empty record says the calls are in pixels, so a grid model running them later doesn't misread them.
         return replace(response, metadata={**(response.metadata or {}), _CALL_SPACE: record})
 
 
