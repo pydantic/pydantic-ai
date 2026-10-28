@@ -222,6 +222,8 @@ class _SpokenItem:
     """How much of the item's audio has arrived."""
     segment: tuple[str, int] | None = None
     """The text and start of the segment whose end isn't known yet."""
+    leading: bool = False
+    """Whether the segment is text that came ahead of the item's first start, which the first timed text joins."""
 
 
 class _SpeechSegmentTimer:
@@ -243,10 +245,12 @@ class _SpeechSegmentTimer:
         elif event_type == 'response.output_audio_transcript.delta':
             transcript = _OutputTranscriptDelta.model_validate(data)
             item = self._item(transcript.item_id, transcript.response_id)
-            if transcript.start_time is None:
-                # Without a start of its own, the text goes on the segment before it.
-                if item.segment is not None:
-                    item.segment = (item.segment[0] + transcript.delta, item.segment[1])
+            if transcript.start_time is None or item.leading:
+                # Text without a start of its own goes on the segment before it. Ahead of any, it's taken to start the
+                # item's audio, and the first text that has a start joins it.
+                item.leading = transcript.start_time is None and (item.leading or item.segment is None)
+                text, start_ms = item.segment or ('', 0)
+                item.segment = (text + transcript.delta, start_ms)
                 return []
             start_ms = round(transcript.start_time * 1000)
             ended = self._end_segment(transcript.item_id, item, start_ms)

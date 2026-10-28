@@ -1302,10 +1302,12 @@ async def test_speech_segments_are_timed_once_they_end(output_speech_timestamps:
     item's last segment where its audio stopped. Nothing is timed with `output_speech_timestamps` off.
     """
     frames = [
-        # Text with no start of its own goes on the segment before it, so with none before it, it isn't timed.
+        # Text with no start of its own goes on the segment before it. Ahead of any, it's taken to start the item's
+        # audio, and the first text with a start joins it.
         _transcript_frame('resp-1', 'item-1', 'Um,', None),
+        _transcript_frame('resp-1', 'item-1', ' well,', None),
         _audio_frame('resp-1', 'item-1', 500),
-        _transcript_frame('resp-1', 'item-1', 'Hello', 0.0),
+        _transcript_frame('resp-1', 'item-1', ' hello', 0.2),
         _transcript_frame('resp-1', 'item-1', ' there.', None),
         _transcript_frame('resp-1', 'item-1', ' How are', 0.6),
         _audio_frame('resp-1', 'item-1', 900),
@@ -1330,7 +1332,7 @@ async def test_speech_segments_are_timed_once_they_end(output_speech_timestamps:
         assert timed == []
         return
     assert timed == [
-        OutputSpeechTimestamps([_segment('Hello there.', 0, 600)], item_id='item-1', response_id='resp-1'),
+        OutputSpeechTimestamps([_segment('Um, well, hello there.', 0, 600)], item_id='item-1', response_id='resp-1'),
         OutputSpeechTimestamps([_segment(' How are', 600, 800)], item_id='item-1', response_id='resp-1'),
         # Timed by the end of its response, ahead of the events that close it; the other response's goes on.
         OutputSpeechTimestamps([_segment('Cut', 0, 300)], item_id='item-2', response_id='resp-2'),
