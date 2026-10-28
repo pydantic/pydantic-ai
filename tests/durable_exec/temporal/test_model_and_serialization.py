@@ -66,6 +66,7 @@ from pydantic_ai.exceptions import (
     ModelRequestRejectedError,
     ModelServerError,
     ModelTimeoutError,
+    RetryModelRequest,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -142,6 +143,8 @@ try:
         _retry_policy_type,  # pyright: ignore[reportPrivateUsage]
         model_errors_as_application_errors,
         rebuilt_model_errors,
+        rebuilt_retry_requests,
+        retry_requests_as_application_errors,
     )
     from pydantic_ai.durable_exec.temporal._replay_safe_tracer_provider import ReplaySafeSDKTracerProvider
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
@@ -3548,6 +3551,33 @@ def test_what_a_stream_produced_before_failing_crosses_with_its_error():
         with rebuilt_model_errors():
             raise _activity_error(wire)
     assert streamed_before_failing(rebuilt.value) == partial
+
+
+@pytest.mark.parametrize('model', ['backup', None])
+def test_retry_model_request_crosses_a_capability_activity(model: str | None):
+    """A `RetryModelRequest` a durable capability hook raises reaches the workflow as itself, with its model's name."""
+    with pytest.raises(ApplicationError) as raised:
+        with retry_requests_as_application_errors():
+            raise RetryModelRequest(model)
+    assert raised.value.non_retryable
+    with pytest.raises(RetryModelRequest) as rebuilt:
+        with rebuilt_retry_requests():
+            raise _activity_error(raised.value)
+    assert rebuilt.value.model == model
+
+
+def test_retry_model_request_for_a_model_instance_cant_cross_a_capability_activity():
+    with pytest.raises(UserError, match='can only name the model to attempt by its name'):
+        with retry_requests_as_application_errors():
+            raise RetryModelRequest(TestModel())
+
+
+def test_other_capability_activity_failures_are_raised_as_they_were():
+    failure = _activity_error(ApplicationError('boom', type='ValueError'))
+    with pytest.raises(ActivityError) as raised:
+        with rebuilt_retry_requests():
+            raise failure
+    assert raised.value is failure
 
 
 def test_model_http_error_crosses_with_its_fields():

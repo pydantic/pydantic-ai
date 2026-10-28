@@ -3259,6 +3259,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>"
       ]
     },
+    "RetryModelRequest": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>"
+      ]
+    },
     "RunCancelled": {
       "engines": [
         "durable_exec"
@@ -3429,6 +3440,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_mcp_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_operation_backend.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>",
