@@ -395,6 +395,46 @@ async def test_event_stream_error_closes_open_text():
     )
 
 
+async def test_event_stream_restarted_part_ends_open_text():
+    """A `PartStartEvent` can arrive while the previous part is still open. #11734
+
+    A retried durable activity republishes the model events it already published
+    (`durable_exec/temporal/_event_stream.py` documents this), so a subscriber reads the first
+    attempt's `PartStartEvent` and deltas, then the retry's `PartStartEvent` for the same index
+    with no `PartEndEvent` between them. The open part is ended before the new start is emitted —
+    the same cleanup the error path does — so the run never finishes with a message part still
+    streaming (`Cannot send 'RUN_FINISHED' while text messages are still active`).
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo'))
+        # The activity retry republishes its part start without a `PartEndEvent` first.
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo, world'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello, world'))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>Hel',
+            'lo',
+            # the first attempt's part, closed with its recorded deltas applied
+            '</text followed_by_text=False>',
+            '<text follows_text=False>Hel',
+            'lo, world',
+            '</text followed_by_text=False>',
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
 async def test_event_stream_error_closes_open_thinking():
     """A mid-stream error while a thinking part is open emits `thinking-end` before the error."""
 
