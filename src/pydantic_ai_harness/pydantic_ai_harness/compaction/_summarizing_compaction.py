@@ -29,11 +29,11 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model, infer_model
+from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import TextOutput
-from pydantic_ai.settings import ModelSettings, merge_model_settings
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts, with_text
 from pydantic_ai_harness._usage import reserved_usage_limits
@@ -785,19 +785,6 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             raise ValueError('max_messages must be positive.')
         if self.max_summary_tokens is not None and self.max_summary_tokens < 1:
             raise ValueError('max_summary_tokens must be positive.')
-        if (
-            self.max_summary_tokens is not None
-            and self.model_settings is not None
-            and (max_output := self.model_settings.get('max_tokens')) is not None
-            and max_output > self.max_summary_tokens
-        ):
-            warnings.warn(
-                f'`max_summary_tokens={self.max_summary_tokens}` limits '
-                f'`model_settings["max_tokens"]={max_output}`. Remove `max_tokens` from '
-                '`model_settings` or set it to the summary budget to avoid this override.',
-                UserWarning,
-                stacklevel=3,
-            )
         validate_token_trigger(self.max_tokens, self.max_fraction, self.fallback_context_window, self.context_window)
         if self.keep_messages < 0:
             raise ValueError('keep_messages must be non-negative.')
@@ -1131,11 +1118,8 @@ async def write_summary(
             f'{ctx.model.model_name!r}, which cannot produce text. Set `model=` on SummarizingCompaction '
             'to a language model to summarize with.'
         )
-    model_settings: ModelSettings | None = summarizer.model_settings
-    budget: int | None = None
-    if summarizer.max_summary_tokens is not None:
-        model = infer_model(cast('Model[Any] | str', model))
-        budget = _summary_token_budget(model, model_settings, summarizer.max_summary_tokens)
+    budget = summarizer.max_summary_tokens
+    if budget is not None:
         prompt = (
             f'{prompt}\n\nWrite the complete summary within {budget} tokens. '
             'When updating a previous summary, rewrite it within this budget rather than appending to it.'
@@ -1143,18 +1127,7 @@ async def write_summary(
 
     def limit_summary(ctx: RunContext[None]) -> ModelSettings:
         assert budget is not None
-        request_budget = _summary_token_budget(
-            cast('Model[Any]', ctx.model), cast('ModelSettings | None', ctx.model_settings), budget
-        )
-        resolved_limit = (ctx.model_settings or {}).get('max_tokens', request_budget)
-        if resolved_limit > request_budget and resolved_limit != (model_settings or {}).get('max_tokens'):
-            warnings.warn(
-                f'Resolved summary max_tokens={resolved_limit} exceeds the summary budget of {request_budget}. '
-                'Lower or remove the output limit to avoid this override.',
-                UserWarning,
-                stacklevel=2,
-            )
-        return {'max_tokens': request_budget}
+        return {'max_tokens': min(budget, (ctx.model_settings or {}).get('max_tokens', budget))}
 
     # `isinstance` narrows the generic `Model` to `Model[Unknown]`; `cast` recovers
     # `Model[Any]`, mirroring core's own `reinject_system_prompt` idiom.
@@ -1164,8 +1137,8 @@ async def write_summary(
         deps_type=type(None),
         output_type=TextOutput(_non_empty_summary),
         instructions=summarizer.instructions,
-        model_settings=model_settings,
-        capabilities=list(summarizer.summarization_capabilities),
+        model_settings=summarizer.model_settings,
+        capabilities=[*summarizer.summarization_capabilities, _CompleteSummary()],
     )
     result = await agent.run(
         prompt,
@@ -1178,11 +1151,20 @@ async def write_summary(
     return result.output
 
 
-def _summary_token_budget(model: Model[Any], settings: ModelSettings | None, budget: int) -> int:
-    """Choose one budget that respects every fallback model's effective output limit."""
-    if isinstance(model, WrapperModel):
-        return _summary_token_budget(model.wrapped, settings, budget)
-    if isinstance(model, FallbackModel):
-        return min(_summary_token_budget(item, settings, budget) for item in model.models)
-    effective_settings = merge_model_settings(model.settings, settings)
-    return min(budget, (effective_settings or {}).get('max_tokens', budget))
+class _CompleteSummary(AbstractCapability[None]):
+    """Reject truncated summaries before core accepts their partial text."""
+
+    async def after_model_request(
+        self,
+        ctx: RunContext[None],
+        *,
+        request_context: ModelRequestContext,
+        response: ModelResponse,
+    ) -> ModelResponse:
+        if response.finish_reason == 'length':
+            max_tokens = (ctx.model_settings or {}).get('max_tokens')
+            limit = f'{max_tokens} tokens' if max_tokens is not None else 'the output token limit'
+            raise ModelRetry(
+                f'The summary was cut off by the output limit. Write a complete, shorter summary within {limit}.'
+            )
+        return response

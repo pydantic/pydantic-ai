@@ -1,17 +1,31 @@
 from __future__ import annotations
 
+import copy
 import warnings
 
 import pytest
 
+from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, SelectModel
-from pydantic_ai.exceptions import ModelAPIError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.messages import (
+    CompactionPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai_harness.compaction import SummarizingCompaction, compact_now
+from pydantic_ai_harness.compaction import (
+    FallbackCompaction,
+    SlidingWindowCompaction,
+    SummarizingCompaction,
+    compact_now,
+)
 
 
 class TestSummarizingCompaction:
@@ -62,15 +76,7 @@ class TestSummarizingCompaction:
                 max_summary_tokens=budget,
                 model_settings=settings,
             )
-        explicit_limit = (settings or {}).get('max_tokens')
-        if budget is not None and explicit_limit is not None and explicit_limit > budget:
-            assert len(captured) == 1
-            assert captured[0].category is UserWarning
-            assert f'`max_summary_tokens={budget}` limits `model_settings["max_tokens"]={explicit_limit}`' in str(
-                captured[0].message
-            )
-        else:
-            assert not captured
+        assert not captured
         if custom_prompt:
             strategy.summary_prompt = 'Summarize this transcript:\n{messages}'
         history: list[ModelMessage] = [
@@ -94,7 +100,7 @@ class TestSummarizingCompaction:
         for prompt, applied_settings in observed:
             assert applied_settings == expected_settings
             if budget is not None:
-                assert f'within {expected_limit} tokens' in prompt
+                assert f'within {budget} tokens' in prompt
                 assert 'rewrite it within this budget rather than appending to it' in prompt
             else:
                 assert 'Write the complete summary within' not in prompt
@@ -107,39 +113,6 @@ class TestSummarizingCompaction:
     def test_budget_must_be_positive(self, budget: int) -> None:
         with pytest.raises(ValueError, match='max_summary_tokens must be positive'):
             SummarizingCompaction(max_messages=1, max_summary_tokens=budget)
-
-    @pytest.mark.parametrize('fail_primary', [False, True])
-    async def test_budget_respects_fallback_model_defaults(self, fail_primary: bool) -> None:
-        observed: list[int] = []
-
-        def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            assert info.model_settings is not None
-            assert 'max_tokens' in info.model_settings
-            observed.append(info.model_settings['max_tokens'])
-            if fail_primary:
-                raise ModelAPIError('primary', 'primary unavailable')
-            return ModelResponse(parts=[TextPart('Summary.')])
-
-        def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            assert info.model_settings is not None
-            assert 'max_tokens' in info.model_settings
-            observed.append(info.model_settings['max_tokens'])
-            return ModelResponse(parts=[TextPart('Summary.')])
-
-        model = FallbackModel(
-            FunctionModel(primary, settings=ModelSettings(max_tokens=60)),
-            FunctionModel(fallback, settings=ModelSettings(max_tokens=40)),
-        )
-        strategy = SummarizingCompaction[None](
-            max_messages=1, keep_messages=1, preserve_first_user_message=False, max_summary_tokens=120
-        )
-        history: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart('Investigate.')]),
-            ModelResponse(parts=[TextPart('Investigation complete.')]),
-            ModelRequest(parts=[UserPromptPart('Continue.')]),
-        ]
-        await compact_now(strategy, history, model=model)
-        assert observed == ([40, 40] if fail_primary else [40])
 
     @pytest.mark.parametrize('capability_limit', [30, 300])
     async def test_budget_applies_after_capability_settings(self, capability_limit: int) -> None:
@@ -169,11 +142,7 @@ class TestSummarizingCompaction:
             warnings.simplefilter('always')
             await compact_now(strategy, history, model=FunctionModel(summarize))
         assert observed == [{'max_tokens': min(120, capability_limit), 'temperature': 0.2}]
-        if capability_limit > 120:
-            assert len(captured) == 1
-            assert 'Resolved summary max_tokens=300' in str(captured[0].message)
-        else:
-            assert not captured
+        assert not captured
 
     @pytest.mark.parametrize('model_kind', ['direct', 'fallback', 'wrapper'])
     async def test_budget_respects_capability_selected_model(self, model_kind: str) -> None:
@@ -208,4 +177,108 @@ class TestSummarizingCompaction:
         await compact_now(
             strategy, history, model=FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Unused.')]))
         )
-        assert observed == [40]
+        assert observed == ([120] if model_kind == 'fallback' else [40])
+
+    @pytest.mark.parametrize('partial_text', ['partial summary', ''])
+    @pytest.mark.parametrize('budget', [None, 120])
+    @pytest.mark.parametrize('fail_twice', [False, True])
+    @pytest.mark.parametrize('model_limit', [None, 80])
+    async def test_length_stopped_summary_is_retried_before_commit(
+        self, partial_text: str, budget: int | None, fail_twice: bool, model_limit: int | None
+    ) -> None:
+        calls: list[list[ModelMessage]] = []
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append(copy.deepcopy(messages))
+            if len(calls) == 1 or fail_twice:
+                return ModelResponse(parts=[TextPart(partial_text)], finish_reason='length')
+            return ModelResponse(parts=[TextPart('Complete summary.')], finish_reason='stop')
+
+        strategy = SummarizingCompaction[None](
+            max_messages=1,
+            keep_messages=1,
+            preserve_first_user_message=False,
+            max_summary_tokens=budget,
+            model_settings=ModelSettings(max_tokens=model_limit) if model_limit is not None else None,
+        )
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Investigate.')]),
+            ModelResponse(parts=[TextPart('Investigation complete.')]),
+            ModelRequest(parts=[UserPromptPart('Continue.')]),
+        ]
+        original = copy.deepcopy(history)
+        if fail_twice:
+            with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+                await compact_now(strategy, history, model=FunctionModel(summarize))
+        else:
+            compacted = await compact_now(strategy, history, model=FunctionModel(summarize))
+            assert [
+                part.content
+                for msg in compacted
+                if isinstance(msg, ModelRequest)
+                for part in msg.parts
+                if isinstance(part, CompactionPart)
+            ] == ['Complete summary.']
+        assert history == original
+        assert len(calls) == 2
+        retry_request = calls[1][-1]
+        assert isinstance(retry_request, ModelRequest)
+        assert len(retry_request.parts) == 1
+        feedback = retry_request.parts[0]
+        assert isinstance(feedback, UserPromptPart)
+        assert isinstance(feedback.content, str)
+        expected_limit = model_limit if model_limit is not None else budget
+        limit = f'{expected_limit} tokens' if expected_limit is not None else 'the output token limit'
+        assert f'within {limit}' in feedback.content
+
+    async def test_length_stopped_summary_can_fall_back_without_committing(self) -> None:
+        summary_calls = 0
+        sent: list[list[ModelMessage]] = []
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal summary_calls
+            summary_calls += 1
+            return ModelResponse(parts=[TextPart('partial summary')], finish_reason='length')
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(copy.deepcopy(messages))
+            return ModelResponse(parts=[TextPart('Done.')])
+
+        strategy = SummarizingCompaction[None](
+            FunctionModel(summarize),
+            max_messages=1,
+            keep_messages=1,
+            preserve_first_user_message=False,
+            max_summary_tokens=120,
+        )
+        fallback = FallbackCompaction[None](
+            fallback_chain=[
+                strategy,
+                SlidingWindowCompaction(
+                    max_messages=1, keep_messages=1, preserve_first_user_message=False, receipts=False
+                ),
+            ],
+            fallback_on=(UnexpectedModelBehavior,),
+            max_tokens=1,
+        )
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Investigate.')]),
+            ModelResponse(parts=[TextPart('Investigation complete.')]),
+        ]
+        original = copy.deepcopy(history)
+        result = await Agent(FunctionModel(respond), deps_type=type(None), capabilities=[fallback]).run(
+            'Continue.', message_history=history
+        )
+        assert result.output == 'Done.'
+        assert result.usage.requests == 3
+        assert summary_calls == 2
+        assert history == original
+        assert len(sent) == 1
+        assert [
+            part.content
+            for msg in sent[0]
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+            if isinstance(part, UserPromptPart)
+        ] == ['Continue.']
+        assert not any(isinstance(part, CompactionPart) for msg in sent[0] for part in msg.parts)

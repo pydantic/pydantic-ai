@@ -599,7 +599,9 @@ running agent's model. That model has to write text, so an agent running a model
 decision model like TypeSafe's Jev, needs `model=` set to a language model; without it, the first compaction
 raises a `UserError` saying so. A summary that is empty or only whitespace is retried within the summary
 run's output retries. Exhausting those retries raises `UnexpectedModelBehavior` rather than replacing
-history with an empty summary. Its nested summary run inherits the parent usage limits and reserves
+history with an empty summary. A response with `finish_reason='length'` is also rejected, even when it
+contains text. The summary run retries once with the output budget restated; if the retry also hits the
+limit, it raises `UnexpectedModelBehavior`. A truncated summary does not replace the history. Its nested summary run inherits the parent usage limits and reserves
 one request from a finite request limit for the pending parent request. These limits also apply to
 retries: if the summary run exhausts its budget first, it raises `UsageLimitExceeded` instead. To fall
 back on either failure, set `FallbackCompaction`'s
@@ -640,7 +642,7 @@ when it falls outside the window. Pass `keep_tokens` to retain a minimum amount 
 instead of using `keep_messages`.
 `keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
 
-Set `max_summary_tokens` to give the summary a token budget in both its prompt and the summary model's `max_tokens` setting. After merging model defaults and `model_settings`, the smaller of the effective `max_tokens` and this budget is used without modifying either settings dictionary. For a fallback model, the shared budget respects the smallest effective limit of its constituent models. Summary capability settings are capped after they are merged; a lower capability limit is preserved. Explicit settings or capability limits above the budget emit a warning naming both values. With `max_summary_tokens=None` (the default), existing output settings are unchanged.
+Setting a summary budget with `max_summary_tokens` is recommended to limit summary growth. It is stated in the prompt and caps the summary request's `max_tokens` after the effective model settings are merged, preserving a smaller limit without mutating the settings dictionary. The more specific summary budget wins over a larger explicit `max_tokens`, without a warning. With `max_summary_tokens=None` (the default), existing output settings are unchanged; a default budget needs benchmarking first.
 
 ```python
 from pydantic_ai_harness import SummarizingCompaction
@@ -648,7 +650,7 @@ from pydantic_ai_harness import SummarizingCompaction
 SummarizingCompaction(max_messages=60, keep_messages=20, max_summary_tokens=1_024)
 ```
 
-Incremental updates rewrite the previous summary within the same budget rather than append to it. A smaller budget can omit useful details or cut off the summary. The budget covers the summary call's output, not the recent messages preserved alongside it, so it does not guarantee that the complete compacted history fits a particular size.
+Incremental updates rewrite the previous summary within the same budget rather than append to it. A smaller budget can omit useful details or cause a summary attempt to hit the output limit. The budget covers the summary call's output, not the recent messages preserved alongside it, so it does not guarantee that the complete compacted history fits a particular size.
 
 The summary is a `CompactionPart` in a `ModelRequest` of its own, after the original system prompts,
 which stay exactly as they were, and the original first user turn when `preserve_first_user_message`
