@@ -45,9 +45,9 @@ from .._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
+from ..capabilities._native_compaction import compact_with_model
 from ..capabilities.abstract import AbstractCapability
 from ..capabilities.compaction import CompactionRequest, CompactionResult
-from ..capabilities.native_compaction import compact_with_model
 from ..exceptions import (
     ModelConnectionError,
     ModelRequestRejectedError,
@@ -162,7 +162,7 @@ from ._tool_choice import (
     support_tool_forcing,
     tool_forcing_unavailable_reason,
 )
-from .wrapper import unwrap_model
+from ._unwrap import unwrap_model
 
 if TYPE_CHECKING:
     from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
@@ -6727,9 +6727,9 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         if not self._should_compact(request_context.messages):
             return request_context
 
-        if _unwrapped_responses_model(request_context.model) is None:
+        if not isinstance(unwrapped := unwrap_model(request_context.model), OpenAIResponsesModel):
             raise UserError(
-                f'OpenAICompaction requires OpenAIResponsesModel, got {type(unwrap_model(request_context.model)).__name__}. '
+                f'OpenAICompaction requires OpenAIResponsesModel, got {type(unwrapped).__name__}. '
                 f'Use the provider-specific compaction capability for your model.'
             )
         ctx.request_compaction(reason='threshold')
@@ -6743,7 +6743,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
     async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
         if not self.stateless:
             return None
-        if _unwrapped_responses_model(request.model) is None:
+        if not isinstance(unwrap_model(request.model), OpenAIResponsesModel):
             # Another model serves this attempt, like a `ModelFallback` candidate: not OpenAI's to compact.
             return None
         # Unlike `NativeCompaction`, whatever the profile's `supports_compaction_on_demand` says: you chose an
@@ -6755,12 +6755,6 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
     @classmethod
     def get_serialization_name(cls) -> str | None:
         return 'OpenAICompaction'
-
-
-def _unwrapped_responses_model(model: Model) -> OpenAIResponsesModel | None:
-    """The `OpenAIResponsesModel` `model` wraps or is, or `None` when it's another model."""
-    unwrapped = unwrap_model(model)
-    return unwrapped if isinstance(unwrapped, OpenAIResponsesModel) else None
 
 
 def _make_raw_content_updater(delta: str, index: int) -> Callable[[dict[str, Any] | None], dict[str, Any]]:

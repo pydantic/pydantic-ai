@@ -142,7 +142,8 @@ from .models._continuation import (
     resumed_response,
 )
 from .models._request_timeout import enforce_request_deadline, start_request_deadline, without_carried_deadline
-from .models.wrapper import WrapperModel, serving_wrapper_scope
+from .models._unwrap import unwrap_model
+from .models.wrapper import serving_wrapper_scope
 from .output import OutputDataT, OutputSpec, PendingModelResponse, StructuredOutputMode
 from .settings import ModelSettings
 from .tools import (
@@ -546,7 +547,7 @@ class _AttemptBaseline:
         step's model may not be supported by, or mean the same to, another one. Only the factory sees the model
         serving the attempt as `ctx.model`; to everything else, `RunContext.model` stays the step's model.
         """
-        if not self.native_tool_factories or _unwrap_model(request_context.model) is _unwrap_model(self.model):
+        if not self.native_tool_factories or unwrap_model(request_context.model) is unwrap_model(self.model):
             return
         attempt_context = replace(run_context, model=request_context.model)
         parameters = request_context.model_request_parameters
@@ -1638,12 +1639,6 @@ def _apply_instruction_parts(
 
 _NativeToolFactoryResult: TypeAlias = tuple[NativeToolFunc[DepsT], AbstractNativeTool | None]
 """A native tool factory, and what it resolved to."""
-
-
-def _unwrap_model(model: models.Model) -> models.Model:
-    while isinstance(model, WrapperModel):
-        model = model.wrapped
-    return model
 
 
 async def _resolve_native_tool_factory(
