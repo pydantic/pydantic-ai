@@ -1,0 +1,22 @@
+--- expected
++++ actual
+@@ -242,4 +241,0 @@
+-   "role": "system",
+-   "content": "<context id=\"capability:refunds\">\nQuote the refund policy.\n</context>"
+-  },
+-  {
+@@ -270,0 +267,4 @@
++  },
++  {
++   "role": "system",
++   "content": "<context id=\"capability:refunds\">\nQuote the refund policy.\n</context>"
+@@ -344,4 +343,0 @@
+-   "role": "system",
+-   "content": "<context id=\"capability:refunds\">\nQuote the refund policy.\n</context>"
+-  },
+-  {
+@@ -372,0 +369,4 @@
++  },
++  {
++   "role": "system",
++   "content": "<context id=\"capability:refunds\">\nQuote the refund policy.\n</context>"

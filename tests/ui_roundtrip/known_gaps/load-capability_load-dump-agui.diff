@@ -1,0 +1,17 @@
+--- expected
++++ actual
+@@ -42,7 +41,0 @@
+-    },
+-    {
+-     "kind": "tool-availability-delta",
+-     "tools_added": [
+-      "refund_status"
+-     ],
+-     "tool_call_id": "load-1"
+@@ -172,6 +164,0 @@
+-    },
+-    {
+-     "kind": "tool-availability-delta",
+-     "tools_added": [
+-      "refund_status"
+-     ]

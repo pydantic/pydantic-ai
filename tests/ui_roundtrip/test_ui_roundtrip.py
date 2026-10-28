@@ -438,6 +438,39 @@ def _reveal_tools(agent: Agent[None, str]) -> None:
         return 'the secret'
 
 
+def _model_load_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Load the capability on the first question, then use its tool on every question."""
+    loaded = any(
+        isinstance(part, ToolCallPart) and part.tool_name == 'load_capability'
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+    )
+    if not loaded:
+        return ModelResponse(
+            parts=[ToolCallPart('load_capability', {'id': 'refunds'}, tool_call_id=f'load-{len(messages)}')]
+        )
+    if not _results_since_question(messages) or (
+        isinstance(last := messages[-1], ModelRequest)
+        and any(isinstance(part, ToolReturnPart) and part.tool_name == 'load_capability' for part in last.parts)
+    ):
+        return ModelResponse(parts=[ToolCallPart('refund_status', {}, tool_call_id=f'status-{len(messages)}')])
+    return ModelResponse(parts=[TextPart('The refund is on its way.')])
+
+
+def refund_status() -> str:
+    return 'refunded'
+
+
+_REFUNDS = Capability[None](
+    id='refunds',
+    description='Refund handling.',
+    instructions='Quote the refund policy.',
+    tools=[refund_status],
+    defer_loading=True,
+)
+
+
 def _mid_run_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     results = _results_since_question(messages)
     if results == 0:
@@ -612,6 +645,11 @@ _APPEND_INSTRUCTIONS = (
     "which the adapter strips from client history in `manage_system_prompt='server'`, so every turn re-renders "
     'the baseline from current state and rewrites the prefix; no issue yet'
 )
+_LOADED_INSTRUCTIONS = (
+    "a loaded capability's instructions are stated as an `InstructionDeltaPart`, system voice the adapter strips "
+    'from client history, so the next request states them again after its last message instead of after the load; '
+    '#11771'
+)
 _FEEDBACK_NOT_STREAMED = (
     "retry feedback (`RetryFeedbackPart`) isn't streamed, so the client keeps the rejected and the accepted "
     'answer as one response; no issue yet'
@@ -694,6 +732,21 @@ SCENARIOS = [
             ('wire', 'dump', 'agui'),
             ('wire', 'stream', 'agui'),
         ),
+    ),
+    Scenario(
+        id='capability_load',
+        script=_model_load_script,
+        agent_kwargs={'capabilities': [_REFUNDS]},
+        gaps={
+            **_gaps(
+                _AGUI_ACTIVITY,
+                ('load', 'dump', 'agui'),
+                ('load', 'stream', 'agui'),
+                ('wire', 'dump', 'agui'),
+                ('wire', 'stream', 'agui'),
+            ),
+            **_gaps(_LOADED_INSTRUCTIONS, ('wire', 'dump', 'vercel'), ('wire', 'stream', 'vercel')),
+        },
     ),
     Scenario(
         id='mid_run_tool_addition',
@@ -1289,6 +1342,7 @@ def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
     assert sorted(client_wire_gaps - server_wire_gaps.keys()) == snapshot(
         [
             'appended_instructions',
+            'capability_load',
             'client_owned_system_prompt',
             'compaction',
             'compaction_boundary',
