@@ -40,6 +40,11 @@ def strip_audio_tags(text: str, *, started: bool = False) -> tuple[str, list[str
     return (result if started else result.lstrip()), tags
 
 
+def is_audio_tag(text: str) -> bool:
+    """Whether `text` is one whole audio tag, which `strip_audio_tags` would remove."""
+    return (match := _AUDIO_TAG.fullmatch(text)) is not None and not match[1][0].isupper()
+
+
 @dataclass
 class AudioTagStripper:
     """Strips audio tags from streamed text so that the pieces add up to the whole text stripped at once.
