@@ -3072,34 +3072,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         text_block['citations'] = citations
                     assistant_content_params.append(text_block)
             elif isinstance(response_part, ToolCallPart):
-                details = response_part.provider_details or {}
-                if (
-                    map_context.computer_tool_sent
-                    and response_part.provider_name == self.system
-                    and (blocks := details.get('computer_blocks'))
-                    # Calls of another computer use tool version go back as plain calls.
-                    and details.get('computer_tool') == map_context.computer_tool_sent
-                ):
-                    # Sent back as the calls they came as; toolset member calls each need their own result.
-                    toolset: dict[str, Any] = {}
-                    if map_context.computer_tool_sent == 'computer_toolset_20260801':
-                        map_context.computer_calls[_guard_tool_call_id(t=response_part)] = blocks
-                        toolset = {'toolset_name': 'computer'}
-                    assistant_content_params.extend(
-                        BetaToolUseBlockParam(
-                            id=block['id'], type='tool_use', name=block['name'], input=block['input'], **toolset
-                        )
-                        for block in blocks
-                    )
-                else:
-                    assistant_content_params.append(
-                        BetaToolUseBlockParam(
-                            id=_guard_tool_call_id(t=response_part),
-                            type='tool_use',
-                            name=response_part.tool_name,
-                            input=response_part.args_as_dict(),
-                        )
-                    )
+                self._map_tool_call_part(response_part, assistant_content_params, map_context)
             elif isinstance(response_part, ThinkingPart):
                 self._map_thinking_part(message, response_part, assistant_content_params, carried_thinking_params)
             elif isinstance(response_part, NativeToolCallPart):
@@ -3141,6 +3114,41 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             anthropic_messages.insert(insert_at, {'role': 'user', 'content': carried_thinking_params})
         if len(assistant_content_params) > 0:
             anthropic_messages.append({'role': 'assistant', 'content': assistant_content_params})
+
+    def _map_tool_call_part(
+        self,
+        part: ToolCallPart,
+        assistant_content_params: list[_AssistantContentBlockParam],
+        map_context: _MapMessagesContext,
+    ) -> None:
+        details = part.provider_details or {}
+        if (
+            map_context.computer_tool_sent
+            and part.provider_name == self.system
+            and (blocks := details.get('computer_blocks'))
+            # Calls of another computer use tool version go back as plain calls.
+            and details.get('computer_tool') == map_context.computer_tool_sent
+        ):
+            # Sent back as the calls they came as; toolset member calls each need their own result.
+            toolset: dict[str, Any] = {}
+            if map_context.computer_tool_sent == 'computer_toolset_20260801':
+                map_context.computer_calls[_guard_tool_call_id(t=part)] = blocks
+                toolset = {'toolset_name': 'computer'}
+            assistant_content_params.extend(
+                BetaToolUseBlockParam(
+                    id=block['id'], type='tool_use', name=block['name'], input=block['input'], **toolset
+                )
+                for block in blocks
+            )
+        else:
+            assistant_content_params.append(
+                BetaToolUseBlockParam(
+                    id=_guard_tool_call_id(t=part),
+                    type='tool_use',
+                    name=part.tool_name,
+                    input=part.args_as_dict(),
+                )
+            )
 
     def _map_compaction_part(
         self,
