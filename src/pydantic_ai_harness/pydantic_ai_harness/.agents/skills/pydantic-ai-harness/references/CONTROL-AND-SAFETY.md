@@ -420,9 +420,11 @@ Gotchas:
 - Omitted usage increments `response.usage.unmeasured_requests`. When `price` is unset or returns `None`,
   any known cost subtotal still accrues, but the response remains unpriced and `on_unpriced` applies.
   Known token and cost totals are lower bounds.
-- The built-in stores are `InMemorySpendStore` (default; per process and instance, lost on restart)
-  and `RedisSpendStore` (shared across workers; install `redis` yourself, `RedisClient` is a protocol).
-  For a restart-safe budget on one machine without Redis, implement `BatchSpendStore`:
+- The built-in stores are `InMemorySpendStore` (default; per process and instance, lost on restart),
+  `RedisSpendStore` (shared across workers; install `redis` yourself, `RedisClient` is a protocol), and
+  `PostgresSpendStore(pool, table='spend')` (shared across workers; pass a caller-owned `asyncpg` pool,
+  tables `{table}_counters` and `{table}_dedup` are created on first use). For another backend, implement
+  `BatchSpendStore`:
   `get_many(keys) -> Mapping[str, Spent]` (unknown keys read as zero) and `add_many(entries:
   Sequence[SpendEntry]) -> Mapping[str, Spent]` (new totals; skip an entry whose `token` was already
   applied to its `key`, honour `ttl`), both async. `SpendStore` (`get`/`add`) is deprecated. Pass the
@@ -551,8 +553,8 @@ agent = Agent(
 - Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
   (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
   gone without a warning, so turn on caching on the model (such as `anthropic_cache`).
-- `SystemReminders` adds no cache breakpoint; `Planning` adds one for its plan reminder, and
-  Anthropic allows 4.
+- Neither `SystemReminders` nor `Planning` adds a cache breakpoint; the model's caching settings
+  place them.
 - Not spec-serializable.
 
 ## TrajectoryJudge

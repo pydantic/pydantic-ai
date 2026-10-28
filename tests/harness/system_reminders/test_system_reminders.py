@@ -15,7 +15,6 @@ from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
-    CachePoint,
     CompactionPart,
     ModelMessage,
     ModelRequest,
@@ -24,6 +23,7 @@ from pydantic_ai.messages import (
     TextContent,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -192,10 +192,8 @@ def _all_text(messages: list[ModelMessage]) -> str:
     for msg in messages:
         for part in msg.parts:
             if isinstance(part, UserPromptPart):
-                if isinstance(part.content, str):
-                    out.append(part.content)
-                else:
-                    out.extend(c for c in part.content if isinstance(c, str))
+                content = part.content
+                out.append(content if isinstance(content, str) else ''.join(c for c in content if isinstance(c, str)))
             elif isinstance(part, TextPart):
                 out.append(part.content)
     return '\n'.join(out)
@@ -1658,21 +1656,16 @@ class TestEndToEnd:
         agent: Agent[None, str] = Agent(FunctionModel(model_fn), deps_type=type(None), capabilities=capabilities)
         result = await agent.run('go')
         assert result.output == 'done'
-        sent = _all_text(captured['messages'])
-        assert '<plan-reminder>' in sent
-        assert '<system>stay focused</system>' in sent
-        # `wrap_model_request` hooks run around the `before_model_request` chain, so `Planning` adds its
-        # reminder to the tool-result request before this reminder is enqueued after it: the plan reminder
-        # keeps its breakpoint on the tool result, and this reminder comes last.
+        # The plan is in the `write_plan` tool return, and the reminder is enqueued after it.
         last = captured['messages'][-1]
         assert isinstance(last, ModelRequest)
-        assert [type(part).__name__ for part in last.parts] == ['ToolReturnPart', 'UserPromptPart', 'UserPromptPart']
-        plan_reminder, reminder = last.parts[1], last.parts[2]
-        assert isinstance(plan_reminder, UserPromptPart) and isinstance(plan_reminder.content, list)
-        assert isinstance(plan_reminder.content[0], CachePoint)
-        assert plan_reminder.content[1] == '<plan-reminder>\n'
-        assert isinstance(reminder, UserPromptPart) and reminder.content == '<system>stay focused</system>'
-        # Planning's reminder is request-only; this one is kept in history as a request-scoped prompt.
-        durable = _all_text(result.all_messages())
-        assert '<plan-reminder>' not in durable
-        assert _request_scoped_texts(result.all_messages()) == ['stay focused', 'stay focused']
+        tool_return = last.parts[0]
+        assert isinstance(tool_return, ToolReturnPart) and '<plan_reminder>' in str(tool_return.content)
+        assert [getattr(part, 'content', None) for part in last.parts[1:]] == ['<system>stay focused</system>']
+        # The reminders are kept in history as request-scoped prompts; `Planning` records nothing of its own.
+        history = result.all_messages()
+        assert 'done' in _all_text(history)
+        assert [part.content for message in history for part in message.parts if isinstance(part, UserPromptPart)] == [
+            'go'
+        ]
+        assert _request_scoped_texts(history) == ['stay focused', 'stay focused']

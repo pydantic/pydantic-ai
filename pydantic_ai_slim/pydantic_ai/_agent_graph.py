@@ -1129,15 +1129,17 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if not run_context:
             run_context = build_run_context(ctx)
 
-        if messages:
-            await self._reevaluate_dynamic_prompts(messages, run_context)
-
+        # Re-evaluated together, so an appended change is compared against the latest value in either.
+        reevaluated: list[_messages.ModelMessage] = [*messages, *([next_message] if next_message else [])]
+        appended_system_prompts = await self._reevaluate_dynamic_prompts(reevaluated, run_context)
         if next_message:
-            reevaluated: list[_messages.ModelMessage] = [next_message]
-            await self._reevaluate_dynamic_prompts(reevaluated, run_context)
-            next_message = cast(_messages.ModelRequest, reevaluated[0])
+            messages[:] = reevaluated[:-1]
+            next_message = cast(_messages.ModelRequest, reevaluated[-1])
+            if appended_system_prompts:
+                next_message = _with_system_prompt_statements(next_message, appended_system_prompts)
         else:
-            parts: list[_messages.ModelRequestPart] = []
+            messages[:] = reevaluated
+            parts: list[_messages.ModelRequestPart] = [*appended_system_prompts]
             if not messages:
                 parts.extend(await self._sys_parts(run_context))
 
@@ -1206,9 +1208,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _reevaluate_dynamic_prompts(
         self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT]
-    ) -> None:
+    ) -> list[_messages.SystemPromptPart]:
         """Reevaluate any `SystemPromptPart` with dynamic_ref in the provided messages by running the associated runner function."""
-        await _system_prompt.reevaluate_dynamic_system_prompts(
+        return await _system_prompt.reevaluate_dynamic_system_prompts(
             messages, self.system_prompt_dynamic_functions, run_context
         )
 
@@ -1219,6 +1221,33 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         )
 
     __repr__ = dataclasses_no_defaults_repr
+
+
+def _with_system_prompt_statements(
+    request: _messages.ModelRequest, statements: list[_messages.SystemPromptPart]
+) -> _messages.ModelRequest:
+    """Add the changed statements of appending dynamic system prompts to a request that's about to be sent.
+
+    Each one goes right after its prompt's latest statement when that is in this request, which no model has
+    answered yet, so the new value still comes after the one it replaces. The others open the request.
+    """
+    parts = list(request.parts)
+    opening: list[_messages.ModelRequestPart] = []
+    for statement in statements:
+        latest = next(
+            (
+                index
+                for index in range(len(parts) - 1, -1, -1)
+                if isinstance(part := parts[index], _messages.SystemPromptPart)
+                and part.dynamic_ref == statement.dynamic_ref
+            ),
+            None,
+        )
+        if latest is None:
+            opening.append(statement)
+        else:
+            parts.insert(latest + 1, statement)
+    return replace(request, parts=[*opening, *parts])
 
 
 def _repair_interrupted_tail(

@@ -21,9 +21,12 @@ Start with `SubAgents` when unsure; its sub-agents move to a `DynamicWorkflow` c
 
 ## Planning
 
-Gives the model plan tools and re-shows the current plan as an ephemeral reminder at the tail of each
-request (never written to `message_history`, never in the system prompt), so plan edits do not break
-the prompt cache.
+Gives the model plan tools and keeps the current plan in front of it: every tool that changes the plan
+ends its result with the whole plan in a `<plan_reminder>` tag, and a fixed note in the static
+instructions says what the tag holds. Only when the latest plan isn't visible (after compaction, in a
+run started without it, or after an outside store change) does `Planning` record it as user-channel
+data. The plan never goes in system voice, and the history only grows, so plan edits don't break the
+prompt cache or preserved thinking.
 
 ```python
 from pydantic_ai import Agent
@@ -60,7 +63,8 @@ Key parameters:
 - `guidance=None`: `None` = built-in guidance, `''` = none, a string replaces it.
 - `store=None`: `None` = fresh in-memory plan per run. Pass a `PlanStore` to persist.
 - `store_resolver=None`: `Callable[[RunContext], PlanStore]`, wins over `store` (per-tenant stores).
-- `enable_subtasks=False`, `inject=True` (the tail reminder), `cache_ttl='5m'` (`'5m'` or `'1h'`).
+- `enable_subtasks=False`, `inject=True` (show the model the plan). `cache_ttl` is deprecated and ignored
+  (an explicit `'5m'`/`'1h'` warns); turn on caching on the model (such as `anthropic_cache_messages`).
 - `tools=None`: allowlist, e.g. `tools=['write_plan']`. Naming a tool the mode does not register
   raises `ValueError`; so does an unknown key in `descriptions`.
 
