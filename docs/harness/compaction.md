@@ -244,7 +244,7 @@ A tier inside `TieredCompaction` is driven directly by the orchestrator, which r
 
 ## `FallbackCompaction`: recover when a strategy fails
 
-`TieredCompaction` advances when a successful tier does not reclaim enough. `FallbackCompaction` advances only when a strategy raises an exception selected by `fallback_on`, which defaults to Pydantic AI's `ModelAPIError` and `FallbackExceptionGroup`. The latter is raised when every model in a `FallbackModel` fails. Each attempt receives a fresh list containing the original message objects, so list-level changes by a failed strategy do not affect its fallback. Strategies must still honor the `CompactionStrategy` contract and avoid mutating message objects. If every strategy fails, the last exception is re-raised. Non-matching exceptions, cancellation, and other `BaseException` subclasses pass through immediately; `fallback_on` rejects types that do not derive from `Exception`.
+`TieredCompaction` advances when a successful tier does not reclaim enough. `FallbackCompaction` advances when a strategy raises an exception selected by `fallback_on`, which defaults to Pydantic AI's `ModelAPIError` and `FallbackExceptionGroup`. The latter is raised when every model in a `FallbackModel` fails. When its trigger runs the chain, it also advances past a `SummarizingCompaction` whose result [isn't smaller](#a-summary-that-isnt-smaller) than the history, and leaves the history unchanged if no strategy shrinks it. Each attempt receives a fresh list containing the original message objects, so list-level changes by a failed strategy do not affect its fallback. Strategies must still honor the `CompactionStrategy` contract and avoid mutating message objects. If every strategy fails, the last exception is re-raised. Non-matching exceptions, cancellation, and other `BaseException` subclasses pass through immediately; `fallback_on` rejects types that do not derive from `Exception`.
 
 Register it directly when summarization should fall back to deterministic truncation:
 
@@ -519,6 +519,10 @@ agent = Agent(
 
 Neither transport works everywhere, which is why this is a choice rather than a default: some endpoints reject non-streaming requests and others reject streaming ones. The handler receives the summary run's own `RunContext` and event stream; the outer `Agent.run(...)` handler is not inherited and never sees the summary token deltas.
 
+### A summary that isn't smaller
+
+The summary replaces only part of the history: system prompts, the first user turn, the recent tail, pinned parts and receipts are kept as they are. When the summarized span is short or the summary is long, the result can be larger than the history it replaces. Automatic compaction is there to make the request smaller, so when `SummarizingCompaction` runs on its own trigger, the compacted history is kept only when it is estimated smaller than the original, using the `tokenizer` of the capability whose trigger fired (`FallbackCompaction`'s inside a chain), or the ~4-characters-per-token estimate without one. Otherwise the request goes out with the history unchanged, any receipt the attempt wrote is dropped, and a `compact_messages` span with `compaction.skipped` set to `not_smaller` records the attempt and its estimated size. The summary call's usage still counts, and while the trigger stays exceeded, the next request in the run tries again with another summary call. Inside `FallbackCompaction`, the next strategy runs instead, so putting a `SlidingWindowCompaction` after the summarizer bounds both the history and that cost. A direct `compact()` call, `compact_now()` or a `TieredCompaction` tier returns the summary either way.
+
 ### Usage accounting
 
 The summary call is a real request to the model, so its full usage -- tokens **and** the request itself -- is folded into the run's `ctx.usage`. This is deliberate: it keeps cost honest, keeps the request count consistent (a model request that did not count as one would be the surprise), and lets a `UsageLimits` request limit catch a runaway compaction. The nested run receives the other parent limits unchanged; the finite request limit is reduced by one so it cannot spend the slot already approved for the parent request. The summary run is filed under the parent run's `conversation_id`, so its requests, spans, and cost group with the conversation it compacts. A run-request or iteration limiter will therefore see compaction calls among its requests.
@@ -617,13 +621,13 @@ Clearing, deduplicating, clamping, and summarizing all rewrite message content, 
 
 ## Tracing
 
-When core instrumentation is active (the `Instrumentation` capability, `agent.instrument`, or `Agent.instrument_all()`), each strategy emits a `compact_messages` span on the run's tracer the moment it actually compacts -- that is, in `before_model_request`, once the strategy's threshold is exceeded (`ClampOversizedMessages` emits only when a part is actually clamped). `TieredCompaction` emits a single span for the whole escalation rather than one per tier, because it drives each tier's `compact` directly. Without instrumentation the tracer is a no-op, so the span adds no overhead.
+When core instrumentation is active (the `Instrumentation` capability, `agent.instrument`, or `Agent.instrument_all()`), each strategy emits a `compact_messages` span on the run's tracer the moment it actually compacts -- that is, in `before_model_request`, once the strategy's threshold is exceeded (`ClampOversizedMessages` emits only when a part is actually clamped). `TieredCompaction` emits a single span for the whole escalation rather than one per tier, because it drives each tier's `compact` directly. An automatic summary that is discarded for not being smaller also emits one, with `compaction.skipped`. Without instrumentation the tracer is a no-op, so the span adds no overhead.
 
 The span name is the static `compact_messages`; the strategy is an attribute, not part of the name, to keep span cardinality low. Attributes:
 
 | Attribute | Type | Meaning |
 |---|---|---|
-| `gen_ai.conversation.compacted` | bool | Always `true`; the OpenTelemetry GenAI convention's flag for a compacted context |
+| `gen_ai.conversation.compacted` | bool | `true` when the history was compacted, absent on a skipped attempt; the OpenTelemetry GenAI convention's flag for a compacted context |
 | `compaction.strategy` | str | Strategy class name (for example `SlidingWindowCompaction`, `SummarizingCompaction`) |
 | `compaction.messages_before` | int | Message count before compaction |
 | `compaction.messages_after` | int | Message count after compaction |
@@ -631,6 +635,7 @@ The span name is the static `compact_messages`; the strategy is an attribute, no
 | `compaction.tokens_after` | int | Estimated token count after compaction |
 | `compaction.model_requested` | bool | `true` when the model asked for the compaction through `CompactOnRequest`; absent otherwise |
 | `compaction.background` | str | Only with `background_start`: `used`, `stale`, or `failed`, what became of the background compaction |
+| `compaction.skipped` | str | `not_smaller` when an automatic summary was discarded because it wasn't smaller than the history; the `*_after` attributes then describe the discarded result. Absent otherwise |
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the ~4-chars-per-token heuristic. Raw message content is not recorded.
 
@@ -680,7 +685,7 @@ A pinned part is never summarized away or dropped; if a strategy would have disc
 
 Pins use model-invisible `TextContent.metadata`, so their contents remain ordinary user context while compaction can distinguish them from user turns.
 
-The `Planning` capability does not need pinning: its plan is re-injected ephemerally on every request in `wrap_model_request`, so it already survives compaction by construction. Pinning is for durable task state and scratchpads that live *in* the history.
+The `Planning` capability does not need pinning: when compaction removes or clears the plan tools' results that show the latest plan, the next request records the plan from its store. Pinning is for durable task state and scratchpads that live *in* the history.
 
 ## On-demand capabilities across compaction
 

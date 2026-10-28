@@ -264,6 +264,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def _has_prepare_model_request(self) -> bool:
         return any(c._has_prepare_model_request for c in self._dispatch)
 
+    def _handles_model_request_error(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> bool:
+        return any(
+            capability._has_on_model_request_error
+            and (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None
+            and capability._handles_model_request_error(cap_ctx, request_context)
+            for capability in self._dispatch
+        )
+
     @property
     def _has_compact_history(self) -> bool:
         return any(c._has_compact_history for c in self._dispatch)
@@ -791,7 +799,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if not capability._has_on_model_request_error:
                 continue
             cap_ctx = _ctx_for_active_cap(capability, ctx)
-            if cap_ctx is None:
+            if cap_ctx is None or not capability._handles_model_request_error(cap_ctx, request_context):
                 continue
             try:
                 return await capability.on_model_request_error(cap_ctx, request_context=request_context, error=error)

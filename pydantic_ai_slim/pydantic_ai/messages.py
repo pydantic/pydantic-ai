@@ -250,6 +250,15 @@ class SystemPromptPart:
     Only set if system prompt is dynamic, see [`system_prompt`][pydantic_ai.agent.Agent.system_prompt] for more information.
     """
 
+    context_id: str | None = None
+    """The id of the `<context>` element this prompt is sent to the model as, or `None` to send its content as is.
+
+    Set by a dynamic system prompt registered with `on_change='append'`, as `'system_prompt:<name>'`. The model
+    sees this id. The first part with an id in a conversation opens it, and each later part with that id is sent as
+    its replacement: an empty one withdraws the prompt. The model is also told once that a later element with the
+    same id replaces the earlier one. See [appending system prompt changes](../agent.md#appending-system-prompt-changes).
+    """
+
     scope: Literal['conversation', 'request'] = 'conversation'
     """How long the model sees this prompt.
 
@@ -3145,11 +3154,7 @@ class InstructionDeltaPart:
                 if len(diff) < len(full):
                     return diff
             return full
-        elif inline_system:
-            content = 'This context has been withdrawn.'
-        else:
-            content = 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
-        return _context_element(self.id, content)
+        return _context_element(self.id, _withdrawal_text(inline_system=inline_system))
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         """Render the replacement in traces only when content capture is enabled."""
@@ -3163,7 +3168,14 @@ def _instruction_text_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def _context_element(instruction_id: InstructionId | None, content: str) -> str:
+def _withdrawal_text(*, inline_system: bool) -> str:
+    """What a withdrawn `<context>` element says, which `<system>`-tagged user text has to say stays in effect."""
+    if inline_system:
+        return 'This context has been withdrawn.'
+    return 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
+
+
+def _context_element(instruction_id: InstructionId | str | None, content: str) -> str:
     """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces.
 
     `wrap` neutralizes every framing tag in the text, including `</system>`: the element is itself
@@ -3172,7 +3184,7 @@ def _context_element(instruction_id: InstructionId | None, content: str) -> str:
     return wrap(CONTEXT_TAG, f'\n{content}\n', id=_id_attribute(instruction_id))
 
 
-def _id_attribute(instruction_id: InstructionId | None) -> str | None:
+def _id_attribute(instruction_id: InstructionId | str | None) -> str | None:
     """The `id` attribute naming a block, or `None` for a change a newer version wrote that this one can't address."""
     return str(instruction_id) if instruction_id is not None else None
 
@@ -3190,6 +3202,22 @@ _SUPERSESSION_SENTENCE = (
 )
 
 
+def _render_system_prompt_context(part: SystemPromptPart, *, inline_system: bool, states_rule: bool) -> str:  # pyright: ignore[reportUnusedFunction]
+    """Render a statement of an appending dynamic system prompt as the `<context>` element its `context_id` names.
+
+    An empty statement withdraws the prompt. With `states_rule`, the element is followed by the sentence an
+    appending instruction prefix ends with, so the model knows a later element with the same id replaces it.
+    """
+    assert part.context_id is not None
+    text = _context_element(part.context_id, part.content or _withdrawal_text(inline_system=inline_system))
+    return f'{text}\n{_SUPERSESSION_SENTENCE}' if states_rule else text
+
+
+def _tagged_append_parts(parts: Sequence[InstructionPart]) -> list[int]:
+    """The positions of the parts `_render_append_parts` sends as `<context>` elements."""
+    return [index for index, part in enumerate(parts) if part.on_change == 'append' and part.id is not None]
+
+
 def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPart]:  # pyright: ignore[reportUnusedFunction]
     """Render the prefix's append-mode blocks as tagged `<context>` elements, followed once by how later ones apply.
 
@@ -3203,7 +3231,7 @@ def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPa
     History stores only the content, so each model renders its own prefix, and renders it identically on
     every request.
     """
-    tagged = [index for index, part in enumerate(parts) if part.on_change == 'append' and part.id is not None]
+    tagged = _tagged_append_parts(parts)
     rendered = list(parts)
     for index in tagged:
         part = parts[index]
@@ -3836,7 +3864,11 @@ class SpeechPart:
     """
 
     id: str | None = None
-    """The provider item ID, used to correlate the part with provider-side conversation items."""
+    """The provider item ID, used to correlate the part with provider-side conversation items.
+
+    Set on the model's speech when the provider names its output items, as the OpenAI Realtime protocol does;
+    `None` on providers that don't, like Gemini Live and GPT-Live.
+    """
 
     provider_name: str | None = None
     """The name of the provider that generated or transcribed the audio.
@@ -4525,6 +4557,19 @@ class ModelResponse:
     provider_url: str | None = None
     """The base URL of the LLM provider that generated the response."""
 
+    canonical_system: str | None = None
+    """The system whose keys verify the stateless signed or encrypted data in this response, when it isn't evident from `provider_name`.
+
+    Set by the model from its provider's [`canonical_system`][pydantic_ai.providers.Provider.canonical_system]
+    when that differs from `provider_name`, such as `'openai'` for an `openai-codex` response. It's always set
+    when the provider's canonical system depends on its client: the `google` and `google-cloud` providers each serve
+    both the Gemini API (`'google'`) and Google Cloud (`'google-cloud'`), and `OpenAIProvider` serves OpenAI
+    (`'openai'`) or, with an `AsyncAzureOpenAI` client, Azure (`'azure'`). It applies to the parts whose `provider_name` is this response's.
+    Models read it to decide whether they can send that data, such as encrypted reasoning and thinking signatures,
+    back to their own provider: see
+    [`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts].
+    """
+
     provider_details: Annotated[
         dict[str, Any] | None,
         # `vendor_details` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
@@ -4843,14 +4888,25 @@ def _post_compaction_window_start(messages: Sequence[ModelMessage]) -> tuple[int
     return 0, 0
 
 
-def _compaction_part_is_wire_boundary(
-    part: CompactionPart, provider_name: str, *, requires_encrypted_content: bool = False
-) -> bool:
-    """Whether `provider_name` would honor `part` as a compaction boundary on the wire.
+_StatelessArtifactPredicate: TypeAlias = Callable[[ModelResponse, ModelResponsePart | None], bool]
+"""Whether a model can send back the stateless data a part in a response carries, such as
+[`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts]."""
 
-    A part is only ever a boundary for the provider that produced it — compaction data round-trips
-    to its own provider — and only while it still carries the payload that provider renders. A part
-    carrying neither payload (no encrypted content, and no summary or an empty one) is a failed
+
+def _compaction_part_is_wire_boundary(
+    response: ModelResponse,
+    part: CompactionPart,
+    accepts: _StatelessArtifactPredicate,
+    *,
+    requires_encrypted_content: bool = False,
+) -> bool:
+    """Whether a model that `accepts` the part would honor `part` in `response` as a compaction boundary on the wire.
+
+    A part is only ever a boundary for a model that can send its compaction data back — its own
+    provider, or another with the same canonical system (see
+    [`Model.accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts]), the same
+    predicate the adapter renders the part by — and only while it still carries the payload that provider
+    renders. A part carrying neither payload (no encrypted content, and no summary or an empty one) is a failed
     compaction, a documented no-op, and a boundary for nobody.
 
     `requires_encrypted_content` is the caller's own render condition, not something derivable from
@@ -4868,7 +4924,7 @@ def _compaction_part_is_wire_boundary(
     adapter would skip. That errs toward refusing a call rather than toward admitting an unseen
     tool, and unifying the two properly wants a declared per-model compaction mode (see #7255).
     """
-    if part.provider_name != provider_name:
+    if not accepts(response, part):
         return False
     if part.provider_details and 'encrypted_content' in part.provider_details:
         return True
@@ -4876,17 +4932,27 @@ def _compaction_part_is_wire_boundary(
 
 
 def _post_compaction_window_for_response(  # pyright: ignore[reportUnusedFunction]
-    messages: Sequence[ModelMessage], serving_response: ModelResponse
+    messages: Sequence[ModelMessage],
+    serving_response: ModelResponse,
+    accepts: _StatelessArtifactPredicate | None = None,
 ) -> list[ModelMessage]:
-    """The provider-exact evidence window for calls in `serving_response`.
+    """The evidence window for calls in `serving_response`, from the boundary the request that produced it honored.
 
-    Only boundaries strictly before the serving response are eligible: a provider can emit a
-    compaction part and continue generating a call in the same response, but that response was not
-    part of the request whose tools the model saw. A response without provider provenance falls
-    back to the provider-agnostic window.
+    `accepts` is the predicate the request that produced `serving_response` was trimmed by (see
+    `Model._compaction_window_predicate`), so the window starts where that request's history did. Without one,
+    only a compaction part from the serving response's own provider is a boundary. Only boundaries strictly
+    before the serving response are eligible: a provider can emit a compaction part and continue generating a
+    call in the same response, but that response was not part of the request whose tools the model saw. A
+    response without provider provenance falls back to the provider-agnostic window.
     """
-    if serving_response.provider_name is None:
+    serving_provider_name = serving_response.provider_name
+    if serving_provider_name is None:
         return post_compaction_window(messages)
+
+    def from_serving_provider(response: ModelResponse, part: ModelResponsePart | None) -> bool:
+        return part is not None and part.provider_name == serving_provider_name
+
+    accepts = accepts or from_serving_provider
 
     serving_index = next((i for i in range(len(messages) - 1, -1, -1) if messages[i] is serving_response), None)
     assert serving_index is not None, '`serving_response` must be present in `messages`'
@@ -4895,9 +4961,7 @@ def _post_compaction_window_for_response(  # pyright: ignore[reportUnusedFunctio
         if isinstance(message, ModelResponse):
             for part_index in range(len(message.parts) - 1, -1, -1):
                 part = message.parts[part_index]
-                if isinstance(part, CompactionPart) and _compaction_part_is_wire_boundary(
-                    part, serving_response.provider_name
-                ):
+                if isinstance(part, CompactionPart) and _compaction_part_is_wire_boundary(message, part, accepts):
                     return [
                         replace(message, parts=list(message.parts[part_index:])),
                         *(messages[i] for i in range(message_index + 1, len(messages))),

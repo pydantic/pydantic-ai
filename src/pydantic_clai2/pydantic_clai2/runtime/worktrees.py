@@ -36,7 +36,7 @@ class Worktree:
 
 def open_worktree(*, name: str) -> Worktree:
     """Reopen `.worktrees/NAME`, or check it out on `clai-NAME`, reusing that branch if it exists."""
-    name = name or f'worktree-{uuid4().hex[:8]}'
+    name = name or _generated_name()
     if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', name) is None:
         raise ValueError('Worktree names must start with a letter or digit and contain only letters, digits, - or _.')
     try:
@@ -94,6 +94,39 @@ def add_worktree(*, repo: Path, path: Path, branch: str, base: str) -> Worktree:
     except OSError as exc:
         raise ValueError(f'Cannot create worktree: {exc}') from exc
     return Worktree(path=path, branch=branch, head=head, created=True, new_branch=True)
+
+
+def new_worktree(*, repo: Path, branch: str, base: str) -> Worktree:
+    """Check out a new `branch` from `base` in `.worktrees/` of the checkout `repo` is in, where `clai2 --worktree` puts them.
+
+    The folder is the branch with anything but letters, digits, `.`, `-`, and `_` turned into `-`. Without
+    a branch, the name is generated and the branch is `clai-NAME`, as with `--worktree` without NAME; without
+    a base, it is the checkout's `HEAD`. Raises `ValueError` outside Git, or when the folder exists or Git refuses.
+    """
+    root = repository_root(repo)
+    if branch:
+        try:
+            _git('-C', str(root), 'check-ref-format', '--branch', branch)
+        except subprocess.CalledProcessError as exc:
+            raise ValueError(f'Cannot create worktree: {exc.stderr.strip()}') from exc
+        try:
+            _git('-C', str(root), 'show-ref', '--verify', '--quiet', f'refs/heads/{branch}')
+        except subprocess.CalledProcessError:
+            pass
+        else:
+            raise ValueError(f'Cannot create worktree: branch {branch} already exists. Pick another name.')
+        folder = re.sub(r'[^A-Za-z0-9._-]+', '-', branch)
+    else:
+        folder = _generated_name()
+        branch = f'clai-{folder}'
+    path = root / '.worktrees' / folder
+    if path.exists():
+        raise ValueError(f'Cannot create worktree: {path} already exists. Pick another name.')
+    return add_worktree(repo=root, path=path, branch=branch, base=commit_of(repo=root, ref=base, remote=False))
+
+
+def _generated_name() -> str:
+    return f'worktree-{uuid4().hex[:8]}'
 
 
 def repository_root(path: Path) -> Path:

@@ -106,6 +106,7 @@ Each model attempted is an *attempt* within the same request step, not a new ste
 
 - `before_model_request` and `wrap_model_request` run once per step, and the model never sees a retry prompt.
 - [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] runs again for every attempt, with `request_context.model` set to the model about to serve it. [`RunContext.model`][pydantic_ai.tools.RunContext.model] stays the model selected for the step, so a hook that depends on the serving model, its [profile](../models/overview.md#inspecting-a-models-profile) or its context window reads `request_context.model`. The model's own message preparation and token counting are redone for each candidate, and so is any preparation a capability does in `prepare_model_request`, rather than inherited from the previous one. The built-in compaction capabilities, including the Harness ones, still run in `before_model_request` for now, so they decide once per step for the step's model, and every candidate inherits that decision. A capability's [`compact_history`](compaction.md#the-compaction-hook) hook runs per attempt instead, for the candidate serving it. See [Retrying and falling back](custom.md#model-request-attempts).
+- A [native tool factory](../native-tools.md#dynamic-configuration) is called again for each model after the first, with that model as `ctx.model`, so each model is sent the native tools it would be sent on its own, and a [provider-adaptive tool](overview.md#provider-adaptive-tools)'s local fallback is offered to a model its native tool doesn't apply to. A native tool a `before_model_request` hook removed stays removed.
 - `after_model_request` hooks of capabilities outside `ModelFallback` only ever see the response that was accepted. `ModelFallback` is positioned innermost, so it judges a response before them.
 - `usage.requests` counts the step once, so [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit] bounds how many steps the agent takes rather than how many models it tried. The tokens and cost of every attempt that produced a response, including rejected ones, are counted in the run's usage and checked against token and cost limits before the next attempt.
 
@@ -136,6 +137,8 @@ With [`BatchModelRequests`](../batch.md), every attempt is batched with the mode
 ## Durable execution
 
 Under a [durability capability](../durable_execution/overview.md), each attempt is a durable model operation of its own: on [Temporal](../durable_execution/temporal.md), an activity per model tried. The activity's retry policy retries a failed request before the error reaches `ModelFallback`'s `fallback_on`, and Temporal's default retry policy retries without limit: set `maximum_attempts` in the retry policy of `TemporalDurability`'s [`model_activity_config`](../durable_execution/temporal.md#activity-configuration) so that a failing model doesn't hold up the fallback. Each model's `request_timeout` deadline runs as a durable timer around its own activity.
+
+A streamed request is consumed inside its durable unit, where its events reach a durability capability's `event_stream_handler`, so a stream that fails after producing output there is raised rather than fallen back from, as outside durable execution, and what it produced counts towards the run's usage.
 
 A model `ModelFallback` moves to is rebuilt for its activity like any model a run uses: a model name string is built on the worker, and a model instance must be registered with the durability capability's `models`, then given to `ModelFallback` by that name:
 
@@ -188,6 +191,7 @@ Everything a `FallbackModel` does carries over:
 And a few things only the capability can do:
 
 - [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] runs for each model, so hooks see the model that will serve the request, its profile and context window, and prepare the request for it. The model's own message preparation and token counting are redone for each model too, so [`count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request] works.
+- A [native tool factory](../native-tools.md#dynamic-configuration) sees the model each attempt is at as `ctx.model`, where under a `FallbackModel` it sees the `FallbackModel` itself.
 - The chain starts from the model selected for the step, so it composes with `agent.run(model=...)` and [`SelectModel`](select-model.md).
 - Under [durable execution](#durable-execution), each attempt is a durable model operation of its own.
 - With [batching](#batching), each attempt goes into a batch on its own model.

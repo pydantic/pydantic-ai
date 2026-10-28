@@ -211,7 +211,7 @@ class OnlineEvaluator:
 
     When a callable, it receives a [`SamplingContext`][pydantic_evals.online.SamplingContext]
     with the function inputs, config metadata, and evaluator name — but not the output or
-    duration (which aren't available yet at sampling time).
+    duration.
 
     Defaults to `None`, which uses the config's `default_sample_rate` at each call.
     Set explicitly to override.
@@ -236,7 +236,7 @@ class OnlineEvaluator:
     """Called synchronously when a `sample_rate` callable raises an exception.
 
     Receives the exception and the evaluator. Must be sync (not async), since sampling
-    runs before the decorated function. If set, the evaluator is skipped. If `None`,
+    runs before evaluators are dispatched. If set, the evaluator is skipped. If `None`,
     uses the config's `on_sampling_error` default. If neither is set, the exception
     propagates to the caller.
     """
@@ -596,7 +596,7 @@ class OnlineEvalConfig:
 
     def should_evaluate(self) -> bool:
         """Whether evaluators with this config should run, based on the current settings and context."""
-        return self.enabled and not _EVALUATION_DISABLED.get() and _task_run.CURRENT_TASK_RUN.get() is None
+        return _online_internal.evaluation_allowed(self) and _task_run.CURRENT_TASK_RUN.get() is None
 
 
 @dataclass(kw_only=True, frozen=True)

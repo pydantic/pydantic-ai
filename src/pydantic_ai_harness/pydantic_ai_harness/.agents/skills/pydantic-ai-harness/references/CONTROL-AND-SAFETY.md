@@ -2,7 +2,8 @@
 
 Capabilities that constrain, screen, budget, or steer a run: repair malformed tool arguments,
 guard prompts/tool calls/outputs, scan tool results for prompt injection, cap spend, ask the user
-a question mid-run, re-inject reminders, and review the trajectory with a judge model. All are
+a question mid-run, re-inject reminders, interrupt repeated-action loops, and review the trajectory with a
+judge model. All are
 `AbstractCapability`s passed in `Agent(capabilities=[...])`. Only `PromptInjectionDefender` needs
 an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 `DeferredToolRequests`, `HandleDeferredToolCalls`), use the core mechanism documented in the
@@ -27,6 +28,7 @@ an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
 | Counter instruction fade in long runs, cache-safe | `SystemReminders` |
 | Have a second model review the run and steer it when it drifts | `TrajectoryJudge` |
+| Interrupt an agent that keeps repeating the same tool call, result, or response | `DetectLoops` |
 
 ## RepairToolArguments
 
@@ -418,9 +420,11 @@ Gotchas:
 - Omitted usage increments `response.usage.unmeasured_requests`. When `price` is unset or returns `None`,
   any known cost subtotal still accrues, but the response remains unpriced and `on_unpriced` applies.
   Known token and cost totals are lower bounds.
-- The built-in stores are `InMemorySpendStore` (default; per process and instance, lost on restart)
-  and `RedisSpendStore` (shared across workers; install `redis` yourself, `RedisClient` is a protocol).
-  For a restart-safe budget on one machine without Redis, implement `BatchSpendStore`:
+- The built-in stores are `InMemorySpendStore` (default; per process and instance, lost on restart),
+  `RedisSpendStore` (shared across workers; install `redis` yourself, `RedisClient` is a protocol), and
+  `PostgresSpendStore(pool, table='spend')` (shared across workers; pass a caller-owned `asyncpg` pool,
+  tables `{table}_counters` and `{table}_dedup` are created on first use). For another backend, implement
+  `BatchSpendStore`:
   `get_many(keys) -> Mapping[str, Spent]` (unknown keys read as zero) and `add_many(entries:
   Sequence[SpendEntry]) -> Mapping[str, Spent]` (new totals; skip an entry whose `token` was already
   applied to its `key`, honour `ttl`), both async. `SpendStore` (`get`/`add`) is deprecated. Pass the
@@ -549,8 +553,8 @@ agent = Agent(
 - Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored
   (an explicit `'5m'`/`'1h'` warns); don't pass it. The breakpoint it used to place by default is
   gone without a warning, so turn on caching on the model (such as `anthropic_cache`).
-- `SystemReminders` adds no cache breakpoint; `Planning` adds one for its plan reminder, and
-  Anthropic allows 4.
+- Neither `SystemReminders` nor `Planning` adds a cache breakpoint; the model's caching settings
+  place them.
 - Not spec-serializable.
 
 ## TrajectoryJudge
@@ -596,6 +600,57 @@ at import time fails without that provider's API key. Pass
 `agent=Agent('openai:...', defer_model_check=True, instructions=...)` instead; a custom agent does
 not get the built-in judge instructions, so its `instructions` must describe the review.
 
+## DetectLoops
+
+Before each model request, checks the current run's history for four patterns: `repeated_call` (same
+tool and canonical arguments `repeated_call_threshold=5` times in the last `window=10` calls),
+`repeated_result` (same call returning the same result `repeated_result_threshold=3` times in a row;
+`ModelRetry` with the same message counts), `alternating_calls` (A-B-A-B for
+`alternating_calls_threshold=3` cycles), and `repeated_text` (`repeated_text_threshold=3` consecutive
+responses with no tool calls and the same text). A threshold of `None` turns a check off.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from pydantic_ai_harness import DetectLoops
+from pydantic_ai_harness.detect_loops import LoopDetectedError
+
+
+def stuck(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'missing.txt'})])
+
+
+agent = Agent(FunctionModel(stuck), capabilities=[DetectLoops(action='error')])
+
+
+@agent.tool_plain
+def read_file(path: str) -> str:
+    return 'Error: file not found'
+
+
+try:
+    agent.run_sync('Summarize missing.txt')
+except LoopDetectedError as error:
+    print(error.loop.pattern)
+    #> repeated_result
+```
+
+- `action='nudge'` (default) enqueues a `SystemPromptPart` (conversation scope, so it keeps
+  applying) into the current request; find it by `metadata['origin'] == 'pydantic-ai-harness.detect_loops.nudge.v1'`, never by
+  text. `'error'` raises `LoopDetectedError` (an `AgentRunError`, `.loop` is the `DetectedLoop`). A
+  sync or async `(ctx, loop)` callable decides itself; type `ctx` as `RunContext[object]` on an agent
+  without `deps_type`.
+- Calls, results, and text are recorded as they arrive (the capability runs outermost), so
+  compaction can't make calls look alike.
+  One loop per request; its responses are then not counted again. Only the current run counts, so
+  `message_history` from earlier runs starts at zero. Hooks run in workflow code under Temporal,
+  DBOS, and Prefect, so replay reaches the same decisions; keep a handler free of I/O.
+- Agents that poll on purpose trip `repeated_result` after 3 identical statuses: raise or disable it.
+- Emits a `loop detected` span (`detect_loops.pattern`, `.action`, `.count`, `.window`,
+  `.tool_names`; `.fingerprints` only with `trace_include_content`); no arguments or results.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/repair-tool-arguments/
@@ -607,4 +662,5 @@ not get the built-in judge instructions, so its `instructions` must describe the
 - https://pydantic.dev/docs/ai/harness/ask-user/
 - https://pydantic.dev/docs/ai/harness/system-reminders/
 - https://pydantic.dev/docs/ai/harness/trajectory-judge/
+- https://pydantic.dev/docs/ai/harness/detect-loops/
 - https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/ (core tool approval and deferred tools)

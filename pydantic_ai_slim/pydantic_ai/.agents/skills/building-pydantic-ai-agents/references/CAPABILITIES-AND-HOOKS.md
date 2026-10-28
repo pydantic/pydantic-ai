@@ -153,6 +153,7 @@ Changing what the model sees from `before_model_request`:
 - Change only this request (trim, filter, redact): assign a new list to `request_context.messages`. Build new messages and parts; mutating shared ones in place changes history too.
 - Rewrite history (compaction): `ctx.messages[:] = ...`, plus assign `request_context.messages` if this request should be sent it.
 - `request_context.messages.append(...)` also writes history, deprecated with a warning; use `ctx.enqueue(...)`.
+- Data tagged in prompt text (`<memory>`, `<reviewer_note>`): register the tag once at module level with `pydantic_ai.framing.register_tag('memory')` and render it with `wrap(tag, body, **attrs)`, never an f-string. Then nothing in its body can close the tag or forge `<system>`, and Pydantic AI's own frames, such as a tool result, neutralize it too. Names are lowercase snake_case.
 
 A request-only change that drops or alters content earlier requests sent moves the cached prefix, and on models with preserved thinking (Claude Opus 5.5, Sonnet 5.5, Fable 5.1) invalidates earlier reasoning. So enqueue reminders, request-scoped when one-off; never make them per-request copies.
 
