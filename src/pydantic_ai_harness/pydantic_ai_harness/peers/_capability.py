@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Self
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, on_event
 from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import EnqueuedMessagesEvent
+from pydantic_ai.messages import EnqueuedMessagesEvent, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai_harness._combine import one_per_id
@@ -29,6 +29,7 @@ _INSTRUCTIONS = (
 )
 
 
+# Pyright's protected scope is class-based; the inbox lifecycle is shared only inside this package.
 @dataclass(kw_only=True)
 class Peers(AbstractCapability[AgentDepsT]):
     """Let an agent list and message other sessions over a host-provided network.
@@ -79,7 +80,7 @@ class Peers(AbstractCapability[AgentDepsT]):
             return await handler()
         finally:
             if self._attached and self.inbox is not None:
-                self.inbox.detach()
+                self.inbox._detach()  # pyright: ignore[reportPrivateUsage]
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
@@ -87,13 +88,19 @@ class Peers(AbstractCapability[AgentDepsT]):
         # This hook runs inside request wrappers, after input guards allow the request. Core drains its
         # enqueued parts into this same request, so queued peer context neither bypasses guards nor costs a call.
         if self.inbox is not None and not self._attached:
-            self._attached = await self.inbox.attach(lambda part: ctx.enqueue(part, priority='asap'))
+
+            def enqueue(part: UserPromptPart) -> str:
+                enqueue_id = ctx.enqueue(part, priority='asap')
+                assert enqueue_id is not None
+                return enqueue_id
+
+            self._attached = await self.inbox._attach(enqueue)  # pyright: ignore[reportPrivateUsage]
         return request_context
 
     @on_event(EnqueuedMessagesEvent)
-    async def delivered(self, ctx: RunContext[AgentDepsT], event: EnqueuedMessagesEvent) -> None:
+    async def _delivered(self, ctx: RunContext[AgentDepsT], event: EnqueuedMessagesEvent) -> None:
         if self.inbox is not None:
-            await self.inbox.acknowledge(event.enqueue_id)
+            await self.inbox._acknowledge(event.enqueue_id)  # pyright: ignore[reportPrivateUsage]
 
 
 class _PeerTools(FunctionToolset[AgentDepsT]):

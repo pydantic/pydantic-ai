@@ -39,14 +39,14 @@ class PeerInbox:
     ) -> None:
         if max_pending < 1 or max_message_bytes < 1:
             raise UserError('Inbox limits must be positive.')
-        self.path = path
-        self.max_pending = max_pending
-        self.max_message_bytes = max_message_bytes
+        self._path = path
+        self._max_pending = max_pending
+        self._max_message_bytes = max_message_bytes
         self.accepting = accepting
         self._messages: dict[str, PeerMessage] = {}
         self._loaded = False
         self._lock = Lock()
-        self._enqueue: Callable[[UserPromptPart], str | None] | None = None
+        self._enqueue: Callable[[UserPromptPart], str] | None = None
         self._inflight: dict[str, str] = {}
 
     @property
@@ -57,19 +57,19 @@ class PeerInbox:
     async def _load(self) -> None:
         if self._loaded:
             return
-        if self.path is not None:
+        if self._path is not None:
             try:
-                saved = await run_sync(self.path.read_bytes)
+                saved = await run_sync(self._path.read_bytes)
             except FileNotFoundError:
                 saved = b'[]'
             self._messages = {message.id: message for message in _MESSAGES.validate_json(saved)}
         self._loaded = True
 
     async def _save(self, messages: dict[str, PeerMessage]) -> None:
-        if self.path is None:
+        if self._path is None:
             return
         data = _MESSAGES.dump_json(list(messages.values()))
-        await run_sync(self._write, self.path, data)
+        await run_sync(self._write, self._path, data)
 
     @staticmethod
     def _write(path: Path, data: bytes) -> None:
@@ -85,9 +85,7 @@ class PeerInbox:
 
     def _deliver(self, message: PeerMessage) -> None:
         if self._enqueue is not None and message.id not in self._inflight:
-            enqueue_id = self._enqueue(make_peer_message(message))
-            if enqueue_id is not None:
-                self._inflight[message.id] = enqueue_id
+            self._inflight[message.id] = self._enqueue(make_peer_message(message))
 
     async def receive(self, message: PeerMessage) -> PeerDelivery:
         """Accept once by message id; refuse oversized messages or a full or disabled inbox."""
@@ -103,9 +101,9 @@ class PeerInbox:
                 'does not accept messages'
                 if not self.accepting
                 else 'too long'
-                if len(message.text.encode('utf-8')) > self.max_message_bytes
+                if len(message.text.encode('utf-8')) > self._max_message_bytes
                 else 'inbox full'
-                if len(self._messages) >= self.max_pending
+                if len(self._messages) >= self._max_pending
                 else ''
             )
             if reason:
@@ -126,7 +124,7 @@ class PeerInbox:
             await self._load()
             return list(self._messages.values())
 
-    async def attach(self, enqueue: Callable[[UserPromptPart], str | None]) -> bool:
+    async def _attach(self, enqueue: Callable[[UserPromptPart], str]) -> bool:
         """Attach one run, enqueue pending messages in order. A nested run leaves the outer run attached."""
         async with self._lock:
             await self._load()
@@ -137,12 +135,12 @@ class PeerInbox:
                 self._deliver(message)
             return True
 
-    def detach(self) -> None:
+    def _detach(self) -> None:
         """Forget an ended run's enqueue IDs; its unacknowledged messages stay pending."""
         self._enqueue = None
         self._inflight.clear()
 
-    async def acknowledge(self, enqueue_id: str) -> None:
+    async def _acknowledge(self, enqueue_id: str) -> None:
         """Remove a message only after core confirms it entered the conversation history."""
         async with self._lock:
             message_id = next((key for key, value in self._inflight.items() if value == enqueue_id), None)
