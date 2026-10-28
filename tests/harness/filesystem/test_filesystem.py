@@ -877,6 +877,14 @@ class TestReadFile:
         result = await _unhashed_toolset().read_file('notes.md', workspace=LocalWorkspaceBackend(tmp_path))
         assert result == f'[notes.md | 1 lines]\n     1\t{text}'
 
+    async def test_oversized_zip_is_described_without_opening_it(self, tmp_path: Path) -> None:
+        # Over the media cap a document would only be described, so the archive isn't parsed to tell.
+        data = _zip_with('word/document.xml') + bytes(5_000_000)
+        (tmp_path / 'big.docx').write_bytes(data)
+        result = await _unhashed_toolset().read_file('big.docx', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, str)
+        assert 'Binary file; the first bytes in hex:' in result
+
     async def test_read_oversized_image_is_described(self, tmp_path: Path) -> None:
         (tmp_path / 'big.png').write_bytes(b'\x89PNG\r\n\x1a\n' + bytes(5_000_000))
         toolset = _unhashed_toolset()
