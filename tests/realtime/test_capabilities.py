@@ -1370,6 +1370,22 @@ async def test_capability_with_uncalled_hook_warns() -> None:
     ]
 
 
+async def test_prepare_model_request_hook_warns() -> None:
+    """A session makes no model request attempts, so a `prepare_model_request` hook never runs."""
+
+    async def prepare(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+        return request_context  # pragma: no cover
+
+    with pytest.warns(UserWarning) as record:
+        await _drain(
+            Agent[None, str](capabilities=[Hooks(prepare_model_request=prepare)], deps_type=type(None)),
+            _RecordingModel(),
+        )
+    assert [str(warning.message) for warning in record] == [
+        _uncalled_hooks_warning('`Hooks`', '`prepare_model_request`')
+    ]
+
+
 async def test_batching_warns_that_a_session_sends_no_model_requests() -> None:
     """A session sends no model requests, so `BatchModelRequests`' `get_wrapper_model` has nothing to wrap."""
     with pytest.warns(UserWarning) as record:

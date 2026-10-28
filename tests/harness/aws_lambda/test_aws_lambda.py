@@ -7,7 +7,7 @@ import gc
 import re
 import threading
 import time
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Any, assert_type
 
@@ -21,10 +21,10 @@ from aws_durable_execution_sdk_python.exceptions import ExecutionError
 from aws_durable_execution_sdk_python.retries import RetryPresets
 from aws_durable_execution_sdk_python.serdes import DEFAULT_JSON_SERDES
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, RunUsage
 from pydantic_ai._run_context import get_current_run_context
-from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback, durable_operation
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelAPIError, ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryContent,
@@ -649,6 +649,60 @@ class TestEventStreamHandler:
         assert 'a__model.request_stream' in ctx.step_names
         assert 'a__event_stream_handler' in ctx.step_names
         assert seen
+
+    @staticmethod
+    def _fallback_agent(*, fail_after_output: bool, answered: list[str]) -> Agent[object, str]:
+        async def primary(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            if fail_after_output:
+                yield 'partial'
+            raise ModelAPIError('primary', 'stream broke')
+
+        async def backup(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            answered.append('backup')
+            yield 'from backup'
+
+        async def handler(ctx: RunContext[object], stream: Any) -> None:
+            async for _event in stream:
+                pass
+
+        return Agent(
+            FunctionModel(stream_function=primary, model_name='primary'),
+            deps_type=object,
+            name='a',
+            capabilities=[
+                ModelFallback('backup'),
+                AWSLambdaDurability(
+                    models={'backup': FunctionModel(stream_function=backup, model_name='backup')},
+                    event_stream_handler=handler,
+                ),
+            ],
+        )
+
+    def test_stream_failing_after_output_does_not_fall_back(self) -> None:
+        """A stream that fails after producing output in its step is raised, not fallen back from, and its usage counts.
+
+        The step delivers the output to the event handler before the run sees the stream, as outside durable
+        execution, where only a stream that fails before its first event falls back.
+        """
+        answered: list[str] = []
+        agent = self._fallback_agent(fail_after_output=True, answered=answered)
+        usage = RunUsage()
+
+        with pytest.raises(ModelAPIError, match='stream broke'):
+            run_durable(lambda: agent.run('go', usage=usage), context=FakeDurableContext())
+
+        assert answered == []
+        assert usage == RunUsage(input_tokens=50, output_tokens=1, requests=1)
+
+    def test_stream_failing_before_output_falls_back(self) -> None:
+        """A stream that fails before producing any output still falls back to the next model."""
+        answered: list[str] = []
+        agent = self._fallback_agent(fail_after_output=False, answered=answered)
+
+        result = run_durable(lambda: agent.run('go'), context=FakeDurableContext())
+
+        assert result.output == 'from backup'
+        assert answered == ['backup']
 
 
 class TestCoverageOfRemainingPaths:

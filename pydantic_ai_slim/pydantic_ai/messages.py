@@ -249,6 +249,15 @@ class SystemPromptPart:
     Only set if system prompt is dynamic, see [`system_prompt`][pydantic_ai.agent.Agent.system_prompt] for more information.
     """
 
+    context_id: str | None = None
+    """The id of the `<context>` element this prompt is sent to the model as, or `None` to send its content as is.
+
+    Set by a dynamic system prompt registered with `on_change='append'`, as `'system_prompt:<name>'`. The model
+    sees this id. The first part with an id in a conversation opens it, and each later part with that id is sent as
+    its replacement: an empty one withdraws the prompt. The model is also told once that a later element with the
+    same id replaces the earlier one. See [appending system prompt changes](../agent.md#appending-system-prompt-changes).
+    """
+
     scope: Literal['conversation', 'request'] = 'conversation'
     """How long the model sees this prompt.
 
@@ -3144,11 +3153,7 @@ class InstructionDeltaPart:
                 if len(diff) < len(full):
                     return diff
             return full
-        elif inline_system:
-            content = 'This context has been withdrawn.'
-        else:
-            content = 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
-        return _context_element(self.id, content)
+        return _context_element(self.id, _withdrawal_text(inline_system=inline_system))
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         """Render the replacement in traces only when content capture is enabled."""
@@ -3162,7 +3167,14 @@ def _instruction_text_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def _context_element(instruction_id: InstructionId | None, content: str) -> str:
+def _withdrawal_text(*, inline_system: bool) -> str:
+    """What a withdrawn `<context>` element says, which `<system>`-tagged user text has to say stays in effect."""
+    if inline_system:
+        return 'This context has been withdrawn.'
+    return 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
+
+
+def _context_element(instruction_id: InstructionId | str | None, content: str) -> str:
     """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces.
 
     `wrap` neutralizes every framing tag in the text, including `</system>`: the element is itself
@@ -3171,7 +3183,7 @@ def _context_element(instruction_id: InstructionId | None, content: str) -> str:
     return wrap(CONTEXT_TAG, f'\n{content}\n', id=_id_attribute(instruction_id))
 
 
-def _id_attribute(instruction_id: InstructionId | None) -> str | None:
+def _id_attribute(instruction_id: InstructionId | str | None) -> str | None:
     """The `id` attribute naming a block, or `None` for a change a newer version wrote that this one can't address."""
     return str(instruction_id) if instruction_id is not None else None
 
@@ -3189,6 +3201,22 @@ _SUPERSESSION_SENTENCE = (
 )
 
 
+def _render_system_prompt_context(part: SystemPromptPart, *, inline_system: bool, states_rule: bool) -> str:  # pyright: ignore[reportUnusedFunction]
+    """Render a statement of an appending dynamic system prompt as the `<context>` element its `context_id` names.
+
+    An empty statement withdraws the prompt. With `states_rule`, the element is followed by the sentence an
+    appending instruction prefix ends with, so the model knows a later element with the same id replaces it.
+    """
+    assert part.context_id is not None
+    text = _context_element(part.context_id, part.content or _withdrawal_text(inline_system=inline_system))
+    return f'{text}\n{_SUPERSESSION_SENTENCE}' if states_rule else text
+
+
+def _tagged_append_parts(parts: Sequence[InstructionPart]) -> list[int]:
+    """The positions of the parts `_render_append_parts` sends as `<context>` elements."""
+    return [index for index, part in enumerate(parts) if part.on_change == 'append' and part.id is not None]
+
+
 def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPart]:  # pyright: ignore[reportUnusedFunction]
     """Render the prefix's append-mode blocks as tagged `<context>` elements, followed once by how later ones apply.
 
@@ -3202,7 +3230,7 @@ def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPa
     History stores only the content, so each model renders its own prefix, and renders it identically on
     every request.
     """
-    tagged = [index for index, part in enumerate(parts) if part.on_change == 'append' and part.id is not None]
+    tagged = _tagged_append_parts(parts)
     rendered = list(parts)
     for index in tagged:
         part = parts[index]
@@ -4480,8 +4508,9 @@ class WorkspaceRef:
 class ModelRequestAttempt:
     """An attempt at a model request that did not produce the response it is recorded on.
 
-    A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] records one for each model it moved
-    on from, on the response of the model that answered
+    A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability records one for each model it moved on
+    from, on the response of the model that answered
     ([`ModelResponse.failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts]), or on the
     [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] when every model failed.
     """
@@ -4496,7 +4525,9 @@ class ModelRequestAttempt:
     """How the attempt failed.
 
     - `'error'` — the request raised an exception, described by `error`.
-    - `'rejected'` — the model returned a response, and a `fallback_on` response handler rejected it.
+    - `'rejected'` — the model returned a response, and a `fallback_on` response handler rejected it
+      (or another capability rejected it by raising
+      [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] from `after_model_request`).
     """
 
     error: str | None = None
@@ -4637,8 +4668,9 @@ class ModelResponse:
     failed_attempts: list[ModelRequestAttempt] | None = None
     """Earlier attempts at this request that failed before this response was produced, in order.
 
-    A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] records the models it moved on
-    from here. Their usage is not included in `usage`, which is this response's own, but it does
+    A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability records the models it moved on from
+    here. Their usage is not included in `usage`, which is this response's own, but it does
     count towards the run's [`RunUsage`][pydantic_ai.usage.RunUsage] and
     [`UsageLimits`][pydantic_ai.usage.UsageLimits] token and cost limits. A rejected response's
     parts are not kept. Not sent to the model.
