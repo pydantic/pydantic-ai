@@ -161,14 +161,10 @@ print(asked[0].questions[0].header)
 - Schema violations (fewer than 2 options, duplicate headers, more than 10 questions, control characters) are retries to the model, and the answerer is never called.
 - An answerer response that does not fit its request (unknown header, label not offered, several picks on single-select) fails the whole run with `ValueError`, as `check_response` would; decline with `cancelled=True` instead.
 - `AskUserRequestedEvent`/`AskUserAnsweredEvent` let an observer capability (`@on_event`) assert on the exchange without being the answerer.
-- Add `note=('User explanation', image)` to `AskUserAnswer` alongside `selected` or `custom_answer`.
-  Assert that the answer dictionary stays in `ToolReturnPart.content` and notes reach a separate `UserPromptPart`.
-  Notes use `answer_note` frames; boundary `TextContent.metadata` carries
-  `origin='pydantic-ai-harness.ask_user.answer_note.v1'`, `request_id` and `header`.
-  Keep image items multimodal when asserting note order. Blank-only notes and control characters fail validation.
-  Reject note URLs outside HTTP(S), any `force_download` value other than `False`, and `UploadedFile` references.
-  Only framework boundary text retains provenance metadata; input text metadata is not forwarded to history.
-  Answered events retain the original response before validation. Treat their note metadata as user input.
+- For `AskUserAnswer(note=...)`, assert that the answer dictionary stays in `ToolReturnPart.content`
+  and notes arrive in a separate `UserPromptPart`. Invalid notes raise `ValueError` through `check_response`.
+  See [Adding notes to an answer](https://pydantic.dev/docs/ai/harness/ask-user/#adding-notes-to-an-answer)
+  for supported content, framing and provenance.
 - Annotate `ask_user_result` values with `AskUserResult` from `pydantic_ai_harness.ask_user`.
   Pass the result directly to `DeferredToolResults.calls` for deferred answers, including notes.
 

@@ -107,8 +107,7 @@ framing tags inside text are escaped; images remain multimodal items between tho
 The boundary items are `TextContent` with `metadata` containing
 `origin='pydantic-ai-harness.ask_user.answer_note.v1'`, `request_id` and `header`, so applications
 can identify the record without matching visible text.
-`AskUserAnsweredEvent.response` retains the original notes, including attachments.
-Without notes, the result remains the existing dictionary or decline text.
+Without notes, the result is the answer dictionary or decline text.
 
 Annotate results with `AskUserResult` from `pydantic_ai_harness.ask_user`. To inspect wrapped
 answers, narrow with `isinstance(result, ToolReturn)` and read `result.return_value`.
