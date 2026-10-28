@@ -351,6 +351,7 @@ include = [
     ".github/scripts/test_check_api_compatibility.py",
     ".github/scripts/pr_gates.py",
     ".github/scripts/publish_douwebot_review.py",
+    ".github/scripts/review_gates.py",
     ".github/scripts/test_pr_gates.py",
     ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
     ".github/scripts/test_pydantic_ai_runner.py",

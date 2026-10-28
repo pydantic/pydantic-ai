@@ -3,12 +3,9 @@
 set -euo pipefail
 
 FILES=$(cat)
-ATTR_ARGS=()
-if [ "$#" -gt 0 ]; then
-  ATTR_ARGS=(--source="$1")
-fi
+: "${1:?base SHA required}"
 GENERATED=$(jq -j '.[] | .filename, "\u0000"' <<<"$FILES" |
-  git check-attr "${ATTR_ARGS[@]}" -z --stdin linguist-generated |
+  git check-attr --source="$1" -z --stdin linguist-generated |
   jq -Rs 'split("\u0000") | [range(0; length; 3) as $i |
     select(.[$i + 2] == "true" or .[$i + 2] == "set") | .[$i]]')
 FILES=$(jq --argjson generated "$GENERATED" 'map(select(.filename as $path | $generated | index($path) | not))' <<<"$FILES")

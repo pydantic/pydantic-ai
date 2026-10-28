@@ -190,9 +190,10 @@ Two consequences of the trigger, both easy to get backwards:
 
 # `PR Gates` answer merge questions from PR metadata
 
-Both gate workflows run `.github/scripts/pr_gates.py`. Keep the workflows and scripts owned in `.github/CODEOWNERS`.
-`pr-gates.yml` runs the compatibility job with a read-only `pull_request` token and the PR's copy.
-`pr-review-gates.yml` uses default-branch code and `statuses: write`; never execute PR code there.
+Keep gate workflows and scripts owned in `.github/CODEOWNERS`.
+`pr-gates.yml` runs `pr_gates.py` with a read-only `pull_request` token and the PR's copy.
+`pr-review-gates.yml` runs `review_gates.py` from default-branch code with `statuses: write`.
+Never execute PR code in the review publisher. Share only the GitHub client and verdict report with compatibility.
 Keep their job names distinct. Required-check matching ignores workflow names and event types.
 
 | Check | Fails when |

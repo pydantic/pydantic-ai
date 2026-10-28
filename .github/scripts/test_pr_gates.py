@@ -12,6 +12,7 @@ from pathlib import Path
 import pr_gates
 import publish_douwebot_review
 import pytest
+import review_gates
 import yaml
 from pr_gates import ChangedFile, GateError, GhCli, compatibility_waiver, run
 from publish_douwebot_review import Finding, ReviewResult, publication
@@ -172,7 +173,7 @@ def test_compatibility_workflow_has_no_privileged_triggers_or_duplicate_check_pr
     trusted = _Workflow.model_validate(yaml.load(REVIEW_WORKFLOW.read_text(), Loader=yaml.BaseLoader))
     names = [job.name for item in (workflow, trusted) for job in item.jobs.values()]
     assert len(names) == len(set(names))
-    assert not set(names) & set(pr_gates.REVIEW_CONTEXTS.values())
+    assert not set(names) & set(review_gates.REVIEW_CONTEXTS.values())
 
 
 def test_review_workflow_uses_only_trusted_code_and_pinned_status_targets():
@@ -194,7 +195,7 @@ def test_review_workflow_uses_only_trusted_code_and_pinned_status_targets():
     for step in (publisher.steps[0], publisher.steps[-1]):
         assert step.env['EXPECTED_HEAD_SHA'] == '${{ needs.review-target.outputs.head }}'
         assert step.env['EXPECTED_HEAD_REPOSITORY_ID'] == '${{ needs.review-target.outputs.repository }}'
-    assert all(context in publisher.steps[0].settings['script'] for context in pr_gates.REVIEW_CONTEXTS.values())
+    assert all(context in publisher.steps[0].settings['script'] for context in review_gates.REVIEW_CONTEXTS.values())
     checkout = next(step for step in publisher.steps if step.uses.startswith('actions/checkout@'))
     assert checkout.settings['ref'] == '${{ github.event.repository.default_branch }}'
     for job in workflow.jobs.values():
@@ -241,7 +242,6 @@ def test_review_failure_reports_distinguish_cancellation_from_failure():
         """
 let needs, steps, github;
 const always = () => true;
-const failure = () => needs.review.result === 'failure' || steps.publish.outcome === 'failure';
 const report = () => (
 """
         + report
@@ -367,10 +367,6 @@ const context = {
 };
 if (data.scenario === 'native') context.eventName = 'pull_request_target';
 if (data.scenario === 'group') context.eventName = 'merge_group';
-const require = (name) => {
-  if (name !== 'node:child_process') throw new Error('Unexpected dependency');
-  return {execFileSync: () => data.otherHead + '\\trefs/pull/7/head\\n'};
-};
 const github = {
   rest: {
     actions: {getWorkflowRun: async args => {calls.push(['run', args]); return {data: serverRun};}},
@@ -442,7 +438,7 @@ resolve().then(pending).then(() => {
         assert output['calls'][-1] == ['live', {'owner': 'pydantic', 'repo': 'pydantic-ai', 'pull_number': 8}]
     if outcome == 'active':
         assert [(write['sha'], write['context'], write['state']) for write in output['writes']] == [
-            (OLD_HEAD, context, 'pending') for context in pr_gates.REVIEW_CONTEXTS.values()
+            (OLD_HEAD, context, 'pending') for context in review_gates.REVIEW_CONTEXTS.values()
         ]
     else:
         assert output['writes'] == []
@@ -450,19 +446,19 @@ resolve().then(pending).then(() => {
 
 HEAD = 'a' * 40
 OLD_HEAD = 'b' * 40
-BOT = pr_gates.ReviewUser(id=1, login='github-actions[bot]', type='Bot')
-AUTHOR = pr_gates.ReviewUser(id=2, login='author', type='User')
-MAINTAINER = pr_gates.ReviewUser(id=3, login='maintainer', type='User')
+BOT = review_gates.ReviewUser(id=1, login='github-actions[bot]', type='Bot')
+AUTHOR = review_gates.ReviewUser(id=2, login='author', type='User')
+MAINTAINER = review_gates.ReviewUser(id=3, login='maintainer', type='User')
 
 
 def review(
     number: int = 10,
-    user: pr_gates.ReviewUser = BOT,
+    user: review_gates.ReviewUser = BOT,
     state: str = 'APPROVED',
     head: str = HEAD,
     body: str | None = None,
-) -> pr_gates.Review:
-    return pr_gates.Review.model_validate(
+) -> review_gates.Review:
+    return review_gates.Review.model_validate(
         {
             'id': number,
             'user': user,
@@ -478,21 +474,21 @@ def review(
 
 @dataclass
 class ReviewGitHub:
-    size_label: pr_gates.Size = 'size: M'
+    size_label: review_gates.Size = 'size: M'
     labels: list[str] | None = None
-    current_reviews: list[pr_gates.Review] = field(default_factory=lambda: [review()])
-    comments: list[pr_gates.ReviewComment] = field(default_factory=list[pr_gates.ReviewComment])
-    permissions: dict[str, pr_gates.Permission] = field(default_factory=lambda: {'maintainer': 'write'})
+    current_reviews: list[review_gates.Review] = field(default_factory=lambda: [review()])
+    comments: list[review_gates.ReviewComment] = field(default_factory=list[review_gates.ReviewComment])
+    permissions: dict[str, review_gates.Permission] = field(default_factory=lambda: {'maintainer': 'write'})
     verified: bool = True
     head: str = HEAD
     repository: int = 888
     closed: bool = False
-    statuses: list[tuple[str, pr_gates.ReviewGate, pr_gates.CommitStatus]] = field(
-        default_factory=list[tuple[str, pr_gates.ReviewGate, pr_gates.CommitStatus]]
+    statuses: list[tuple[str, review_gates.ReviewGate, review_gates.CommitStatus]] = field(
+        default_factory=list[tuple[str, review_gates.ReviewGate, review_gates.CommitStatus]]
     )
 
-    def pull_request(self) -> pr_gates.ReviewPullRequest:
-        return pr_gates.ReviewPullRequest.model_validate(
+    def pull_request(self) -> review_gates.ReviewPullRequest:
+        return review_gates.ReviewPullRequest.model_validate(
             {
                 'state': 'closed' if self.closed else 'open',
                 'head': {'sha': self.head, 'repo': {'id': self.repository}},
@@ -505,16 +501,16 @@ class ReviewGitHub:
             }
         )
 
-    def size(self, pull: pr_gates.ReviewPullRequest) -> pr_gates.Size:
+    def size(self, pull: review_gates.ReviewPullRequest) -> review_gates.Size:
         return self.size_label
 
-    def reviews(self) -> list[pr_gates.Review]:
+    def reviews(self) -> list[review_gates.Review]:
         return self.current_reviews.copy()
 
-    def review_comments(self) -> list[pr_gates.ReviewComment]:
+    def review_comments(self) -> list[review_gates.ReviewComment]:
         return self.comments.copy()
 
-    def permission(self, login: str) -> pr_gates.Permission:
+    def permission(self, login: str) -> review_gates.Permission:
         return self.permissions.get(login, 'read')
 
     def verified_review_run(self, run_id: int, head: str) -> bool:
@@ -522,17 +518,17 @@ class ReviewGitHub:
         return self.verified
 
     def status(
-        self, head: str, gate: pr_gates.ReviewGate, state: pr_gates.CommitStatus, description: str, url: str
+        self, head: str, gate: review_gates.ReviewGate, state: review_gates.CommitStatus, description: str, url: str
     ) -> None:
         self.statuses.append((head, gate, state))
 
 
-def verdicts(github: ReviewGitHub) -> dict[pr_gates.ReviewGate, pr_gates.Verdict]:
-    return pr_gates.review_verdicts(github, github.pull_request(), github.reviews(), github.review_comments())
+def verdicts(github: ReviewGitHub) -> dict[review_gates.ReviewGate, pr_gates.Verdict]:
+    return review_gates.review_verdicts(github, github.pull_request(), github.reviews(), github.review_comments())
 
 
 @pytest.mark.parametrize('size', ['size: S', 'size: M', 'size: L', 'size: XL'])
-def test_review_bar_by_size(size: pr_gates.Size):
+def test_review_bar_by_size(size: review_gates.Size):
     github = ReviewGitHub(size_label=size, current_reviews=[])
     result = verdicts(github)
     assert bool(result['douwebot'].failures) is (size != 'size: S')
@@ -559,7 +555,7 @@ def test_size_must_match_exactly_one_recomputed_label(labels: list[str]):
         review(body=f'Reviewed at {HEAD}\n\nNo findings.'),
     ],
 )
-def test_unqualified_bot_reviews_do_not_pass(candidate: pr_gates.Review):
+def test_unqualified_bot_reviews_do_not_pass(candidate: review_gates.Review):
     assert verdicts(ReviewGitHub(current_reviews=[candidate]))['douwebot'].failures
 
 
@@ -588,7 +584,11 @@ def test_findings_before_a_clean_retry_still_make_the_head_unclean(state: str, l
     )
     parent = review(9, state=state, body=json.loads(publication(result, HEAD, 20))['body'])
     comments = (
-        [pr_gates.ReviewComment(pull_request_review_id=parent.id, user=BOT, original_commit_id=HEAD, body=finding.body)]
+        [
+            review_gates.ReviewComment(
+                pull_request_review_id=parent.id, user=BOT, original_commit_id=HEAD, body=finding.body
+            )
+        ]
         if location == 'inline'
         else []
     )
@@ -601,7 +601,7 @@ def test_failed_douwebot_publication_cannot_hide_a_finding_behind_another_receip
             return run_id == 20
 
     parent = review(9, body=f'No blocking findings.\n\n<!-- douwebot:review run=21 head={HEAD} -->')
-    comment = pr_gates.ReviewComment(
+    comment = review_gates.ReviewComment(
         pull_request_review_id=9,
         user=BOT,
         original_commit_id=HEAD,
@@ -615,7 +615,7 @@ def test_relocated_comment_uses_its_parent_review_head(current: bool):
     # GitHub forwards commit_id for non-outdated comments. The immutable parent
     # still says this comment was posted on the older head.
     parent = review(9, head=HEAD if current else OLD_HEAD)
-    comment = pr_gates.ReviewComment.model_validate(
+    comment = review_gates.ReviewComment.model_validate(
         {
             'pull_request_review_id': parent.id,
             'user': BOT,
@@ -631,7 +631,7 @@ def test_relocated_comment_uses_its_parent_review_head(current: bool):
 @pytest.mark.parametrize('workflow', ['pydantic-ai-pr-review', 'pydantic-ai-ui-security-review'])
 def test_other_review_receipt_does_not_count_as_douwebot_finding(workflow: str):
     parent = review(8, body=f'Reviewed at head\n<!-- gh-aw-workflow-call-id: pydantic/pydantic-ai/{workflow} -->')
-    comment = pr_gates.ReviewComment(pull_request_review_id=8, user=BOT, original_commit_id=HEAD, body='CI finding')
+    comment = review_gates.ReviewComment(pull_request_review_id=8, user=BOT, original_commit_id=HEAD, body='CI finding')
     github = ReviewGitHub(current_reviews=[parent, review()], comments=[comment])
     assert not verdicts(github)['douwebot'].failures
     github.current_reviews = [review(8, body='Unidentified review'), review()]
@@ -657,7 +657,7 @@ def test_other_review_receipt_does_not_count_as_douwebot_finding(workflow: str):
     ],
 )
 def test_human_approval_semantics(
-    user: pr_gates.ReviewUser, permission: pr_gates.Permission, states: list[str], passes: bool
+    user: review_gates.ReviewUser, permission: review_gates.Permission, states: list[str], passes: bool
 ):
     github = ReviewGitHub(size_label='size: L', permissions={user.login: permission})
     github.current_reviews += [review(11 + index, user, state, OLD_HEAD, '') for index, state in enumerate(states)]
@@ -676,9 +676,9 @@ ENV = {
 
 def test_reevaluation_replaces_a_failure_with_success_on_the_live_head():
     github = ReviewGitHub(current_reviews=[])
-    assert pr_gates.reconcile_reviews(github, ENV) == 1
+    assert review_gates.reconcile_reviews(github, ENV) == 1
     github.current_reviews = [review()]
-    assert pr_gates.reconcile_reviews(github, ENV) == 0
+    assert review_gates.reconcile_reviews(github, ENV) == 0
     assert github.statuses == [
         (HEAD, 'douwebot', 'failure'),
         (HEAD, 'human', 'success'),
@@ -689,27 +689,27 @@ def test_reevaluation_replaces_a_failure_with_success_on_the_live_head():
 
 def test_errors_and_changing_snapshots_fail_closed():
     class Unreachable(ReviewGitHub):
-        def review_comments(self) -> list[pr_gates.ReviewComment]:
+        def review_comments(self) -> list[review_gates.ReviewComment]:
             raise GateError('API unavailable')
 
     github = Unreachable()
-    assert pr_gates.reconcile_reviews(github, ENV) == 1
+    assert review_gates.reconcile_reviews(github, ENV) == 1
     assert all(state == 'failure' for _, _, state in github.statuses[-2:])
 
     class Moving(ReviewGitHub):
-        def pull_request(self) -> pr_gates.ReviewPullRequest:
+        def pull_request(self) -> review_gates.ReviewPullRequest:
             self.labels = ['size: M', 'chore'] if self.labels is None else None
             return super().pull_request()
 
     moving = Moving(current_reviews=[])
-    assert pr_gates.reconcile_reviews(moving, ENV) == 1
+    assert review_gates.reconcile_reviews(moving, ENV) == 1
     assert all(state == 'failure' for _, _, state in moving.statuses[-2:])
 
 
 @pytest.mark.parametrize('change', ['head', 'repository', 'closed'])
 def test_reevaluation_does_not_follow_an_observer_to_a_different_head(change: str):
     class Superseded(ReviewGitHub):
-        def review_comments(self) -> list[pr_gates.ReviewComment]:
+        def review_comments(self) -> list[review_gates.ReviewComment]:
             if change == 'head':
                 self.head = OLD_HEAD
             elif change == 'repository':
@@ -719,27 +719,27 @@ def test_reevaluation_does_not_follow_an_observer_to_a_different_head(change: st
             return super().review_comments()
 
     github = Superseded()
-    assert pr_gates.reconcile_reviews(github, ENV) == 0
+    assert review_gates.reconcile_reviews(github, ENV) == 0
     assert github.statuses == []
 
 
 def test_no_snapshot_cannot_write_to_an_unverified_environment_head():
     class NoSnapshot(ReviewGitHub):
-        def pull_request(self) -> pr_gates.ReviewPullRequest:
+        def pull_request(self) -> review_gates.ReviewPullRequest:
             raise GateError('PR does not exist or cannot be read')
 
     github = NoSnapshot()
-    assert pr_gates.reconcile_reviews(github, {**ENV, 'HEAD_SHA': OLD_HEAD}) == 1
+    assert review_gates.reconcile_reviews(github, {**ENV, 'HEAD_SHA': OLD_HEAD}) == 1
     assert github.statuses == []
 
 
 def test_merge_group_skips_metadata_and_reports_both_contexts():
     class NoMetadata(ReviewGitHub):
-        def pull_request(self) -> pr_gates.ReviewPullRequest:
+        def pull_request(self) -> review_gates.ReviewPullRequest:
             raise AssertionError('Merge groups do not inspect queue members')
 
     github = NoMetadata()
-    assert pr_gates.reconcile_reviews(github, {**ENV, 'MERGE_GROUP_SHA': OLD_HEAD}) == 0
+    assert review_gates.reconcile_reviews(github, {**ENV, 'MERGE_GROUP_SHA': OLD_HEAD}) == 0
     assert github.statuses == [(OLD_HEAD, 'douwebot', 'success'), (OLD_HEAD, 'human', 'success')]
 
 
@@ -749,7 +749,7 @@ def test_publisher_binds_inline_comments_to_one_marked_review():
     )
     payload = json.loads(publication(result, HEAD, 20))
     parent = review(body=payload['body'])
-    comment = pr_gates.ReviewComment(
+    comment = review_gates.ReviewComment(
         pull_request_review_id=parent.id, user=BOT, original_commit_id=HEAD, body=payload['comments'][0]['body']
     )
     assert payload['commit_id'] == HEAD
@@ -884,7 +884,7 @@ def test_review_publication_errors_fail_closed(
 def test_gh_cli_verifies_both_jobs_and_originating_run(
     path: str, event: str, title: str, conclusion: str, job_conclusion: str, valid: bool
 ):
-    class Metadata(GhCli):
+    class Metadata(review_gates.ReviewGhCli):
         def _api(self, *args: str, input: str | None = None) -> str:
             if args[-1].endswith('/jobs?per_page=100'):
                 assert args[:2] == ('--paginate', '--slurp')
@@ -903,7 +903,7 @@ def test_gh_cli_verifies_both_jobs_and_originating_run(
 
 
 def test_gh_cli_reads_all_review_pages_and_posts_exact_context():
-    class Metadata(GhCli):
+    class Metadata(review_gates.ReviewGhCli):
         def _api(self, *args: str, input: str | None = None) -> str:
             if args[-1].endswith('/reviews?per_page=100'):
                 assert args[:2] == ('--paginate', '--slurp')
@@ -952,15 +952,15 @@ def test_gate_uses_shared_calculator_with_base_attributes(
         if args[:2] == ['git', 'fetch']:
             assert args[-1] == OLD_HEAD
             return subprocess.CompletedProcess(args, 1, '', '')
-        assert args == ['bash', str(Path(pr_gates.__file__).with_name('pr_size.sh')), OLD_HEAD]
+        assert args == ['bash', str(Path(review_gates.__file__).with_name('pr_size.sh')), OLD_HEAD]
         assert isinstance(kwargs['input'], str)
         assert json.loads(kwargs['input'])[0]['filename'] == 'x.py'
         return subprocess.CompletedProcess(args, 0, calculation, '')
 
-    monkeypatch.setattr(pr_gates.subprocess, 'run', fake_run)
+    monkeypatch.setattr(review_gates.subprocess, 'run', fake_run)
     pull = ReviewGitHub().pull_request().model_copy(update={'changed_files': total})
     if fails:
-        with pytest.raises((GateError, pr_gates.ValidationError)):
-            GhCli('o/r', 7).size(pull)
+        with pytest.raises((GateError, review_gates.ValidationError)):
+            review_gates.ReviewGhCli('o/r', 7).size(pull)
     else:
-        assert GhCli('o/r', 7).size(pull) == 'size: M'
+        assert review_gates.ReviewGhCli('o/r', 7).size(pull) == 'size: M'

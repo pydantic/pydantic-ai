@@ -136,6 +136,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             .github/scripts/pr_gates.py
+            .github/scripts/review_gates.py
             .github/scripts/publish_douwebot_review.py
             .github/scripts/pr_size.sh
             .github/scripts/check_api_compatibility.py
@@ -151,4 +152,4 @@ jobs:
           EXPECTED_HEAD_SHA: ${{ needs.review-target.outputs.head }}
           EXPECTED_HEAD_REPOSITORY_ID: ${{ needs.review-target.outputs.repository }}
           MERGE_GROUP_SHA: ${{ needs.review-target.outputs.group }}
-        run: python3 .github/scripts/pr_gates.py review-gates
+        run: python3 .github/scripts/review_gates.py

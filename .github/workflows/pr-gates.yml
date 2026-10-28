@@ -35,7 +35,6 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             .github/scripts/pr_gates.py
-            .github/scripts/publish_douwebot_review.py
             .github/scripts/check_api_compatibility.py
           sparse-checkout-cone-mode: false
       - name: Install pinned script dependencies

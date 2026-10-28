@@ -110,6 +110,25 @@ def _run_step(
         path = tmp_path / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding='utf-8')
+    subprocess.run(['git', 'add', '--all'], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            'git',
+            '-c',
+            'user.name=Test',
+            '-c',
+            'user.email=test@example.com',
+            '-c',
+            'core.hooksPath=/dev/null',
+            'commit',
+            '--quiet',
+            '-m',
+            'Base attributes',
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    base = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=tmp_path, capture_output=True, text=True, check=True)
     helper = tmp_path / '.github' / 'scripts' / 'pr_size.sh'
     helper.parent.mkdir(parents=True, exist_ok=True)
     helper.write_text((WORKFLOW.parents[1] / 'scripts' / 'pr_size.sh').read_text(encoding='utf-8'), encoding='utf-8')
@@ -129,6 +148,7 @@ def _run_step(
             **os.environ,
             'PATH': f'{tmp_path}{os.pathsep}{os.environ["PATH"]}',
             'GH_TOKEN': 'fake-token',
+            'BASE_SHA': base.stdout.strip(),
             'FAKE_STATE': str(tmp_path),
             'FAKE_FILE_PAGES': json.dumps(pages),
             **(overrides or {}),
@@ -259,6 +279,7 @@ def test_stale_event_labels(tmp_path: Path, script: str):
 @pytest.mark.parametrize(
     ('overrides', 'expected_calls'),
     [
+        ({'BASE_SHA': ''}, [f'GET {PULL}/files']),
         ({'FAKE_FAILURE': 'files'}, [f'GET {PULL}/files']),
         ({'GIT_DIR': '/nonexistent-size-label-repository'}, [f'GET {PULL}/files']),
         ({'FAKE_FILE_RESPONSE': 'not json'}, [f'GET {PULL}/files']),
@@ -367,3 +388,26 @@ def test_trusted_checkout():
     assert steps[0]['with'] == {'ref': '${{ github.event.repository.default_branch }}', 'persist-credentials': False}
     assert steps[1]['name'] == 'Calculate PR size and set label'
     assert steps[1]['env']['BASE_SHA'] == '${{ github.event.pull_request.base.sha }}'
+
+
+@pytest.mark.parametrize('arguments', [[], ['']])
+def test_shared_calculator_requires_base_attributes(arguments: list[str]):
+    """Reject absent or empty base identity instead of reading checkout attributes."""
+    result = subprocess.run(
+        ['bash', str(WORKFLOW.parents[1] / 'scripts' / 'pr_size.sh'), *arguments],
+        input='[]',
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert 'base SHA required' in result.stderr
+
+
+def test_base_attributes_ignore_trusted_checkout_changes(tmp_path: Path, script: str):
+    """Use committed base declarations even when the trusted checkout differs."""
+    changes: list[ChangedFile] = [
+        {'filename': '.github/workflows/generated.lock.yml', 'additions': 2000, 'deletions': 0}
+    ]
+    result = _run_step(tmp_path, ': > .gitattributes\n' + script, [], [changes])
+    assert result.process.returncode == 0, result.process.stderr
+    assert 'Weighted score: 0\n' in result.process.stdout

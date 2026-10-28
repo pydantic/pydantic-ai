@@ -39,14 +39,11 @@ jobs:
           # Fetch file changes for this PR
           FILES=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --paginate | jq -s 'add')
 
-          SIZE_ARGS=()
-          if [ -n "${BASE_SHA:-}" ]; then
-            if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
-              git fetch --no-tags --depth=1 origin "$BASE_SHA"
-            fi
-            SIZE_ARGS=("$BASE_SHA")
+          : "${BASE_SHA:?base SHA required}"
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
           fi
-          CALCULATED=$(printf '%s' "$FILES" | bash .github/scripts/pr_size.sh "${SIZE_ARGS[@]}")
+          CALCULATED=$(printf '%s' "$FILES" | bash .github/scripts/pr_size.sh "$BASE_SHA")
           SIZE=$(jq -r '.size' <<<"$CALCULATED")
           SCORE=$(jq -r '.score' <<<"$CALCULATED")
           jq -r '"Code: \(.code), Docs: \(.docs), Tests: \(.tests)"' <<<"$CALCULATED"
