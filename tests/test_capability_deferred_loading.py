@@ -25,6 +25,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, EndStrategy
 from pydantic_ai.capabilities import (
     Capability,
+    ModelFallback,
     NativeTool,
     ProcessHistory,
     ToolSearch,
@@ -37,6 +38,7 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks
 from pydantic_ai.exceptions import (
     CallDeferred,
+    ModelAPIError,
     ModelRetry,
     UnexpectedModelBehavior,
     UserError,
@@ -3194,6 +3196,45 @@ async def test_parallel_sync_tools_loading_one_capability_load_it_once(monkeypat
         if isinstance(part, CapabilityLoadDeltaPart | ToolAvailabilityDeltaPart)
     ]
     assert (sorted(results), records) == ([False, True], ['CapabilityLoadDeltaPart', 'ToolAvailabilityDeltaPart'])
+
+
+async def test_load_capability_survives_a_fallback_attempt() -> None:
+    """A load from code rides along with the request a fallback model retries, without the model seeing its record.
+
+    The primary model fails on the request after the loading tool's result, so `ModelFallback` makes another attempt
+    at that request on the fallback model. That attempt has the capability: its tool and instructions, but not the
+    `CapabilityLoadDeltaPart`, which `prepare_messages` drops. History records the load once.
+    """
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('open_case', {}, tool_call_id='open')])
+        raise ModelAPIError(model_name='primary', message='overloaded')
+
+    seen: list[tuple[list[str], list[str]]] = []
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(
+            (
+                [type(part).__name__ for part in messages[-1].parts],
+                [tool.name for tool in info.function_tools],
+            )
+        )
+        return make_text_response('Refunds take 5 days.')
+
+    agent = Agent(FunctionModel(primary), capabilities=[_refunds(), ModelFallback(FunctionModel(fallback))])
+
+    @agent.tool
+    def open_case(ctx: RunContext[object]) -> str:
+        ctx.load_capability('refunds')
+        return 'Case opened.'
+
+    result = await agent.run('Was I refunded?')
+
+    assert seen == snapshot(
+        [(['ToolReturnPart', 'UserPromptPart', 'UserPromptPart'], ['load_capability', 'open_case', 'refund_status'])]
+    )
+    assert _load_records(result.all_messages()) == [('refunds', 'open')]
 
 
 @dataclass
