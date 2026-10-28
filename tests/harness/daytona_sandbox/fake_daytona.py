@@ -34,9 +34,12 @@ from daytona import (
     DaytonaBadRequestError,
     DaytonaConnectionError,
     DaytonaError,
+    DaytonaInternalServerError,
     DaytonaNotFoundError,
+    DaytonaServiceUnavailableError,
     DaytonaTimeoutError,
     SandboxState,
+    ScreenshotOptions,
     ScreenshotRegion,
 )
 
@@ -384,6 +387,9 @@ class FakeComputerUse:
         self.mouse = self.keyboard = self.screenshot = self.display = self
         self.started = False
         self.start_calls = 0
+        # After `stop_with_sandbox`, input before `start` breaks the desktop for good, as Daytona's does.
+        self.stopped_with_sandbox = False
+        self.broken = False
         # Raised by the next desktop call, and then cleared.
         self.error: Exception | None = None
         self.start_gate: asyncio.Event | None = None
@@ -391,12 +397,25 @@ class FakeComputerUse:
         self.position = SimpleNamespace(x=7, y=8)
         self.displays = [SimpleNamespace(width=1280, height=800, is_active=True)]
 
+    def stop_with_sandbox(self) -> None:
+        """The sandbox stopped and started again, as someone else may do: the desktop is down until `start`."""
+        self.started = False
+        self.stopped_with_sandbox = True
+
+    def _check_broken(self) -> None:
+        if self.broken:
+            raise DaytonaServiceUnavailableError('connection is shut down', status_code=503)
+
     async def _call(self, line: str) -> None:
         await anyio.lowlevel.checkpoint()
         self.owner.check_alive()
         if (error := self.error) is not None:
             self.error = None
             raise error
+        self._check_broken()
+        if not self.started and self.stopped_with_sandbox:
+            self.broken = True
+            raise DaytonaInternalServerError('unexpected EOF', status_code=500)
         assert self.started, f'{line} before the desktop started'
         self.owner.desktop_calls.append(line)
 
@@ -404,8 +423,14 @@ class FakeComputerUse:
         self.start_calls += 1
         if self.start_gate is not None:
             await self.start_gate.wait()
+        self._check_broken()
         self.started = True
         await self._call('start')
+
+    async def get_status(self, request_timeout: float | None = None) -> SimpleNamespace:
+        await anyio.lowlevel.checkpoint()
+        self._check_broken()
+        return SimpleNamespace(status='active' if self.started else 'inactive')
 
     async def get_info(self, request_timeout: float | None = None) -> SimpleNamespace:
         await self._call('get_info')
@@ -413,6 +438,13 @@ class FakeComputerUse:
 
     async def take_full_screen(self, request_timeout: float | None = None) -> SimpleNamespace:
         await self._call('take_full_screen')
+        return SimpleNamespace(screenshot=base64.b64encode(self.png).decode())
+
+    async def take_compressed(
+        self, options: ScreenshotOptions | None = None, request_timeout: float | None = None
+    ) -> SimpleNamespace:
+        assert options is not None
+        await self._call(f'take_compressed {options.fmt} {options.scale}')
         return SimpleNamespace(screenshot=base64.b64encode(self.png).decode())
 
     async def take_region(self, region: ScreenshotRegion, request_timeout: float | None = None) -> SimpleNamespace:

@@ -811,10 +811,13 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         return self._display
 
     async def _start_display(self) -> X11Computer:
-        assert self._desktop_size is not None
-        return await start_x11(
+        assert self._desktop_size is not None and self._display is not None
+        computer, started = await start_x11(
             self, self._desktop_size, _START_DESKTOP, lambda: f'E2B sandbox {self._ref and self._ref.id}'
         )
+        if started:
+            self._display.started_fresh()
+        return computer
 
     async def live_view_url(self) -> str:
         """A link to watch the desktop, and use it, in a browser, through the template's noVNC viewer.
