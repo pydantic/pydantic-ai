@@ -594,6 +594,18 @@ class TestRun:
         # The cause is logged with the warning, so a stop that keeps failing can be diagnosed.
         assert all(record.exc_info is not None for record in warnings)
 
+    async def test_a_command_on_a_paused_sandbox_says_so_without_a_traceback(
+        self, fake_e2b: FakeE2B, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        backend = await started()
+        fake_e2b.run_error = TimeoutException('The sandbox was not found')
+        fake_e2b.kill_command_error = TimeoutException('The sandbox was not found')
+        fake_e2b.sandbox_is_running = False
+        fake_e2b.sandbox_paused = True
+        with pytest.raises(WorkspaceUnavailableError, match="'sbx-1' is paused; a later run that attaches to it"):
+            await backend.run(['true'])
+        assert [record for record in caplog.records if record.levelname == 'WARNING'] == []
+
     async def test_a_failed_operation_names_what_failed(self, fake_e2b: FakeE2B) -> None:
         fake_e2b.run_error = SandboxException('no such user')
         backend = await started()
@@ -672,7 +684,7 @@ class TestKilledSandbox:
         assert owner.ref is not None
         attached = await started(ref=owner.ref)
         await (await owner.get_sandbox()).kill()
-        with pytest.raises(WorkspaceUnavailableError, match="'sbx-1' is no longer running"):
+        with pytest.raises(WorkspaceUnavailableError, match="'sbx-1' no longer exists: it was killed"):
             await attached.write_bytes('/tmp/a.txt', b'x')
 
 

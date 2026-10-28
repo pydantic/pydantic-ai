@@ -5,8 +5,8 @@ from __future__ import annotations as _annotations
 import base64
 import itertools
 import re
-from collections.abc import AsyncGenerator, Callable, Sequence
-from contextlib import asynccontextmanager, suppress
+from collections.abc import Callable, Sequence
+from contextlib import suppress
 
 import anyio
 
@@ -26,6 +26,7 @@ from pydantic_ai.workspaces import (
     SupportsCommands,
     TypeText,
     WorkspaceError,
+    WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
@@ -241,6 +242,10 @@ _ENV = {'DISPLAY': DISPLAY, 'LC_ALL': 'C.UTF-8'}
 POSIX locale, which is what an environment without one set, such as E2B's, has."""
 
 
+_X_LOCK = f'/tmp/.X{DISPLAY[1:]}-lock'
+_X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY[1:]}'
+
+
 def start_x_server(log: str, *, then: str = '') -> str:
     """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one answers.
 
@@ -249,6 +254,10 @@ def start_x_server(log: str, *, then: str = '') -> str:
     """
     return (
         'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
+        # A lock left by an X server that's gone, such as after `docker stop`, stops Xvfb starting when its PID now
+        # belongs to another process.
+        f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in Xvfb) ;; '
+        f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
         f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{log} & xvfb=$!; i=0; '
         'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
         'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
@@ -257,43 +266,21 @@ def start_x_server(log: str, *, then: str = '') -> str:
     )
 
 
-class X11Display:
-    """The X display of an environment: started on first use, and again after a failure that may have stopped it.
+async def start_x11(
+    backend: SupportsCommands, size: tuple[int, int], script: str, where: Callable[[], str]
+) -> X11Computer:
+    """Run `script`, built with `start_x_server`, which starts an X display of the size `$1` names unless one answers, and control that display.
 
-    The environment needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`.
+    `where` names the environment in errors.
     """
-
-    def __init__(self, backend: SupportsCommands, size: tuple[int, int], start: str, where: Callable[[], str]):
-        """`start` is a shell script, built with `start_x_server`; `where` names the environment in errors."""
-        self._backend = backend
-        self._size = size
-        self._start = start
-        self._where = where
-        self._started = False
-        self._lock = anyio.Lock()
-
-    @asynccontextmanager
-    async def computer(self) -> AsyncGenerator[X11Computer]:
-        # One start at a time: two would both find no display and launch two X servers.
-        async with self._lock:
-            if not self._started:
-                width, height = self._size
-                start = ['sh', '-c', self._start, 'sh', f'{width}x{height}']
-                result = await self._backend.run(start, env={'DISPLAY': DISPLAY}, timeout=30)
-                if result.exit_code != 0:
-                    raise WorkspaceError(
-                        f'could not start the display in {self._where()}: it needs Xvfb, xdotool, xmodmap, scrot '
-                        f'and setsid ({(result.stderr or result.stdout).strip()})'
-                    )
-                self._started = True
-        try:
-            yield X11Computer(self._backend)
-        except WorkspaceUnsupportedActionError:
-            raise  # a refused action, such as an unknown key: the display is fine
-        except WorkspaceError:
-            # The X server may have died, or the environment restarted: the next call checks and starts it again.
-            self._started = False
-            raise
+    width, height = size
+    result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], env={'DISPLAY': DISPLAY}, timeout=30)
+    if result.exit_code != 0:
+        raise WorkspaceUnavailableError(
+            f'could not start the display in {where()}: it needs Xvfb, xdotool, xmodmap, scrot and setsid '
+            f'({(result.stderr or result.stdout).strip()})'
+        )
+    return X11Computer(backend)
 
 
 class X11Computer:
@@ -308,6 +295,10 @@ class X11Computer:
 
     async def _run(self, command: list[str] | str) -> CommandResult:
         result = await self._backend.run(command, shell=isinstance(command, str), env=_ENV, timeout=_COMMAND_TIMEOUT)
+        if result.exit_code == 127:
+            raise WorkspaceUnavailableError(
+                f'A display command is missing on display {DISPLAY}: {(result.stderr or result.stdout).strip()}'
+            )
         if result.exit_code != 0:
             raise WorkspaceError(
                 f'Display command failed with exit code {result.exit_code} on display {DISPLAY}: '

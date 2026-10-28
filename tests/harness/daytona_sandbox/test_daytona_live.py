@@ -317,17 +317,19 @@ class TestLiveDaytonaDesktop(WorkspaceBackendSuite):
     async def test_keys_and_text_reach_the_focused_window(self, backend: WorkspaceBackend) -> None:
         """Validates the key mapping the fake assumes: a shifted symbol is shift and its key on Daytona's display."""
         assert isinstance(backend, DaytonaSandboxBackend)
-        assert await backend.display_size() == (1280, 800)
+        display = backend.display
+        assert display is not None
+        assert await display.display_size() == (1280, 800)
         await backend.run(
             'setsid xfce4-terminal --geometry 60x10+100+100 -x sh -c "touch ready; cat > typed.txt" >/dev/null 2>&1 &',
             shell=True,
         )
         await backend.run('until [ -e ready ]; do sleep 0.1; done; sleep 1', shell=True, timeout=30)
 
-        await backend.act(Click(x=300, y=180))
-        await backend.act(TypeText(text='hello, desktop'))
-        await backend.act(PressKeys(keys=('!',)))
-        await backend.act(PressKeys(keys=('enter',)))
+        await display.act(Click(x=300, y=180))
+        await display.act(TypeText(text='hello, desktop'))
+        await display.act(PressKeys(keys=('!',)))
+        await display.act(PressKeys(keys=('enter',)))
 
         typed = await backend.run('until [ -s typed.txt ]; do sleep 0.1; done; cat typed.txt', shell=True, timeout=30)
         assert typed.stdout == 'hello, desktop!\n'

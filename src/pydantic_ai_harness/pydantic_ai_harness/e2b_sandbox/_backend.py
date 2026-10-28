@@ -31,8 +31,8 @@ import posixpath
 import shlex
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import TYPE_CHECKING, Self
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 import anyio
 import anyio.lowlevel
@@ -40,15 +40,10 @@ import anyio.lowlevel
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
-    ComputerAction,
     FileEntry,
-    Point,
-    Region,
     SupportsCommands,
-    SupportsCursorPosition,
     SupportsDisplay,
     SupportsFilesystem,
-    SupportsZoom,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -57,6 +52,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._display import ManagedDisplay
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -66,7 +62,7 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
-from pydantic_ai_harness._x11 import DISPLAY, X11Computer, X11Display, start_x_server
+from pydantic_ai_harness._x11 import DISPLAY, X11Computer, start_x11, start_x_server
 
 if TYPE_CHECKING:
     from pydantic_ai.workspaces import WorkspaceCommand
@@ -225,6 +221,26 @@ def _unavailable_message(sandbox_id: str, *, found: bool) -> str:
     )
 
 
+async def _stopped_message(sandbox_id: str) -> str:
+    """Say why a sandbox E2B still answers for no longer runs, asking E2B whether it is paused or gone."""
+    try:
+        state = (await e2b.AsyncSandbox.get_info(sandbox_id)).state
+    except e2b.SandboxNotFoundException:
+        return (
+            f'The E2B sandbox {sandbox_id!r} no longer exists: it was killed. '
+            "Pass `workspace='new'` to start a fresh sandbox."
+        )
+    except Exception:
+        logger.debug('E2B state lookup for sandbox %s failed', sandbox_id, exc_info=True)
+        state = None
+    if state == 'paused':
+        return (
+            f'The E2B sandbox {sandbox_id!r} is paused; a later run that attaches to it resumes it. '
+            "Pass `workspace='new'` to start a fresh sandbox."
+        )
+    return _unavailable_message(sandbox_id, found=True)
+
+
 def _is_lifetime_refusal(error: e2b.SandboxException) -> bool:
     """Whether E2B refused the requested `sandbox_timeout`, e.g. `400: Timeout cannot be greater than 1 hours`."""
     status = error.status_code
@@ -253,9 +269,7 @@ def _refused_message(context: str, error: e2b.SandboxException) -> str:
     return message
 
 
-class E2BSandboxBackend(
-    WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay, SupportsZoom, SupportsCursorPosition
-):
+class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay):
     """An [E2B](https://e2b.dev) sandbox as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands and file operations run inside an E2B microVM, not on the host.
@@ -343,11 +357,7 @@ class E2BSandboxBackend(
         if self._desktop_size:
             # Commands see the desktop too, so a program the agent starts from the shell opens on it.
             self._env = {'DISPLAY': DISPLAY, **(self._env or {})}
-        self._x11 = (
-            X11Display(self, self._desktop_size, _START_DESKTOP, lambda: f'E2B sandbox {self._ref and self._ref.id}')
-            if self._desktop_size
-            else None
-        )
+        self._display = None if self._desktop_size is None else ManagedDisplay(self._start_display)
         self._setsid: bool | None = None
         self._setsid_lock = anyio.Lock()
 
@@ -464,7 +474,7 @@ class E2BSandboxBackend(
         if isinstance(error, e2b.TimeoutException):
             sandbox = self._sandbox
             if sandbox is not None and not await _is_running(sandbox):
-                return WorkspaceUnavailableError(_unavailable_message(sandbox.sandbox_id, found=True))
+                return WorkspaceUnavailableError(await _stopped_message(sandbox.sandbox_id))
             return error
         if isinstance(error, e2b.SandboxException) and not isinstance(error, e2b.RateLimitException):
             return WorkspaceError(f'{context}: {error}')
@@ -716,8 +726,12 @@ class E2BSandboxBackend(
                 await stopper.wait()
             except Exception:
                 # A failed control-plane stop must not mask the original failure; the command may
-                # still be running, and the sandbox ref stays available for explicit cleanup.
-                logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id, exc_info=True)
+                # still be running, and the sandbox ref stays available for explicit cleanup. A sandbox
+                # that isn't running, such as a paused one, runs no command, and its error says so.
+                if await _is_running(sandbox):
+                    logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id, exc_info=True)
+                else:
+                    logger.debug('Could not stop E2B command in sandbox %s: it is not running', sandbox.sandbox_id)
 
         # Counted as the SDK receives it, so `yes` or a large `cat` stops at the cap instead of
         # growing this process; the SDK calls these from its own event-pump task.
@@ -792,42 +806,25 @@ class E2BSandboxBackend(
                         logger.debug('Could not remove E2B stop claim %s', claim, exc_info=True)
 
     @property
-    def display(self) -> Self | None:
-        """This backend, when created with `desktop=True`."""
-        return self if self._desktop_size is not None else None
+    def display(self) -> ManagedDisplay | None:
+        """The sandbox's desktop, when created with `desktop=True`."""
+        return self._display
 
-    def _display(self) -> AbstractAsyncContextManager[X11Computer]:
-        if self._x11 is None:
-            raise UserError('This E2B sandbox has no display: create it with `desktop=True`.')
-        return self._x11.computer()
-
-    async def display_size(self) -> tuple[int, int]:
-        async with self._display() as computer:
-            return await computer.display_size()
-
-    async def screenshot(self) -> bytes:
-        async with self._display() as computer:
-            return await computer.screenshot()
-
-    async def act(self, action: ComputerAction) -> None:
-        async with self._display() as computer:
-            await computer.act(action)
-
-    async def zoom(self, region: Region) -> bytes:
-        async with self._display() as computer:
-            return await computer.zoom(region)
-
-    async def cursor_position(self) -> Point:
-        async with self._display() as computer:
-            return await computer.cursor_position()
+    async def _start_display(self) -> X11Computer:
+        assert self._desktop_size is not None
+        return await start_x11(
+            self, self._desktop_size, _START_DESKTOP, lambda: f'E2B sandbox {self._ref and self._ref.id}'
+        )
 
     async def live_view_url(self) -> str:
         """A link to watch the desktop, and use it, in a browser, through the template's noVNC viewer.
 
         The link carries the viewer's password: anyone with it can see and use the desktop while the sandbox runs.
         """
-        async with self._display():
-            result = await self.run(['sh', '-c', _START_VIEWER], timeout=30)
+        if self._display is None:
+            raise UserError('This E2B sandbox has no display: create it with `desktop=True`.')
+        await self._display.driver()
+        result = await self.run(['sh', '-c', _START_VIEWER], timeout=30)
         if result.exit_code != 0:
             raise WorkspaceError(
                 f'could not start the desktop viewer: the template needs x11vnc and noVNC in /opt/noVNC '

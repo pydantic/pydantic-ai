@@ -154,7 +154,9 @@ class TestLiveDockerDesktop(WorkspaceBackendSuite):
 
     async def test_typed_text_reaches_the_focused_window(self, backend: WorkspaceBackend) -> None:
         assert isinstance(backend, DockerSandboxBackend)
-        await backend.display_size()  # starts the display
+        display = backend.display
+        assert display is not None
+        await display.display_size()  # starts the display
         await backend.run(
             'setsid xterm -geometry 60x10+100+100 -e sh -c "cat > typed.txt" >/dev/null 2>&1 &',
             shell=True,
@@ -162,9 +164,9 @@ class TestLiveDockerDesktop(WorkspaceBackendSuite):
         )
         await backend.run(['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xterm'], env={'DISPLAY': ':1'})
 
-        await backend.act(Click(x=300, y=180))
-        await backend.act(TypeText(text='héllo, desktop 你好'))
-        await backend.act(PressKeys(keys=('enter',)))
+        await display.act(Click(x=300, y=180))
+        await display.act(TypeText(text='héllo, desktop 你好'))
+        await display.act(PressKeys(keys=('enter',)))
 
         typed = await backend.run('until [ -s typed.txt ]; do sleep 0.1; done; cat typed.txt', shell=True, timeout=30)
         assert typed.stdout == 'héllo, desktop 你好\n'

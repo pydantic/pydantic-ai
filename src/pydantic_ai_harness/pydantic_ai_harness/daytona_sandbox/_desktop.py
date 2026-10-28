@@ -11,7 +11,10 @@ on the sandbox's display. Re-check these before changing the mapping, by running
 - Modifiers given to `click`, `scroll` and `press` are held around the event; `cmd` is `Super_L`.
 - `keyboard.down` and `keyboard.up` take letters and named keys, not only modifiers.
 - `keyboard.type` types Unicode text up to U+FFFF, newlines as Enter; it drops emoji and anything else beyond.
-- `keyboard.press` refuses a shifted symbol such as `!`, and an X keysym name such as `KP_Enter`.
+- `keyboard.press` refuses a shifted symbol such as `!`, and names outside its own list: X keysyms such as `KP_Enter`,
+  and print screen, pause, scroll lock and media keys, which it has no name for.
+- Its names for the numpad are `num0` to `num9`, `num_enter`, `num_plus`, `num_minus`, `num_asterisk`, `num_slash`,
+  `num_decimal` and `num_lock` (checked 2026-10-28); `menu` is refused by the display.
 - Pressing `f13` to `f24` crashes the sandbox's computer-use process for good: nothing restarts it.
 """
 
@@ -75,10 +78,23 @@ _NAMED_KEYS = frozenset(
         'left',
         'right',
         'space',
+        'capslock',
         *(f'f{n}' for n in range(1, 13)),
     }
 )
 """Normalized key names Daytona presses under the same name; `f13` to `f24` crash its desktop."""
+
+_RENAMED_KEYS = {
+    **{f'numpad{n}': f'num{n}' for n in range(10)},
+    'numpad_enter': 'num_enter',
+    'numpad_add': 'num_plus',
+    'numpad_subtract': 'num_minus',
+    'numpad_multiply': 'num_asterisk',
+    'numpad_divide': 'num_slash',
+    'numpad_decimal': 'num_decimal',
+    'numlock': 'num_lock',
+}
+"""Normalized key names Daytona presses under another name."""
 
 _UNSHIFTED = frozenset("abcdefghijklmnopqrstuvwxyz0123456789`-=[]\\;',./")
 
@@ -102,6 +118,8 @@ def _keys(keys: Sequence[str]) -> list[str]:
             names.append(_MODIFIERS[key])
         elif key in _NAMED_KEYS or key in _UNSHIFTED:
             names.append(key)
+        elif key in _RENAMED_KEYS:
+            names.append(_RENAMED_KEYS[key])
         elif key in _SHIFTED:
             names += ['shift', _SHIFTED[key]]
         else:
