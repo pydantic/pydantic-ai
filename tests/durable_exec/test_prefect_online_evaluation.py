@@ -107,3 +107,28 @@ async def test_prefect_online_evaluation_dispatch_failure() -> None:
     with pytest.raises(RuntimeError, match='sampling failed'):
         await completed_run_flow()
     assert evaluated == []
+
+
+async def test_prefect_online_evaluation_failed_run_hands_evaluators_the_live_exception() -> None:
+    """A failed run's `run_on_errors` evaluators get the run's own exception, as the task runs in the flow's process."""
+    agent = Agent(
+        TestModel(),
+        name='prefect_online_evaluation_failed_run_evaluated',
+        capabilities=[
+            PrefectDurability[object](),
+            OnlineEvaluation(
+                id='online_evaluation', evaluators=[OnlineEvaluator(evaluator=RecordRun(), run_on_errors=True)]
+            ),
+        ],
+    )
+
+    @flow
+    async def failed_run_flow() -> None:
+        await agent.run('go', usage_limits=UsageLimits(request_limit=0))
+
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        await failed_run_flow()
+    await wait_for_evaluations()
+    [(_, context)] = evaluated
+    assert isinstance(context.output, UsageLimitExceeded)
+    assert str(context.output) == str(exc_info.value)
