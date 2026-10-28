@@ -8,6 +8,7 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Self
 
 import anyio
 import anyio.to_thread
@@ -168,8 +169,9 @@ class LocalDesktopBackend(LocalWorkspaceBackend):
         return X11Computer(self, (await self._display_env())['DISPLAY'])
 
     @property
-    def has_display(self) -> bool:
-        return True
+    def display(self) -> Self:
+        """This backend: its screen is the session's display, or its own virtual one."""
+        return self
 
     async def display_size(self) -> tuple[int, int]:
         return await (await self._computer()).display_size()

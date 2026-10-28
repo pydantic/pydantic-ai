@@ -88,7 +88,7 @@ async def test_a_virtual_screen_starts_once_and_every_command_runs_on_it(
     desktop = LocalDesktop[None](tmp_path, size=(1024, 768))
     try:
         backend = _backend(desktop)
-        assert backend.has_display
+        assert backend.display is backend
         assert (await backend.run('echo $DISPLAY', shell=True)).stdout == ':7\n'
         assert await backend.display_size() == (1280, 800)
         assert (await backend.screenshot()).startswith(b'\x89PNG')
