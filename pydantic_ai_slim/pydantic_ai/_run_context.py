@@ -1053,9 +1053,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
             call succeeds.
 
         Raises:
-            UserError: If the capability isn't registered in this run, or this context can't load
-                capabilities: outside a tool call, from an output tool, or inside a durable execution
-                activity, step, or task.
+            UserError: If the capability isn't registered in this run, if it's a non-deferred member of a
+                deferred group that isn't loaded yet (load the group instead), or if this context can't load
+                capabilities: outside a tool call, from an output tool, in a realtime session, or inside a
+                durable execution activity, step, or task.
         """
         # Imported here: the loader module imports `RunContext`.
         from .toolsets._deferred_capability_loader import load_capability
