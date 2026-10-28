@@ -517,6 +517,7 @@ ALLOWED: dict[str, Allowed] = {
 """Documented prefix movers, checked exactly."""
 
 OPTIONAL_DEPENDENCIES: dict[str, str] = {
+    'BoxdSandbox': 'boxd',
     'BoxLiteSandbox': 'boxlite',
     'BrowserUse': 'browser_use',
     'DaytonaSandbox': 'daytona',
