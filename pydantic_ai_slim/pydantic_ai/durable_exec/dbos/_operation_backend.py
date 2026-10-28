@@ -30,6 +30,7 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
+from pydantic_ai.durable_exec._workspace import WORKSPACE_OPERATION_ID
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
@@ -58,6 +59,10 @@ class DBOSOperationConfig(DurableOperationConfig[StepConfig]):
             return self._model
         if role == 'event':
             return self._event
+        if operation_id is WORKSPACE_OPERATION_ID:
+            # DBOS's default: no retries. A retried command, write, or environment creation could
+            # repeat what the failed attempt already did, so `mcp_step_config` doesn't apply here.
+            return {}
         return self._tool
 
     def for_tool(

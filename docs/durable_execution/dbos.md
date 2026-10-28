@@ -189,7 +189,7 @@ If you don't pass `run_id` or `conversation_id` to [`Agent.run()`][pydantic_ai.a
 
 ### Workspaces
 
-Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent, and use `ctx.workspace` as in any run. Each workspace call made in workflow code, including from function tools, which DBOS runs in the workflow, is a step, so file contents and command output count toward the [size guidance above](#agent-run-context-and-dependencies).
+Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent, and use `ctx.workspace` as in any run. Each workspace call made in workflow code, including from function tools, which DBOS runs in the workflow, is a step, so file contents and command output count toward the [size guidance above](#agent-run-context-and-dependencies). Workspace steps are never retried, whatever `mcp_step_config` says, because a retried command or write could repeat what the failed attempt already did.
 
 DBOS stores workflow-side workspace call arguments (commands, `env=`, file contents) in history.
 Keep secrets in the workspace capability's `env=` instead of passing them to workspace calls;

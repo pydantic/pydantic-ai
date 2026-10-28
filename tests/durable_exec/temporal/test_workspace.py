@@ -9,6 +9,8 @@ re-imports the scenario module and can construct a backend, but only an activity
 
 from __future__ import annotations
 
+import json
+import os
 import sys
 import uuid
 from datetime import timedelta
@@ -265,6 +267,89 @@ async def test_workspace_runs_draw_their_run_id_without_the_stable_id_patch(clie
 
     replay = await Replayer(workflows=[ScenarioWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
     assert replay.replay_failure is None
+
+
+# Temporal's defaults: a 60-second timeout and unlimited retries.
+default_config_agent = Agent(
+    TestModel(), name='default_config', capabilities=[provider.capability(), TemporalDurability()]
+)
+
+
+@workflow.defn
+class WorkspaceCallsWorkflow:
+    @workflow.run
+    async def run(self, read: str) -> None:
+        workspace = (
+            await default_config_agent.run('Hi.', workspace=WorkspaceRef(provider=provider.name, id='seeded'))
+        ).workspace
+        if read:
+            await workspace.read_bytes(read)
+            return
+        await workspace.exists('a.txt')
+        await workspace.write_text('a.txt', 'a')
+        try:
+            await workspace.run(['sleep', '900'], timeout=900)
+        except TypeError:
+            pass  # The fake provider runs no commands; the activity was still scheduled.
+
+
+async def _execute_workspace_calls(client: Client, read: str = '') -> WorkflowHistory:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkspaceCallsWorkflow],
+        plugins=[AgentPlugin(default_config_agent)],
+    ):
+        handle = await client.start_workflow(
+            WorkspaceCallsWorkflow.run,
+            read,
+            id=f'workspace-calls-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        # Not `execution_timeout`: Temporal would cap the activity timeouts under test at it.
+        with anyio.fail_after(30):  # hang guard
+            await handle.result()
+        return await handle.fetch_history()
+
+
+async def test_workspace_activities_retry_only_read_only_calls_and_outlast_the_command_timeout(client: Client) -> None:
+    """Under the tool timeout and retries, a slow command or environment creation ran again on every attempt."""
+    provider.reset()
+    provider.environments['seeded'] = {}
+    history = await _execute_workspace_calls(client)
+    scheduled = [
+        event.activity_task_scheduled_event_attributes
+        for event in history.events
+        if event.HasField('activity_task_scheduled_event_attributes')
+        and event.activity_task_scheduled_event_attributes.activity_type.name.endswith('workspace__call')
+    ]
+    assert [
+        (
+            json.loads(attributes.input.payloads[0].data)['call']['method'],
+            attributes.retry_policy.maximum_attempts,
+            attributes.start_to_close_timeout.ToTimedelta(),
+            attributes.heartbeat_timeout.ToTimedelta(),
+        )
+        for attributes in scheduled
+    ] == snapshot(
+        [
+            ('ensure', 1, timedelta(minutes=10), timedelta(seconds=30)),
+            ('exists', 0, timedelta(minutes=10), timedelta(seconds=30)),
+            ('write_bytes', 1, timedelta(minutes=10), timedelta(seconds=30)),
+            ('run', 1, timedelta(seconds=960), timedelta(seconds=30)),
+        ]
+    )
+
+
+async def test_an_oversized_workspace_result_explains_the_payload_limit(client: Client) -> None:
+    provider.reset()
+    provider.environments['seeded'] = {'/remote/big.bin': os.urandom(1_600_000)}
+    with pytest.raises(WorkflowFailureError) as exc_info:
+        await _execute_workspace_calls(client, 'big.bin')
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == 'UserError'
+    assert cause.message.startswith("A workspace 'read_bytes' call returned a result too large for Temporal.")
+    assert 'Work with large files or command output inside a tool' in cause.message
 
 
 # --- The activity side on its own ---------------------------------------------------------------
