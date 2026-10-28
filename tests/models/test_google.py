@@ -68,6 +68,7 @@ from pydantic_ai import (
     WebCitationSource,
     capture_run_messages,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
@@ -236,6 +237,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -314,6 +316,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -351,6 +354,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -394,6 +398,7 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
                     timestamp=IsDatetime(),
                     provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -457,6 +462,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -500,6 +506,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -539,6 +546,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -981,6 +989,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1060,6 +1069,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'kind': 'response',
                 'provider_name': 'google',
                 'provider_url': 'https://generativelanguage.googleapis.com/',
+                'canonical_system': 'google',
                 'provider_details': {
                     'finish_reason': 'SAFETY',
                     'safety_ratings': [
@@ -1227,6 +1237,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1318,6 +1329,7 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1477,6 +1489,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1739,6 +1752,7 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1823,6 +1837,7 @@ async def test_google_model_web_fetch_tool(allow_model_requests: None, google_pr
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1913,6 +1928,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2155,6 +2171,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2203,6 +2220,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2285,6 +2303,7 @@ async def test_google_model_thinking_part_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=datetime.UTC),
@@ -2342,6 +2361,7 @@ async def test_google_model_thinking_part_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2405,6 +2425,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2602,6 +2623,7 @@ async def test_google_url_input(
                 timestamp=IsDatetime(),
                 provider_name='google-cloud',
                 provider_url='https://aiplatform.googleapis.com/',
+                canonical_system='google-cloud',
                 provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2648,6 +2670,7 @@ async def test_google_url_input_force_download(
                 timestamp=IsDatetime(),
                 provider_name='google-cloud',
                 provider_url='https://aiplatform.googleapis.com/',
+                canonical_system='google-cloud',
                 provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2709,6 +2732,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2742,6 +2766,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2969,6 +2994,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3008,6 +3034,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3085,6 +3112,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3126,6 +3154,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3186,6 +3215,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3253,6 +3283,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3302,6 +3333,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3367,6 +3399,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3408,6 +3441,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3465,6 +3499,7 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3711,6 +3746,7 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
                 timestamp=IsDatetime(),
                 provider_name='google-cloud',
                 provider_url='https://aiplatform.googleapis.com/',
+                canonical_system='google-cloud',
                 provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'},
                 provider_response_id='5QlpatShBNyV3tMPkcCE2Ak',
                 finish_reason='stop',
@@ -3806,6 +3842,7 @@ Based on your location in **San Francisco**, here is the weather forecast for to
                 timestamp=IsDatetime(),
                 provider_name='google-cloud',
                 provider_url='https://aiplatform.googleapis.com/',
+                canonical_system='google-cloud',
                 provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND'},
                 provider_response_id='6wlpatX_FviAjNsP4MPYsQw',
                 finish_reason='stop',
@@ -4248,6 +4285,7 @@ def test_google_process_response_empty_candidates(google_provider: GoogleProvide
             timestamp=IsDatetime(),
             provider_name='google',
             provider_url='https://generativelanguage.googleapis.com/',
+            canonical_system='google',
             provider_response_id='resp-456',
         )
     )
@@ -4619,6 +4657,7 @@ async def test_google_stream_usage_survives_mid_stream_error(
             timestamp=IsDatetime(),
             provider_name='google',
             provider_url='https://generativelanguage.googleapis.com/',
+            canonical_system='google',
             provider_response_id='resp-1',
             run_id=IsStr(),
             conversation_id=IsStr(),
@@ -4753,6 +4792,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                     timestamp=IsDatetime(),
                     provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -4834,6 +4874,7 @@ Here are some key facts about the Eiffel Tower:
                     timestamp=IsDatetime(),
                     provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -4937,6 +4978,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     timestamp=IsDatetime(),
                     provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
                     finish_reason='stop',
@@ -5568,6 +5610,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=datetime.UTC),
@@ -5612,6 +5655,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=datetime.UTC),
@@ -5653,6 +5697,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6021,6 +6066,7 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6029,6 +6075,11 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
             ),
         ]
     )
+
+
+def _gemini_api_model() -> GoogleModel:
+    """A Gemini API model, which replays thought signatures recorded under `google`."""
+    return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='mock-api-key'))
 
 
 def test_google_thought_signature_on_thinking_part():
@@ -6047,7 +6098,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -6058,7 +6109,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert old_google_response == snapshot(
         {
@@ -6082,7 +6133,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -6092,7 +6143,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert old_google_response == snapshot(
         {
@@ -6116,7 +6167,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     new_google_response = _content_model_response(
         ModelResponse(
@@ -6126,7 +6177,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='google',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert old_google_response == snapshot(
         {
@@ -6154,7 +6205,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name=None,  # ModelResponse doesn't have provider_name set
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert response_with_item_provider_name == snapshot(
         {'role': 'model', 'parts': [{'thought_signature': b'signature', 'text': 'text'}]}
@@ -6172,7 +6223,7 @@ def test_google_thought_signature_on_thinking_part():
             ],
             provider_name='openai',  # Different provider on ModelResponse
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert response_with_different_provider == snapshot(
         {'role': 'model', 'parts': [{'thought_signature': b'signature', 'text': 'text'}]}
@@ -6188,7 +6239,7 @@ def test_google_missing_tool_call_thought_signature():
             ],
             provider_name='openai',
         ),
-        frozenset({'google'}),
+        _gemini_api_model().accepts_stateless_artifacts,
     )
     assert google_response == snapshot(
         {
@@ -6259,6 +6310,7 @@ async def test_google_streaming_tool_call_thought_signature(
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6291,6 +6343,7 @@ async def test_google_streaming_tool_call_thought_signature(
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6401,7 +6454,10 @@ async def test_google_non_leading_system_prompt_wraps_as_user_message(google_pro
     prepared = m.prepare_messages(messages)
     system_instruction, contents = await m._map_messages(prepared, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
-    assert system_instruction == {'role': 'user', 'parts': [{'text': 'You are helpful.'}]}
+    assert system_instruction == {
+        'role': 'user',
+        'parts': [{'text': 'You are helpful.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}],
+    }
     contents_any = cast(list[Any], contents)
     wrapped_texts = [
         part['text']
@@ -7347,6 +7403,7 @@ async def test_google_vertex_service_tier_flex(
                 timestamp=IsDatetime(),
                 provider_name='google-cloud',
                 provider_url='https://aiplatform.googleapis.com/',
+                canonical_system='google-cloud',
                 provider_details={'finish_reason': 'STOP', 'timestamp': IsDatetime(), 'traffic_type': 'ON_DEMAND_FLEX'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -7398,6 +7455,7 @@ async def test_google_vertex_service_tier_flex_stream(
                 timestamp=IsDatetime(),
                 provider_name='google-cloud',
                 provider_url='https://aiplatform.googleapis.com/',
+                canonical_system='google-cloud',
                 provider_details={'timestamp': IsDatetime(), 'finish_reason': 'STOP', 'traffic_type': 'ON_DEMAND_FLEX'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -7447,6 +7505,7 @@ async def test_google_model_gemini_3_5_flash(allow_model_requests: None, google_
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',

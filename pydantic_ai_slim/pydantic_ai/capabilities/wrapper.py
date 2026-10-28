@@ -192,6 +192,18 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             or self.wrapped._has_on_model_request_error
         )
 
+    def _handles_model_request_error(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> bool:
+        if type(self).on_model_request_error is not WrapperCapability.on_model_request_error:
+            return True
+        return self.wrapped._handles_model_request_error(ctx, request_context)
+
+    @property
+    def _has_prepare_model_request(self) -> bool:
+        return (
+            type(self).prepare_model_request is not WrapperCapability.prepare_model_request
+            or self.wrapped._has_prepare_model_request
+        )
+
     @property
     def has_wrap_run_event_stream(self) -> bool:
         return (
@@ -267,6 +279,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:
         return self.wrapped.get_model()
+
+    @property
+    def _can_supply_model(self) -> bool:
+        return type(self).get_model is not WrapperCapability.get_model or self.wrapped._can_supply_model
+
+    def _model_is_default(self) -> bool:
+        # A subclass that supplies its own model makes a selection of its own, not a stand-in.
+        return type(self).get_model is WrapperCapability.get_model and self.wrapped._model_is_default()
 
     @property
     def has_resolve_model_id(self) -> bool:
@@ -428,6 +448,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         return await self.wrapped.before_model_request(ctx, request_context)
+
+    async def prepare_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        return await self.wrapped.prepare_model_request(ctx, request_context)
 
     async def after_model_request(
         self,

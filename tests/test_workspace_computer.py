@@ -106,6 +106,8 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
         lambda: HoldKeys(keys=('',), seconds=1),
         # Modifiers are checked before anything runs, so an unknown one can't be skipped mid-action.
         lambda: Click(modifiers=('ctrl', 'exec')),
+        # A known key that isn't a modifier is refused too.
+        lambda: Click(modifiers=('ctrl', 'a')),
     ],
 )
 def test_actions_are_validated_when_built_in_python(build: Any) -> None:
