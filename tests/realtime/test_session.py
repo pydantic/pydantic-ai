@@ -602,6 +602,36 @@ async def test_cumulative_transcript_repeating_itself_emits_nothing() -> None:
     assert deltas == [TranscriptUpdate(index=0, speaker='user', delta='Hello', transcript='Hello')]
 
 
+async def test_cumulative_transcript_revised_to_empty_clears_the_caption() -> None:
+    """A snapshot revising the turn to nothing is a correction, and the caption view must show it as one.
+
+    An empty `transcript` is a real value, not "no transcript": treating it as missing would keep
+    rendering the text the provider just withdrew.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='hello', cumulative=True),
+            InputTranscript(text='', cumulative=True),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        events, deltas = await asyncio.gather(
+            drain_events(session), aiter_to_list(session.stream_transcripts(delta=True))
+        )
+
+    assert [event.delta for event in events if isinstance(event, PartDeltaEvent)] == [
+        SpeechPartDelta(speaker='user', transcript_delta='hello', transcript='hello'),
+        SpeechPartDelta(speaker='user', transcript_delta='', transcript=''),
+    ]
+    assert deltas == [
+        TranscriptUpdate(index=0, speaker='user', delta='hello', transcript='hello'),
+        TranscriptUpdate(index=0, speaker='user', delta='', transcript=''),
+    ]
+
+
 # One second of the default 24 kHz mono PCM16 output.
 _SECOND = 48000
 _MINUTE = 60 * _SECOND
@@ -995,7 +1025,7 @@ async def test_multiple_assistant_items_fold_into_one_response() -> None:
         [
             ModelResponse(
                 parts=[
-                    SpeechPart(speaker='assistant', transcript='first'),
+                    SpeechPart(speaker='assistant', transcript='first', id='item-1', provider_name='openai'),
                     TextPart(content='second'),
                 ],
                 provider_name='openai',
@@ -1482,8 +1512,8 @@ async def test_explicit_interrupt_records_audio_offset_on_last_speech_part() -> 
         [
             ModelResponse(
                 parts=[
-                    SpeechPart(speaker='assistant', transcript='first'),
-                    SpeechPart(speaker='assistant', transcript='second', interrupted_at_ms=640),
+                    SpeechPart(speaker='assistant', transcript='first', id='item-1'),
+                    SpeechPart(speaker='assistant', transcript='second', interrupted_at_ms=640, id='item-2'),
                 ],
                 model_name='m',
                 timestamp=IsDatetime(),
@@ -1521,9 +1551,7 @@ async def test_deltas_still_in_flight_when_a_cancel_lands_stay_in_the_interrupte
             ModelResponse(
                 parts=[
                     SpeechPart(
-                        speaker='assistant',
-                        transcript='I was saying something',
-                        interrupted_at_ms=120,
+                        speaker='assistant', transcript='I was saying something', interrupted_at_ms=120, id='item-1'
                     )
                 ],
                 model_name='m',
@@ -2466,7 +2494,8 @@ async def test_handle_barge_in_flushes_on_provider_initiated_interruption() -> N
         assert [chunk async for chunk in stream] == []
 
 
-async def test_speech_parts_do_not_persist_provider_item_ids() -> None:
+async def test_speech_parts_record_provider_item_ids() -> None:
+    """The model's speech carries the provider's item ID, which a standard model never receives."""
     openai = RealtimeSession(
         FakeRealtimeConnection([OutputTranscript(text='hello', is_final=True, item_id='item-a'), ResponseDone()]),
         _noop_runner,
@@ -2477,14 +2506,20 @@ async def test_speech_parts_do_not_persist_provider_item_ids() -> None:
         _noop_runner,
         provider_name='google',
     )
-    _ = await collect_events(openai)
+    openai_events = await collect_events(openai)
     _ = await collect_events(gemini)
 
+    starts = [event.part for event in openai_events if isinstance(event, PartStartEvent)]
+    assert starts == snapshot([SpeechPart(speaker='assistant', transcript='', id='item-a', provider_name='openai')])
     openai_part = openai.new_messages()[0].parts[0]
     gemini_part = gemini.new_messages()[0].parts[0]
     assert isinstance(openai_part, SpeechPart) and isinstance(gemini_part, SpeechPart)
-    assert (openai_part.id, openai_part.provider_name) == (None, None)
+    assert (openai_part.id, openai_part.provider_name) == ('item-a', 'openai')
     assert (gemini_part.id, gemini_part.provider_name) == (None, None)
+
+    # A text model reads the speech as plain text: a realtime item ID means nothing to the API it would be replayed to.
+    prepared = TestModel().prepare_messages(openai.all_messages())
+    assert prepared[0].parts == snapshot([TextPart(content='hello')])
 
 
 # --- tool calls: history + events --------------------------------------------------------------
@@ -6028,7 +6063,7 @@ async def test_send_during_response_is_recorded_after_response() -> None:
     assert session.new_messages() == snapshot(
         [
             ModelResponse(
-                parts=[SpeechPart(speaker='assistant', transcript='first response')],
+                parts=[SpeechPart(speaker='assistant', transcript='first response', id='assistant-1')],
                 provider_response_id='response-1',
                 timestamp=IsDatetime(),
                 finish_reason='stop',
@@ -6674,9 +6709,9 @@ async def test_late_transcript_yields_its_turn_again_in_stream_transcripts() -> 
 
     assert transcripts == snapshot(
         [
-            SpeechPart(speaker='assistant', transcript='Hello'),
-            SpeechPart(speaker='assistant', transcript='Hello world.'),
-            SpeechPart(speaker='assistant', transcript='Bonjour.'),
+            SpeechPart(speaker='assistant', transcript='Hello', id='a'),
+            SpeechPart(speaker='assistant', transcript='Hello world.', id='a'),
+            SpeechPart(speaker='assistant', transcript='Bonjour.', id='b'),
         ]
     )
     assert updates == snapshot(
@@ -9011,7 +9046,7 @@ async def test_existing_assistant_speech_associates_late_item_id_in_session_stat
     assert isinstance(response, ModelResponse)
     part = response.parts[0]
     assert isinstance(part, SpeechPart)
-    assert part.id is None
+    assert part.id == 'assistant-item'
     assert len(response.parts) == 1
 
 

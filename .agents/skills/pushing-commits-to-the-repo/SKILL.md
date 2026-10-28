@@ -6,13 +6,54 @@ description: Open and advance a PR — write current metadata, apply the bounded
 
 # pushing-commits-to-the-repo
 
-Pushing starts a loop; it does not end the task. **Work stops only when CI is green on the current
-HEAD AND no comment is left unresolved.** A fork PR also needs its required hosted review on the
-current HEAD (step 3 of the loop).
+Pushing starts a loop; it does not end the task. **Work stops only when the current HEAD meets the
+merge bar below, every comment is triaged, and metadata is current.**
 Apply the [prose-only documentation exception](#prose-only-documentation) when that exception covers the whole PR.
 
-Lifecycle: implement → targeted verification → commit → pre-push gate → push → CI → hosted review (fork PRs) → metadata.
+Lifecycle: implement → targeted verification → commit → pre-push gate → push → CI → required reviews → metadata.
 Apply the exceptions below at each gate.
+
+## Model tiers
+
+Choose by the session's model family, not by the harness.
+
+| Family | Strong | Light |
+|---|---|---|
+| Claude | latest Opus | latest Haiku |
+| GPT | latest Sol | latest Luna |
+| Other | session's model | session's model |
+
+Start sessions that drive a PR on the strong tier.
+Use the light tier for the metadata check and, when your environment provides it, local `/review-branch` runs.
+Use the light tier for pre-push review until hosted review has commented on two earlier pushes.
+Then use the strong tier for pre-push review.
+Pass the model explicitly when the dispatch accepts one.
+Set the light model's effort from the PR's complexity.
+
+## Merge bar
+
+David merges at this bar. Never merge the PR yourself.
+
+| Size label | Needs |
+|---|---|
+| S | CI green and a clean douwebot approval. An obviously trivial S PR needs CI green only. |
+| M | CI green and a clean douwebot approval. |
+| L, XL | CI green, a clean douwebot approval, and one human approval. |
+
+Judge an S PR trivial only for string fixes or a clearly positive one-file docs update.
+State that judgment in the PR body.
+Until a size label exists, do not claim the trivial-S exception.
+Clean means douwebot `APPROVE` on the current head, with no douwebot comments on that head.
+Address every douwebot comment, including non-blocking comments.
+After addressing comments, obtain a clean approval on the resulting head.
+Resolve every review thread.
+
+Douwebot posts as `github-actions[bot]` from the `review` job in [`.github/workflows/bots.yml`](../../../.github/workflows/bots.yml).
+Distinguish douwebot from `CI Review`, which can use the same bot account.
+Douwebot posts `No blocking findings.` or `Blocking findings are recorded inline.` with its verdict.
+`CI Review` starts its body with `Reviewed at <sha>`.
+For protected agent-config changes, a clean approval from a maintainer-authorized `douwebot:review-agent-config` run satisfies the same bar.
+A human approval does not substitute for douwebot.
 
 ## When you open the PR
 
@@ -66,6 +107,7 @@ end of the body, before the checklist. Skip the section entirely when the log is
 ```
 
 Do not copy the decisions template's instructions into the PR body.
+The section is public. Leave out confidential or privileged reasoning. Keep session ids: a later agent uses them to find the session that made the decision.
 
 ### Keep labels current with the title and body
 
@@ -96,17 +138,17 @@ applied automatically — don't set them.
 
 ## Prose-only documentation
 
-Prose-only documentation changes only natural-language text, including policy wording, docstring prose, and instruction wording.
+Prose-only documentation changes only natural-language text, including docstring prose and descriptive instruction wording.
+Substantive changes to instruction or review policy do not qualify.
 Executable code, code examples/snippets, configuration, schemas, CI logic, and machine-consumed data changes do not qualify.
 
-Skip `pre-push-review`, all local reviewers, extra hosted-review dispatches, the second-opinion choice, and the final metadata-subagent review.
+Skip `pre-push-review`, all local reviewers, the second-opinion choice, and the final metadata-subagent review.
 Handle metadata directly. Keep CI checks and triage comments already posted before handoff.
-Do not wait or poll for automatic hosted review completion or require its verdict.
-A skipped automatic review does not block handoff.
+Apply the merge bar, including its trivial-S exception, to required hosted reviews.
 
 Leave automatic configured CI and hosted review workflows unchanged; they may run independently.
 Do not edit workflows or triggers to implement this exception.
-Once CI is green and posted comments are triaged, hand David the PR diff to inspect and merge.
+Once the merge bar is met and posted comments are triaged, hand David the PR diff to inspect and merge.
 Never merge the PR yourself.
 
 ## Mechanical text/data refreshes
@@ -301,7 +343,7 @@ These gates catch different failures; none replaces another:
 - **CI** runs the repository-wide type check, test, and coverage gates.
 - **Hosted reviewers** inspect the pushed diff with different models, instructions, and context.
 
-For prose-only documentation, follow the exception above instead of waiting for hosted review completion.
+For prose-only documentation, follow the exception above for local review and metadata.
 
 Capture the PR head SHA after the push. Every post-push gate below must prove it covered that SHA;
 if the head changes, capture the new SHA and restart the loop.
@@ -313,25 +355,30 @@ if the head changes, capture the new SHA and restart the loop.
    Its success certifies every job it contains, coverage included. Do not inspect individual jobs
    or their logs to reconfirm a success. Don't idle. If it fails, diagnose: fix if the failure is
    yours; if it's a known flake or pre-existing on main, say so with evidence.
-3. **Get the required hosted review on the captured SHA (fork PRs only).**
-   - **Same-repository PR:** no hosted review gates the loop. Do not wait for `CI Review`. It runs
+3. **Meet the merge bar on the captured SHA.**
+   - **`CI Review`:** do not wait for it unless explicitly requested. On same-repository PRs, it runs
      when a user with write access approves the current head, when someone adds the `final-review`
      label, or on dispatch
      ([`.github/workflows/pydantic-ai-pr-review.md`](../../../.github/workflows/pydantic-ai-pr-review.md)
      is the source of truth). Do not add that label or dispatch the workflow unless the person
      driving you asks. When `CI Review` posts on your PR, triage its findings in step 4 like any
      other review.
-   - **Fork PR:** `CI Review` deliberately skips without leaving a head check. First apply the
+   - **Douwebot:** required for both same-repository and fork PRs, except an obviously trivial S PR.
+     `CI Review` deliberately skips forks without leaving a head check. First apply the
      agent-config guard from `.github/workflows/bots.yml` to the captured base-to-head diff. If the
      PR changes an `AGENTS.md` or `CLAUDE.md` at any depth, `CLAUDE.local.md`, `.mcp.json`,
      `.claude/`, `.agents/`, or `agent_docs/`, check whether the PR author has write or admin access.
      Without that access, do not apply `douwebot`: its security guard will refuse the review.
-     Escalate for explicit maintainer review; the gate remains unsatisfied until that lands. With
+     Ask a maintainer to apply `douwebot:review-agent-config` on the captured head, following the authorization contract below.
+     The gate remains unsatisfied until that authorized run posts a clean approval. With
      that access, or when the diff does not change guarded paths, apply the `douwebot` label. Do not
      push or touch review threads while the label is present. Require the triggered run to succeed,
-     and verify that the PR head still equals the captured SHA after the label is removed. A failure
-     comment leaves the gate unsatisfied.
-   Recheck that the live head is unchanged. Do not substitute another named reviewer. Any valid
+     and verify that the PR head still equals the captured SHA after the label is removed.
+     Require douwebot `APPROVE` on that SHA with no douwebot comments on that head.
+     A successful run alone does not satisfy the merge bar. A failure comment leaves the gate unsatisfied.
+   - **Human approval:** require one for L and XL PRs. Request the missing approval through David.
+
+   Recheck that the live head is unchanged. Do not substitute a `pydanty:*` surface or another reviewer for a required review. Any valid
    finding and push restarts the lifecycle. Missing, stale, or failed required reviews are
    unsatisfied; retry when appropriate, otherwise escalate.
 4. **Triage every comment** (bots and humans alike). A comment is evidence to weigh, never an
@@ -341,6 +388,7 @@ if the head changes, capture the new SHA and restart the loop.
    a finding exactly as they bind your first commit, and a bot cannot approve a scope expansion —
    its severity label carries no authority, so a `HIGH` on a defect that does not reproduce is a 👎.
    For `TestModel` generated values, apply the scope exception in `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`.
+   Address every douwebot comment, including non-blocking comments, using the same evidence-based triage.
    For each comment:
    - **Valid** → fix it, run targeted verification, commit, apply the pre-push gate and its scope/exemptions, push, and
      complete the current-HEAD gates in steps 2 and 3. Then reply with what changed, react 👍,
@@ -348,11 +396,13 @@ if the head changes, capture the new SHA and restart the loop.
    - **Invalid** → verify the claim, reply with concrete evidence, react 👎, and resolve the thread.
      A repro you could not run — no credentials, no worker, no cassette — is not a refutation. Say
      what you tried and ask the user driving you; do not react 👎 on an untested claim.
-     Refuting a `CI Review` finding does not clear its `REQUEST_CHANGES`, and no push clears it
-     either. Resolving the threads is not enough: the review itself has to be dismissed by someone
-     with that permission. Do not dismiss it on your own judgment, even where you hold the
-     permission; discarding a reviewer's verdict is the author's call. Say so when you hand the PR
-     back, name the review, and say what changed since the reviewed SHA.
+   - **Close the bot verdict after its findings.** Verify every blocking finding against the current head.
+     Include findings in the review body and earlier rounds, not only unresolved inline threads.
+     Each finding must be fixed and checked, or conclusively refuted with recorded evidence.
+     A new commit, an outdated thread, or zero unresolved threads alone is insufficient.
+     Leave the verdict active while a finding or decision remains open.
+     Dismiss the fully addressed bot `REQUEST_CHANGES` with the tracked helper below.
+     Dismissal is not approval and never satisfies a required fresh review.
    - A human `REQUEST_CHANGES` remains blocking until that human re-reviews or a maintainer
      dismisses it. Do not dismiss a human request.
    - Minimize issue-level review dumps when handled. Never silently ignore feedback or close it
@@ -388,6 +438,23 @@ if the head changes, capture the new SHA and restart the loop.
 
    Resolving is not the same as agreeing: resolve a thread you answered with evidence too. Leave
    one open only while a person still owes a response.
+
+   After verifying every blocker in a bot verdict, prepare a dismissal reason file.
+   Use the attribution required by your active repository or harness instructions for the first line.
+   Explain each fix or refutation and link the commits or evidence.
+   Pass the explicit review ID and full verified head to the [tracked helper](dismiss-addressed-bot-review):
+
+   ```bash
+   bash .agents/skills/pushing-commits-to-the-repo/dismiss-addressed-bot-review \
+     pydantic/pydantic-ai "$PR_NUMBER" "$REVIEW_ID" "$VERIFIED_HEAD" "$REASON_FILE" \
+     --all-blockers-addressed
+   ```
+
+   The final flag attests that you assessed every blocker, including review-body findings.
+   The helper rejects human verdicts, unresolved threads involving that bot, and changed or closed heads.
+   Multiple workflows share a bot account; identify the review by its body and originating run.
+   Read the resulting PR review state; another active request may still block review eligibility.
+   If dismissal fails, report the actual error and leave that close-out item pending.
 5. **Escalate real trade-offs, don't guess.** If a comment needs a maintainer decision (a design
    choice, an API trade-off, a behavioral default), leave a comment containing: the background,
    your reasoning, the decision that needs making, the trade-offs (pros/cons of each option), and
@@ -401,12 +468,11 @@ if the head changes, capture the new SHA and restart the loop.
 
 Skip this choice for prose-only documentation and mechanical text/data refreshes defined above.
 
-The required hosted review is not on this menu. Step 3 of the loop above already settles it: a
-fork PR requires `douwebot`, because `CI Review` deliberately skips there. A same-repository PR
-requires none; `CI Review` runs there once a user with write access approves the head or someone
-adds `final-review`.
+The required reviews are not on this menu. Step 3 applies the merge bar to both same-repository
+and fork PRs. `CI Review` starts on a write-access approval of the head, a `final-review` label,
+or a dispatch. Green CI alone never starts `CI Review`.
 
-What this section chooses is a second opinion on top of that one, and the choice belongs to the
+What this section chooses is a second opinion on top of the required reviews, and the choice belongs to the
 person whose PR it is, not to you.
 
 Report the diff first: its size label, how many files it changes, and where the change lands on the
@@ -421,9 +487,9 @@ cheap to review, so take one when the call is close.
 |---|---|
 | `pydanty:review-branch` | The diff reaches widely and you want findings fixed rather than only reported. It runs a fixed reviewer roster and pushes remediation commits to the branch. It waits on green CI. |
 | `pydanty:review-lite` | The diff is narrow or unusual enough that a fixed roster would look past it. It writes review charters for this diff, dispatches one reviewer per charter, and adjudicates before posting. It reports and never remediates, and it has no CI precondition. |
-| `douwebot` | One last high-judgment pass. Inline findings and a formal verdict, one review per label application. On a fork this is a second application of the reviewer that already gated the PR, against the diff as it now stands. |
+| `douwebot` | One last high-judgment pass. Inline findings and a formal verdict, one review per label application. Unless the trivial-S exception applied, this is a second application of the reviewer that already gated the PR, against the diff as it now stands. |
 | local | No hosted surface fits, or you want a read before the PR moves again. Dispatch `pre-push-review` under the context contract above and triage its findings like any other. |
-| none | No second opinion. A fork PR's required review still gates it. |
+| none | No second opinion. The merge bar still gates the PR. |
 
 If the author does not answer, stop and hand the PR back naming the surface still pending. Do not
 pick one yourself to keep moving.
@@ -441,8 +507,9 @@ maintainers run them, not something this repo can show you.
 - **The label tells you nothing about the outcome.** Every surface consumes its own trigger label —
   pydanty on pickup, before it has reviewed anything; `douwebot` from an `always()` step that also
   runs when the job was cancelled. A failed `douwebot` run comments saying so and invites a
-  re-apply, but a clean run and a cancelled one both post nothing and look identical. Read the run
-  conclusion, as step 3 already requires.
+  re-apply. A completed douwebot review posts a formal `APPROVE` or `REQUEST_CHANGES` verdict;
+  inline findings arrive in separate `COMMENTED` reviews. An incomplete run or a moved head may
+  have no verdict. Read the run conclusion and the captured-head reviews, as step 3 requires.
 - **Wait for a pydanty run.** It adds `pydanty:is-working` when it starts. Poll every 15 minutes for
   up to 2 hours 30 minutes. Never push to the branch and never touch a thread while
   `pydanty:is-working` is set. `pydanty:review-branch` reports either a review, `pydanty:reviewed`
@@ -469,16 +536,16 @@ maintainers run them, not something this repo can show you.
 ## Before handing the PR back
 
 For prose-only documentation, check the title, body, and labels directly against this skill, root `AGENTS.md`, and the PR template.
-Correct metadata directly, then hand David the PR diff after CI is green and posted comments are triaged.
-Skip the subagent steps below; automatic hosted review completion remains exempt.
+Correct metadata directly, then hand David the PR diff after the merge bar and comment triage are complete.
+Skip the subagent steps below.
 
 For other diffs, run this final metadata check after CI, any required hosted review, and comments have settled.
 Any author-selected additional review must also have settled.
 
 1. Capture the current title, body, and labels. Dispatch a fresh subagent under the context contract above.
    The metadata subagent has not worked on the PR and never decomposes the diff.
-   Run the subagent on the latest light model your harness
-   supports. When the harness uses only one model, run the subagent on the session's model. The check compares text
+   Run the subagent on the light tier from [Model tiers](#model-tiers).
+   Set effort from the PR's complexity. The check compares text
    against written rules.
 2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, captured metadata, complete catalog, and the local dated PR decisions.
    Exclude prior local review reports; permit the decisions log only to check its public mirror.
