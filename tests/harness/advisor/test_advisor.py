@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 from inline_snapshot import snapshot
@@ -19,7 +19,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import AbstractModel, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionDef, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
@@ -27,7 +27,12 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.advisor import Advisor
+from tests.conftest import try_import
 from tests.harness.conftest import agent_run_names
+
+with try_import() as anthropic_imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -89,6 +94,40 @@ class TestAdvisor:
 
         assert seen[0].function_tools == []
         assert seen[0].native_tools == [AdvisorTool(model='claude-opus-4-8', max_tokens=2048, caching='5m')]
+
+    @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+    @pytest.mark.parametrize('mode', ['auto', 'native'])
+    async def test_uses_native_advisor_for_a_renamed_provider_of_the_same_api(
+        self, mode: Literal['auto', 'native']
+    ) -> None:
+        """An `AnthropicProvider` subclass named `claude-code` still reaches the Anthropic API and its model IDs."""
+
+        class ClaudeCodeProvider(AnthropicProvider):
+            @property
+            def name(self) -> str:
+                return 'claude-code'
+
+        model = AnthropicModel('claude-sonnet-4-5', provider=ClaudeCodeProvider(api_key='x'))
+        [factory] = Advisor('anthropic:claude-opus-4-8', mode=mode).get_native_tools()
+        assert callable(factory)
+        assert factory(RunContext(deps=None, model=model, usage=RunUsage())) == AdvisorTool(model='claude-opus-4-8')
+
+    async def test_a_model_without_a_provider_is_matched_by_its_system(self) -> None:
+        """A realtime model has no `Model.provider`, so its `system` names the API it reaches."""
+
+        class _RealtimeLikeModel(AbstractModel):
+            @property
+            def model_name(self) -> str:
+                return 'voice'
+
+            @property
+            def system(self) -> str:
+                return 'anthropic'
+
+        [factory] = Advisor('anthropic:claude-opus-4-8').get_native_tools()
+        assert callable(factory)
+        ctx = RunContext(deps=None, model=_RealtimeLikeModel(), usage=RunUsage())
+        assert factory(ctx) == AdvisorTool(model='claude-opus-4-8')
 
     async def test_fallback_model_gets_the_advisor_for_its_own_provider(self) -> None:
         """A `ModelFallback` model is offered the advisor as it would be on its own, not as the failed model was.

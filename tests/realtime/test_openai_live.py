@@ -210,9 +210,16 @@ def test_websocket_url_is_the_live_endpoint(model: OpenAILiveModel) -> None:
 
 def test_azure_is_rejected() -> None:
     """Azure does not serve GPT-Live, so pointing at it fails with a pointer to what does."""
-    provider = AzureProvider(azure_endpoint='https://example.openai.azure.com', api_key='k', api_version='v')
-    with pytest.raises(UserError, match='Azure OpenAI does not serve GPT-Live'):
-        OpenAILiveModel('gpt-live-1', provider=provider)
+
+    class RenamedAzureProvider(AzureProvider):
+        @property
+        def name(self) -> str:
+            return 'my-azure'
+
+    for provider_cls in (AzureProvider, RenamedAzureProvider):
+        provider = provider_cls(azure_endpoint='https://example.openai.azure.com', api_key='k', api_version='v')
+        with pytest.raises(UserError, match='Azure OpenAI does not serve GPT-Live'):
+            OpenAILiveModel('gpt-live-1', provider=provider)
 
 
 def test_agent_instructions_and_tools_configure_the_backend(model: OpenAILiveModel) -> None:
@@ -1762,6 +1769,19 @@ async def test_the_agents_model_is_used_when_reached_the_same_way(
     agent = Agent(OpenAIResponsesModel('gpt-6-luna', provider=provider(agent_route)))
     live = OpenAILiveModel('gpt-live-1', provider=provider(live_route))
     assert await _session_backend(agent, live) == backend
+
+
+async def test_the_agents_model_is_used_through_a_renamed_provider() -> None:
+    """A provider that renames itself reaches the Live session's server as long as both models use it."""
+
+    class RenamedOpenAIProvider(OpenAIProvider):
+        @property
+        def name(self) -> str:
+            return 'my-openai'
+
+    provider = RenamedOpenAIProvider(api_key='x')
+    agent = Agent(OpenAIResponsesModel('gpt-6-luna', provider=provider))
+    assert await _session_backend(agent, OpenAILiveModel('gpt-live-1', provider=provider)) == 'gpt-6-luna'
 
 
 async def test_an_agent_model_not_at_openai_is_not_a_backend(model: OpenAILiveModel) -> None:

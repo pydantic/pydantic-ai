@@ -99,6 +99,27 @@ def test_batching_a_chat_completions_model_points_to_the_responses_api(
     assert str(exc_info.value) == message
 
 
+def test_batching_a_chat_completions_model_points_to_the_responses_api_by_profile_not_provider_name() -> None:
+    """The hint follows `openai_supports_batch_api`, which `OpenAIResponsesModel` batches on, not the provider's name."""
+
+    class RenamedOpenAIProvider(OpenAIProvider):
+        @property
+        def name(self) -> str:
+            return 'my-openai'
+
+    provider = RenamedOpenAIProvider(api_key='k')
+    assert OpenAIResponsesModel('gpt-4.1-nano', provider=provider).batch_max_requests is not None
+    with pytest.raises(UserError, match='batch it through the Responses API'):
+        BatchPool().wrap(OpenAIChatModel('gpt-4.1-nano', provider=provider))
+
+    no_batch_profile = OpenAIModelProfile(openai_supports_batch_api=False)
+    with pytest.raises(UserError) as exc_info:
+        BatchPool().wrap(
+            OpenAIChatModel('gpt-4.1-nano', provider=OpenAIProvider(api_key='k'), profile=no_batch_profile)
+        )
+    assert str(exc_info.value) == "`OpenAIChatModel` 'gpt-4.1-nano' has no batch API."
+
+
 @pytest.mark.parametrize(
     'model_factory,max_requests',
     [

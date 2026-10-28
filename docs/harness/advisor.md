@@ -96,7 +96,7 @@ In `auto` mode, a `Model` instance runs locally and keeps its own provider, clie
 | `caching` | `None` | Anthropic-native prompt-cache TTL: `'5m'` or `'1h'`. |
 | `forward_history` | `False` | Forward completed executor message history to local consultations. |
 
-Use `mode='native'` when the consultation must stay inside the executor provider, or `mode='local'` when the configured advisor provider must receive a separate request. Native mode requires an `anthropic:<model>` or `openrouter:<model>` string and an executor on that same provider. It does not fall back when the executor lacks support.
+Use `mode='native'` when the consultation must stay inside the executor provider, or `mode='local'` when the configured advisor provider must receive a separate request. Native mode requires an `anthropic:<model>` or `openrouter:<model>` string and an executor on that same provider. A provider subclass that only changes its `name`, such as an `AnthropicProvider` subclass named `claude-code`, counts as the provider it extends. It does not fall back when the executor lacks support.
 
 `max_uses` caps consultations per executor model request, the same scope as Anthropic's native tool, and resets on the next request. On the local path, a call counts once its arguments validate, even if the consultation then fails. Parallel calls cannot exceed the cap. Without `max_uses`, the run's usage limits bound local consultations within one request.
 

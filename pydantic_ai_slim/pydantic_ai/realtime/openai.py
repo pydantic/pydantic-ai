@@ -65,6 +65,7 @@ from ..models import ModelRequestParameters
 from ..models.openai import _map_api_errors as map_openai_api_errors  # pyright: ignore[reportPrivateUsage]
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
+from ..providers.azure import AzureProvider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._lifecycle import InputId, LifecycleEvent, RealtimeFrame, ResponseEnded, ResponseStatus, StaleEvent
@@ -1554,7 +1555,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         """Resolve the `provider=` argument; a protocol clone (Azure) overrides which providers it takes."""
         if isinstance(provider, str):
             provider = cast('Provider[AsyncOpenAI]', infer_provider(provider))
-        if provider.name == 'azure':
+        if isinstance(provider, AzureProvider):
             raise UserError(
                 'Azure OpenAI is not supported through `OpenAIRealtimeModel`: its realtime endpoint uses a '
                 'different URL and authentication scheme. Use `AzureRealtimeModel` (or the '

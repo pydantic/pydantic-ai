@@ -107,6 +107,7 @@ from ..models.openai import (
 from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..profiles.openai import OpenAIModelProfile, openai_model_profile
 from ..providers import Provider, infer_provider
+from ..providers.azure import AzureProvider
 from ..providers.gateway import normalize_gateway_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -2385,7 +2386,7 @@ class OpenAILiveModel(RealtimeModel):
         self._backend_model = backend_model or None
         if isinstance(provider, str):
             provider = cast('Provider[AsyncOpenAI]', infer_provider(provider))
-        if provider.name == 'azure':
+        if isinstance(provider, AzureProvider):
             raise UserError(
                 'Azure OpenAI does not serve GPT-Live. Use `AzureRealtimeModel` (or the `azure:` prefix) '
                 'for Azure OpenAI realtime models.'
@@ -2412,8 +2413,8 @@ class OpenAILiveModel(RealtimeModel):
 
         The backend runs the agent's instructions and calls its tools, so it is the agent doing its work,
         and an agent built on an OpenAI model has already said which model that should be. It has to be
-        an OpenAI model at this model's base URL, so both go to OpenAI directly or both through the same
-        gateway route; anything else can't serve as this session's backend.
+        a model of this model's provider at its base URL, so both go to OpenAI directly or both through the
+        same gateway route; anything else can't serve as this session's backend.
 
         Read from the current run context: a session opened with
         [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] is an agent run, so its run context is
@@ -2425,7 +2426,11 @@ class OpenAILiveModel(RealtimeModel):
         agent_model = run_context.agent.model if run_context is not None and run_context.agent is not None else None
         if isinstance(agent_model, str):
             agent_model = _resolve_openai_model(agent_model)
-        if isinstance(agent_model, Model) and agent_model.system == 'openai' and agent_model.base_url == self.base_url:
+        if (
+            isinstance(agent_model, Model)
+            and agent_model.system == self.system
+            and agent_model.base_url == self.base_url
+        ):
             return agent_model.model_name
         return None
 
