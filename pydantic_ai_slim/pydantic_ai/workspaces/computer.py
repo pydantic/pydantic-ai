@@ -7,8 +7,9 @@ The model writes these as the `computer` tool's arguments, so they follow the pr
 apart by `type`, not the `kind` Pydantic AI's own message types use, and named as OpenAI's are (`click`, `keypress`).
 
 A key is a single character or one of a fixed set of names; other names are refused when the action is validated.
-Common spellings, including X keysyms such as `KP_Enter`, are normalized to one lowercase name, and a combination
-written as one name, such as `ctrl+s`, is split into its keys. A character presses whatever the keyboard layout needs
+Common spellings, including X keysyms such as `KP_Enter` or `minus` and browser names such as `NumpadAdd`, are
+normalized to one lowercase name or character, and a combination written as one name, such as `ctrl+s`, is split into
+its keys. A character presses whatever the keyboard layout needs
 to type it, shift or AltGr included; an upper-case letter is its lower-case key. Names may be added only for keys no
 existing name covers.
 
@@ -19,6 +20,9 @@ How these actions change, so backends written today keep doing what the model as
 - An existing action only gains fields whose default is today's behaviour. Anything a backend must honour, such as
   scrolling by pixels, is a new type instead.
 - The values a field accepts, such as the mouse buttons, don't grow.
+- A field added later is left out of serialized data while it holds its default (`Field(exclude_if=...)`), so an
+  older version can still read every action that doesn't use it.
+- A new field, here or in a result, never changes what an existing field means.
 
 A backend refuses an action, or a value, it can't perform exactly with
 [`WorkspaceUnsupportedActionError`][pydantic_ai.workspaces.WorkspaceUnsupportedActionError]; it never ignores one.
@@ -152,6 +156,58 @@ _KEY_ALIASES = {
     'xf86audioplay': 'mediaplay',
     'xf86audionext': 'medianext',
     'xf86audioprev': 'mediaprev',
+    'meta_l': 'super',
+    'meta_r': 'super',
+    # X keysyms for punctuation, as in `ctrl+plus`.
+    'plus': '+',
+    'minus': '-',
+    'equal': '=',
+    'comma': ',',
+    'period': '.',
+    'slash': '/',
+    'backslash': '\\',
+    'semicolon': ';',
+    'apostrophe': "'",
+    'grave': '`',
+    'bracketleft': '[',
+    'bracketright': ']',
+    'less': '<',
+    'greater': '>',
+    'question': '?',
+    'exclam': '!',
+    'at': '@',
+    'numbersign': '#',
+    'dollar': '$',
+    'percent': '%',
+    'asciicircum': '^',
+    'ampersand': '&',
+    'asterisk': '*',
+    'parenleft': '(',
+    'parenright': ')',
+    'underscore': '_',
+    'colon': ':',
+    'quotedbl': '"',
+    'braceleft': '{',
+    'braceright': '}',
+    'bar': '|',
+    'asciitilde': '~',
+    # DOM `key` and `code` spellings, as browser automation writes keys.
+    'controlleft': 'ctrl',
+    'controlright': 'ctrl',
+    'shiftleft': 'shift',
+    'shiftright': 'shift',
+    'altleft': 'alt',
+    'altright': 'alt',
+    'metaleft': 'super',
+    'metaright': 'super',
+    'numpadenter': 'numpad_enter',
+    **{f'numpad{operator}': f'numpad_{operator}' for operator in _NUMPAD_OPERATORS},
+    'audiovolumemute': 'volumemute',
+    'audiovolumeup': 'volumeup',
+    'audiovolumedown': 'volumedown',
+    'mediaplaypause': 'mediaplay',
+    'mediatracknext': 'medianext',
+    'mediatrackprevious': 'mediaprev',
 }
 
 _UNKNOWN_KEY = 'is not a key: use a single character or one of ' + ', '.join(
@@ -170,7 +226,7 @@ _UNKNOWN_KEY = 'is not a key: use a single character or one of ' + ', '.join(
 def _normalize_key(key: str) -> str:
     lower = key.lower()
     name = _KEY_ALIASES.get(lower, lower)
-    if len(key) > 1 and name not in _KEY_NAMES:
+    if len(name) > 1 and name not in _KEY_NAMES:
         raise ValueError(f'{key!r} {_UNKNOWN_KEY}')
     return name
 
