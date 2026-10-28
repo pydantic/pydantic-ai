@@ -2473,6 +2473,31 @@ async def test_profile_flag_overrides_a_setup_that_can_never_use_a_socket(
     assert http.requests == []
 
 
+async def test_azure_named_provider_can_advertise_socket_support(
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
+):
+    class AzureNamedProvider(OpenAIProvider):
+        @property
+        def name(self) -> str:
+            return 'azure'
+
+        @staticmethod
+        def model_profile(model_name: str) -> OpenAIModelProfile:
+            return OpenAIModelProfile(
+                context_window=128_000,
+                openai_supports_batch_api=True,
+                openai_responses_supports_websocket=True,
+            )
+
+    provider = AzureNamedProvider(api_key='test', http_client=http.client)
+    model = websocket_model(provider)
+    assert model.batch_max_requests is None
+    assert model.profile.get('openai_responses_supports_websocket') is True
+    assert (await Agent(model).run('hello')).output == 'ready'
+    assert sockets.connect_count == 1
+    assert http.requests == []
+
+
 async def test_missing_websocket_dependency_warns_and_uses_http(
     allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, monkeypatch: pytest.MonkeyPatch
 ):

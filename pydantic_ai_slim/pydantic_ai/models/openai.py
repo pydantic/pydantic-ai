@@ -3545,10 +3545,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """
         if _is_azure(self._provider.client, self._provider.name) or is_gateway_provider(self._provider):
             # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
-            # Responses WebSockets aren't verified on Azure, and the gateway's handshake fails with a 503 (2026-10-22).
-            return merge_profile(
-                profile, OpenAIModelProfile(openai_supports_batch_api=False, openai_responses_supports_websocket=False)
-            )
+            profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
+        # An Azure-named custom provider may advertise socket support with an ordinary OpenAI client.
+        if isinstance(self._provider.client, AsyncAzureOpenAI) or is_gateway_provider(self._provider):
+            # Responses WebSockets aren't verified on the Azure client, and the gateway's handshake fails with a 503
+            # while HTTP succeeds (live, 2026-10-22).
+            return merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
         return profile
 
     @classmethod
