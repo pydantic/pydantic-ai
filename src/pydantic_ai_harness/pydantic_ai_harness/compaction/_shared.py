@@ -6,7 +6,7 @@ preservation, and in-place tool-result clearing -- anything used by more than on
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
@@ -58,6 +58,8 @@ from pydantic_ai_harness.compaction._receipts import (
 from pydantic_ai_harness.filesystem import READ_FILE_KIND
 
 if TYPE_CHECKING:
+    from opentelemetry.util.types import AttributeValue
+
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.tools import ToolDefinition
 
@@ -600,6 +602,7 @@ async def compact_with_span(
     tokenizer: Callable[[str], int] | None = None,
     model_requested: bool = False,
     background: BackgroundOutcome | None = None,
+    attributes: Mapping[str, AttributeValue] | None = None,
 ) -> list[ModelMessage]:
     """Run *compact* and emit a `compact_messages` span when it changes the history.
 
@@ -619,6 +622,7 @@ async def compact_with_span(
             `compaction.model_requested` (set only when `True`).
         background: What became of a background compaction, recorded as `compaction.background`
             when there was one.
+        attributes: Strategy-specific attributes added to the span, such as why it fired.
     """
     token = open_receipt_scope()
     try:
@@ -639,6 +643,7 @@ async def compact_with_span(
                     'compaction.messages_after': len(compacted),
                     'compaction.tokens_before': estimate_token_count(messages, tokenizer),
                     'compaction.tokens_after': estimate_token_count(compacted, tokenizer),
+                    **(attributes or {}),
                 }
             )
             if model_requested:
@@ -646,15 +651,15 @@ async def compact_with_span(
             if background is not None:
                 span.set_attribute('compaction.background', background)
             for receipt in receipts:
-                attributes = {
+                receipt_attributes = {
                     'compaction.receipt.strategy': receipt.strategy,
                     'compaction.receipt.messages_dropped': receipt.dropped_messages,
                     'compaction.receipt.tokens_dropped': receipt.dropped_tokens,
                     'compaction.receipt.by': receipt.by,
                 }
                 if receipt.handle is not None:
-                    attributes['compaction.receipt.handle'] = receipt.handle
-                span.add_event(RECEIPT_EVENT_NAME, attributes)
+                    receipt_attributes['compaction.receipt.handle'] = receipt.handle
+                span.add_event(RECEIPT_EVENT_NAME, receipt_attributes)
     return compacted
 
 

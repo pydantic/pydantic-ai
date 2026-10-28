@@ -59,6 +59,8 @@ A run compacts when something on it asks: the history is compacted before the ru
 - [`agent_run.request_compaction()`][pydantic_ai.run.AgentRun.request_compaction] on the [`AgentRun`][pydantic_ai.run.AgentRun] of an [`iter()`][pydantic_ai.agent.AbstractAgent.iter] loop, or [`events.request_compaction()`][pydantic_ai.agent.AgentRunEvents.request_compaction] on what [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] returns, once it's started.
 - `compact=` on [`run()`][pydantic_ai.agent.AbstractAgent.run], [`run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync], [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] or [`iter()`][pydantic_ai.agent.AbstractAgent.iter], to compact before the run's first request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` (default `'manual'`) and a `focus`. This is what a `/compact` command does: the next message is answered from the compacted history.
 
+[Pydantic AI Harness](../harness/index.md)'s [`CompactOnCacheExpiry`](../harness/compaction.md#compactoncacheexpiry-compact-once-the-cache-has-expired) asks from a capability hook, with reason `'cache_expiry'`, on the first request after the provider's prompt cache has expired: that request pays to write the cache anyway, so compacting then costs no extra cache spend.
+
 ```python {title="run_compact.py" test="skip" gateway_toggle="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeCompaction

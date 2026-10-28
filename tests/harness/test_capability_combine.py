@@ -37,6 +37,7 @@ import warnings
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, TypeGuard
@@ -74,6 +75,7 @@ from pydantic_ai_harness import (
     ToolOutputLimits,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
+from pydantic_ai_harness.compaction import CompactOnCacheExpiry
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
@@ -194,6 +196,11 @@ def _check_compact_on_request(merged: Any) -> None:
     assert merged.max_per_run == 2
 
 
+def _check_compact_on_cache_expiry(merged: Any) -> None:
+    assert merged.fallback_retention == timedelta(hours=1)
+    assert merged.context_window == 100_000
+
+
 def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
@@ -272,6 +279,14 @@ COMBINE_POLICY: dict[str, Policy] = {
             CompactOnRequest[Any](SlidingWindowCompaction[Any](max_messages=1), max_per_run=2),
         ),
         _check_compact_on_request,
+    ),
+    'CompactOnCacheExpiry': Combines(
+        'one expiry policy per agent, and two requests for one expired request would compact twice',
+        lambda: (
+            CompactOnCacheExpiry[Any](fallback_retention=timedelta(hours=1)),
+            CompactOnCacheExpiry[Any](context_window=100_000),
+        ),
+        _check_compact_on_cache_expiry,
     ),
     'ToolOutputLimits': Combines(
         'one output-limit policy; `tool_filter`/`per_tool` are how one instance varies by tool',
