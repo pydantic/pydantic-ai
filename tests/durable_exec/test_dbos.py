@@ -1763,6 +1763,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
@@ -1813,6 +1814,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
@@ -1914,6 +1916,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
@@ -1964,6 +1967,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
@@ -2035,6 +2039,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
@@ -2084,6 +2089,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
@@ -2125,6 +2131,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
@@ -2515,16 +2522,15 @@ async def test_dbos_durability_submit_output_from_a_function_tool(dbos: DBOS) ->
 
 
 @DBOS.step()
-async def _submit_output_in_a_step(ctx: RunContext[None]) -> str:
+async def _submit_output_in_a_step(ctx: RunContext[None]) -> None:
     await ctx.submit_output('final_result', {'response': 'submitted'})
-    return 'done'
 
 
 async def test_dbos_durability_submit_output_refused_in_a_users_step(dbos: DBOS) -> None:
     """A step the tool's own code runs records its result, and recovery wouldn't submit again, so it's refused."""
 
-    async def finish(ctx: RunContext[None]) -> str:
-        return await _submit_output_in_a_step(ctx)
+    async def finish(ctx: RunContext[None]) -> None:
+        await _submit_output_in_a_step(ctx)
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('finish', {})])

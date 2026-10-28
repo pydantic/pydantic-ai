@@ -215,9 +215,10 @@ class CodeMode(AbstractCapability[AgentDepsT]):
       and OpenRouter's Anthropic routes it gets a cache point of its own, so new conversations reuse it;
     - deferred tools that `run_code` will take over stay off the wire until they're found through the local
       `search_tools` tool or by loading their capability, and are callable only from `run_code` after that, so
-      no tool declaration changes. With the `'bm25'` and `'regex'` `ToolSearch` strategies, or a `tools` selector
-      that keeps another deferred tool native, only the native tool search can find them, so they're declared
-      for it and the declaration is dropped once they move into `run_code`;
+      no tool declaration changes. When a `tools` selector keeps other deferred tools native, `search_tools`
+      searches those too and the native tool search isn't sent. With the `'bm25'` and `'regex'` `ToolSearch`
+      strategies only the native tool search can find them, so they're declared for it and the declaration is
+      dropped once they move into `run_code`;
     - the functions `run_code` gains from tools a search found are announced in a short
       [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] enqueued through
       [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], naming them as `run_code` calls them.

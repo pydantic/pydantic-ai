@@ -74,16 +74,17 @@ def best(paths: tuple[str, ...], query: str) -> list[str]:
     """The best `MATCH_LIMIT` of `paths` for `query`, ignoring case.
 
     A name or path starting with it comes first, then a name holding it, a path holding it, and a path holding
-    its characters in order; within each, shallower and shorter paths first. An empty query lists the top level,
-    and the path typed in full is left out.
+    its characters in order; within each, shallower and shorter paths first. An empty query lists the top level.
+    A file typed in full comes first, as the shortest of its rank; a folder typed in full is left out, for what it
+    holds.
     """
     needle = query.lower()
     ranked: list[tuple[int, int, int, str]] = []
     for path in paths:
         lowered = path.lower()
         name = _name(lowered)
-        if lowered == needle:
-            continue  # Typed in full: nothing left to complete.
+        if lowered == needle and path.endswith('/'):
+            continue  # A folder typed in full: what it holds comes next.
         if lowered.startswith(needle) or name.startswith(needle):
             rank = 0
         elif needle in name:

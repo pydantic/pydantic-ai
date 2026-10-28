@@ -220,6 +220,11 @@ def _should_evaluate(
     return random.random() < resolved
 
 
+def evaluation_allowed(config: OnlineEvalConfig) -> bool:
+    """Whether `config` allows evaluation here, apart from the check for an enclosing task run."""
+    return config.enabled and not EVALUATION_DISABLED.get()
+
+
 def sample_evaluators(
     online_evals: Sequence[OnlineEvaluator],
     config: OnlineEvalConfig,

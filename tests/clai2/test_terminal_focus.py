@@ -35,7 +35,7 @@ from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.terminal import NOWHERE, Terminal
 from tests.clai2.dialog_script import ScriptedDialogs
-from tests.clai2.menu_script import Script
+from tests.clai2.menu_script import Script, pick
 from tests.clai2.surface_terminal import SurfaceTerminal
 from tests.clai2.test_live_runtimes import Fleet, Recorder, blocked, until
 
@@ -172,19 +172,22 @@ async def test_restarts_are_refused_while_other_sessions_run_turns(
             for command in ('/reload', '/update now'):
                 with pytest.raises(ValueError, match='2 other sessions are running turns; try again when they finish'):
                     await home.commands.execute_async(command)
-            # Bare `/update` can still show its read-only status and channel while an install is refused.
-            shown = Script(lists=[MenuResult(cancelled=True)], choices=[], texts=[])
+            # Bare `/update` can still show its read-only status and channel while an install is refused; its
+            # Update action says why and stays in the menu.
+            shown = Script(lists=[pick(VERSION), MenuResult(cancelled=True)], choices=[], texts=[])
             monkeypatch.setattr(dialogs, 'RUNNERS', shown.runners)
             home.updates.fetch = lambda channel: home.updates.current.version
             home.updates.spawn = lambda work: work()
-            assert await home.commands.execute_async('/update') == ''
-            assert shown.opened == ['list']
-            # The menu's Update action still refuses an install, even when the menu itself opens.
+            assert (
+                await home.commands.execute_async('/update')
+                == '2 other sessions are running turns; try again when they finish.'
+            )
+            assert shown.opened == ['list', 'list']
+            # The web UI's About menu refuses an install as an error, so the page shows no saved row.
             about = next(command for command in home.commands if command.name == 'update').menu
             assert about is not None
-            assert await about().actions[VERSION](ScriptedDialogs([])) == [
-                '2 other sessions are running turns; try again when they finish.'
-            ]
+            with pytest.raises(ValueError, match='2 other sessions are running turns; try again when they finish'):
+                await about().actions[VERSION](ScriptedDialogs([]))
             release['c'].set()
             await until(desk.live, lambda: not c.running)
             with pytest.raises(ValueError, match='1 other session is running a turn; try again when it finishes'):
