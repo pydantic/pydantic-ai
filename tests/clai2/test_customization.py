@@ -72,7 +72,7 @@ async def test_default_agent_lists_docs_without_reading_them(monkeypatch: pytest
     def unexpected_read(*args: object, **kwargs: object) -> str:
         raise AssertionError('Docs must not be read until requested')  # pragma: no cover
 
-    monkeypatch.setattr('pydantic_clai2.clai_docs._read', unexpected_read)
+    monkeypatch.setattr('pydantic_clai2.clai_docs.files', unexpected_read)
     agent = create_agent()
     model = TestModel(call_tools=[], custom_output_text='hello')
     with agent.override(model=model):
@@ -179,7 +179,7 @@ async def test_loading_docs_does_not_read_docs_or_inject_the_guide(monkeypatch: 
     def unexpected_read(*args: object, **kwargs: object) -> str:
         raise AssertionError('Loading the capability must not read any docs')  # pragma: no cover
 
-    monkeypatch.setattr('pydantic_clai2.clai_docs._read', unexpected_read)
+    monkeypatch.setattr('pydantic_clai2.clai_docs.files', unexpected_read)
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:

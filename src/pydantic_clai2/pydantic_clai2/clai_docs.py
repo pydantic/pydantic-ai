@@ -118,25 +118,24 @@ class _Doc:
         return ''.join(self.lines[start:end])
 
 
-def _read(doc_id: str) -> str:
+@cache
+def _doc(doc_id: str) -> _Doc:
     if doc_id in _CLAI_DOCS:
         source = _CLAI_DOCS[doc_id][0]
         package = files('pydantic_clai2')
         relative = PurePosixPath(source)
         if relative.parts[0] == 'pydantic_clai2':
-            return package.joinpath(*relative.parts[1:]).read_text(encoding='utf-8')
-        packaged = package.joinpath('_docs').joinpath(relative.name)
-        if packaged.is_file():
-            return packaged.read_text(encoding='utf-8')
-        # An editable install runs from the checkout, where `force-include` has not copied anything.
-        return (_PROJECT_ROOT / source).read_text(encoding='utf-8')
-    name = doc_id.removeprefix('harness/')
-    return files('pydantic_ai_harness').joinpath(name).joinpath('README.md').read_text(encoding='utf-8')
-
-
-@cache
-def _doc(doc_id: str) -> _Doc:
-    text = _read(doc_id)
+            text = package.joinpath(*relative.parts[1:]).read_text(encoding='utf-8')
+        else:
+            packaged = package.joinpath('_docs').joinpath(relative.name)
+            if packaged.is_file():
+                text = packaged.read_text(encoding='utf-8')
+            else:
+                # Editable installs read the checkout, before `force-include` has copied the docs.
+                text = (_PROJECT_ROOT / source).read_text(encoding='utf-8')
+    else:
+        name = doc_id.removeprefix('harness/')
+        text = files('pydantic_ai_harness').joinpath(name).joinpath('README.md').read_text(encoding='utf-8')
     lines = text.splitlines(keepends=True)
     headings: list[tuple[int, int, str]] = []
     fence = ''
