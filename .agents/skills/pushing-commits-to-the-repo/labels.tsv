@@ -57,6 +57,7 @@ enhancement
 examples
 feature	New feature request, or PR implementing a feature (enhancement)
 feedback wanted
+final-review	Run the CI Review agent on this PR's head
 fix
 gateway
 genai-prices
