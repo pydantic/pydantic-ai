@@ -395,6 +395,31 @@ Compatibility with one API does not imply support for the other or for every Ope
 
 When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
 
+### AnonRouter
+
+[AnonRouter](https://anonrouter.ai/) is an OpenAI-compatible router that serves models from several upstream providers behind one endpoint, identified as `creator/model`.
+
+AnonRouter doesn't have a dedicated provider class, so you can use it with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] by setting the `base_url` and `api_key`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'meta-llama/llama-3.3-70b',
+    provider=OpenAIProvider(
+        base_url='https://api.anonrouter.ai/v1',
+        api_key='your-anonrouter-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+!!! note
+    AnonRouter uses single-use tickets by default. Enable [OpenAI-compatible access](https://docs.anonrouter.ai/compatibility) for this key in the AnonRouter dashboard; a key without that permission is rejected with a `403`.
+
 ## Model profile
 
 A model profile tells the model class how to shape requests for a particular model and API: which JSON schema restrictions its tool definitions have, whether tools can be marked as strict, how reasoning is configured, and so on. The providers above select one automatically based on the model name, so you only need this section if a model behind a custom endpoint doesn't work correctly out of the box.
