@@ -15,8 +15,9 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.subagents import DelegationStartEvent, DelegationTask, TaskQuestionEvent
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    PROTOCOL,
     ItemAdded,
     ServerMessage,
     Snapshot,
@@ -29,7 +30,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.plugins import TaskEvent, TaskInfo
+from pydantic_clai2.plugins import TaskInfo, TaskProgress
 from pydantic_clai2.runtime.tasks import resume_prompt
 from tests.clai2.test_web import TOKEN, WIRE, MakeWeb, Web, make_web, receive_until
 
@@ -101,7 +102,7 @@ def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
             yield 'parent done'
 
     web_ = make_web(create_stock_agent(FunctionModel(stream_function=stream)), extra=[CODER])
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as socket:
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers=ORIGIN) as socket:
         snapshot = WIRE.validate_json(socket.receive_text())
         assert isinstance(snapshot, Snapshot) and snapshot.tasks == [] and snapshot.task_items == {}
         assert web_.get('/api/tasks/nope').status_code == 404, 'no task owner runs before the prompt opens'
@@ -115,7 +116,7 @@ def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
         assert isinstance(prompt, ItemAdded) and prompt.item.text == 'child' and prompt.item.id.startswith('task1-')
 
         # A browser that connects now sees the running task and its transcript so far.
-        with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as late:
+        with web_.client.websocket_connect(f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers=ORIGIN) as late:
             joined = WIRE.validate_json(late.receive_text())
             assert isinstance(joined, Snapshot)
             assert [task.id for task in joined.tasks] == [task_id]
@@ -245,7 +246,7 @@ def test_a_prompted_task_runs_beside_a_turn_with_code_mode_on(make_web: MakeWeb)
 
     web_ = make_web(create_stock_agent(FunctionModel(stream_function=stream)), extra=[CODER])
     web_.shell.context.set_setting(['run.code_mode', 'true'])
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as socket:
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers=ORIGIN) as socket:
         web_.run()
         assert web_.post('/api/input', {'text': 'hold'}).json() == {'menu': None}
         assert holding.wait(10)
@@ -271,7 +272,7 @@ def test_a_task_takes_no_prompt_once_its_agent_delegates_no_more(make_web: MakeW
         yield 'hi'
 
     web_ = make_web(create_stock_agent(FunctionModel(stream_function=stream)))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as socket:
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers=ORIGIN) as socket:
         web_.run()
         # A turn ending means the prompt is open, and with it the session's tasks.
         assert web_.post('/api/input', {'text': 'hello'}).json() == {'menu': None}
@@ -321,8 +322,8 @@ def test_workers_echo_steering_only_for_a_live_task() -> None:
         usage=RunUsage(),
     )
     start = DelegationStartEvent(agent_name='Explore', task='look', truncated=False, inherits_tools=False, model=None)
-    workers.observe(TaskEvent(task=task, event=start))
-    workers.observe(TaskEvent(task=task))
+    workers.observe(TaskProgress(task=task, event=start))
+    workers.observe(TaskProgress(task=task))
     assert [type(message) for message in published] == [TaskChanged, TaskItems], 'an unchanged row is not sent again'
     assert isinstance(changed := published[0], TaskChanged) and changed.task.backgroundable
     workers.steered('t', 'hello')
@@ -352,21 +353,21 @@ def test_a_resumed_or_joined_run_starts_from_the_tasks_history() -> None:
         activity='starting',
         usage=RunUsage(),
     )
-    workers.observe(TaskEvent(task=task))
+    workers.observe(TaskProgress(task=task))
     assert workers.items() == {}, 'a change of the task alone, such as a question it waits on, starts no transcript'
     question = TaskQuestionEvent(task_id='t', agent_name='self', question_id='q', question='Which?')
-    workers.observe(TaskEvent(task=task, event=question))
+    workers.observe(TaskProgress(task=task, event=question))
     assert workers.items() == {}, 'nor does its question, a task-control message'
     start = DelegationStartEvent(agent_name='self', task='look again', truncated=False, inherits_tools=True, model=None)
     start.task_id = 't'
-    workers.observe(TaskEvent(task=task, event=start))
+    workers.observe(TaskProgress(task=task, event=start))
     assert [item.text for item in workers.items()['t']] == ['look', 'first run', 'look again'], (
         'resumed: and its prompt'
     )
     assert all(item.id.startswith('task1-') for item in workers.items()['t'])
 
     workers.reset()
-    workers.observe(TaskEvent(task=task, event=PartStartEvent(index=0, part=TextPart('more'))))
+    workers.observe(TaskProgress(task=task, event=PartStartEvent(index=0, part=TextPart('more'))))
     assert [item.text for item in workers.items()['t']] == ['look', 'first run', 'more'], (
         'joined midway: its own request'
     )

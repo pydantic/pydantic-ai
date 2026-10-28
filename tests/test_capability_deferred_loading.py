@@ -28,8 +28,9 @@ from pydantic_ai.capabilities import (
     ProcessHistory,
     ToolSearch,
     Toolset,
+    WrapperCapability,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, CapabilityPosition
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks
 from pydantic_ai.exceptions import (
@@ -75,6 +76,7 @@ from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_TOOL_NAME,
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -756,6 +758,216 @@ def test_deferred_capability_without_id_raises_at_construction() -> None:
     """A statically-provided deferred capability without an `id` fails fast at construction."""
     with pytest.raises(UserError, match='stable explicit `id` values'):
         Agent(TestModel(), capabilities=[Capability[object](description='No id.', defer_loading=True)])
+    # A deferred group is not merged into the agent's capabilities, so its missing `id` is reported too.
+    with pytest.raises(UserError, match='stable explicit `id` values'):
+        Agent(TestModel(), capabilities=[CombinedCapability[object]([Capability[object]()], defer_loading=True)])
+
+
+def test_deferred_capability_inside_deferred_capability_raises() -> None:
+    """Loading a deferred group loads everything in it, so a member can't also be deferred on its own."""
+    child = Capability[object](id='child', description='Child.', defer_loading=True)
+    group = CombinedCapability[object]([child], id='group', description='Group.', defer_loading=True)
+
+    with pytest.raises(UserError) as exc_info:
+        Agent(TestModel(), capabilities=[group])
+
+    assert str(exc_info.value) == snapshot(
+        "Deferred capability 'child' is inside deferred capability 'group'. Loading 'group' already loads everything in it, so remove `defer_loading=True` from 'child', or pass it to the agent separately to load it on its own."
+    )
+
+    # A member without an `id` gets the error that names that problem.
+    anonymous = Capability[object](description='Child.', defer_loading=True)
+    with pytest.raises(UserError, match='Deferred capabilities must use stable explicit `id` values'):
+        Agent(
+            TestModel(),
+            capabilities=[CombinedCapability([anonymous], id='group', description='G.', defer_loading=True)],
+        )
+
+
+@pytest.mark.parametrize('wrap', [False, True], ids=['combined', 'wrapped-combined'])
+async def test_deferred_capability_group_loads_all_members_together(wrap: bool) -> None:
+    """A deferred group hides its members' tools, instructions and hooks until it loads, then activates all of them.
+
+    Its members are not reported as active capabilities before then either, and can't be loaded on their own.
+    """
+
+    def edit_document(doc_id: str) -> str:
+        return f'edited {doc_id}'
+
+    hooks = Hooks()
+    hook_steps: list[int] = []
+
+    @hooks.on.before_model_request
+    async def record(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+        hook_steps.append(ctx.run_step)
+        return request_context
+
+    members: list[AbstractCapability[object]] = [
+        Capability[object](id='editing_tools', instructions='Editing instructions.', tools=[edit_document]),
+        hooks,
+    ]
+    observer = Hooks()
+    active_ids: list[set[str]] = []
+
+    @observer.on.before_model_request
+    async def observe(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+        active_ids.append({'editing', 'editing_tools'} & ctx.active_capability_ids)
+        return request_context
+
+    group = (
+        WrapperCapability[object](CombinedCapability(members), id='editing', description='Editing.', defer_loading=True)
+        if wrap
+        else CombinedCapability[object](members, id='editing', description='Editing.', defer_loading=True)
+    )
+    visible_tools: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        visible_tools.append(sorted(tool.name for tool in info.function_tools))
+        if len(visible_tools) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'editing_tools'}),
+                    ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'editing'}),
+                ]
+            )
+        if len(visible_tools) == 2:
+            return ModelResponse(parts=[ToolCallPart('edit_document', {'doc_id': 'd1'})])
+        return make_text_response('done')
+
+    result = await Agent(FunctionModel(model_fn), capabilities=[group, observer]).run('Edit d1.')
+
+    assert visible_tools == [
+        ['load_capability'],
+        ['edit_document', 'load_capability'],
+        ['edit_document', 'load_capability'],
+    ]
+    assert hook_steps == [2, 3]
+    assert active_ids == [set(), {'editing', 'editing_tools'}, {'editing', 'editing_tools'}]
+    assert loaded_instructions(result.all_messages(), 'editing') == 'Editing instructions.'
+    assert [
+        part.content
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.tool_name == 'edit_document'
+    ] == ['edited d1']
+    assert [
+        part.content
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried'
+    ] == [
+        "Capability 'editing_tools' is part of deferred capability 'editing' and loads with it. Load 'editing' instead."
+    ]
+
+
+async def test_a_deferred_group_member_keeps_its_global_hook_position() -> None:
+    """A member that must be outermost or innermost takes that place among all capabilities once its group loads."""
+    calls: list[str] = []
+
+    @dataclass
+    class Recorder(AbstractCapability[object]):
+        name: str = ''
+        position: CapabilityPosition | None = None
+
+        def get_ordering(self) -> CapabilityOrdering | None:
+            return CapabilityOrdering(position=self.position) if self.position else None
+
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            calls.append(self.name)
+            return request_context
+
+    group = CombinedCapability[object](
+        [Recorder('member'), Recorder('outer', 'outermost'), Recorder('inner', 'innermost')],
+        id='group',
+        description='Group.',
+        defer_loading=True,
+    )
+    per_request: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        per_request.append(calls.copy())
+        calls.clear()
+        if len(per_request) == 1:
+            return ModelResponse(parts=[ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'group'})])
+        return make_text_response('done')
+
+    await Agent(FunctionModel(model_fn), capabilities=[Recorder('first'), group, Recorder('last')]).run('hi')
+
+    assert per_request == [['first', 'last'], ['outer', 'first', 'member', 'last', 'inner']]
+
+
+async def test_a_prefixed_deferred_group_loads_its_prefixed_tools() -> None:
+    """`prefix_tools` wraps a deferred group under the group's `id`, and loading that `id` reveals the prefixed tools."""
+
+    def lookup() -> str:
+        return 'found'  # pragma: no cover
+
+    group = CombinedCapability[object](
+        [Capability[object](id='member', tools=[lookup])], id='group', description='Group.', defer_loading=True
+    )
+    visible_tools: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        visible_tools.append(sorted(tool.name for tool in info.function_tools))
+        if len(visible_tools) == 1:
+            return ModelResponse(parts=[ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'group'})])
+        return make_text_response('done')
+
+    await Agent(FunctionModel(model_fn), capabilities=[group.prefix_tools('p')]).run('hi')
+
+    assert visible_tools == [['load_capability'], ['load_capability', 'p_lookup']]
+
+
+@pytest.mark.parametrize('also_eager', [False, True], ids=['only-deferred', 'also-eager'])
+async def test_a_shared_member_is_active_only_when_it_occurs_outside_an_unloaded_group(also_eager: bool) -> None:
+    """A shared member is inactive only while every occurrence is in an unloaded deferred group."""
+    member = Capability[object](instructions='Shared.')
+    active_ids: list[set[str]] = []
+    observer = Hooks()
+
+    @observer.on.before_model_request
+    async def observe(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+        aliases = {i for i, cap in ctx.capabilities.items() if cap is member}
+        active_ids.append(aliases & ctx.active_capability_ids)
+        return request_context
+
+    groups = [CombinedCapability[object]([member], id=i, description='G.', defer_loading=True) for i in ('g1', 'g2')]
+    eager = [member] if also_eager else []
+    await Agent(TestModel(call_tools=[]), capabilities=[*groups, *eager, observer]).run('hi')
+    assert [bool(ids) for ids in active_ids] == [also_eager]
+
+
+async def test_a_deferred_group_member_rebuilt_for_the_run_still_loads_with_its_group() -> None:
+    """A member and a sibling that return a fresh instance from `for_run` are what the run dispatches to."""
+    calls: list[tuple[str, bool]] = []
+
+    @dataclass
+    class PerRun(AbstractCapability[object]):
+        name: str = ''
+        fresh: bool = False
+
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            return replace(self, fresh=True)
+
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            calls.append((self.name, self.fresh))
+            return request_context
+
+    group = CombinedCapability[object]([PerRun('member')], id='group', description='Group.', defer_loading=True)
+    per_request: list[list[tuple[str, bool]]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        per_request.append(calls.copy())
+        calls.clear()
+        if len(per_request) == 1:
+            return ModelResponse(parts=[ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'group'})])
+        return make_text_response('done')
+
+    await Agent(FunctionModel(model_fn), capabilities=[group, PerRun('sibling')]).run('hi')
+
+    assert per_request == [[('sibling', True)], [('member', True), ('sibling', True)]]
 
 
 async def test_partial_load_capability_history_does_not_mark_loaded() -> None:
@@ -1366,7 +1578,9 @@ def _call_secret_op_once(messages: list[ModelMessage], _info: AgentInfo) -> Mode
     return ModelResponse(parts=[ToolCallPart('secret_op', {}, tool_call_id='call-1')])
 
 
-@pytest.mark.parametrize('inject_load', [False, True])
+@pytest.mark.parametrize(
+    'inject_load', [False, pytest.param(True, marks=pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN))]
+)
 async def test_processor_injected_load_lets_capability_prepare_tools_govern_its_tools(inject_load: bool) -> None:
     """A capability made active by history processing still has `prepare_tools` over its own tools.
 
@@ -1516,6 +1730,9 @@ async def test_processor_removed_load_leaves_advertisement_and_gate_in_agreement
     )
 
 
+@pytest.mark.moves_cache_prefix(
+    reason="the hand-built history resumes a suspended response that was sent without the agent's instructions"
+)
 async def test_processor_injected_load_is_governed_when_resuming_a_suspended_response() -> None:
     """The same governance holds on the request that resumes a provider-suspended turn.
 

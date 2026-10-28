@@ -757,7 +757,10 @@ class TestInputGuardrailRedaction:
 
         agent = Agent(
             FunctionModel(respond),
-            capabilities=[SystemReminders(reminders=[Reminder('be brief', tag=None)]), InputGuardrail(guard=guard)],
+            capabilities=[
+                SystemReminders(reminders=[Reminder('be brief', tag=None)]),
+                InputGuardrail(guard=guard),
+            ],
         )
         history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hello')])]
 

@@ -20,10 +20,11 @@ from ...exceptions import (
 from .. import (
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
 )
+from .._anthropic_schema_limits import SCHEMA_TOO_COMPLEX_HINT, is_schema_too_complex_error
 from .._transport_errors import transport_error_message
 
 # https://platform.claude.com/docs/en/api/errors#http-errors
-_ERROR_TYPE_STATUS_CODES = {
+ERROR_TYPE_STATUS_CODES = {
     'invalid_request_error': 400,
     'authentication_error': 401,
     'billing_error': 402,
@@ -47,8 +48,8 @@ def error_status_code(error: APIStatusError) -> int:
         return error.status_code
     body = error.body
     if _utils.is_str_dict(body) and _utils.is_str_dict(error_body := body.get('error')):
-        if isinstance(error_type := error_body.get('type'), str) and error_type in _ERROR_TYPE_STATUS_CODES:
-            return _ERROR_TYPE_STATUS_CODES[error_type]
+        if isinstance(error_type := error_body.get('type'), str) and error_type in ERROR_TYPE_STATUS_CODES:
+            return ERROR_TYPE_STATUS_CODES[error_type]
     return error.status_code
 
 
@@ -81,35 +82,15 @@ def map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> Ge
     try:
         yield
     except APIStatusError as e:
-        body: object | None = e.body
-        error = nested if _utils.is_str_dict(body) and _utils.is_str_dict(nested := body.get('error')) else {}
-        error_type, error_message = error.get('type'), error.get('message')
-        category = _ERROR_TYPE_CATEGORIES.get(error_type) if isinstance(error_type, str) else None
-        if error_type == 'invalid_request_error' and isinstance(error_message, str):
-            if 'prompt is too long' in error_message.lower():
-                category = ModelContextWindowExceededError
-            elif 'credit balance is too low' in error_message.lower():
-                # Anthropic reports an exhausted prepaid balance as a 400, identifiable only by its message.
-                category = ModelQuotaExceededError
-        provider_error_type = error_type if isinstance(error_type, str) else None
-        if (status_code := error_status_code(e)) >= 400:
-            suggested_model_id = None
-            if error_type == 'not_found_error' and error_message == f'model: {model_name}':
-                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-            raise ModelHTTPError.for_category(
-                category or _model_errors.http_status_category(status_code, error_message),
-                status_code=status_code,
-                model_name=model_name,
-                body=body,
-                headers=dict(e.response.headers),
-                suggested_model_id=suggested_model_id,
-                provider_error_type=provider_error_type,
-                # An `error` event inside a stream comes with the stream's own 200 status; it got its status above.
-                in_stream=e.status_code < 400,
-            ) from e
-        # An `error` event inside a stream whose type has no known status.
-        raise (category or ModelAPIError)(
-            model_name=model_name, message=e.message, body=body, provider_error_type=provider_error_type, in_stream=True
+        raise api_error(
+            model_name,
+            model_id_namespace,
+            status_code=error_status_code(e),
+            body=e.body,
+            message=e.message,
+            headers=dict(e.response.headers),
+            # An `error` event inside a stream comes with the stream's own 200 status.
+            in_stream=e.status_code < 400,
         ) from e
     except APIConnectionError as e:
         raise _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError)) from e
@@ -118,6 +99,56 @@ def map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> Ge
         # off a stream mid-way surfaces as the raw `httpx2` error.
         timeout = isinstance(e, httpx2.TimeoutException)
         raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
+
+
+def api_error(
+    model_name: str,
+    model_id_namespace: str,
+    *,
+    status_code: int,
+    body: object | None,
+    message: str,
+    headers: dict[str, str] | None,
+    in_stream: bool,
+) -> ModelAPIError:
+    """The error for an error response, stream `error` event, or errored Message Batches result with `body`."""
+    error = nested if _utils.is_str_dict(body) and _utils.is_str_dict(nested := body.get('error')) else {}
+    error_type, error_message = error.get('type'), error.get('message')
+    category = _ERROR_TYPE_CATEGORIES.get(error_type) if isinstance(error_type, str) else None
+    if error_type == 'invalid_request_error' and isinstance(error_message, str):
+        if 'prompt is too long' in error_message.lower():
+            category = ModelContextWindowExceededError
+        elif 'credit balance is too low' in error_message.lower():
+            # Anthropic reports an exhausted prepaid balance as a 400, identifiable only by its message.
+            category = ModelQuotaExceededError
+    provider_error_type = error_type if isinstance(error_type, str) else None
+    if status_code >= 400:
+        suggested_model_id = None
+        if error_type == 'not_found_error' and error_message == f'model: {model_name}':
+            suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+        reported = reported_error_body(body)
+        hint = (
+            SCHEMA_TOO_COMPLEX_HINT
+            if status_code == 400
+            and _utils.is_str_dict(reported)
+            and is_schema_too_complex_error(reported.get('message'))
+            else None
+        )
+        return ModelHTTPError.for_category(
+            category or _model_errors.http_status_category(status_code, error_message),
+            status_code=status_code,
+            model_name=model_name,
+            body=body,
+            headers=headers,
+            suggested_model_id=suggested_model_id,
+            hint=hint,
+            provider_error_type=provider_error_type,
+            in_stream=in_stream,
+        )
+    # An `error` event inside a stream whose type has no known status.
+    return (category or ModelAPIError)(
+        model_name=model_name, message=message, body=body, provider_error_type=provider_error_type, in_stream=True
+    )
 
 
 _ERROR_TYPE_CATEGORIES: dict[str, _model_errors.HTTPErrorCategory] = {

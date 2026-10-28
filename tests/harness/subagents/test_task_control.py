@@ -85,6 +85,7 @@ from pydantic_ai_harness.subagents import (
     serialize_message,
 )
 
+from .._deferred_tools import pending_agent
 from .._recording_durability import RecordingDurability
 
 WAIT = 10
@@ -1220,6 +1221,18 @@ class TestSubAgentWorker:
         assert '(failed):\nThe next request would exceed the request_limit of 2.' in limited_out
         assert 'needs tool approval or deferred tool results' in approving_out
         assert '(failed):\n`model` must either be set on the agent or included when calling it.' in modelless_out
+
+    async def test_a_task_left_waiting_on_its_provider_fails_and_cancels_the_request(self) -> None:
+        # The delegating run can't check on the request later, so the worker cancels it.
+        background, model = pending_agent('remote')
+        transport = InMemoryTransport()
+        worker = SubAgentWorker(agents={'remote': background}, transport=transport, deps=None)
+        parent, _ = remote_parent(transport, call('delegate_task', agent_name='remote', task='Work.'), echo_last_return)
+        with anyio.fail_after(WAIT):
+            async with serving(worker):
+                result = await parent.run('Go.')
+        assert "(failed):\nSub-agent 'remote' ended with `PendingModelResponse`" in result.output
+        assert model.cancelled == ['job-1']
 
     async def test_a_resume_the_worker_has_no_conversation_for_fails(self) -> None:
         transport = InMemoryTransport()

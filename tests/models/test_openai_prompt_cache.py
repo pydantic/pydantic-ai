@@ -24,6 +24,7 @@ from cassetter import Cassette
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -293,7 +294,7 @@ def _history_ending_in(*tail: ModelMessage) -> list[ModelMessage]:
 async def test_openai_chat_leading_cache_point_attaches_to_previous_message(allow_model_requests: None):
     """A `CachePoint` opening a user message after a tool result marks the tool result instead of raising.
 
-    That is where a tail reminder (`SystemReminders`, `Planning`) puts its breakpoint once a tool loop
+    That is where a tail reminder (such as `Planning`'s) puts its breakpoint once a tool loop
     is underway; the request used to fail with `CachePoint cannot be the first content in a user message`.
     """
     mock_client = MockOpenAI.create_mock(chat_completion())
@@ -438,7 +439,10 @@ async def test_openrouter_unified_cache_adds_cache_control(allow_model_requests:
     await Agent(model, instructions='Stable instructions.', model_settings={'cache': '1h'}).run('Hi')
 
     request = create.call_args.kwargs
-    system_message = request['messages'][0]
+    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the standing prompt opens with the
+    # `<system>` tag announcement; the breakpoint after the instructions covers both.
+    announcement, system_message = request['messages'][:2]
+    assert announcement == {'role': 'system', 'content': SYSTEM_VOICE_ANNOUNCEMENT}
     assert system_message['role'] == 'system'
     assert system_message['content'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}
 

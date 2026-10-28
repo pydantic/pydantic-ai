@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from .conversation_search import ConversationSearch
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
+    from .detect_loops import DetectLoops
     from .docker_sandbox import DockerSandbox, DockerSandboxBackend
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
@@ -49,6 +50,7 @@ if TYPE_CHECKING:
         OutputGuardrailFunc,
         ToolGuardrail,
     )
+    from .ipython_code_mode import IPythonCodeMode
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -95,15 +97,16 @@ __all__ = [
     'CapabilityCreation',
     'ClampOversizedMessages',
     'ClearToolResults',
-    'CompactOnRequest',
     'CodeMode',
     'Coder',
+    'CompactOnRequest',
     'ConversationSearch',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
     'DayAI',
     'DaytonaSandbox',
     'DaytonaSandboxBackend',
     'DeduplicateFileReads',
+    'DetectLoops',
     'DockerSandbox',
     'DockerSandboxBackend',
     'DynamicWorkflow',
@@ -117,6 +120,7 @@ __all__ = [
     'GuardrailError',
     'GuardrailResult',
     'HarnessDeprecationWarning',
+    'IPythonCodeMode',
     'InputBlocked',
     'InputGuardrail',
     'InputGuardrailFunc',
@@ -184,14 +188,15 @@ _CAPABILITY_EXPORTS = {
     'CapabilityCreation': 'capability_creation',
     'ClampOversizedMessages': 'compaction',
     'ClearToolResults': 'compaction',
-    'CompactOnRequest': 'compaction',
     'CodeMode': 'code_mode',
     'Coder': 'coder',
+    'CompactOnRequest': 'compaction',
     'ConversationSearch': 'conversation_search',
     'DayAI': 'day_ai',
     'DaytonaSandbox': 'daytona_sandbox',
     'DockerSandbox': 'docker_sandbox',
     'DeduplicateFileReads': 'compaction',
+    'DetectLoops': 'detect_loops',
     'DynamicWorkflow': 'dynamic_workflow',
     'E2BSandbox': 'e2b_sandbox',
     'ExaAgent': 'exa',
@@ -199,6 +204,7 @@ _CAPABILITY_EXPORTS = {
     'FallbackCompaction': 'compaction',
     'FileSystem': 'filesystem',
     'Grain': 'grain',
+    'IPythonCodeMode': 'ipython_code_mode',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
     'ManagedPrompt': 'logfire',

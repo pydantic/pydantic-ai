@@ -14,11 +14,11 @@ from typing import TYPE_CHECKING
 from pydantic_ai.capabilities import AgentCapability, Toolset
 from pydantic_ai.toolsets import DynamicToolset
 from pydantic_clai2.commands import Command
-from pydantic_clai2.mcp._command import HELP, MCPCommand
-from pydantic_clai2.mcp._form import EXAMPLES, ServerForm, edit_form, edit_in_editor, install_form, run_form
-from pydantic_clai2.mcp._menu import ServersSource, servers_menu
-from pydantic_clai2.mcp._runtime import MCPServers, ServerEntry, State
-from pydantic_clai2.mcp._settings import (
+from pydantic_clai2.mcp.command import HELP, MCPCommand
+from pydantic_clai2.mcp.form import EXAMPLES, ServerForm, edit_form, edit_in_editor, install_form, run_form
+from pydantic_clai2.mcp.menu import ServersSource, servers_menu
+from pydantic_clai2.mcp.runtime import MCPServers, ServerEntry, State
+from pydantic_clai2.mcp.settings import (
     OAUTH_TIMEOUT,
     HTTPServer,
     MCPSettings,
@@ -28,9 +28,10 @@ from pydantic_clai2.mcp._settings import (
     SSEServer,
     StdioServer,
 )
-from pydantic_clai2.mcp._store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
-from pydantic_clai2.mcp._tokens import OAuthSignIn, TokenStore
+from pydantic_clai2.mcp.store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
+from pydantic_clai2.mcp.tokens import OAuthSignIn, TokenStore
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd
+from pydantic_clai2.runtime.session import WorkspacelessCapability
 
 if TYPE_CHECKING:
     from pydantic_clai2.mcp._client import SignIn, http_client
@@ -80,7 +81,7 @@ def __getattr__(name: str) -> object:
 
 
 class MCPPlugin(Plugin[MCPSettings]):
-    """Offer enabled servers to every run; nothing connects until a run or `/mcp start`."""
+    """Offer enabled servers to every run; nothing connects until a run, a load, or `/mcp start`."""
 
     def __init__(self, host: PluginHost[None], settings: MCPSettings, *, store: MCPStore | None = None) -> None:
         """`store` defaults to the user's `mcp.json`, with the session's project files; tests pass their own."""
@@ -88,10 +89,13 @@ class MCPPlugin(Plugin[MCPSettings]):
         self.servers = MCPServers(store or MCPStore(workspace=host.workspace), settings.servers)
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        return (Toolset(DynamicToolset(self.servers.toolset, per_run_step=False)),)
+        return (
+            Toolset(DynamicToolset(self.servers.toolset, per_run_step=False)),
+            WorkspacelessCapability[None](self.servers.capability),
+        )
 
     def get_commands(self) -> Sequence[Command]:
-        command = MCPCommand(servers=self.servers)
+        command = MCPCommand(servers=self.servers, history=lambda: self.host.conversation.messages)
         return (
             Command(
                 name='mcp',

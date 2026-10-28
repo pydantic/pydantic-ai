@@ -78,8 +78,10 @@ from pydantic_ai_harness.memory import (
     MetadataMemoryStore,
     SqliteMemoryStore,
 )
-from pydantic_ai_harness.system_reminders import Reminder, SystemReminders
+from pydantic_ai_harness.planning import InMemoryPlanStore, PlanItem, Planning
+from pydantic_ai_harness.system_reminders import LLMReminder, SystemReminders
 from tests.conftest import try_import
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness._recording_durability import RecordingDurability
 
 with try_import() as provider_imports:
@@ -1634,8 +1636,8 @@ class TestInjection:
             '... [1 earlier lines; use read_memory("MEMORY.md") for the full notebook] ...\n</memory>'
         ]
 
-    @pytest.mark.parametrize('with_reminders', [False, True])
-    async def test_snapshot_stays_with_user_prompt_after_tool_results(self, with_reminders: bool) -> None:
+    @pytest.mark.parametrize('with_plan_reminder', [False, True])
+    async def test_snapshot_stays_with_user_prompt_after_tool_results(self, with_plan_reminder: bool) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- likes tea')
         captured: list[list[ModelMessage]] = []
@@ -1649,10 +1651,12 @@ class TestInjection:
         def lookup() -> str:
             return 'found'
 
-        # `SystemReminders` adds a request-only user part to the tool-result request before `Memory` runs.
+        # `Planning` adds a request-only user part to the tool-result request before `Memory` runs.
         capabilities: list[AbstractCapability[None]] = [Memory(store=store)]
-        if with_reminders:
-            capabilities.insert(0, SystemReminders(reminders=[Reminder('stay on task', interval=1)]))
+        if with_plan_reminder:
+            plan_store = InMemoryPlanStore()
+            await plan_store.set_items([PlanItem(content='stay on task')])
+            capabilities.insert(0, Planning(store=plan_store))
         agent = Agent(FunctionModel(model), deps_type=type(None), capabilities=capabilities)
         agent.tool_plain(lookup)
         await agent.run('what do I like?')
@@ -1662,6 +1666,34 @@ class TestInjection:
         assert 'what do I like?' in _user_text(captured[1][:1])
         assert isinstance(captured[1][2], ModelRequest)
         assert any(isinstance(part, ToolReturnPart) for part in captured[1][2].parts)
+
+    async def test_snapshot_stays_with_user_prompt_after_generated_reminders(self) -> None:
+        # An `LLMReminder` firing keeps its generated text in history as user-channel content; that isn't the
+        # user's prompt, so the snapshot stays with the prompt the user wrote.
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- likes tea')
+        captured: list[list[ModelMessage]] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            captured.append(messages)
+            if len(captured) < 3:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id=f'lookup{len(captured)}')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        def lookup() -> str:
+            return 'found'
+
+        reminders = SystemReminders[None](
+            dynamic_reminders=[
+                LLMReminder(interval=1, model=FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('refocus')])))
+            ],
+        )
+        agent = Agent(FunctionModel(model), deps_type=type(None), capabilities=[reminders, Memory(store=store)])
+        agent.tool_plain(lookup)
+        await agent.run('what do I like?')
+
+        assert len(captured) == 3
+        assert [_memory_request_indexes(messages) for messages in captured] == [[0], [0], [0]]
 
     async def test_snapshot_stays_with_user_prompt_when_approved_tool_resumes(self) -> None:
         store = InMemoryStore()
@@ -1865,7 +1897,10 @@ class TestInjection:
         # Restored on the request after compaction, then found there instead of restored again.
         assert len(_memory_contexts(post_compaction_window(result.all_messages()))) == 1
 
-    @pytest.mark.parametrize('preserve_first_user_message', [True, False])
+    @pytest.mark.parametrize(
+        'preserve_first_user_message',
+        [pytest.param(True, marks=pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)), False],
+    )
     async def test_compaction_mid_run_keeps_the_run_snapshot_current(self, preserve_first_user_message: bool) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- version A')
