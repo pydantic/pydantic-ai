@@ -268,6 +268,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'HandleDeferredToolCalls': Anonymous('`CombinedCapability` chains handlers via `remaining`'),
     'ResolveModelId': Anonymous('returns `None` to let a later capability resolve; chaining is the feature'),
     'SelectModel': Anonymous('receives the lower-precedence model; chaining is designed'),
+    'ModelFallback': Anonymous('each instance walks its own chain; the innermost handles a failure first'),
     'BatchModelRequests': Anonymous(
         'each instance is its own batching pool; a model already batched is not batched again'
     ),

@@ -981,6 +981,7 @@ def test_profile_allow_seeding() -> None:
         supported_native_tools=frozenset({WebSearchTool}),
         # Gemini Live never reports user speech start/end; a UI must key off interruption events.
         emits_input_speech_events=False,
+        output_speech_timestamp_granularity=None,
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
         response_usage_covers_context=True,
