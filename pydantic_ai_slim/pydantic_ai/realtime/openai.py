@@ -67,7 +67,7 @@ from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._lifecycle import InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, StaleEvent
+from ._lifecycle import InputId, LifecycleEvent, RealtimeFrame, ResponseEnded, ResponseStatus, StaleEvent
 from ._openai_lifecycle import OpenAILifecycle, frame_response_id
 from ._openai_protocol import (
     ACTIVE_RESPONSE_ERROR_CODE,
@@ -149,6 +149,7 @@ from .codec import (
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
+    ResponseDone,
     SessionUsage,
     TextContext,
     ToolCall,
@@ -977,7 +978,17 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             reconnects = not self._session_ended and self._reconnect is not None and self._dial is not None
             if reconnects and await self._try_reconnect():
                 reconnected = RealtimeSessionReconnectEvent(state_restored=self._restores_state_on_reconnect)
-                yield [*self._take_pending_lifecycle(), reconnected]
+                lifecycle = self._take_pending_lifecycle()
+                # A response the old socket was streaming is never continued on the new one (its replay carries
+                # only finalized turns), so its `response.done` never comes. The lifecycle already ended it as
+                # lost; this terminal is the codec stream's alone, so messages queued behind the reply go out
+                # rather than waiting forever for a boundary.
+                orphaned: list[StaleEvent] = (
+                    [StaleEvent(ResponseDone(interrupted=True))]
+                    if any(isinstance(event, ResponseEnded) and event.status == 'lost' for event in lifecycle)
+                    else []
+                )
+                yield [*lifecycle, *orphaned, reconnected]
                 continue
             if reconnects:
                 # Out of attempts: no reconnect is coming any more.

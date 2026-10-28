@@ -31,7 +31,7 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
@@ -160,11 +160,17 @@ https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#changing-effor
 """
 
 
-class OpenRouterProvider(_OpenAICompatibleProvider):
+class OpenRouterProvider(_OpenAISDKProvider):
     """Provider for OpenRouter API."""
 
     @property
     def name(self) -> str:
+        return 'openrouter'
+
+    @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing reasoning details. Which upstream verifies
+        # them depends on where OpenRouter routed the request, so no other provider is declared compatible.
         return 'openrouter'
 
     @property
