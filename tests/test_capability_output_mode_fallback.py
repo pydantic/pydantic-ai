@@ -16,7 +16,7 @@ from pydantic_ai import Agent, ModelMessage, ModelResponse, NativeOutput, RunCon
 from pydantic_ai.capabilities import ModelFallback, OutputModeFallback, output_mode_fallback
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.output import OutputMode
+from pydantic_ai.output import OutputMode, StructuredOutputMode
 from pydantic_ai.profiles import ModelProfile
 
 FALLS_BACK_TO_TOOL_OUTPUT = pytest.mark.moves_cache_prefix(
@@ -41,7 +41,7 @@ def forget_rejected_schemas() -> Iterator[None]:
 def schema_model(
     modes: list[OutputMode],
     *,
-    infers: OutputMode = 'native',
+    infers: StructuredOutputMode = 'native',
     rejects: tuple[OutputMode, ...] = ('native',),
     error_body: object = TOO_COMPLEX,
     model_name: str = 'compiler',
@@ -86,11 +86,12 @@ async def test_rejected_schema_is_remembered_per_model():
     """Another model may compile the schema, so it still gets Native Output first."""
     modes: list[OutputMode] = []
     capability = OutputModeFallback[None]()
-    await Agent(schema_model(modes), output_type=Survey, capabilities=[capability]).run('Answer the survey.')
+    agent = Agent(schema_model(modes), deps_type=type(None), output_type=Survey, capabilities=[capability])
+    await agent.run('Answer the survey.')
 
     modes.clear()
     other = schema_model(modes, model_name='other-compiler')
-    await Agent(other, output_type=Survey, capabilities=[capability]).run('Answer the survey.')
+    await agent.run('Answer the survey.', model=other)
     assert modes == ['native', 'tool']
 
 
