@@ -526,6 +526,38 @@ async def test_prefect_durability_model_error_reaches_flow_with_its_type() -> No
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
 
 
+@pytest.mark.parametrize('in_task', [True, False], ids=['task', 'flow-code'])
+async def test_prefect_durability_submit_output_needs_the_tool_in_flow_code(in_task: bool) -> None:
+    """`submit_output()` is refused in a tool task, whose recorded result a retry replays, and works in flow code."""
+
+    async def finish(ctx: RunContext[None]) -> str:
+        await ctx.submit_output('final_result', {'response': 'submitted'})
+        return 'done'
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('finish', {})])
+
+    toolset = FunctionToolset[None](id='submit-tools')
+    toolset.add_function(finish, metadata=None if in_task else {'prefect': False})
+    agent = Agent(
+        FunctionModel(model),
+        name=f'prefect_durability_submit_output_{"task" if in_task else "flow"}',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow(name=f'test_prefect_durability_submit_output_{"task" if in_task else "flow"}')
+    async def run_durable_agent() -> str:
+        return (await agent.run('Finish')).output
+
+    if in_task:
+        with pytest.raises(UserError, match='cannot be called from a tool that runs as a durable step or task'):
+            await run_durable_agent()
+    else:
+        assert await run_durable_agent() == 'submitted'
+
+
 class Deps(BaseModel):
     country: str
 

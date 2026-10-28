@@ -2489,6 +2489,31 @@ async def test_dbos_durability_model_error_reaches_workflow_with_its_type(dbos: 
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
 
 
+async def test_dbos_durability_submit_output_from_a_function_tool(dbos: DBOS) -> None:
+    """DBOS runs function tools in workflow code, so `submit_output()` from one ends the run."""
+
+    async def finish(ctx: RunContext[None]) -> str:
+        await ctx.submit_output('final_result', {'response': 'submitted'})
+        return 'done'
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('finish', {})])
+
+    agent = Agent(
+        FunctionModel(model),
+        name='durability_submit_output',
+        deps_type=type(None),
+        tools=[finish],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Finish')).output
+
+    assert await run_durable_agent() == 'submitted'
+
+
 async def test_dbos_durability_rejects_a_live_workspace_workflow_input(dbos: DBOS, tmp_path: Path) -> None:
     """A live backend passed into a workflow has no durable steps behind it, so the run refuses it.
 

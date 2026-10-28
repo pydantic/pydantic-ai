@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Container, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from types import NoneType
@@ -1674,34 +1674,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             processor = ObjectOutputProcessor(output=output, description=description, strict=strict)  # pyright: ignore[reportUnknownArgumentType]
             object_def = processor.object_def
 
-            if name is None:
-                name = default_name
-                if multiple:
-                    # strip unsupported characters like "[" and "]" from generic class names
-                    safe_name = _utils.TOOL_NAME_SANITIZER.sub('', object_def.name or '')
-                    name += f'_{safe_name}'
-
-            i = 1
-            original_name = name
-            while name in processors:
-                i += 1
-                name = f'{original_name}_{i}'
-
-            description = object_def.description
-            if not description:
-                description = DEFAULT_OUTPUT_TOOL_DESCRIPTION
-                if multiple:
-                    description = f'{object_def.name}: {description}'
-
-            tool_def = ToolDefinition(
-                name=name,
-                description=description,
-                parameters_json_schema=object_def.json_schema,
-                strict=object_def.strict,
-                outer_typed_dict_key=processor.outer_typed_dict_key,
-                kind='output',
-                sequential=sequential,
+            name = output_tool_name(
+                default_name if name is None else name, object_def, suffix=name is None and multiple, taken=processors
             )
+            tool_def = output_tool_def(name, processor, multiple=multiple, sequential=sequential)
             processors[name] = processor
             tool_defs.append(tool_def)
             if tool_max_retries is not None:
@@ -1806,6 +1782,47 @@ class OutputSubmissionTarget:
         return to_json(data).decode()
 
 
+def output_tool_name(name: str, object_def: OutputObjectDefinition, *, suffix: bool, taken: Container[str]) -> str:
+    """The name of an output type's output tool: `name`, suffixed with the type's name if `suffix`, made unique in `taken`.
+
+    Shared by tool output and `output_submission_targets`, so submission targets are named as tool output would name them.
+    """
+    if suffix:
+        # strip unsupported characters like "[" and "]" from generic class names
+        name += f'_{_utils.TOOL_NAME_SANITIZER.sub("", object_def.name or "")}'
+    return _unique_name(name, taken)
+
+
+def output_tool_def(
+    name: str, processor: ObjectOutputProcessor[Any], *, multiple: bool, sequential: bool = False
+) -> ToolDefinition:
+    """The definition of an output type's output tool, as tool output and `output_submission_targets` both build it."""
+    object_def = processor.object_def
+    description = object_def.description
+    if not description:
+        description = DEFAULT_OUTPUT_TOOL_DESCRIPTION
+        if multiple:
+            description = f'{object_def.name}: {description}'
+    return ToolDefinition(
+        name=name,
+        description=description,
+        parameters_json_schema=object_def.json_schema,
+        strict=object_def.strict,
+        outer_typed_dict_key=processor.outer_typed_dict_key,
+        kind='output',
+        sequential=sequential,
+    )
+
+
+def _unique_name(name: str, taken: Container[str]) -> str:
+    i = 1
+    original_name = name
+    while name in taken:
+        i += 1
+        name = f'{original_name}_{i}'
+    return name
+
+
 def output_submission_targets(schema: OutputSchema[Any]) -> dict[str, OutputSubmissionTarget]:
     """The outputs a tool can submit for `schema`, keyed by name: one per output type, whatever the output mode.
 
@@ -1814,48 +1831,23 @@ def output_submission_targets(schema: OutputSchema[Any]) -> dict[str, OutputSubm
     one that takes the text as `response`. Images and `DeferredToolRequests` can't be submitted.
     """
     targets: dict[str, OutputSubmissionTarget] = {}
-
-    def unique_name(name: str) -> str:
-        i = 1
-        original_name = name
-        while name in targets:
-            i += 1
-            name = f'{original_name}_{i}'
-        return name
-
-    def object_tool_def(name: str, processor: ObjectOutputProcessor[Any], *, multiple: bool) -> ToolDefinition:
-        object_def = processor.object_def
-        description = object_def.description
-        if not description:
-            description = DEFAULT_OUTPUT_TOOL_DESCRIPTION
-            if multiple:
-                description = f'{object_def.name}: {description}'
-        return ToolDefinition(
-            name=name,
-            description=description,
-            parameters_json_schema=object_def.json_schema,
-            strict=object_def.strict,
-            outer_typed_dict_key=processor.outer_typed_dict_key,
-            kind='output',
-        )
-
     text_processor = schema.text_processor
     if schema.toolset is not None:
         for tool_def in schema.toolset.tool_defs:
             targets[tool_def.name] = OutputSubmissionTarget(tool_def, 'tool')
     elif isinstance(text_processor, UnionOutputProcessor):
         for kind, processor in text_processor.processors.items():
-            name = unique_name(f'{DEFAULT_OUTPUT_TOOL_NAME}_{_utils.TOOL_NAME_SANITIZER.sub("", kind)}')
+            name = output_tool_name(DEFAULT_OUTPUT_TOOL_NAME, processor.object_def, suffix=True, taken=targets)
             targets[name] = OutputSubmissionTarget(
-                object_tool_def(name, processor, multiple=True), 'object', union_kind=kind
+                output_tool_def(name, processor, multiple=True), 'object', union_kind=kind
             )
     elif isinstance(text_processor, ObjectOutputProcessor):
         targets[DEFAULT_OUTPUT_TOOL_NAME] = OutputSubmissionTarget(
-            object_tool_def(DEFAULT_OUTPUT_TOOL_NAME, text_processor, multiple=False), 'object'
+            output_tool_def(DEFAULT_OUTPUT_TOOL_NAME, text_processor, multiple=False), 'object'
         )
 
     if text_processor is not None and not isinstance(text_processor, BaseObjectOutputProcessor):
-        name = unique_name(f'{DEFAULT_OUTPUT_TOOL_NAME}_text' if targets else DEFAULT_OUTPUT_TOOL_NAME)
+        name = _unique_name(f'{DEFAULT_OUTPUT_TOOL_NAME}_text' if targets else DEFAULT_OUTPUT_TOOL_NAME, targets)
         targets[name] = OutputSubmissionTarget(
             ToolDefinition(
                 name=name,

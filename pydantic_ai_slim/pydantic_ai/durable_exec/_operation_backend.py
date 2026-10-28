@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Generator, Sequence
-from contextlib import contextmanager
-from contextvars import ContextVar
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Generic, Literal, Protocol, TypeVar, cast
 
+# Re-exported from here, where `durable_exec` has always exposed them.
+from .._run_context import durable_unit_scope as durable_unit_scope, in_durable_unit as in_durable_unit
 from ._operation import (
     DurableOperation,
     DurableOperationConfig,
@@ -23,34 +23,6 @@ ConfigT = TypeVar('ConfigT')
 ParamsT_bound = TypeVar('ParamsT_bound')
 WireT_bound = TypeVar('WireT_bound')
 ResultT_bound = TypeVar('ResultT_bound')
-
-_IN_DURABLE_UNIT: ContextVar[bool] = ContextVar('pydantic_ai.durable_exec.in_durable_unit', default=False)
-
-
-def in_durable_unit() -> bool:
-    """Whether the current task is running a durable unit's body, set by `CallableOperationBackend`.
-
-    In-process engines need it where their own container check stays true inside a unit (Prefect's
-    `FlowRunContext` is set inside a task), so a `DurableWorkspace` call or a capability's durable
-    operation called from a tool goes direct.
-    """
-    return _IN_DURABLE_UNIT.get()
-
-
-@contextmanager
-def durable_unit_scope() -> Generator[None]:
-    """Mark the current task as running a durable unit's body.
-
-    `CallableOperationBackend` enters it around every unit. A `RegisteredOperationBackend` enters it
-    around its worker-side handler, so a nested durable operation called from inside the unit (a
-    `DurableWorkspace` call, a capability's durable operation called from a tool) runs directly
-    instead of scheduling a second unit.
-    """
-    token = _IN_DURABLE_UNIT.set(True)
-    try:
-        yield
-    finally:
-        _IN_DURABLE_UNIT.reset(token)
 
 
 class BoundDurableOperation(Generic[ParamsT_bound, WireT_bound, ResultT_bound], Protocol):

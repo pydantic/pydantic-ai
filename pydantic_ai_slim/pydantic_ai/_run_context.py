@@ -883,8 +883,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
         Raises:
             UserError: If this isn't called from a tool call during an agent run in the same process as
-                the run itself (so not inside a Temporal activity), or the tool call already submitted an
-                output.
+                the run itself (so not inside a Temporal activity), if the tool runs as a durable step or task
+                (such as a DBOS step or Prefect task), or if the tool call already submitted an output.
             ToolRetryError: If the submission was rejected, carrying the feedback for the model.
             UnexpectedModelBehavior: If the submission was rejected and the output retries ran out.
         """
@@ -1194,6 +1194,35 @@ def with_tool_name_layer(ctx: RunContext[AgentDepsT], layer: str | Mapping[str, 
 def without_tool_name_path(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
     """The context to hand user code that runs while tools are listed, without the listing's tool name path."""
     return with_tool_name_path(ctx, ()) if ctx._tool_name_path else ctx  # pyright: ignore[reportPrivateUsage]
+
+
+_IN_DURABLE_UNIT: ContextVar[bool] = ContextVar('pydantic_ai.durable_exec.in_durable_unit', default=False)
+
+
+def in_durable_unit() -> bool:
+    """Whether the current task is running a durable unit's body, set by `CallableOperationBackend`.
+
+    In-process engines need it where their own container check stays true inside a unit (Prefect's
+    `FlowRunContext` is set inside a task), so a `DurableWorkspace` call or a capability's durable
+    operation called from a tool goes direct.
+    """
+    return _IN_DURABLE_UNIT.get()
+
+
+@contextmanager
+def durable_unit_scope() -> Generator[None]:
+    """Mark the current task as running a durable unit's body.
+
+    `CallableOperationBackend` enters it around every unit. A `RegisteredOperationBackend` enters it
+    around its worker-side handler, so a nested durable operation called from inside the unit (a
+    `DurableWorkspace` call, a capability's durable operation called from a tool) runs directly
+    instead of scheduling a second unit.
+    """
+    token = _IN_DURABLE_UNIT.set(True)
+    try:
+        yield
+    finally:
+        _IN_DURABLE_UNIT.reset(token)
 
 
 _CURRENT_RUN_CONTEXT: ContextVar[RunContext[Any] | None] = ContextVar(

@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import inspect
-import sys
 import time
 import weakref
 from collections import deque
@@ -101,6 +100,7 @@ from ._run_context import (
     AnchoredEvidence,
     EventStreamBuffer,
     dispatch_event_stream,
+    in_durable_unit,
     recorded_workspace_ref,
     set_current_run_context,
 )
@@ -3724,8 +3724,7 @@ class _GraphOutputSubmitter(Generic[DepsT]):
     async def submit(self, ctx: RunContext[Any], tool_name: str, args: dict[str, Any]) -> None:
         tool_call_id = ctx.tool_call_id
         assert tool_call_id is not None
-        durable_units = sys.modules.get('pydantic_ai.durable_exec._operation_backend')
-        if durable_units is not None and durable_units.in_durable_unit():
+        if in_durable_unit():
             # The engine records the tool's return value, and replaying it wouldn't submit again.
             raise exceptions.UserError(
                 '`submit_output` cannot be called from a tool that runs as a durable step or task, '

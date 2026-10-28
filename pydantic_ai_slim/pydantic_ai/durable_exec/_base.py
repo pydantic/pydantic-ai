@@ -64,6 +64,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .. import _usage_attribution
+from .._run_context import in_durable_unit
 from ..models.wrapper import serving_wrapper_scope
 from ._capability_operation import (
     CapabilityBoundOperation,
@@ -108,7 +109,6 @@ from ._operation_backend import (
     BoundDurableOperation,
     DurableOperationBackend,
     RegisteredOperationBackend,
-    in_durable_unit,
 )
 from ._runtime_toolsets import (
     cancellation_token_unsupported_error,
