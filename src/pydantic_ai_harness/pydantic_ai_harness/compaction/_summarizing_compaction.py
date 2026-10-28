@@ -37,6 +37,7 @@ from pydantic_ai.output import TextOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._message_text import tool_return_text, user_prompt_texts, with_text
+from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction._capability_loads import (
@@ -437,9 +438,15 @@ def _kept_first_user_message(message: ModelRequest, system_parts: list[SystemPro
 def is_legacy_summary(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[SystemPromptPart]:
     """Whether *part* is a summary written by a release that stored it as a system prompt.
 
-    Recognized by its text, so a user system prompt that opens with the same sentence counts too.
+    Recognized by its text, since those releases set no metadata on it, so a user system prompt that opens with the
+    same sentence counts too. A system prompt a harness capability marked with its `origin`, such as a lasting
+    `SystemReminders` reminder, is that capability's and never a summary.
     """
-    return isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX)
+    return (
+        isinstance(part, SystemPromptPart)
+        and part.content.startswith(SUMMARY_PREFIX)
+        and harness_origin(part.metadata) is None
+    )
 
 
 def extract_previous_summary(messages: list[ModelMessage]) -> str | None:

@@ -3856,12 +3856,14 @@ class _RepeatedMalformedToolArgsConnection(FakeRealtimeConnection):
 async def test_repeated_malformed_json_args_exceed_tool_retry_budget() -> None:
     session = RealtimeSession(_RepeatedMalformedToolArgsConnection([]), _noop_runner)
 
-    with pytest.raises(UnexpectedModelBehavior, match="Tool 'noop' exceeded max retries count of 1"):
-        await collect_events(session)
-
-    assert session._tool_manager.failed_tools == set()  # pyright: ignore[reportPrivateUsage]
-    assert session._tool_manager.ctx is not None  # pyright: ignore[reportPrivateUsage]
-    assert session._tool_manager.ctx.retries == {'noop': 1}  # pyright: ignore[reportPrivateUsage]
+    async with session:
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'noop' exceeded max retries count of 1"):
+            async for _ in session:
+                pass
+        # Read before closing: teardown releases the tool manager's run context.
+        assert session._tool_manager.failed_tools == set()  # pyright: ignore[reportPrivateUsage]
+        assert session._tool_manager.ctx is not None  # pyright: ignore[reportPrivateUsage]
+        assert session._tool_manager.ctx.retries == {'noop': 1}  # pyright: ignore[reportPrivateUsage]
 
 
 class _RecordsUnanswered(FakeRealtimeConnection):
@@ -4326,7 +4328,8 @@ async def test_close_completes_when_the_closing_task_is_cancelled() -> None:
             watchdog.cancel()
 
     assert session.closed
-    assert session._pump_task is not None and session._pump_task.done()  # pyright: ignore[reportPrivateUsage]
+    # The teardown finished, releasing the pump task along with the rest of the run state.
+    assert session._pump_task is None  # pyright: ignore[reportPrivateUsage]
     assert tool_task is not None and tool_task.done()
     assert tool_cancelled.is_set()
     assert [
@@ -8048,6 +8051,36 @@ async def test_agent_realtime_session_warns_when_async_tool_calls_false_is_ignor
             pass
 
 
+async def test_agent_realtime_session_warns_when_output_speech_timestamps_are_unsupported() -> None:
+    """A model that reports no speech timestamps says so when they're asked for, and only then."""
+    agent: Agent[None, str] = Agent()
+    untimed = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with pytest.warns(UnsupportedSettingWarning) as record:
+        async with agent.realtime(
+            untimed, model_settings=RealtimeModelSettings(output_speech_timestamps=True)
+        ).session():
+            pass
+    assert [str(warning.message) for warning in record] == snapshot(
+        [
+            "The `output_speech_timestamps` setting is not supported by model 'fake:fake-realtime' and will be "
+            'ignored. Its speech carries no timestamps.'
+        ]
+    )
+
+    profile = _profile()
+    profile['output_speech_timestamp_granularity'] = 'word'
+    timed = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]), profile=profile)
+    untimed = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        async with agent.realtime(timed, model_settings=RealtimeModelSettings(output_speech_timestamps=True)).session():
+            pass
+        async with agent.realtime(
+            untimed, model_settings=RealtimeModelSettings(output_speech_timestamps=False)
+        ).session():
+            pass
+
+
 @pytest.mark.parametrize(
     'settings,has_tools,declared',
     [
@@ -8322,6 +8355,40 @@ async def test_agent_realtime_session_reevaluates_seeded_dynamic_system_prompt()
     stale = seed[0]
     assert isinstance(stale, ModelRequest) and isinstance(stale.parts[0], SystemPromptPart)
     assert stale.parts[0].content == 'Stale value.'
+
+
+async def test_agent_realtime_session_appending_dynamic_system_prompt_warns() -> None:
+    """A realtime session can't append a system prompt change, so it re-evaluates the prompt in place, and says so."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.system_prompt(dynamic=True, on_change='append')
+    def dynamic_prompt() -> str:
+        return 'Current value.'
+
+    seed = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(
+                    content='Stale value.',
+                    dynamic_ref=dynamic_prompt.__qualname__,
+                    context_id='system_prompt:dynamic_prompt',
+                ),
+                UserPromptPart(content='earlier question'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='earlier answer')]),
+    ]
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with pytest.warns(
+        UserWarning,
+        match="realtime sessions, so dynamic system prompts 'system_prompt:dynamic_prompt' are re-evaluated in place",
+    ):
+        async with agent.realtime(model, message_history=seed).session() as session:
+            _ = [e async for e in session]
+    assert model.last_instructions == 'Current value.'
+    first = session.all_messages()[0]
+    assert isinstance(first, ModelRequest) and isinstance(first.parts[0], SystemPromptPart)
+    assert first.parts[0].content == 'Current value.'
 
 
 async def test_agent_realtime_session_unknown_tool() -> None:

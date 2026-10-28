@@ -188,6 +188,7 @@ def test_profile(model: OpenAILiveModel) -> None:
         supports_thinking=True,
         supports_tool_return_schema=False,
         emits_input_speech_events=False,
+        output_speech_timestamp_granularity=None,
         # The one model in the repo that infers its turn boundary rather than reading it off the wire.
         synthesizes_turn_boundary=True,
         # Its spoken replies are inferred turns; the requests that spend tokens are the backend's.

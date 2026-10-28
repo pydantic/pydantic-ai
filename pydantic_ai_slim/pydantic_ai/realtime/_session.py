@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import contextvars
 import dataclasses
 import weakref
 from collections import deque
@@ -24,7 +25,11 @@ from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._framing import SYSTEM_TAG, wrap
 from .._instrumentation import annotate_tool_call_otel_metadata
-from .._run_context import RealtimeEventBuffer, context_window_fraction
+from .._run_context import (
+    _CURRENT_RUN_CONTEXT,  # pyright: ignore[reportPrivateUsage]
+    RealtimeEventBuffer,
+    context_window_fraction,
+)
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -133,6 +138,7 @@ from .codec import (
     CreateResponse,
     InputRejected,
     InputTranscript,
+    OutputSpeechTimestamps,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
@@ -415,6 +421,7 @@ class _AudioTap:
 _TranslatableEvent: TypeAlias = (
     AudioDelta
     | OutputTranscript
+    | OutputSpeechTimestamps
     | InputTranscript
     | ResponseDone
     | RealtimeInputSpeechStartEvent
@@ -578,6 +585,10 @@ class _RealtimePendingMessages(PendingMessageQueue):
 
     def bind(self, on_append: Callable[[PendingMessagePriority], None]) -> None:
         self._on_append = on_append
+
+    def unbind(self) -> None:
+        """Drop the callback, which holds a bound method back to the session."""
+        self._on_append = None
 
     def append(self, pending: PendingMessage) -> None:
         _pending_message_text(pending)
@@ -1002,7 +1013,12 @@ class RealtimeSession:
                 self._apply_core(event)
             self._apply_core(Closed())
             self._end_chat_spans_left_open()
-            self._teardown = asyncio.create_task(self._finish_teardown())
+            # The teardown runs in a copy of the caller's context, so its end-of-session and hang-up requests
+            # stay under the caller's span. Only `_CURRENT_RUN_CONTEXT` is cleared: the finished task keeps its
+            # context, and that run context holds the session (via `realtime_session`) and its deps.
+            teardown_context = contextvars.copy_context()
+            teardown_context.run(_CURRENT_RUN_CONTEXT.set, None)
+            self._teardown = asyncio.create_task(self._finish_teardown(), context=teardown_context)
         elif asyncio.current_task() in self._background_tasks:
             # A tool closing the session is cancelled by the teardown, at the wait below of its own
             # `close()` call. One that swallows that cancellation and calls `close()` again would wait
@@ -1129,6 +1145,16 @@ class RealtimeSession:
             if self._close_error is not None:
                 _chain_context(hang_up_error, self._close_error)
             self._close_error = hang_up_error
+
+        # Break the cycles that would otherwise keep the session, and the deps it holds, alive until a
+        # cyclic collection: the core's bound annotator, the pending-messages callback, the tool
+        # manager's run context, and the pump task's captured context.
+        self._pending_messages.unbind()
+        self._core.release_annotator()
+        self._pump_task = None
+        # Drop the manager's run context, whose `realtime_session` points back here. `realtime_session` itself
+        # stays set, since `after_run` hooks still read it; `ctx.tool_manager.ctx` is `None` from here on.
+        self._tool_manager.ctx = None
 
     async def _record_final_usage(self) -> None:
         """End the provider session, recording the usage it reports only as it ends.
@@ -2402,7 +2428,7 @@ class RealtimeSession:
         if isinstance(event, OutputTranscript):
             self._session_instrumentation.set_output_type('text' if event.output_text else 'speech')
             return []
-        if isinstance(event, (InputTranscript, ResponseDone, PartStartEvent, PartEndEvent)):
+        if isinstance(event, (InputTranscript, OutputSpeechTimestamps, ResponseDone, PartStartEvent, PartEndEvent)):
             # (What they make streams as the core applies them.)
             return []
         if isinstance(event, RealtimeInputSpeechEndEvent):

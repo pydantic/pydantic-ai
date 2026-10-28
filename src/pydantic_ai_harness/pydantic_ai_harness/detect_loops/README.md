@@ -38,7 +38,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[DetectLoops()])
 | `alternating_calls` | Two different tool calls are made in turn, A-B-A-B, for this many A-B cycles. | `alternating_calls_threshold` (`3`) |
 | `repeated_text` | This many consecutive responses have no tool calls and the same text, ignoring case and whitespace. This happens when [output validation](https://pydantic.dev/docs/ai/core-concepts/output/#output-validator-functions) keeps asking the model to retry. | `repeated_text_threshold` (`3`) |
 
-`window` (default `10`) is how many of the most recent tool calls the three call-based checks look at. Set a threshold to `None` to turn that check off. A threshold must be at least 2, and a call-based threshold has to fit in `window` (`alternating_calls_threshold` needs twice its value), so a check that could never fire raises `ValueError` when the capability is created.
+`window` (default `10`) is how many of the most recent tool calls the three call-based checks look at. Set a threshold to `None` to turn that check off. `window` must be at least 2, even when every call-based check is off. A threshold must be at least 2, and a call-based threshold has to fit in `window` (`alternating_calls_threshold` needs twice its value), so a check that could never fire raises `ValueError` when the capability is created.
 
 How calls and results are compared:
 

@@ -295,6 +295,11 @@ export interface Opened {
   id: string
 }
 
+/** What `POST /api/worktrees` answers: the new worktree's folder. */
+export interface AddedWorktree {
+  root: string
+}
+
 export type ServerMessage =
   | {
       type: 'snapshot'

@@ -380,6 +380,48 @@
     },
     {
       "against": "v2.63.0",
+      "fingerprint": "0db3082753bca3bf3a60d72f9e3a16e0f3657081d2a83d3d268c4e890e9d609d",
+      "reason": "Adds the new `output_speech_timestamps` setting's name to `RealtimeModelSettingName`, which lists every `RealtimeModelSettings` field; every existing name is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11685"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "fbafe599901fd7eb81f8f1d60de36cd164ab7165f0c43d44fe0a6b09b096cfff",
+      "reason": "Adds the new `output_speech_timestamp_granularity` flag to `DEFAULT_REALTIME_PROFILE`, defaulting to `None`; every existing key and value is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11685"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "1f28bd82488fed51fe34f0d297be062343323b9c5ee5879b3975b0c270f97b27",
+      "reason": "Adds `OutputSpeechTimestamps` to the `RealtimeCodecEvent` union a connection yields, for the speech timestamps Azure AI Voice Live reports; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11685"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "2018a1f6f9f174b7c4f2eaa1f0c7f1e8ed6452a63fda3ffee7095e81516c3afc",
+      "reason": "Harness 0.x: `Planning.cache_ttl` is deprecated and has no effect, because the plan reminder no longer places a cache breakpoint of its own, so its default is `None`. An explicit `'5m'` or `'1h'` warns that it's ignored; the loss of the default breakpoint is in the docs and release note, and caching on the model replaces it.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "9be216257b6cf2a0b4fb6c866822cd4230b68487f7423e74113ccd0e9ea1fb40",
+      "reason": "Harness 0.x: `Planning.cache_ttl` is deprecated and has no effect, because the plan reminder no longer places a cache breakpoint of its own, so its default is `None`. An explicit `'5m'` or `'1h'` warns that it's ignored; the loss of the default breakpoint is in the docs and release note, and caching on the model replaces it.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "51c9835f3d0b470684680c992c6a4df453c356ad85fe788921de808a6624054c",
+      "reason": "Harness 0.x: `Planning.from_spec`'s `cache_ttl` follows the deprecated `Planning.cache_ttl`, defaulting to `None`; an explicit `'5m'` or `'1h'` warns that it's ignored.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+    },
+    {
+      "against": "v2.63.0",
+      "fingerprint": "4f48f3cbafd028241e3620a3564f13cde10fcf648b18bd76b1a881f743ec9241",
+      "reason": "False positive: `Planning` still inherits `wrap_model_request` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the fallback plan record is now added in `before_model_request`.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+    },
+    {
+      "against": "v2.63.0",
       "fingerprint": "ba357493cc5988982484475597d4666626d566ac71a2317e5e91af3c243c196e",
       "reason": "`RepoContextSettings.nested_traversal` keeps its type and default; only its `Field` description changed, to describe nested traversal surfacing every directory between the traversed one and the workspace.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11687"
