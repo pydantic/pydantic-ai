@@ -20,7 +20,7 @@ The plan tools' results carry `metadata={'origin': 'pydantic-ai-harness.planning
 - in a run that starts without them in its history, such as an executor reading a plan another agent wrote to a shared store;
 - after something outside the plan tools changed the store.
 
-That record is kept in the history and marked with the same `origin`, so compaction tells it from something the user said. A plan emptied outside the plan tools after the model was shown one is recorded as `No plan yet.`, once, so the old plan doesn't read as current. A custom `guidance` replaces the tool guidance but keeps the note; `inject=False` means the model isn't shown the plan: it drops the note and the record, and the plan tools reply as they did before they returned the plan (`write_plan` with the bare checklist, the others with just their message).
+That record is kept in the history and marked with the same `origin`, so compaction tells it from something the user said. A plan emptied outside the plan tools after the model was shown one is recorded as `No plan yet.`, once, so the old plan doesn't read as current. A custom `guidance` replaces the tool guidance but keeps the note; `inject=False` means the model isn't shown the plan: it drops the note and the record, and the plan tools don't return the plan (`write_plan` replies with the bare checklist, the others with just their message).
 
 ```python
 from pydantic_ai import Agent

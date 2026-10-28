@@ -1198,10 +1198,10 @@ class TestReminder:
         ctx = _ctx()
         enqueued: list[object] = []
 
-        def record(*content: object) -> None:
+        def record(*content: object, priority: object = 'asap') -> None:
             enqueued.extend(content)
 
-        ctx.enqueue = MagicMock(side_effect=record)
+        ctx.enqueue = record
         request_context = ModelRequestContext(
             model=TestModel(), messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()
         )

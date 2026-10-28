@@ -124,8 +124,8 @@ class Planning(AbstractCapability[AgentDepsT]):
     """Show the model the plan: the plan tools end their results with it, the instructions carry the note on its tag,
     and the plan is recorded when the latest one isn't visible.
 
-    With `inject=False`, the plan tools reply as they did before they returned the plan: `write_plan` with the bare
-    checklist, the others with just their message."""
+    With `inject=False`, the plan tools don't return the plan: `write_plan` replies with the bare checklist, and the
+    others with just their message."""
 
     tools: Sequence[str] | None = None
     """Optional allowlist of tool names to register; `None` registers all of them.

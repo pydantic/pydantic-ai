@@ -573,8 +573,8 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
     def _plan_reply(self, message: str, items: list[PlanItem], suffix: str = '', *, bare_plan: bool = False) -> str:
         """A plan-changing tool's reply: ending with the framed plan when `Planning` shows the model its plan.
 
-        With `inject=False`, the reply is what it was before plan tools returned the plan: the message, with the
-        bare checklist after it for `write_plan` (`bare_plan`).
+        With `inject=False`, the reply doesn't carry the plan: it's the message, with the bare checklist after it for
+        `write_plan` (`bare_plan`).
         """
         if self._capability.inject:
             return _PlanReply(message, items, suffix)
