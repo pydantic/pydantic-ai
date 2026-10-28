@@ -5,21 +5,28 @@ server and holds the connection open between prompts, which the dashboard report
 A server that fails to connect is marked `error` and left out, so it cannot fail the prompt.
 `stop` releases the connection and disables the server.
 
+A server with `defer_loading` is offered as the on-demand capability `mcp_NAME` instead: the model sees
+one catalog line until it loads it, and only then does a run connect the server and list its tools.
+
 An OAuth server connects with its stored sign-in only; `/mcp auth NAME` is the one place that opens the browser.
 Signed out, it is marked `error` with that hint instead of holding the prompt up for a sign-in.
 """
 
+import textwrap
 import time
+from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from anyio import to_thread
 
 from pydantic_ai import RunContext
-from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Toolset
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool
 from pydantic_clai2.mcp.settings import (
     RemoteServer,
     Server,
@@ -38,6 +45,14 @@ if TYPE_CHECKING:
 
 Source = Literal['user', 'plugin', 'project']
 State = Literal['running', 'ready', 'stopped', 'error']
+
+ABOUT_LIMIT = 200
+"""The most characters of a server's own instructions an on-demand catalog line shows."""
+
+
+def capability_id(name: str) -> str:
+    """The server's toolset and on-demand capability id; fixed, so a resumed conversation keeps it loaded."""
+    return f'mcp_{name}'
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -60,15 +75,19 @@ class ServerEntry:
 class _Connection:
     server: Server
     toolset: 'MCPToolset[None]'
+    prefixed: AbstractToolset[None]
+    """`toolset` with the server's name prefix, built once so a run step sees the same toolset again."""
     stack: AsyncExitStack | None = None
     started: float | None = None
     error: str | None = None
     tools: tuple[str, ...] = field(default_factory=tuple[str, ...])
+    about: str | None = None
+    """What the server said about itself when it last connected, for an on-demand catalog line."""
 
 
 def _shape(server: Server) -> Server:
-    """The configuration a connection depends on; toggling `enabled` keeps the connection."""
-    return server.model_copy(update={'enabled': True})
+    """The configuration a connection depends on; `enabled`, `defer_loading`, and `description` keep it."""
+    return server.model_copy(update={'enabled': True, 'defer_loading': False, 'description': None})
 
 
 class MCPServers:
@@ -137,6 +156,12 @@ class MCPServers:
         connection = self._connections.get(entry.name)
         return connection.tools if connection is not None else ()
 
+    def description(self, entry: ServerEntry) -> str:
+        """The catalog line: the configured one, else what the server said about itself, else its name."""
+        connection = self._connections.get(entry.name)
+        about = connection.about if connection is not None else None
+        return entry.server.description or about or f'Tools from the {entry.name} MCP server.'
+
     async def start(self, name: str) -> str:
         """Enable the server and hold a connection open."""
         entry = self.get(name)
@@ -170,6 +195,7 @@ class MCPServers:
             return connection.error
         connection.stack, connection.started, connection.error = stack, time.monotonic(), None
         connection.tools = tuple(f'{name}_{tool.name}' for tool in listed)
+        connection.about = _about(connection.toolset)
         self.log(name, f'started with {len(listed)} tools')
         return None
 
@@ -215,17 +241,46 @@ class MCPServers:
             await self._release(name)
 
     async def toolset(self, ctx: RunContext[None]) -> AbstractToolset[None] | None:
-        """The enabled servers for this run, each prefixed with its name."""
+        """The enabled eager servers for this run, each prefixed with its name."""
         await self.sync()
         toolsets: list[AbstractToolset[None]] = []
-        for entry in self.entries():
-            if self.state(entry) not in ('running', 'ready'):
+        for entry in self._usable():
+            if entry.server.defer_loading:
                 continue
-            connection = await self._connection(entry)
-            if connection.stack is None and await self._open(entry.name, connection):
-                continue  # A server that cannot connect is marked `error`, not allowed to fail the prompt.
-            toolsets.append(connection.toolset.prefixed(entry.name))
+            toolset = await self._attach(entry)
+            if toolset is not None:
+                toolsets.append(toolset)
         return CombinedToolset(toolsets) if toolsets else None
+
+    async def capability(self, ctx: RunContext[None]) -> AbstractCapability[None] | None:
+        """The enabled on-demand servers for this run, each its own deferred capability.
+
+        Nothing connects here: a server connects on the first run step after the model loads it.
+        """
+        await self.sync()
+        capabilities: list[AbstractCapability[None]] = [
+            Toolset(
+                _OnDemandToolset(capability_id=capability_id(entry.name), attach=partial(self._attach, entry)),
+                id=capability_id(entry.name),
+                description=self.description(entry),
+                defer_loading=True,
+            )
+            for entry in self._usable()
+            if entry.server.defer_loading
+        ]
+        return CombinedCapability(capabilities) if capabilities else None
+
+    def _usable(self) -> list[ServerEntry]:
+        return [entry for entry in self.entries() if self.state(entry) in ('running', 'ready')]
+
+    async def _attach(self, entry: ServerEntry) -> AbstractToolset[None] | None:
+        """The server's prefixed tools, connecting it first; `None` when it cannot connect."""
+        connection = await self._connection(entry)
+        if connection.error is not None:
+            return None  # Tried and failed: an on-demand server is asked again on each step of the run.
+        if connection.stack is None and await self._open(entry.name, connection):
+            return None  # A server that cannot connect is marked `error`, not allowed to fail the prompt.
+        return connection.prefixed
 
     async def list_tools(self, name: str) -> list[str]:
         """Connect if needed and list the server's prefixed tool names."""
@@ -237,6 +292,7 @@ class MCPServers:
         try:
             async with connection.toolset:
                 tools = await connection.toolset.list_tools()
+                connection.about = _about(connection.toolset)
         except Exception as exc:
             required = _sign_in_required(exc)
             if required is None:
@@ -267,7 +323,8 @@ class MCPServers:
             return connection
         if connection is not None:
             await self._release(entry.name)
-        created = _Connection(server=entry.server, toolset=self._build(entry))
+        toolset = self._build(entry)
+        created = _Connection(server=entry.server, toolset=toolset, prefixed=toolset.prefixed(entry.name))
         self._connections[entry.name] = created
         return created
 
@@ -310,8 +367,45 @@ class MCPServers:
                 )
             timeout = server.timeout
         if timeout is None:
-            return MCPToolset(transport, id=f'mcp_{entry.name}')
-        return MCPToolset(transport, id=f'mcp_{entry.name}', init_timeout=timeout)
+            return MCPToolset(transport, id=capability_id(entry.name))
+        return MCPToolset(transport, id=capability_id(entry.name), init_timeout=timeout)
+
+
+@dataclass(kw_only=True)
+class _OnDemandToolset(AbstractToolset[None]):
+    """An on-demand server's tools, once the model has loaded its capability; no connection before that.
+
+    The connection is `MCPServers`'s, held between prompts like an eager server's, so the run does not enter it.
+    """
+
+    capability_id: str
+    attach: Callable[[], Awaitable[AbstractToolset[None] | None]]
+
+    @property
+    def id(self) -> str | None:  # pragma: no cover -- only durable execution, which CLAI does not use, asks.
+        return None
+
+    async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+        if self.capability_id not in ctx.loaded_capability_ids:
+            return {}
+        toolset = await self.attach()
+        return {} if toolset is None else await toolset.get_tools(ctx)
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        return await tool.toolset.call_tool(name, tool_args, ctx, tool)
+
+
+def _about(toolset: 'MCPToolset[None]') -> str | None:
+    """The first line of the server's instructions, else the title it gave itself; `None` when it gave neither."""
+    lines = (toolset.instructions or '').strip().splitlines()
+    if lines:
+        return textwrap.shorten(lines[0], ABOUT_LIMIT, placeholder='...')
+    try:
+        return toolset.server_info.title
+    except AttributeError:  # The server sent no server info.
+        return None
 
 
 def sign_in(name: str, server: Server) -> OAuthSignIn | None:
