@@ -2354,6 +2354,28 @@ async def test_azure_unified_cache(
         assert model.resolve_cache_retention({'cache': True}) is None
 
 
+async def test_azure_unified_cache_custom_deployment_name(allow_model_requests: None, request_capture: RequestCapture):
+    """A deployment whose name isn't a model name opts in with a `profile=` that turns breakpoints and the unified
+    setting on, since the provider's profile is derived from the name."""
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(_azure_wire_response),
+        event_hooks={'request': list(request_capture.client.event_hooks['request'])},
+    ) as http_client:
+        provider = _azure_provider('v1_endpoint', http_client)
+        assert OpenAIResponsesModel('prod-chat', provider=provider).resolve_cache_retention({'cache': True}) is None
+        profile = OpenAIModelProfile(
+            openai_supports_prompt_cache_breakpoints=True, supports_cache=True, supported_cache_retentions=('30m',)
+        )
+        model = OpenAIResponsesModel('prod-chat', provider=provider, profile=profile)
+
+        await Agent(model, instructions='Support policies.', model_settings={'cache': True}).run('Where is order 1234?')
+
+    [body] = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
+    assert body['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
+    assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    assert model.resolve_cache_retention({'cache': True}) == timedelta(minutes=30)
+
+
 async def test_azure_unified_cache_ignored_before_gpt_5_6(allow_model_requests: None, request_capture: RequestCapture):
     """Earlier Azure deployments cache implicitly with nothing to configure, so the unified setting sends nothing."""
     async with httpx2.AsyncClient(
