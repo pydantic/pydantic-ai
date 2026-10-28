@@ -39,7 +39,7 @@ pytestmark = pytest.mark.anyio(backends=['asyncio'])
 
 async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, FakeSandbox]:
     backend = DaytonaSandboxBackend(desktop=True)
-    await backend.display_size()
+    await Workspace(backend).display_size()
     (sandbox,) = fake_daytona.sandboxes
     sandbox.desktop_calls.clear()
     return backend, sandbox
@@ -83,6 +83,12 @@ async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, Fa
         ),
         pytest.param(PressKeys(keys=('Return',)), ['press enter modifiers=[]'], id='alias'),
         pytest.param(
+            PressKeys(keys=('ctrl', 'KP_Enter', 'numpad_multiply')),
+            ['keydown ctrl', 'keydown num_enter', 'keydown num_asterisk', 'keyup num_asterisk', 'keyup num_enter']
+            + ['keyup ctrl'],
+            id='renamed-keys',
+        ),
+        pytest.param(
             PressKeys(keys=('shift', 'ctrl', '!')), ["press 1 modifiers=['shift', 'ctrl']"], id='shifted-symbol'
         ),
         pytest.param(PressKeys(keys=('super',)), ['keydown cmd', 'keyup cmd'], id='modifier-alone'),
@@ -101,7 +107,7 @@ async def test_each_action_maps_onto_daytona_calls(
 ) -> None:
     backend, sandbox = await _started(fake_daytona)
 
-    await backend.act(action)
+    await Workspace(backend).act(action)
 
     assert sandbox.desktop_calls == calls
 
@@ -113,7 +119,7 @@ async def test_each_action_maps_onto_daytona_calls(
         pytest.param(TypeText(text='done 😀'), id='emoji'),
         pytest.param(MouseDown(button='forward'), id='side-button-down'),
         pytest.param(PressKeys(keys=('f13',)), id='key-that-crashes-the-desktop'),
-        pytest.param(PressKeys(keys=('KP_Enter',)), id='keysym'),
+        pytest.param(PressKeys(keys=('printscreen',)), id='key-without-a-daytona-name'),
         pytest.param(HoldKeys(keys=('é',), seconds=1), id='non-ascii-key'),
     ],
 )
@@ -123,7 +129,7 @@ async def test_what_daytona_cannot_do_is_refused_before_anything_runs(
     backend, sandbox = await _started(fake_daytona)
 
     with pytest.raises(WorkspaceUnsupportedActionError):
-        await backend.act(action)
+        await Workspace(backend).act(action)
     assert sandbox.desktop_calls == []
 
 
@@ -131,14 +137,14 @@ async def test_an_unknown_action_type_is_refused(fake_daytona: FakeDaytona) -> N
     backend, _ = await _started(fake_daytona)
 
     with pytest.raises(WorkspaceUnsupportedActionError, match='cannot perform'):
-        await backend.act(object())  # pyright: ignore[reportArgumentType]
+        await Workspace(backend).act(object())  # pyright: ignore[reportArgumentType]
 
 
 async def test_a_cancelled_hold_lets_go_of_what_it_pressed(fake_daytona: FakeDaytona) -> None:
     backend, sandbox = await _started(fake_daytona)
 
     async with anyio.create_task_group() as tasks:
-        tasks.start_soon(backend.act, HoldKeys(keys=('ctrl', 'a'), seconds=30))
+        tasks.start_soon(Workspace(backend).act, HoldKeys(keys=('ctrl', 'a'), seconds=30))
         await anyio.wait_all_tasks_blocked()  # holding, in its sleep
         tasks.cancel_scope.cancel()
 
@@ -160,7 +166,7 @@ async def test_a_failed_release_still_lets_go_of_the_other_keys(fake_daytona: Fa
 
     sandbox.computer_use.up = up_failing_once
     with pytest.raises(DaytonaServiceUnavailableError):
-        await backend.act(PressKeys(keys=('ctrl', 'a', 'b')))
+        await Workspace(backend).act(PressKeys(keys=('ctrl', 'a', 'b')))
 
     # `b` failed to come up, so it is tried again along with the keys still down.
     assert sandbox.desktop_calls == ['keydown ctrl', 'keydown a', 'keydown b', 'keyup b', 'keyup a', 'keyup ctrl']
@@ -174,7 +180,9 @@ async def test_a_failed_drag_releases_the_button_and_keys(fake_daytona: FakeDayt
 
     sandbox.computer_use.move = fail_on_move
     with pytest.raises(DaytonaServiceUnavailableError):
-        await backend.act(Drag(path=(Point(x=1, y=1), Point(x=2, y=2), Point(x=3, y=3)), modifiers=('shift',)))
+        await Workspace(backend).act(
+            Drag(path=(Point(x=1, y=1), Point(x=2, y=2), Point(x=3, y=3)), modifiers=('shift',))
+        )
 
     assert sandbox.desktop_calls == ['keydown shift', 'mousedown 1 1 left', 'mouseup None None left', 'keyup shift']
 
@@ -191,9 +199,9 @@ async def test_the_live_view_url_is_a_signed_link_to_the_desktops_viewer(fake_da
 async def test_screenshots_zoom_and_pointer(fake_daytona: FakeDaytona) -> None:
     backend, sandbox = await _started(fake_daytona)
 
-    assert await backend.screenshot() == sandbox.computer_use.png
-    assert await backend.zoom(Region(left=10, top=20, right=110, bottom=70)) == sandbox.computer_use.png
-    assert await backend.cursor_position() == Point(x=7, y=8)
+    assert await Workspace(backend).screenshot() == sandbox.computer_use.png
+    assert await Workspace(backend).zoom(Region(left=10, top=20, right=110, bottom=70)) == sandbox.computer_use.png
+    assert await Workspace(backend).cursor_position() == Point(x=7, y=8)
     assert sandbox.desktop_calls == ['take_full_screen', 'take_region 10 20 100 50', 'get_position']
 
 
@@ -202,13 +210,13 @@ async def test_replies_the_desktop_cannot_use_are_workspace_errors(fake_daytona:
 
     sandbox.computer_use.png = b'GIF89a'
     with pytest.raises(WorkspaceError, match='did not return a PNG'):
-        await backend.screenshot()
+        await Workspace(backend).screenshot()
     sandbox.computer_use.displays = []
     with pytest.raises(WorkspaceError, match='no display size'):
-        await backend.display_size()
+        await Workspace(backend).display_size()
     sandbox.computer_use.position = SimpleNamespace(x=None, y=None)
     with pytest.raises(WorkspaceError, match='no pointer position'):
-        await backend.cursor_position()
+        await Workspace(backend).cursor_position()
 
 
 async def test_the_desktop_starts_once_however_many_first_uses_race(fake_daytona: FakeDaytona) -> None:
@@ -234,8 +242,17 @@ async def test_a_failed_desktop_call_starts_it_again_next_time(fake_daytona: Fak
 
     sandbox.computer_use.error = DaytonaServiceUnavailableError('connection is shut down', status_code=503)
     with pytest.raises(DaytonaServiceUnavailableError):
-        await backend.act(Click(x=1, y=1))
-    await backend.act(Click(x=1, y=1))
+        await Workspace(backend).act(Click(x=1, y=1))
+    await Workspace(backend).act(Click(x=1, y=1))
+
+    assert sandbox.computer_use.start_calls == 2
+
+
+async def test_a_failed_look_starts_the_desktop_again_and_looks_again(fake_daytona: FakeDaytona) -> None:
+    backend, sandbox = await _started(fake_daytona)
+
+    sandbox.computer_use.error = DaytonaServiceUnavailableError('connection is shut down', status_code=503)
+    assert await Workspace(backend).screenshot() == sandbox.computer_use.png
 
     assert sandbox.computer_use.start_calls == 2
 
@@ -247,8 +264,8 @@ async def test_a_failed_start_is_retried(fake_daytona: FakeDaytona) -> None:
 
     sandbox.computer_use.error = DaytonaBadRequestError('no desktop packages', status_code=400)
     with pytest.raises(WorkspaceError, match='The Daytona desktop failed: no desktop packages'):
-        await backend.screenshot()
-    await backend.screenshot()
+        await Workspace(backend).act(Click(x=1, y=1))
+    await Workspace(backend).act(Click(x=1, y=1))
 
     assert sandbox.computer_use.start_calls == 2
 
@@ -257,8 +274,8 @@ async def test_a_refused_action_does_not_restart_the_desktop(fake_daytona: FakeD
     backend, sandbox = await _started(fake_daytona)
 
     with pytest.raises(WorkspaceUnsupportedActionError):
-        await backend.act(PressKeys(keys=('numpad_enter',)))
-    await backend.act(Click(x=1, y=1))
+        await Workspace(backend).act(PressKeys(keys=('printscreen',)))
+    await Workspace(backend).act(Click(x=1, y=1))
 
     assert sandbox.computer_use.start_calls == 1
 
@@ -279,8 +296,8 @@ async def test_a_sandbox_without_a_desktop_has_no_display(fake_daytona: FakeDayt
     backend = DaytonaSandboxBackend()
 
     assert Workspace(backend).has_display is False
-    with pytest.raises(UserError, match='has no display: create it with `desktop=True`'):
-        await backend.screenshot()
+    with pytest.raises(UserError, match='has no display'):
+        await Workspace(backend).screenshot()
     assert fake_daytona.sandboxes == []
 
 

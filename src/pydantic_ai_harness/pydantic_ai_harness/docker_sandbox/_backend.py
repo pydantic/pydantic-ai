@@ -30,23 +30,16 @@ import secrets
 import shutil
 import tempfile
 from collections.abc import Mapping, Sequence
-from contextlib import AbstractAsyncContextManager
 from pathlib import Path
-from typing import Literal, Self
+from typing import Literal
 
 import anyio
 
-from pydantic_ai import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
-    ComputerAction,
     LocalWorkspaceBackend,
-    Point,
-    Region,
     SupportsCommands,
-    SupportsCursorPosition,
     SupportsDisplay,
-    SupportsZoom,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -55,8 +48,9 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._display import ManagedDisplay
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
-from pydantic_ai_harness._x11 import DISPLAY, X11Computer, X11Display, start_x_server
+from pydantic_ai_harness._x11 import DISPLAY, X11Computer, start_x11, start_x_server
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerSandboxBackend', 'remove_container')
 
@@ -277,7 +271,7 @@ async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -
         raise WorkspaceUnavailableError(f'could not build the desktop image: {result.stderr.strip()[-2000:]}')
 
 
-class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay, SupportsZoom, SupportsCursorPosition):
+class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     """Run commands in a local Docker container, created on first use, through the `docker` CLI.
 
     The image needs a POSIX `sh` and the usual file utilities; its own entrypoint and command don't run. A
@@ -338,11 +332,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay, 
         self._image = image
         self._ref = ref
         self._desktop_size = _DEFAULT_DESKTOP_SIZE if desktop is True else desktop or None
-        self._x11 = (
-            X11Display(self, self._desktop_size, _START_DESKTOP, lambda: f'Docker workspace {self._name}')
-            if self._desktop_size
-            else None
-        )
+        self._display = None if self._desktop_size is None else ManagedDisplay(self._start_display)
         self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
         # Commands see the desktop too, so a program the agent starts from the shell opens on it.
         display_env = {'DISPLAY': DISPLAY} if self._desktop_size else {}
@@ -526,31 +516,10 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay, 
         await stop_shielded(lambda: self._runner.run(argv), grace=_STOP_TIMEOUT)
 
     @property
-    def display(self) -> Self | None:
-        """This backend, when created with `desktop=True`."""
-        return self if self._desktop_size is not None else None
+    def display(self) -> ManagedDisplay | None:
+        """The container's display, when created with `desktop=True`."""
+        return self._display
 
-    def _display(self) -> AbstractAsyncContextManager[X11Computer]:
-        if self._x11 is None:
-            raise UserError('This Docker workspace has no display: create it with `desktop=True`.')
-        return self._x11.computer()
-
-    async def display_size(self) -> tuple[int, int]:
-        async with self._display() as computer:
-            return await computer.display_size()
-
-    async def screenshot(self) -> bytes:
-        async with self._display() as computer:
-            return await computer.screenshot()
-
-    async def act(self, action: ComputerAction) -> None:
-        async with self._display() as computer:
-            await computer.act(action)
-
-    async def zoom(self, region: Region) -> bytes:
-        async with self._display() as computer:
-            return await computer.zoom(region)
-
-    async def cursor_position(self) -> Point:
-        async with self._display() as computer:
-            return await computer.cursor_position()
+    async def _start_display(self) -> X11Computer:
+        assert self._desktop_size is not None
+        return await start_x11(self, self._desktop_size, _START_DESKTOP, lambda: f'Docker workspace {self._name}')

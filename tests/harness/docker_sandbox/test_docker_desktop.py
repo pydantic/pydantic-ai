@@ -138,6 +138,37 @@ async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, con
     assert docker.xvfb_starts == 1
 
 
+async def test_a_look_at_a_display_that_went_away_starts_it_and_looks_again(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    workspace = Workspace(_desktop(container_dir, image='my-desktop'))
+    await workspace.display_size()
+
+    docker.remove_display()
+    assert await workspace.cursor_position() == Point(x=640, y=400)
+    assert docker.xvfb_starts == 1
+
+
+async def test_a_lock_left_by_a_stopped_container_does_not_stop_the_display(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    backend = _desktop(container_dir, image='my-desktop')
+    await backend.working_dir()
+    assert backend.ref is not None
+    docker.remove_display()
+    docker.leave_x_lock(backend.ref.id)
+
+    assert await Workspace(backend).display_size() == (1280, 800)
+
+
+async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, container_dir: Path) -> None:
+    (docker.bin_dir / 'scrot').unlink()
+    workspace = Workspace(_desktop(container_dir, image='my-desktop'))
+
+    with pytest.raises(WorkspaceUnavailableError, match='A display command is missing'):
+        await workspace.screenshot()
+
+
 async def test_a_refused_key_does_not_restart_the_display(docker: FakeDocker, container_dir: Path) -> None:
     workspace = Workspace(_desktop(container_dir))
     await workspace.display_size()
@@ -155,7 +186,7 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
     docker.remove_display(can_start=False)
     workspace = Workspace(_desktop(container_dir, image='my-desktop'))
 
-    with pytest.raises(WorkspaceError, match='it needs Xvfb, xdotool, xmodmap, scrot and setsid') as error:
+    with pytest.raises(WorkspaceUnavailableError, match='it needs Xvfb, xdotool, xmodmap, scrot and setsid') as error:
         await workspace.screenshot()
     assert 'the X server did not start' in str(error.value)
     assert 'Fatal server error' in str(error.value)
@@ -167,8 +198,8 @@ async def test_a_container_without_a_desktop_has_no_display(docker: FakeDocker, 
     backend = DockerSandboxBackend(image='python:3.13-slim', working_dir=str(container_dir))
 
     assert Workspace(backend).has_display is False
-    with pytest.raises(UserError, match='has no display: create it with `desktop=True`'):
-        await backend.screenshot()
+    with pytest.raises(UserError, match='has no display'):
+        await Workspace(backend).screenshot()
     assert docker.calls == []
 
 

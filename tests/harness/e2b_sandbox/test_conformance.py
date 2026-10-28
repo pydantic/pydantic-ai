@@ -117,7 +117,9 @@ class TestLiveE2BDesktop(TestLiveE2BSandboxBackend):  # pragma: lax no cover
 
     async def test_typed_text_reaches_the_focused_window(self, backend: WorkspaceBackend) -> None:
         assert isinstance(backend, E2BSandboxBackend)
-        await backend.display_size()  # starts the display
+        display = backend.display
+        assert display is not None
+        await display.display_size()  # starts the display
         typed = f'/tmp/typed-{uuid.uuid4().hex}.txt'
         await backend.run(
             f'setsid xfce4-terminal --disable-server --geometry 60x10+100+100 -x sh -c "cat > {typed}" '
@@ -129,9 +131,9 @@ class TestLiveE2BDesktop(TestLiveE2BSandboxBackend):  # pragma: lax no cover
             ['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xfce4-terminal'], env={'DISPLAY': ':1'}
         )
 
-        await backend.act(Click(x=300, y=180))
-        await backend.act(TypeText(text='hello, desktop'))
-        await backend.act(PressKeys(keys=('enter',)))
+        await display.act(Click(x=300, y=180))
+        await display.act(TypeText(text='hello, desktop'))
+        await display.act(PressKeys(keys=('enter',)))
 
         result = await backend.run(f'until [ -s {typed} ]; do sleep 0.1; done; cat {typed}', shell=True, timeout=30)
         assert result.stdout == 'hello, desktop\n'

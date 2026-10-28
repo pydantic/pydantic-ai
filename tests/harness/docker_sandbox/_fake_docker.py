@@ -90,9 +90,12 @@ exec)
         tmp="$state/$name.tmp"
         [ "$name" != readonly ] || tmp=/nonexistent-pydantic-ai-dir
         mkdir -p "$state/$name.tmp"
+        export FAKE_TMP="$tmp"
         for arg; do
             shift
-            case $arg in */run/pydantic-ai/*) arg=$(printf '%s' "$arg" | sed "s#/run/pydantic-ai/#$tmp/#g") ;; esac
+            case $arg in */run/pydantic-ai/* | */tmp/.X*)
+                arg=$(printf '%s' "$arg" | sed -e "s#/run/pydantic-ai/#$tmp/#g" -e "s#/tmp/\\.X#$tmp/.X#g") ;;
+            esac
             set -- "$@" "$arg"
         done
     fi
@@ -158,10 +161,12 @@ _FAKE_XVFB = """#!/bin/sh
 bin=$(dirname "$0")
 echo "$*" >> "$bin/xvfb-starts"
 if [ -e "$bin/xvfb-fails" ]; then echo 'Fatal server error: no screens found' >&2; exit 1; fi
+if [ -e "$FAKE_TMP/.X1-lock" ]; then echo 'Fatal server error: Server is already active for display 1' >&2; exit 1; fi
 rm -f "$bin/no-display"
 exec sleep 2
 """
-"""Stands in for an X server: brings the fake display up and stays running a while, or fails if `xvfb-fails` exists.
+"""Stands in for an X server: brings the fake display up and stays running a while, or fails if `xvfb-fails` or a
+lock for its display exists.
 
 Also keeps a host's real Xvfb from starting.
 """
@@ -227,6 +232,10 @@ class FakeDocker:
         (self.bin_dir / 'no-display').touch()
         if not can_start:
             (self.bin_dir / 'xvfb-fails').touch()
+
+    def leave_x_lock(self, name: str) -> None:
+        """Leave the lock of an X server that's gone in the container `name`, as `docker stop` does."""
+        (self.bin_dir / 'containers' / f'{name}.tmp' / '.X1-lock').write_text('        25\n')
 
     @property
     def xvfb_starts(self) -> int:

@@ -13,7 +13,7 @@ from typing import TypeVar
 import anyio
 import pytest
 
-from pydantic_ai.workspaces import Click, Point, ReadOnlyWorkspace, Region, WorkspaceError, WorkspaceRef
+from pydantic_ai.workspaces import Click, Point, ReadOnlyWorkspace, Region, WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai_harness import LocalDesktop, LocalDesktopBackend
 
 T = TypeVar('T')
@@ -88,13 +88,13 @@ async def test_a_virtual_screen_starts_once_and_every_command_runs_on_it(
     desktop = LocalDesktop[None](tmp_path, size=(1024, 768))
     try:
         backend = _backend(desktop)
-        assert backend.display is backend
+        display = backend.display
         assert (await backend.run('echo $DISPLAY', shell=True)).stdout == ':7\n'
-        assert await backend.display_size() == (1280, 800)
-        assert (await backend.screenshot()).startswith(b'\x89PNG')
-        assert (await backend.zoom(Region(left=0, top=0, right=10, bottom=10))).startswith(b'\x89PNG')
-        await backend.act(Click(x=5, y=6))
-        assert await backend.cursor_position() == Point(x=3, y=4)
+        assert await display.display_size() == (1280, 800)
+        assert (await display.screenshot()).startswith(b'\x89PNG')
+        assert (await display.zoom(Region(left=0, top=0, right=10, bottom=10))).startswith(b'\x89PNG')
+        await display.act(Click(x=5, y=6))
+        assert await display.cursor_position() == Point(x=3, y=4)
         # A later run's backend uses the same screen.
         assert (await _backend(desktop).run('echo $DISPLAY', shell=True)).stdout == ':7\n'
     finally:
@@ -121,11 +121,11 @@ def test_a_screen_that_stopped_starts_again_in_a_later_event_loop(fake_x: Path, 
     desktop = LocalDesktop[None](tmp_path)
     backend = _backend(desktop)
     try:
-        _in_new_event_loop(backend.display_size)
+        _in_new_event_loop(backend.display.display_size)
         for process in desktop._screen._processes:  # pyright: ignore[reportOptionalMemberAccess,reportPrivateUsage]
             process.kill()
             process.wait()
-        assert _in_new_event_loop(backend.display_size) == (1280, 800)
+        assert _in_new_event_loop(backend.display.display_size) == (1280, 800)
     finally:
         _in_new_event_loop(lambda: _stop(desktop))
     assert len(_lines(fake_x, 'Xvfb')) == 2
@@ -151,8 +151,8 @@ async def test_a_screen_that_cannot_start_says_why(
         else:
             _install(bin_dir, {name: body})
     desktop = LocalDesktop[None](tmp_path)
-    with pytest.raises(WorkspaceError, match=error.replace('`', '.')):
-        await _backend(desktop).screenshot()
+    with pytest.raises(WorkspaceUnavailableError, match=error.replace('`', '.')):
+        await _backend(desktop).display.screenshot()
     assert desktop._screen._processes == []  # pyright: ignore[reportOptionalMemberAccess,reportPrivateUsage]
 
 
@@ -161,7 +161,7 @@ async def test_a_start_that_is_cancelled_stops_what_it_started(fake_x: Path, tmp
     _install(Path(os.environ['PATH'].split(':')[0]), {'xprop': 'true'})  # the window manager never gets ready
     desktop = LocalDesktop[None](tmp_path)
     with anyio.move_on_after(0.5):
-        await _backend(desktop).screenshot()
+        await _backend(desktop).display.screenshot()
     pids = [int(pid) for pid in Path(f'{fake_x}.pids').read_text(encoding='utf-8').split()]
     assert len(pids) == 2
     for pid in pids:
@@ -180,7 +180,7 @@ async def test_the_real_screen_is_the_session_this_process_runs_in(
     backend = _backend(LocalDesktop[None](tmp_path, real_screen=True))
     output = await backend.run('echo "$DISPLAY $XAUTHORITY"', shell=True)
     assert output.stdout == ':0 /run/user/1000/gdm/Xauthority\n'
-    assert await backend.display_size() == (1280, 800)
+    assert await backend.display.display_size() == (1280, 800)
     assert _lines(fake_x, 'Xvfb') == []
 
 
@@ -201,14 +201,14 @@ async def test_the_real_screen_is_refused_where_it_cannot_work(
         monkeypatch.delenv(name, raising=False)
     for name, value in env.items():
         monkeypatch.setenv(name, value)
-    with pytest.raises(WorkspaceError, match=error.replace('`', '.')):
-        await _backend(LocalDesktop[None](tmp_path, real_screen=True)).screenshot()
+    with pytest.raises(WorkspaceUnavailableError, match=error.replace('`', '.')):
+        await _backend(LocalDesktop[None](tmp_path, real_screen=True)).display.screenshot()
 
 
 async def test_it_needs_linux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sys, 'platform', 'darwin')
-    with pytest.raises(WorkspaceError, match='A local desktop needs Linux'):
-        await _backend(LocalDesktop[None](tmp_path)).screenshot()
+    with pytest.raises(WorkspaceUnavailableError, match='A local desktop needs Linux'):
+        await _backend(LocalDesktop[None](tmp_path)).display.screenshot()
 
 
 def test_it_is_a_local_workspace_with_a_screen(tmp_path: Path):

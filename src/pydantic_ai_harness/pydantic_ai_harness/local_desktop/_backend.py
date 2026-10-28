@@ -8,20 +8,17 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Self
 
 import anyio
 import anyio.to_thread
 
 from pydantic_ai.workspaces import (
     CommandResult,
-    ComputerAction,
     LocalWorkspaceBackend,
-    Point,
-    Region,
     WorkspaceCommand,
-    WorkspaceError,
+    WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._display import ManagedDisplay
 from pydantic_ai_harness._x11 import X11Computer
 
 __all__ = ('LocalDesktopBackend', 'VirtualScreen')
@@ -60,7 +57,7 @@ class VirtualScreen:
 
     async def _start(self) -> str:
         if missing := [program for program in _PROGRAMS if shutil.which(program) is None]:
-            raise WorkspaceError(
+            raise WorkspaceUnavailableError(
                 f'A virtual screen needs {", ".join(missing)}; on Debian or Ubuntu: `apt install {_PACKAGES}`.'
             )
         width, height = self._size
@@ -75,7 +72,7 @@ class VirtualScreen:
         with anyio.move_on_after(_START_TIMEOUT):
             number = await anyio.to_thread.run_sync(xvfb.stdout.readline, abandon_on_cancel=True)
         if not number.strip():
-            raise WorkspaceError('The virtual screen did not start: Xvfb printed no display number.')
+            raise WorkspaceUnavailableError('The virtual screen did not start: Xvfb printed no display number.')
         display = f':{number.decode().strip()}'
         # Without a window manager, clicking a window doesn't focus or raise it.
         window_manager = self._open(['fluxbox'], env={'DISPLAY': display})
@@ -84,7 +81,7 @@ class VirtualScreen:
                 if await _has_window_manager(display):
                     return display
                 await anyio.sleep(0.05)
-        raise WorkspaceError('The virtual screen did not start: its window manager did not start.')
+        raise WorkspaceUnavailableError('The virtual screen did not start: its window manager did not start.')
 
     def _open(
         self, argv: list[str], *, stdout: int | None = None, env: dict[str, str] | None = None
@@ -121,12 +118,14 @@ async def _has_window_manager(display: str) -> bool:
 def _session_env() -> dict[str, str]:
     """The `DISPLAY` and `XAUTHORITY` of the X session this process runs in."""
     if os.environ.get('WAYLAND_DISPLAY') or os.environ.get('XDG_SESSION_TYPE') == 'wayland':
-        raise WorkspaceError(
+        raise WorkspaceUnavailableError(
             'This is a Wayland session, which the desktop can neither see nor control. '
             'Log in with an X11 (Xorg) session, or use a virtual screen.'
         )
     if not os.environ.get('DISPLAY'):
-        raise WorkspaceError('There is no X screen to use: `DISPLAY` is not set. Use a virtual screen instead.')
+        raise WorkspaceUnavailableError(
+            'There is no X screen to use: `DISPLAY` is not set. Use a virtual screen instead.'
+        )
     return {name: os.environ[name] for name in ('DISPLAY', 'XAUTHORITY') if name in os.environ}
 
 
@@ -146,10 +145,11 @@ class LocalDesktopBackend(LocalWorkspaceBackend):
     ):
         super().__init__(working_dir, env=env)
         self._screen = screen
+        self._display = ManagedDisplay(self._start_display)
 
     async def _display_env(self) -> dict[str, str]:
         if sys.platform != 'linux':
-            raise WorkspaceError(
+            raise WorkspaceUnavailableError(
                 'A local desktop needs Linux. Use `DockerSandbox(desktop=True)` for one on this machine.'
             )
         return _session_env() if self._screen is None else {'DISPLAY': await self._screen.display()}
@@ -165,25 +165,12 @@ class LocalDesktopBackend(LocalWorkspaceBackend):
         env = {**await self._display_env(), **(env or {})}
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
-    async def _computer(self) -> X11Computer:
-        return X11Computer(self, (await self._display_env())['DISPLAY'])
+    async def _start_display(self) -> X11Computer:
+        await self._display_env()  # checks for a screen, starting a virtual one
+        # `run` gives every command the screen's `DISPLAY`, starting it again if it stopped.
+        return X11Computer(self, None)
 
     @property
-    def display(self) -> Self:
-        """This backend: its screen is the session's display, or its own virtual one."""
-        return self
-
-    async def display_size(self) -> tuple[int, int]:
-        return await (await self._computer()).display_size()
-
-    async def screenshot(self) -> bytes:
-        return await (await self._computer()).screenshot()
-
-    async def act(self, action: ComputerAction) -> None:
-        await (await self._computer()).act(action)
-
-    async def zoom(self, region: Region) -> bytes:
-        return await (await self._computer()).zoom(region)
-
-    async def cursor_position(self) -> Point:
-        return await (await self._computer()).cursor_position()
+    def display(self) -> ManagedDisplay:
+        """The session's screen, or this backend's virtual one."""
+        return self._display

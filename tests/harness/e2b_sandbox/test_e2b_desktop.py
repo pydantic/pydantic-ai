@@ -17,6 +17,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceError,
     WorkspaceRef,
+    WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
@@ -112,7 +113,7 @@ async def test_the_live_view_url_opens_the_viewer_with_its_password(fake_e2b: Fa
 
 async def test_a_viewer_that_does_not_start_is_an_error(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
     backend = E2BSandboxBackend(desktop=True)
-    await backend.display_size()
+    await Workspace(backend).display_size()
     display.up = False  # the start script's own failure, as the fake answers it
 
     with pytest.raises(WorkspaceError, match=r'could not start the desktop viewer.*the viewer did not start'):
@@ -153,6 +154,17 @@ async def test_a_display_that_went_away_is_started_again(fake_e2b: FakeE2B, disp
     assert len(display.starts) == 2
 
 
+async def test_a_look_at_a_display_that_went_away_starts_it_and_looks_again(
+    fake_e2b: FakeE2B, display: FakeDisplay
+) -> None:
+    workspace = Workspace(E2BSandboxBackend(desktop=True))
+    await workspace.display_size()
+
+    display.up = False
+    assert await workspace.display_size() == (1280, 800)
+    assert len(display.starts) == 2
+
+
 async def test_a_refused_key_does_not_restart_the_display(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
     workspace = Workspace(E2BSandboxBackend(desktop=True))
     await workspace.display_size()
@@ -168,7 +180,7 @@ async def test_a_template_without_a_working_x_server_says_why(fake_e2b: FakeE2B,
     display.can_start = False
     workspace = Workspace(E2BSandboxBackend(template='base', desktop=True))
 
-    with pytest.raises(WorkspaceError, match='it needs Xvfb, xdotool, xmodmap, scrot and setsid') as error:
+    with pytest.raises(WorkspaceUnavailableError, match='it needs Xvfb, xdotool, xmodmap, scrot and setsid') as error:
         await workspace.screenshot()
     assert 'Fatal server error' in str(error.value)
 
@@ -177,8 +189,8 @@ async def test_a_sandbox_without_a_desktop_has_no_display(fake_e2b: FakeE2B) -> 
     backend = E2BSandboxBackend()
 
     assert Workspace(backend).has_display is False
-    with pytest.raises(UserError, match='has no display: create it with `desktop=True`'):
-        await backend.screenshot()
+    with pytest.raises(UserError, match='has no display'):
+        await Workspace(backend).screenshot()
     assert fake_e2b.create_calls == []
 
 
