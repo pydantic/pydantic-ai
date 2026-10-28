@@ -91,7 +91,8 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
 Keyword-only options: `instructions=None` (appended to the default guidance),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
 `repo_context=True` (`RepoContext` walking up to the repository root and surfacing nested instruction
-files as the agent reads; pass a `RepoContext` to configure it), `sub_agents=True`, `agent_folders=None`, `task_control=None` (a `TaskControl`
+files as the agent reads; pass a `RepoContext` to use it in place of the bundled one, whose settings it
+replaces entirely), `sub_agents=True`, `agent_folders=None`, `task_control=None` (a `TaskControl`
 is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`.
 
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless
@@ -99,10 +100,11 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
   capabilities such as approval gates), up to 3 levels deep.
 - **Lazy sandbox creation:** `RepoContext` reads the workspace at run start, which creates a sandbox
   before any tool call. `Coder(repo_context=False)` defers it (the instructions then stop naming the
-  working directory). Also use it when you bind your own `RepoContext`, or files load twice.
+  working directory). To use your own `RepoContext`, pass it as `repo_context=RepoContext(...)` rather than
+  binding it next to `Coder`, which would load the files twice; that also keeps the project note.
 - File tools stay in the working directory with `.git`, `.env*`, keys, and `secrets*` read-only; `shell`
   bypasses all of that. To change a bundled setting (hashes, allowlist, `list_directory`), compose
-  `FileSystem`/`Shell`/`RepoContext`/`SubAgents` yourself.
+  `FileSystem`/`Shell`/`SubAgents` yourself; `RepoContext` is configured through `repo_context=RepoContext(...)`.
 - **Prompt caching is on by default** (`cache=True`): a coding run resends the same tools and
   instructions plus a growing conversation on every request, so each request reads back the previous
   one's prefix. What it does per provider and what it costs:
