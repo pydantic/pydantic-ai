@@ -52,7 +52,7 @@ _POINTER_NOTE = (
     'A directory you just accessed has an instruction file, not loaded here. Its path is in the '
     '`<context-file>` tag that follows. Read the file if it is relevant to your task.'
 )
-NESTED_NOTE_ORIGIN = 'pydantic-ai-harness.repo_context.nested_note.v1'
+_NESTED_NOTE_ORIGIN = 'pydantic-ai-harness.repo_context.nested_note.v1'
 """The `origin` in the `metadata` of every part a nested note enqueues, next to the surfaced `directory`."""
 _DEFAULT_TRAVERSAL_TOOL_NAMES = frozenset({'list_directory', 'read_file'})
 _DEFAULT_TRAVERSAL_PATH_ARG = 'path'
@@ -401,7 +401,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
 def _stamp(parts: Sequence[str | SystemPromptPart], directory: str) -> Iterator[TextContent | SystemPromptPart]:
     """Mark a note's parts as RepoContext's, so history scans and compaction recognize them by metadata."""
-    metadata = {'origin': NESTED_NOTE_ORIGIN, 'directory': directory}
+    metadata = {'origin': _NESTED_NOTE_ORIGIN, 'directory': directory}
     for part in parts:
         yield (
             replace(part, metadata=metadata)
@@ -419,7 +419,7 @@ def _latest_compaction(messages: Sequence[ModelMessage]) -> CompactionPart | Non
 
 
 def _note_directory(metadata: object) -> str | None:
-    if not is_str_dict(metadata) or metadata.get('origin') != NESTED_NOTE_ORIGIN:
+    if not is_str_dict(metadata) or metadata.get('origin') != _NESTED_NOTE_ORIGIN:
         return None
     directory = metadata.get('directory')
     return directory if isinstance(directory, str) else None
