@@ -25,7 +25,11 @@ from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._framing import SYSTEM_TAG, wrap
 from .._instrumentation import annotate_tool_call_otel_metadata
-from .._run_context import RealtimeEventBuffer, context_window_fraction
+from .._run_context import (
+    _CURRENT_RUN_CONTEXT,  # pyright: ignore[reportPrivateUsage]
+    RealtimeEventBuffer,
+    context_window_fraction,
+)
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -1010,9 +1014,12 @@ class RealtimeSession:
                 self._apply_core(event)
             self._apply_core(Closed())
             self._end_chat_spans_left_open()
-            # A clean context keeps the caller's context variables, including a run context holding
-            # the session's deps, out of the finished teardown task.
-            self._teardown = asyncio.create_task(self._finish_teardown(), context=contextvars.Context())
+            # The teardown runs in a copy of the caller's context, so its end-of-session and hang-up requests
+            # stay under the caller's span. Only `_CURRENT_RUN_CONTEXT` is cleared: the finished task keeps its
+            # context, and that run context holds the session (via `realtime_session`) and its deps.
+            teardown_context = contextvars.copy_context()
+            teardown_context.run(_CURRENT_RUN_CONTEXT.set, None)
+            self._teardown = asyncio.create_task(self._finish_teardown(), context=teardown_context)
         elif asyncio.current_task() in self._background_tasks:
             # A tool closing the session is cancelled by the teardown, at the wait below of its own
             # `close()` call. One that swallows that cancellation and calls `close()` again would wait
@@ -1146,7 +1153,8 @@ class RealtimeSession:
         self._pending_messages.unbind()
         self._core.release_annotator()
         self._pump_task = None
-        # Kept on the run context itself: `after_run` hooks still read `ctx.realtime_session`.
+        # Drop the manager's run context, whose `realtime_session` points back here. `realtime_session` itself
+        # stays set, since `after_run` hooks still read it; `ctx.tool_manager.ctx` is `None` from here on.
         self._tool_manager.ctx = None
 
     async def _record_final_usage(self) -> None:
