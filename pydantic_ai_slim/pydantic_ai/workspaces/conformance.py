@@ -646,8 +646,10 @@ class WorkspaceBackendSuite:
         if not isinstance(display, SupportsScaledScreenshot):
             pytest.skip('backend cannot scale screenshots')
         width, height = await display.display_size()
-        size = (max(1, width // 2), max(1, height // 2))
-        assert _png_size(await display.scaled_screenshot(*size)) == size
+        # A size that isn't an exact ratio of the display's, so a display that scales by a ratio has to round.
+        size = (max(1, width * 2 // 3), max(1, height * 2 // 3))
+        scaled_width, scaled_height = _png_size(await display.scaled_screenshot(*size))
+        assert abs(scaled_width - size[0]) <= 1 and abs(scaled_height - size[1]) <= 1
 
     async def test_the_cursor_position_is_on_the_screen(self, backend: WorkspaceBackend) -> None:
         display = _display(backend)
