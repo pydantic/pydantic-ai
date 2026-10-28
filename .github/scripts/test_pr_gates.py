@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'pr-gates.yml'
 PATH = f'.github/api-compatibility-waivers/{"a" * 64}.json'
 OTHER_PATH = f'.github/api-compatibility-waivers/{"b" * 64}.json'
+ALLOWLIST = '.github/api-compatibility-allowlist.json'
 WAIVER = {
     'against': 'v2.59.0',
     'reason': 'Deprecated in v2.40, removed on schedule.',
@@ -25,6 +26,11 @@ WAIVER = {
 
 def _waiver(**changes: str) -> str:
     return json.dumps(WAIVER | changes)
+
+
+def _legacy_allowlist(against: str) -> str:
+    """An allowlist that still lists the waiver for `PATH` under `allowed_breakages`."""
+    return json.dumps({'allowed_breakages': [WAIVER | {'against': against, 'fingerprint': 'a' * 64}]})
 
 
 @dataclass
@@ -80,6 +86,20 @@ class FakeGitHub:
             set[str](),
             True,
             id='renamed',
+        ),
+        pytest.param(
+            ChangedFile(filename=PATH),
+            {(PATH, 'head'): _waiver(), (ALLOWLIST, 'merge-base'): _legacy_allowlist('v2.59.0')},
+            set[str](),
+            False,
+            id='moved-from-legacy-list',
+        ),
+        pytest.param(
+            ChangedFile(filename=PATH),
+            {(PATH, 'head'): _waiver(), (ALLOWLIST, 'merge-base'): _legacy_allowlist('v2.58.0')},
+            set[str](),
+            True,
+            id='moved-from-legacy-list-against-a-newer-release',
         ),
         pytest.param(
             ChangedFile(filename=PATH),

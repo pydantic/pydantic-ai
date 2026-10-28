@@ -18,6 +18,7 @@ from typing import Literal, Protocol, assert_never
 from check_api_compatibility import WAIVERS, read_waiver
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
+ALLOWLIST = '.github/api-compatibility-allowlist.json'
 COMPATIBILITY_LABEL = 'compatibility impact'
 Gate = Literal['compatibility-waiver']
 TITLES: dict[Gate, str] = {'compatibility-waiver': 'Compatibility waiver labeled'}
@@ -89,7 +90,8 @@ def compatibility_waiver(github: GitHub, *, base_sha: str, head_sha: str) -> Ver
 
     merge_base = github.merge_base(base_sha, head_sha)
     try:
-        added = _waivers(github, paths, head_sha) - _waivers(github, paths, merge_base)
+        existing = _waivers(github, paths, merge_base) | _legacy_waivers(github, merge_base)
+        added = _waivers(github, paths, head_sha) - existing
     except ValueError as error:
         verdict.failures.append(f'Cannot read a waiver: {error}')
         return verdict
@@ -114,6 +116,27 @@ def _waivers(github: GitHub, paths: Iterable[str], ref: str) -> set[tuple[str, s
             fingerprint, waiver = read_waiver(PurePosixPath(path), text)
             waivers.add((waiver.against, fingerprint))
     return waivers
+
+
+class _LegacyWaiver(BaseModel):
+    against: str
+    fingerprint: str
+
+
+class _LegacyAllowlist(BaseModel):
+    allowed_breakages: list[_LegacyWaiver] = []
+
+
+def _legacy_waivers(github: GitHub, ref: str) -> set[tuple[str, str]]:
+    """The `(against, fingerprint)` of each waiver that `ALLOWLIST` still lists at `ref`.
+
+    Before waivers moved to their own files, `allowed_breakages` held them all; moving one out adds no waiver.
+    """
+    if (text := github.file_text(ALLOWLIST, ref)) is None:
+        return set()
+    return {
+        (waiver.against, waiver.fingerprint) for waiver in _LegacyAllowlist.model_validate_json(text).allowed_breakages
+    }
 
 
 _FILE_PAGES = TypeAdapter(list[list[ChangedFile]])
