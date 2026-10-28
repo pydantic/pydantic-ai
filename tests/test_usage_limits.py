@@ -346,6 +346,23 @@ async def test_multi_agent_usage_no_incr():
     }
 
 
+def test_usage_opentelemetry_attributes_use_the_current_cache_write_name():
+    """The OTel GenAI registry renamed `cache_creation` to `cache_write` for cache-write tokens.
+
+    Emitting only the retired name meant a collector configured against the current registry saw no
+    cache-write usage at all. The count is still reachable as `details.cache_write_tokens` for
+    backends that read the older key.
+    """
+    usage = RequestUsage(input_tokens=100, output_tokens=50, cache_write_tokens=7, cache_read_tokens=3)
+    attributes = usage.opentelemetry_attributes()
+    assert attributes['gen_ai.usage.cache_write.input_tokens'] == 7
+    assert 'gen_ai.usage.cache_creation.input_tokens' not in attributes
+    # the read side was not renamed, so it must not gain a second name
+    assert attributes['gen_ai.usage.cache_read.input_tokens'] == 3
+    # the old key is still there, under `details`
+    assert attributes['gen_ai.usage.details.cache_write_tokens'] == 7
+
+
 def test_usage_opentelemetry_attributes_include_zero_details():
     """A zero-valued detail is a real measurement and must survive the OTel mapping.
 

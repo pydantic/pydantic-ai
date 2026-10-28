@@ -7070,7 +7070,7 @@ def test_usage_otel_attributes_omit_first_class_token_details_with_compaction():
         {
             'gen_ai.usage.input_tokens': 212,
             'gen_ai.usage.output_tokens': 4,
-            'gen_ai.usage.cache_creation.input_tokens': 4,
+            'gen_ai.usage.cache_write.input_tokens': 4,
             'gen_ai.usage.cache_read.input_tokens': 5,
             'gen_ai.usage.details.compaction_iterations': 1,
             'gen_ai.usage.details.message_iterations': 1,

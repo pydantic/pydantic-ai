@@ -256,7 +256,11 @@ class UsageBase:
 
         details = self.details.copy()
         if self.cache_write_tokens:
-            result['gen_ai.usage.cache_creation.input_tokens'] = self.cache_write_tokens
+            # `cache_write` is the current name in the OTel GenAI registry; the older
+            # `cache_creation` was renamed upstream (semantic-conventions-genai#440).
+            # The `details.cache_write_tokens` entry below keeps the old key available
+            # to backends that still read it.
+            result['gen_ai.usage.cache_write.input_tokens'] = self.cache_write_tokens
             # For backwards compat
             details['cache_write_tokens'] = self.cache_write_tokens
         if self.cache_read_tokens:
