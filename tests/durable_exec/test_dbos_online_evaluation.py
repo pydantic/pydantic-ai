@@ -251,3 +251,29 @@ async def test_dbos_online_evaluation_dispatches_each_capability_in_its_own_step
     await fork.get_result()
     await wait_for_evaluations()
     assert len(evaluated) == 2
+
+
+async def test_dbos_online_evaluation_failed_run_hands_evaluators_the_live_exception(dbos: DBOS) -> None:
+    """A failed run's `run_on_errors` evaluators get the run's own exception, as the step runs in the workflow's process."""
+    agent = Agent(
+        TestModel(),
+        name='dbos_online_evaluation_failed_run_evaluated',
+        capabilities=[
+            DBOSDurability[object](),
+            OnlineEvaluation(
+                id='online_evaluation', evaluators=[OnlineEvaluator(evaluator=RecordRun(), run_on_errors=True)]
+            ),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run', usage_limits=UsageLimits(request_limit=0))
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        with pytest.raises(UsageLimitExceeded) as exc_info:
+            await run_workflow()
+    await wait_for_evaluations()
+    [(_, context)] = evaluated
+    assert isinstance(context.output, UsageLimitExceeded)
+    assert str(context.output) == str(exc_info.value)

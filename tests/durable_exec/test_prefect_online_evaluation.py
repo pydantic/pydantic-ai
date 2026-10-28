@@ -1,4 +1,8 @@
-"""`OnlineEvaluation` under `PrefectDurability`, against the Prefect test harness."""
+"""`OnlineEvaluation` under `PrefectDurability`, against the Prefect test harness.
+
+Not VCR tests: the behavior under test is what the dispatch task hands evaluators and how its failure
+reaches the flow, which a provider recording could not show.
+"""
 
 from __future__ import annotations
 

@@ -1056,7 +1056,7 @@ agent = Agent(
 
 Keep the `id` stable once workflows that use it are deployed, as it names the recorded operation.
 
-Each `OnlineEvaluation` capability adds one durable operation to each completed run unless every one of its evaluators' sample rates is `0`, including runs where none ends up sampled. To a failed run, it adds one only when one of its evaluators has `run_on_errors=True`.
+Each `OnlineEvaluation` capability adds one durable operation to each completed run unless every one of its evaluators' sample rates is `0`, including runs where none ends up sampled. A failed run gets one under the same condition, and only when one of its evaluators has `run_on_errors=True`.
 
 Sampling happens inside the operation, after the run. An exception from a `sample_rate` callable without an `on_sampling_error` handler fails the operation, and the engine retries it according to its retry policy. Once the operation has failed for good, so does the run, unless the run had already failed: then its own exception reaches the caller, with a warning that the evaluation wasn't dispatched. Temporal's default activity retry policy has no attempt limit, so set `on_sampling_error` to keep such a workflow from retrying indefinitely. A `retry_policy` with `maximum_attempts` in the `activity_config` of [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] also limits it, but that config applies to the agent's model and tool activities too; see [Activity Configuration](../durable_execution/temporal.md#activity-configuration).
 

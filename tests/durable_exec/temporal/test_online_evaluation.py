@@ -1,4 +1,8 @@
-"""`OnlineEvaluation` under Temporal: each run's evaluators are dispatched once, however often the workflow replays."""
+"""`OnlineEvaluation` under Temporal: each run's evaluators are dispatched once, however often the workflow replays.
+
+Not VCR tests: the behavior under test is what Temporal records, replays and retries, and what crosses its
+data converter, which a provider recording could not show.
+"""
 
 from __future__ import annotations
 
