@@ -120,7 +120,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             parts = await resolve_loaded_capability_instructions(capability_id, self, ctx)
             if (text := InstructionPart.join([part for part in parts if part.content])) is not None:
                 result['instructions'] = text
-        tools = sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)
+        tools = _capability_tool_names(ctx, capability_id)
         return ToolReturn(return_value=result, tools=tools or None)
 
 
@@ -204,9 +204,10 @@ async def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx:
     # Recorded without a `load_capability` call, which the request may have no tool for: the same
     # `ToolAvailabilityDeltaPart` a model's load leaves after its return, naming the capability and revealing
     # its tools. The next request then states the capability's instructions, as after a model's load.
-    tools = sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)
     record = ToolAvailabilityDeltaPart(
-        tools_added=tools, capabilities_added=[capability_id], tool_call_id=ctx.tool_call_id
+        tools_added=_capability_tool_names(ctx, capability_id),
+        capabilities_added=[capability_id],
+        tool_call_id=ctx.tool_call_id,
     )
     # Delivered with the next model request; if this step ends the run instead (a tool call needs
     # approval or is deferred, or output is produced), the load is dropped rather than forcing one.
@@ -236,10 +237,7 @@ def _is_active_or_loading(ctx: RunContext[Any], queue: PendingMessageQueue, capa
         capability_id in record.capabilities_added for record in queue.capability_loads
     ):
         return True
-    response = next((message for message in reversed(ctx.messages) if isinstance(message, ModelResponse)), None)
-    return response is not None and any(
-        isinstance(part, LoadCapabilityCallPart) and part.capability_id == capability_id for part in response.parts
-    )
+    return bool(_executing_load_calls(ctx, capability_id))
 
 
 def _is_duplicate_load_in_response(ctx: RunContext[Any], capability_id: str) -> bool:
@@ -252,17 +250,22 @@ def _is_duplicate_load_in_response(ctx: RunContext[Any], capability_id: str) -> 
     call to name a tool its reveal, so which call delivers the instructions doesn't depend on task
     scheduling.
     """
-    response = next((message for message in reversed(ctx.messages) if isinstance(message, ModelResponse)), None)
-    parts = response.parts if response is not None else ()
     owner_tool_call_id = next(
-        (
-            part.tool_call_id
-            for part in parts
-            if isinstance(part, LoadCapabilityCallPart) and part.capability_id == capability_id
-        ),
-        ctx.tool_call_id,
+        (part.tool_call_id for part in _executing_load_calls(ctx, capability_id)), ctx.tool_call_id
     )
     return owner_tool_call_id != ctx.tool_call_id
+
+
+def _executing_load_calls(ctx: RunContext[Any], capability_id: str) -> list[LoadCapabilityCallPart]:
+    """The `load_capability` calls for `capability_id` in the response being executed, the last one in history."""
+    response = next((message for message in reversed(ctx.messages) if isinstance(message, ModelResponse)), None)
+    parts = response.parts if response is not None else ()
+    return [part for part in parts if isinstance(part, LoadCapabilityCallPart) and part.capability_id == capability_id]
+
+
+def _capability_tool_names(ctx: RunContext[Any], capability_id: str) -> list[str]:
+    """The tools a load of `capability_id` reveals, the same for a model's load and a load from code."""
+    return sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)
 
 
 def _beneath(capability: AbstractCapability[Any]) -> list[AbstractCapability[Any]]:
