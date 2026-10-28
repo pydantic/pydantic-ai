@@ -857,6 +857,8 @@ class TestReadFile:
             _zip_with('notes.txt'),
             b'PK\x03\x04 not really a zip\x00',
             b'\x00\x00\x00\x20ftypM4A \x00\x00',
+            b'\x00\x00\x00\x18ftypheic\x00\x00',
+            b'\x00\x00\x00\x1cftypavif\x00\x00',
             b'\xff\xfa\xf0\x00',  # MPEG audio sync with a reserved bitrate
             b'\xff\x00\x00\x00',
             # A central directory entry needing a newer `zipfile` than the standard library has.
@@ -864,7 +866,8 @@ class TestReadFile:
         ],
     )
     async def test_a_container_no_media_type_names_is_described(self, tmp_path: Path, data: bytes) -> None:
-        # A plain or broken ZIP is no office document, MPEG-4 audio has no `AudioMediaType`, and a stray 0xFF is no
+        # A plain or broken ZIP is no office document, HEIC and AVIF photos aren't video, MPEG-4 audio has no
+        # `AudioMediaType`, and a stray 0xFF is no
         # audio frame.
         (tmp_path / 'blob').write_bytes(data)
         result = await _unhashed_toolset().read_file('blob', workspace=LocalWorkspaceBackend(tmp_path))

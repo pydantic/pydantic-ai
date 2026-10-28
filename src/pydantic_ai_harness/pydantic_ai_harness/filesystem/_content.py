@@ -166,6 +166,13 @@ def _audio(data: bytes) -> str | None:
     return None
 
 
+_MP4_VIDEO_BRANDS = frozenset(
+    {b'isom', b'iso2', b'iso3', b'iso4', b'iso5', b'iso6', b'mp41', b'mp42', b'avc1', b'M4V ', b'M4VH', b'M4VP'}
+    | {b'dash', b'mmp4', b'MSNV', b'f4v ', b'NDAS'}
+)
+"""`ftyp` brands of MP4 video."""
+
+
 def _video(data: bytes) -> str | None:
     if data[4:8] == b'ftyp':
         brand = data[8:12]
@@ -173,10 +180,9 @@ def _video(data: bytes) -> str | None:
             return 'video/quicktime'
         if brand.startswith((b'3gp', b'3g2')):
             return 'video/3gpp'
-        if brand.startswith((b'M4A', b'M4B')):
-            # MPEG-4 audio, which no `AudioMediaType` names.
-            return None
-        return 'video/mp4'
+        # Only known video brands: HEIF and AVIF photos, JPEG 2000 and camera raw files share the `ftyp` box, and
+        # MPEG-4 audio (`M4A `) has no `AudioMediaType`.
+        return 'video/mp4' if brand in _MP4_VIDEO_BRANDS else None
     if data.startswith(b'\x1a\x45\xdf\xa3'):
         # Matroska and WebM share the EBML header; its DocType, near the start, tells them apart.
         return 'video/webm' if b'webm' in data[:64] else 'video/x-matroska'
