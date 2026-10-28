@@ -657,7 +657,8 @@ class AnthropicModelSettings(ModelSettings, total=False):
     [`anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers]).
     The Anthropic API rejects a container on any other request, so Pydantic AI doesn't send it
     there. Tools passed as `extra_body['tools']` replace the ones Pydantic AI builds, so they decide
-    whether the history container is sent. An id recovered from history is the only container
+    whether the history container is sent; they're recognized by tool family, not by version. An id
+    recovered from history is the only container
     Pydantic AI may replace on its own: if a request carrying both that id and
     `CodeExecutionTool` uploads comes back `500`, the id is dropped and the request is
     sent once more so the upload lands in a fresh container. Nothing else is replaced —

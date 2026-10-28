@@ -481,6 +481,23 @@ HISTORY_CONTAINER_CASES = [
         expected_tools=[('web_search_20250305', None)],
     ),
     HistoryContainerCase(
+        'api-extra-body-newer-code-execution',
+        'api',
+        'claude-sonnet-4-6',
+        container_sent=True,
+        suspended=True,
+        model_settings={'extra_body': {'tools': [{'type': 'code_execution_20260521', 'name': 'code_execution'}]}},
+        expected_tools=[('code_execution_20260521', None)],
+    ),
+    HistoryContainerCase(
+        'api-extra-body-newer-web-fetch',
+        'api',
+        'claude-sonnet-4-6',
+        container_sent=True,
+        model_settings={'extra_body': {'tools': [{'type': 'web_fetch_20260309', 'name': 'web_fetch'}]}},
+        expected_tools=[('web_fetch_20260309', None)],
+    ),
+    HistoryContainerCase(
         'api-empty-callers',
         'api',
         'claude-sonnet-4-6',
@@ -557,40 +574,30 @@ async def test_anthropic_history_container_without_code_execution_by_client(
     assert [(tool['type'], tool.get('allowed_callers')) for tool in tools] == case.expected_tools
 
 
-def _pause_turn_segment(text: str, stop_reason: str, stream: bool) -> httpx2.Response:
-    """One `pause_turn` segment of a turn whose code execution container is `container_A`."""
+def _pause_turn_segment(block: dict[str, Any], stop_reason: str, stream: bool) -> httpx2.Response:
+    """One segment, holding one content block, of a turn whose code execution container is `container_A`."""
     container = {'id': 'container_A', 'expires_at': '2026-11-01T00:00:00Z'}
     usage = {'input_tokens': 5, 'output_tokens': 1}
+    message = {
+        'id': f'msg_{stop_reason}',
+        'type': 'message',
+        'role': 'assistant',
+        'model': 'claude-sonnet-4-6',
+        'usage': usage,
+        'container': container,
+    }
     if not stream:
-        return httpx2.Response(
-            200,
-            json={
-                'id': f'msg_{text}',
-                'type': 'message',
-                'role': 'assistant',
-                'model': 'claude-sonnet-4-6',
-                'content': [{'type': 'text', 'text': text}],
-                'stop_reason': stop_reason,
-                'usage': usage,
-                'container': container,
-            },
-        )
+        return httpx2.Response(200, json={**message, 'content': [block], 'stop_reason': stop_reason})
+    if block['type'] == 'text':
+        start: dict[str, Any] = {'type': 'text', 'text': ''}
+        delta: dict[str, Any] = {'type': 'text_delta', 'text': block['text']}
+    else:
+        start = {**block, 'input': {}}
+        delta = {'type': 'input_json_delta', 'partial_json': json.dumps(block['input'])}
     events: list[dict[str, Any]] = [
-        {
-            'type': 'message_start',
-            'message': {
-                'id': f'msg_{text}',
-                'type': 'message',
-                'role': 'assistant',
-                'model': 'claude-sonnet-4-6',
-                'content': [],
-                'stop_reason': None,
-                'usage': usage,
-                'container': container,
-            },
-        },
-        {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
-        {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': text}},
+        {'type': 'message_start', 'message': {**message, 'content': [], 'stop_reason': None}},
+        {'type': 'content_block_start', 'index': 0, 'content_block': start},
+        {'type': 'content_block_delta', 'index': 0, 'delta': delta},
         {'type': 'content_block_stop', 'index': 0},
         {'type': 'message_delta', 'delta': {'stop_reason': stop_reason, 'stop_sequence': None}, 'usage': usage},
         {'type': 'message_stop'},
@@ -600,15 +607,45 @@ def _pause_turn_segment(text: str, stop_reason: str, stream: bool) -> httpx2.Res
 
 
 @pytest.mark.parametrize('stream', [pytest.param(False, id='request'), pytest.param(True, id='stream')])
+@pytest.mark.parametrize(
+    'native_tools,extra_body_tool,server_tool_call',
+    [
+        pytest.param([], _CODE_EXECUTION_WIRE_TOOL, ('code_execution', {'code': 'print(1)'}), id='code-execution'),
+        pytest.param(
+            [CodeExecutionTool()],
+            {'type': 'code_execution_20260521', 'name': 'code_execution'},
+            ('bash_code_execution', {'command': 'ls'}),
+            id='newer-code-execution-bash',
+        ),
+        pytest.param(
+            [WebSearchTool()],
+            {'type': 'web_search_20260318', 'name': 'web_search'},
+            ('code_execution', {'code': 'print(1)'}),
+            id='newer-web-search',
+        ),
+    ],
+)
 async def test_anthropic_pause_turn_reconnect_keeps_extra_body_code_execution_container(
-    allow_model_requests: None, stream: bool
+    allow_model_requests: None,
+    stream: bool,
+    native_tools: list[AbstractNativeTool],
+    extra_body_tool: dict[str, object],
+    server_tool_call: tuple[str, dict[str, object]],
 ):
-    """A `pause_turn` reconnect sends the container when code execution reaches the wire through `extra_body`.
+    """A `pause_turn` reconnect keeps code execution that reaches the wire through `extra_body`, at any version.
+
+    The reconnect sends the container and replays the paused turn's in-flight sandbox call.
 
     Unit test: a live `pause_turn` with a container can't be requested reliably, and the claim is the request shape.
     """
+    name, input = server_tool_call
     bodies: list[dict[str, Any]] = []
-    segments = iter([('Working.', 'pause_turn'), ('Done.', 'end_turn')])
+    segments = iter(
+        [
+            ({'type': 'server_tool_use', 'id': 'srvtoolu_1', 'name': name, 'input': input}, 'pause_turn'),
+            ({'type': 'text', 'text': 'Done.'}, 'end_turn'),
+        ]
+    )
 
     def handle(request: httpx2.Request) -> httpx2.Response:
         bodies.append(json.loads(request.content))
@@ -619,19 +656,26 @@ async def test_anthropic_pause_turn_reconnect_keeps_extra_body_code_execution_co
             'claude-sonnet-4-6',
             provider=AnthropicProvider(anthropic_client=AsyncAnthropic(api_key='x', http_client=http_client)),
         )
-        settings: AnthropicModelSettings = {'max_tokens': 1024, 'extra_body': {'tools': [_CODE_EXECUTION_WIRE_TOOL]}}
-        agent = Agent(model, model_settings=settings)
+        settings: AnthropicModelSettings = {'max_tokens': 1024, 'extra_body': {'tools': [extra_body_tool]}}
+        agent = Agent(model, capabilities=[NativeTool(tool) for tool in native_tools], model_settings=settings)
         if stream:
             async with agent.run_stream('Run the code.') as result:
                 output = await result.get_output()
         else:
             output = (await agent.run('Run the code.')).output
 
-    assert output == 'Working.Done.'
+    assert output == 'Done.'
     assert [(body.get('container'), body['tools']) for body in bodies] == [
-        (None, [_CODE_EXECUTION_WIRE_TOOL]),
-        ('container_A', [_CODE_EXECUTION_WIRE_TOOL]),
+        (None, [extra_body_tool]),
+        ('container_A', [extra_body_tool]),
     ]
+    assert [
+        block['name']
+        for message in bodies[1]['messages']
+        if message['role'] == 'assistant'
+        for block in message['content']
+        if block['type'] == 'server_tool_use'
+    ] == [name]
 
 
 async def test_anthropic_container_from_message_history_not_sent_for_function_tool(allow_model_requests: None):
