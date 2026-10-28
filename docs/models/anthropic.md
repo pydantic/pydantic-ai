@@ -197,6 +197,12 @@ agent = Agent(model)
 
 See [Anthropic's Microsoft Foundry documentation](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry) for setup instructions including Entra ID authentication.
 
+### History across platforms
+
+Every platform verifies Claude's thinking signatures and redacted thinking, so they're sent back whichever client produced them, including [`BedrockConverseModel`](bedrock.md#claude-thinking-from-other-platforms) with a Claude model and a subclass of `AnthropicProvider` that only changes its `name`: all have the `anthropic` [canonical system](../message-history.md#sending-history-to-another-provider). Search, fetch and advisor results go along. Code execution results, and the container and file IDs they refer to, stay with the provider that ran them.
+
+Anthropic Files API file IDs and code execution container IDs aren't sent through the `AsyncAnthropicBedrock`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients, where [`anthropic_accepts_file_and_container_ids`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_accepts_file_and_container_ids] is `False`: an Anthropic [`UploadedFile`][pydantic_ai.messages.UploadedFile] raises a [`UserError`][pydantic_ai.exceptions.UserError], a [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]'s files aren't uploaded, and no container from the history is reused.
+
 ## Task Budgets (Beta)
 
 Anthropic's [task budgets](https://platform.claude.com/docs/en/build-with-claude/task-budgets) let you give Claude an advisory token budget for a full agentic loop — including thinking, tool calls, tool results, and output — so the model can pace itself and finish gracefully as the budget is consumed. Configure them with [`AnthropicModelSettings.anthropic_task_budget`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_task_budget], which takes an [`AnthropicTaskBudget`][pydantic_ai.models.anthropic.AnthropicTaskBudget] payload and maps to `output_config.task_budget`.

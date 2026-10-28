@@ -18,6 +18,7 @@ from pydantic_core import to_json
 from typing_extensions import ParamSpec, TypedDict
 
 try:
+    import botocore
     from botocore.client import BaseClient
     from botocore.eventstream import ParserError as EventStreamParserError
     from botocore.exceptions import (
@@ -76,7 +77,7 @@ from pydantic_ai import (
 from pydantic_ai._gateway_cost import fill_gateway_header_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._thinking_part import render_replayed_thinking
+from pydantic_ai._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinking
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
@@ -127,7 +128,7 @@ from pydantic_ai.models._tool_choice import (
 from pydantic_ai.models._transport_errors import transport_error_message
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
 from pydantic_ai.output import StructuredOutputMode
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
@@ -963,6 +964,30 @@ class BedrockConverseModel(Model[BaseClient]):
         """The model provider."""
         return self._provider.name
 
+    @functools.cached_property
+    def profile(self) -> ModelProfile:
+        """The model profile.
+
+        `supports_json_schema_output` is narrowed when the installed `botocore` can't send `outputConfig`, so that a
+        structured `output_type` that doesn't pick an output mode uses the mode it would for a model without Native
+        Output, rather than failing before the request is sent.
+        """
+        _profile = super().profile
+        if _profile.get('supports_json_schema_output', False) and not self._botocore_supports_output_config:
+            _profile = merge_profile(_profile, ModelProfile(supports_json_schema_output=False))
+        return _profile
+
+    @property
+    def canonical_system(self) -> str:
+        """`'anthropic'` for Claude models, whose thinking signatures the Anthropic API verifies too, otherwise the provider's.
+
+        A model is taken to be Claude when its profile's `bedrock_thinking_variant` is `'anthropic'`, which you can
+        set in `profile=` for a model the name doesn't identify, such as an application inference profile ARN.
+        """
+        if self.profile.get('bedrock_thinking_variant') == 'anthropic':
+            return 'anthropic'
+        return super().canonical_system
+
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
 
@@ -1069,6 +1094,12 @@ class BedrockConverseModel(Model[BaseClient]):
         model_request_parameters = model_request_parameters.with_default_output_mode(
             self._default_structured_output_mode(settings, model_request_parameters)
         )
+        if model_request_parameters.output_mode == 'native' and not self._botocore_supports_output_config:
+            raise UserError(
+                f'The installed `botocore` ({botocore.__version__}) is too old to send Native Output to Bedrock, as it '
+                "predates Converse's `outputConfig`. Upgrade `boto3`/`botocore`; on AWS Lambda, the runtime's bundled "
+                '`botocore` may be shadowing a newer one from your layer.'
+            )
         if (
             model_request_parameters.output_mode == 'tool'
             and not model_request_parameters.allow_text_output
@@ -1169,6 +1200,16 @@ class BedrockConverseModel(Model[BaseClient]):
         """
         tool_spec_shape = self.client.meta.service_model.shape_for('ToolSpecification')
         return isinstance(tool_spec_shape, StructureShape) and 'strict' in tool_spec_shape.members
+
+    @property
+    def _botocore_supports_output_config(self) -> bool:
+        """Whether the installed `botocore` knows Converse's `outputConfig`, which carries Native Output.
+
+        Like `strict` on tools, `botocore` rejects it with a `ParamValidationError` when its bundled service model
+        predates it.
+        """
+        request_shape = self.client.meta.service_model.shape_for('ConverseRequest')
+        return not isinstance(request_shape, StructureShape) or 'outputConfig' in request_shape.members
 
     def _map_tool_definition(self, f: ToolDefinition) -> ToolTypeDef:
         tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
@@ -1313,6 +1354,7 @@ class BedrockConverseModel(Model[BaseClient]):
             _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
+        streamed_response.canonical_system = self._canonical_system_stamp
         try:
             yield streamed_response
         finally:
@@ -1423,6 +1465,7 @@ class BedrockConverseModel(Model[BaseClient]):
             provider_response_id=response_id,
             provider_name=self._provider.name,
             provider_url=self.base_url,
+            canonical_system=self._canonical_system_stamp,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -1867,12 +1910,13 @@ class BedrockConverseModel(Model[BaseClient]):
                         content.append({'text': item.content})
                     elif isinstance(item, ThinkingPart):
                         if (
-                            item.provider_name == self.system
-                            and item.signature
+                            item.signature
                             and profile.get('bedrock_send_back_thinking_parts', False)
+                            and self.accepts_stateless_artifacts(message, item)
                         ):
                             reasoning_content: ReasoningContentBlockOutputTypeDef
-                            if item.id == 'redacted_content':
+                            # `AnthropicModel` records redacted thinking as `redacted_thinking`, with the same data.
+                            if item.id in REDACTED_THINKING_PART_IDS:
                                 reasoning_content = {
                                     'redactedContent': item.signature.encode('utf-8'),
                                 }
