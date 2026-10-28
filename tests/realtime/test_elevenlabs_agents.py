@@ -2602,7 +2602,7 @@ async def test_speech_timestamps_start_over_with_each_response() -> None:
 @pytest.mark.parametrize(
     'strip_audio_tags, words',
     [
-        (True, ['Hi', 'there', '[Your', 'Name]', '[1]', f'[{"a" * 30}', 'b' * 30, '[unclosed']),
+        (True, ['Hi', 'there', '[Your', 'Name]', '[1]', 'Hello', f'[{"a" * 30}', 'b' * 30, '[unclosed']),
         (
             False,
             [
@@ -2614,6 +2614,7 @@ async def test_speech_timestamps_start_over_with_each_response() -> None:
                 '[Your',
                 'Name]',
                 '[1]',
+                '[laughs][sighs]Hello',
                 f'[{"a" * 30}',
                 'b' * 30,
                 '[unclosed',
@@ -2622,8 +2623,8 @@ async def test_speech_timestamps_start_over_with_each_response() -> None:
     ],
 )
 async def test_speech_timestamps_leave_out_stripped_audio_tags(strip_audio_tags: bool, words: list[str]) -> None:
-    """An expressive voice's audio tags are timed as words (verified live), and go with the transcript's."""
-    text = f'[laughs] Hi [strong accent] there [Your Name] [1] [{"a" * 30} {"b" * 30} [unclosed'
+    """An expressive voice's audio tags are timed (verified live), and go as from the transcript, wherever they are."""
+    text = f'[laughs] Hi [strong accent] there [Your Name] [1] [laughs][sighs]Hello [{"a" * 30} {"b" * 30} [unclosed'
     events = await collect_codec_events(
         _timed_connection(
             [
@@ -2644,7 +2645,10 @@ async def test_speech_timestamps_leave_out_stripped_audio_tags(strip_audio_tags:
 
 
 def _cut_off(response_id: str, text: str, heard: str, *, when: str, event_id: int) -> list[dict[str, Any]]:
-    """An agent message timed word by word that a barge-in cuts off, as recorded live for each moment it can land."""
+    """An agent message timed word by word that a barge-in cuts off, as recorded live for each moment it can land.
+
+    Its audio ends mid-word, so its last word is timed only once its response ends.
+    """
 
     def response(said: str) -> dict[str, Any]:
         return {
@@ -2655,9 +2659,9 @@ def _cut_off(response_id: str, text: str, heard: str, *, when: str, event_id: in
     interruption = {'type': 'interruption', 'interruption_event': {'event_id': event_id + 1}}
     if when == 'generated':
         # The text that follows is already cut down to what was heard, with no correction.
-        return [_aligned_audio(f'{text} ', event_id=event_id), interruption, response(heard)]
+        return [_aligned_audio(text, event_id=event_id), interruption, response(heard)]
     return [
-        _aligned_audio(f'{text} ', event_id=event_id),
+        _aligned_audio(text, event_id=event_id),
         response(text),
         *([_VOICED] if when == 'ended' else []),
         interruption,
