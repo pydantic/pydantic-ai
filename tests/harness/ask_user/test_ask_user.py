@@ -437,6 +437,7 @@ class TestContextAnswerer:
 
     def test_typing_constructor_signatures_match_dataclass(self) -> None:
         parameters = inspect.signature(AskUser).parameters
+        assert all(parameter.kind is inspect.Parameter.KEYWORD_ONLY for parameter in parameters.values())
         expected = {name: parameter.default for name, parameter in parameters.items()}
         constructors = [
             node
