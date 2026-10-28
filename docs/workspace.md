@@ -546,7 +546,9 @@ whose screen is scaled, such as a high-density display, reports the screenshot's
 match. A model's profile can limit the screenshots it takes, as
 [`computer_use_screenshot_limit`][pydantic_ai.profiles.ModelProfile.computer_use_screenshot_limit]; a computer-use
 tool fits a larger screen to it, so report the screen's real size. The display can also implement
-[`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom], to capture part of the display at full resolution, and
+[`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom], to capture part of the display at full resolution,
+[`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot], to capture the whole display at a
+smaller size for a model with a screenshot limit (durable execution journals it like the other display calls), and
 [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition]. Key names in actions are a fixed set,
 with X keysyms such as `KP_Enter` accepted as aliases; a character key presses whatever the layout needs to type
 it. Typed text holds no control characters other than `\n` and `\t`, which press Enter and Tab.
@@ -691,7 +693,8 @@ Before shipping a backend, use the suite to check:
   indefinitely delay a finished command.
 - File operations preserve bytes, follow symlinks where appropriate, and report path errors;
   understand containment limits: a working directory is not a jail, and symlinks may cross roots.
-- A display's screenshot is its declared size, a zoom keeps the region's shape at full resolution, and moving
+- A display's screenshot is its declared size, a scaled screenshot is the size asked for, a zoom keeps the
+  region's shape at full resolution, and moving
   the mouse puts the pointer there, when the display reports the pointer position.
 - Supply `attach_backend`, `destroy_environment`, and an independent `destructive_backend` to check
   reattachment, a destroyed reference, and destruction during a command. These optional rules

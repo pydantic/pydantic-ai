@@ -80,6 +80,7 @@ WorkspaceMethod: TypeAlias = Literal[
     'screenshot',
     'act',
     'zoom',
+    'scaled_screenshot',
     'cursor_position',
 ]
 
@@ -134,6 +135,7 @@ class WorkspaceCall:
     timeout: float | None = None
     action: ComputerAction | None = None
     region: Region | None = None
+    size: tuple[int, int] | None = None
 
     async def execute(self, workspace: Workspace) -> WorkspaceCallResult:  # noqa: C901
         match self.method:
@@ -182,6 +184,9 @@ class WorkspaceCall:
             case 'zoom':
                 assert self.region is not None
                 return WorkspaceCallResult(data=await workspace.zoom(self.region))
+            case 'scaled_screenshot':
+                assert self.size is not None
+                return WorkspaceCallResult(data=await workspace.scaled_screenshot(*self.size))
             case 'cursor_position':
                 return WorkspaceCallResult(point=await workspace.cursor_position())
         assert_never(self.method)
@@ -424,6 +429,11 @@ class DurableWorkspace(WrapperWorkspace):
         if not self._in_container():
             return await self.wrapped.zoom(region)
         return (await self._call(WorkspaceCall(method='zoom', region=region))).data
+
+    async def scaled_screenshot(self, width: int, height: int) -> bytes:
+        if not self._in_container():
+            return await self.wrapped.scaled_screenshot(width, height)
+        return (await self._call(WorkspaceCall(method='scaled_screenshot', size=(width, height)))).data
 
     async def cursor_position(self) -> Point:
         if not self._in_container():
