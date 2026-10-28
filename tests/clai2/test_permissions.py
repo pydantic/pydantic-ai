@@ -179,7 +179,13 @@ def test_proposed_diff() -> None:
     assert edited is not None and '-a\n+b\n' in edited and '-c\n+d\n' in edited
 
 
-@pytest.mark.parametrize(('subject', 'printed'), [('ls', False), ('echo ' + 'x' * 600 + ' && rm -rf doomed', True)])
+@pytest.mark.parametrize(
+    ('subject', 'printed'),
+    [
+        pytest.param('ls', False, id='short'),
+        pytest.param('echo ' + 'x' * 600 + ' && rm -rf doomed', True, id='long'),
+    ],
+)
 async def test_terminal_approver_prints_a_command_too_long_for_the_question(subject: str, printed: bool) -> None:
     """The picker's question is cut at its limit, so a longer command is printed in full before it is approved."""
     output = io.StringIO()

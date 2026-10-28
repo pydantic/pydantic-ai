@@ -1336,7 +1336,9 @@ is loaded, it asks the questions instead, in the browser and this picker at once
 
 The same picker asks about the calls [`/permissions`](docs/reference.md#permissions) holds: the plugin also binds
 `runtime/permissions.py`'s `approval_handler`, which puts each held call to the answerer as a question with
-`Approve`, `Approve for this session`, and `Deny`; a typed answer denies the call with it as the reason. A
+`Approve`, `Approve for this session`, and `Deny`; a typed answer denies the call with it as the reason. A command
+too long for the question is printed in full above the picker first (`TerminalAnswerer.ask_approval`); a replacement
+approver should show it in full too. A
 replacement for this plugin that should answer approvals binds `approval_handler` with its own approver; without
 one, held calls are denied.
 
