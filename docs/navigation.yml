@@ -351,8 +351,7 @@ navigation:
       - page: "Building Custom Capabilities"
         path: "capabilities/custom.md"
         slug: "capabilities/custom"
-      # clai2 is unreleased and intentionally unpublished until release.
-      # See UNPUBLISHED_PAGES in tests/test_docs_navigation.py for publication constraints.
+      # harness/clai2.md is intentionally unpublished; see UNPUBLISHED_PAGES in tests/test_docs_navigation.py.
       - page: "Pydantic AI Harness"
         path: "harness/index.md"
         slug: "harness"
