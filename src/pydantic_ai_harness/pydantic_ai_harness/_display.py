@@ -66,22 +66,23 @@ class ManagedDisplay:
             return self._driver
 
     async def _call(self, call: Callable[[DisplayDriver], Awaitable[T]], *, observe: bool) -> T:
-        async with self._scope():
-            retry = observe
-            while True:
-                driver = await self.driver()
-                try:
+        retry = observe
+        while True:
+            driver = None
+            try:
+                async with self._scope():
+                    driver = await self.driver()
                     return await call(driver)
-                except WorkspaceUnsupportedActionError:
-                    raise  # a refused action, such as an unknown key: the display is fine
-                except Exception as error:
-                    # The display may have stopped, or the environment restarted: the next call starts it again.
-                    if self._driver is driver:
-                        self._driver = None
-                    # Retrying can't help an unavailable environment, and would double a timeout.
-                    if not retry or isinstance(error, WorkspaceUnavailableError | WorkspaceTimeoutError):
-                        raise
-                    retry = False
+            except WorkspaceUnsupportedActionError:
+                raise  # a refused action, such as an unknown key: the display is fine
+            except Exception as error:
+                # The display may have stopped, or the environment restarted: the next call starts it again.
+                if driver is not None and self._driver is driver:
+                    self._driver = None
+                # Retrying can't help an unavailable environment, and would double a timeout.
+                if not retry or isinstance(error, WorkspaceUnavailableError | WorkspaceTimeoutError):
+                    raise
+                retry = False
 
     async def display_size(self) -> tuple[int, int]:
         return await self._call(lambda driver: driver.display_size(), observe=True)
