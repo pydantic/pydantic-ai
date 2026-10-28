@@ -377,6 +377,12 @@
       "fingerprint": "c2655ed50f60d9b53296c110ea2267134651aa29c6bfa49d4beb7ffcceede410",
       "reason": "False positive: `SessionPlugins.live_session` is still a `LiveRuntime` built with the same arguments; Griffe compares the expression text, which only gained `forks=forks`.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11334"
+    },
+    {
+      "against": "v2.62.0",
+      "fingerprint": "ba357493cc5988982484475597d4666626d566ac71a2317e5e91af3c243c196e",
+      "reason": "`RepoContextSettings.nested_traversal` keeps its type and default; only its `Field` description changed, to describe nested traversal surfacing every directory between the traversed one and the workspace.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11687"
     }
   ],
   "model_name_literals": [
