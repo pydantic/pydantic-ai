@@ -975,11 +975,12 @@ async def test_a_pick_over_a_read_only_view_names_the_picked_session(page: Page,
         'items': [],
         'openable': False,
         'missing': True,
+        'owner_pid': None,
     }
     await page.route(f'**/api/sessions/{web_ui.moved}', lambda route: route.fulfill(json=transcript))
     sidebar = page.locator('.sidebar')
     await sidebar.get_by_text('Browser Moved', exact=True).click()
-    await expect(page.locator('.preview-banner')).to_be_visible()
+    await expect(page.locator('.preview-banner')).to_contain_text('which no longer exists')
     held: list[Route] = []
 
     async def hold(route: Route) -> None:
