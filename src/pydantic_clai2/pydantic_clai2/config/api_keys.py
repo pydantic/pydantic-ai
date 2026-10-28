@@ -24,7 +24,7 @@ from pydantic_clai2.config.credential_store import (
 )
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import menu_key, require_terminal, run_worker
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 
 class KeyReference(BaseModel):

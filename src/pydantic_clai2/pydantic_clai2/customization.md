@@ -18,7 +18,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
 - Change tool output: override render(event), returning a Rich renderable or None.
 - Add a fragment to the status row: return functions from get_status_segments,
   each returning a short string.
-- Add a working animation: return make_spinner(name, frames, interval=...,
+- Add a working animation: return build_spinner(name, frames, interval=...,
   description=...) values from get_spinners, or add an entry in spinners.json next
   to CLAI's settings (/spinner init writes a starter). /spinner picks one; the
   choice persists as display.spinner.
@@ -154,7 +154,11 @@ opt in. An explicit false remains an opt-out. To run without coding tools,
 built-in to its defaults rather than removing it. A repository's
 .clai/settings.json can declare plugins too; they show as (project), rank
 just above the built-ins, and start off until the user runs /plugins enable
-NAME, so repository code never runs without that approval. Outside a session,
+NAME, so repository code never runs without that approval. Its "hooks" table
+(commands run before and after tool calls and as a turn starts and ends) is the
+project plugin project_hooks, approved the same way; any change to the table
+needs approval again. The user's own table is the settings of the built-in
+hooks plugin (pydantic_clai2.builtin_plugins.hooks). Outside a session,
 clai2 plugins add NAME module[:Class] [JSON] saves for the next startup.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.
@@ -249,7 +253,7 @@ new source. Do not mutate another plugin or the agent to add a plugin's tools.
 
 ## Finding CLAI source
 
-The package root keeps the shell entry point (`_app.py`) and the documented
+The package root keeps the shell entry point (`app.py`) and the documented
 plugin-author imports `pydantic_clai2.plugins` and `pydantic_clai2.commands`.
 Implementations live in `cli/` (launch and command context), `config/` (settings
 and storage), `runtime/` (sessions and reload), `models/` (catalog and provider
@@ -520,12 +524,12 @@ Offer a working animation with get_spinners; the user selects it with /spinner:
 from collections.abc import Sequence
 
 from pydantic_clai2.plugins import Plugin
-from pydantic_clai2.ui.rendering.spinners import Spinner, make_spinner
+from pydantic_clai2.ui.rendering.spinners import Spinner, build_spinner
 
 
 class Wave(Plugin):
     def get_spinners(self) -> Sequence[Spinner]:
-        return (make_spinner('wave', ['~   ', ' ~  ', '  ~ ', '   ~'], interval=0.1, description='a small wave'),)
+        return (build_spinner('wave', ['~   ', ' ~  ', '  ~ ', '   ~'], interval=0.1, description='a small wave'),)
 ```
 
 Frames are padded to one width and interval is clamped to 0.02-1 seconds. The
@@ -542,7 +546,7 @@ The following uses CLAI's internal UI helpers; check them when upgrading:
 ```python
 from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 from pydantic_clai2.commands import Command
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.plugins import Plugin
@@ -703,6 +707,15 @@ ValueError.
 removes the native effort override. Custom parameters stay unchanged: remove any
 that override effort with `/model settings` first. Models without an effort
 control say so. Like `/fast`, `/effort` waits for the current turn to finish.
+
+`/commit [MESSAGE]` stages and commits every change in the session's directory;
+without MESSAGE the session's model drafts one from the changes. `/push` runs
+`git push -u origin BRANCH`; on the default branch it asks for `/push confirm`.
+`/pr [TITLE]` pushes the branch and opens a GitHub pull request with `gh`, the
+model drafting its description (and title, without TITLE). The web UI's git chip
+does the same, with a file list and the drafts to edit first. A plugin's own
+`/commit`, `/push`, or `/pr` replaces these; a skill of the same name is hidden
+by them, and CLAI says so.
 
 For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose

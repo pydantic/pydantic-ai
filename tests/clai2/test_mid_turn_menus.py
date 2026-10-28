@@ -42,6 +42,7 @@ from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from tests.clai2.test_tasks import task
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 
 def test_only_bare_opted_in_commands_run_during_a_turn() -> None:
@@ -337,7 +338,7 @@ async def test_live_command_keeps_the_editor_working_and_cancellable(
     started, working, drafted, kept, done = (anyio.Event() for _ in range(5))
 
     class Surface(PromptSurface):
-        def paint(self, rows: tuple[str, ...]) -> None:
+        def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
             plain = [Text.from_ansi(row).plain.rstrip() for row in rows]
             busy = any(row.startswith('─ Working ') for row in plain)
             if started.is_set() and busy:
@@ -346,7 +347,7 @@ async def test_live_command_keeps_the_editor_working_and_cancellable(
                     drafted.set()
             elif drafted.is_set() and 'keep me' in plain:
                 kept.set()
-            super().paint(rows)
+            super().paint(rows, select_pinned=select_pinned)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
 
@@ -402,13 +403,13 @@ async def test_cancelling_a_command_discards_the_prompt_it_submitted(
     working, stopped, done = (anyio.Event() for _ in range(3))
 
     class Surface(PromptSurface):
-        def paint(self, rows: tuple[str, ...]) -> None:
+        def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
             busy = any(Text.from_ansi(row).plain.startswith('─ Working ') for row in rows)
             if busy:
                 working.set()
             elif working.is_set():
                 stopped.set()
-            super().paint(rows)
+            super().paint(rows, select_pinned=select_pinned)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     requests: list[list[ModelMessage]] = []
@@ -643,6 +644,7 @@ def _plain(transcript: TranscriptBuffer) -> str:
     return Text.from_ansi('\n'.join(transcript.frame(width=200, height=500).rows)).plain
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_speculation_toggled_mid_turn_shows_at_once_and_binds_on_the_next_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -656,11 +658,11 @@ async def test_speculation_toggled_mid_turn_shows_at_once_and_binds_on_the_next_
             if _plain(self.transcript).count('Finished work') >= 2:
                 answered.set()
 
-        def paint(self, rows: tuple[str, ...]) -> None:
+        def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
             frames.append('\n'.join(Text.from_ansi(row).plain for row in rows))
             if 'this turn keeps its tools' in frames[-1]:
                 noticed.set()
-            super().paint(rows)
+            super().paint(rows, select_pinned=select_pinned)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     store = SettingsStore(tmp_path / 'config.db')

@@ -23,7 +23,7 @@ from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager, suppress
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, Literal, assert_never, cast
+from typing import Any, Literal, Protocol, assert_never, cast
 
 from anyio import Lock
 from anyio.lowlevel import RunVar
@@ -168,6 +168,8 @@ __all__ = (
     'GoogleRealtimeModel',
     'GoogleRealtimeModelSettings',
     'GoogleRealtimeConnection',
+    'GoogleRealtimeDial',
+    'GoogleRealtimeReplay',
     'AutomaticVAD',
     'MultiSpeaker',
     'ContextCompression',
@@ -439,8 +441,8 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     a typed turn doesn't, the most recent image sent in the last 10 seconds is sent again in the typed
     turn's own content, ahead of the text. Every Gemini Live model probed misses it:
     `gemini-3.1-flash-live-preview`, `gemini-3.8-live` and its extended-thinking variant answer that
-    they can't see an image, and `gemini-2.5-flash-native-audio-*` and Vertex's `gemini-live-2.5-flash`
-    misread it.
+    they can't see an image, and `gemini-2.5-flash-native-audio-*`, Vertex's `gemini-live-2.5-flash` and
+    `gemini-robotics-er-2-streaming-preview` misread it.
     """
 
 
@@ -1145,32 +1147,32 @@ class GoogleRealtimeModel(RealtimeModel):
         )
 
     async def _replay_turns(
-        self, connection: GoogleRealtimeConnection | None, handle: str | None, function_parts: bool
+        self, replay: GoogleRealtimeReplay | None, function_parts: bool
     ) -> tuple[list[genai_types.Content], list[genai_types.Content]]:
-        """What a re-dial of `connection` replays: the conversation so far, and the turns to ask a reply to again.
+        """What a re-dial replays: the conversation so far, and the turns to ask a reply to again.
 
-        Nothing when it resumes from `handle`: a session resumed from a handle already has the conversation.
-        Without one (the connection dropped before Gemini issued a handle) the re-dial is a fresh session, so
-        the conversation so far is replayed into it, and the model continues the call rather than starting
-        over with amnesia. Like the OpenAI-protocol replay, media is left behind: the model needs the
-        conversation, and re-sending a long call's retained audio (or a stale video frame) would cost far more
-        than it restores.
+        Nothing without a `replay`: a session resumed from a handle already has the conversation. Without
+        a handle (the connection dropped before Gemini issued one) the re-dial is a fresh session, so the
+        connection passes the conversation so far to replay into it, and the model continues the call
+        rather than starting over with amnesia. Like the OpenAI-protocol replay, media is left behind: the
+        model needs the conversation, and re-sending a long call's retained audio (or a stale video frame)
+        would cost far more than it restores.
 
         Typed turns whose reply the drop lost (see `GoogleRealtimeConnection.frames`) come last in the
-        session's conversation, as the user turns after the last model turn. When the connection asks for
+        session's conversation, as the user turns after the last model turn. When the replay asks for
         their reply again, those are split off, to go in as a turn of their own that the model answers.
         """
-        if handle is not None or connection is None or (message_history := connection.message_history) is None:
+        if replay is None:
             return [], []
         turns = await _seed_turns(
-            [replayable for message in message_history() if (replayable := without_media(message)) is not None],
+            [replayable for message in replay.messages if (replayable := without_media(message)) is not None],
             # Not `replace`d on the model's profile: these say what *this* seeding pass will carry, not what
             # the model supports.
             profile={**self.profile, 'supports_seeding_audio': False, 'supports_seeding_images': False},
             provider_name=self.system,
             function_parts=function_parts,
         )
-        if not connection._asks_replies_again:  # pyright: ignore[reportPrivateUsage]
+        if not replay.asks_replies_again:
             return turns, []
         history = len(turns)
         while history and turns[history - 1].role == 'user':
@@ -1434,15 +1436,14 @@ class GoogleRealtimeModel(RealtimeModel):
         # the next (so they don't accumulate), and teardown closes whatever is current.
         cm: AbstractAsyncContextManager[AsyncSession] | None = None
         dialed = False
-        connection: GoogleRealtimeConnection | None = None
 
-        async def dial(handle: str | None) -> AsyncSession:
+        async def dial(handle: str | None, /, *, replay: GoogleRealtimeReplay | None = None) -> AsyncSession:
             nonlocal cm, dialed
             if cm is not None:
                 previous, cm = cm, None
                 await previous.__aexit__(None, None, None)
             # The first dial seeds `message_history`; a re-dial into a fresh session replays the conversation.
-            seed, asked_again = await self._replay_turns(connection, handle, function_parts) if dialed else (turns, [])
+            seed, asked_again = await self._replay_turns(replay, function_parts) if dialed else (turns, [])
             # A seed with native function parts goes in as the session's initial history, which ends with
             # `turn_complete` without triggering a reply; one without is sent as context turns. A server
             # waiting for initial history would take the next typed turn as history and not answer it, so
@@ -1536,6 +1537,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 input_transcription_enabled=self._input_transcription(settings),
                 async_tool_calls=self._async_tool_calls(settings),
                 text_output=settings.get('output_modality', 'audio') == 'text',
+                vertexai=client.vertexai,
             )
             yield connection
         finally:
@@ -1563,6 +1565,38 @@ class _CutOffLifecycle(InferredLifecycle):
     inputs_cut_off_replies = True
 
 
+@dataclass(frozen=True)
+class GoogleRealtimeReplay:
+    """The conversation a re-dial without a resumption handle replays into the fresh session.
+
+    [`GoogleRealtimeConnection`][pydantic_ai.realtime.google.GoogleRealtimeConnection] passes it to its
+    [`dial`][pydantic_ai.realtime.google.GoogleRealtimeDial] callback as `replay=`.
+    """
+
+    _: KW_ONLY
+
+    messages: Sequence[ModelMessage]
+    """The session's conversation so far, as the session would replay it."""
+    asks_replies_again: bool
+    """Whether the user turns after the last model turn in `messages` are typed turns whose reply the drop
+    lost, which go in as a turn of their own for the model to answer rather than as context."""
+
+
+class GoogleRealtimeDial(Protocol):
+    """The callback a `GoogleRealtimeConnection` opens a new session with on reconnect."""
+
+    def __call__(self, handle: str | None, /, *, replay: GoogleRealtimeReplay | None = None) -> Awaitable[AsyncSession]:
+        """Open a configured session, resuming from `handle` when there is one.
+
+        `replay` is passed only when there is no handle and a
+        [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] offered its conversation for replay. The
+        new session is then a fresh one, and `dial` must send `replay` into it: the reconnect reports
+        `state_restored=True` on the assumption that it did. A re-dial with a handle passes `handle`
+        alone.
+        """
+        ...
+
+
 class GoogleRealtimeConnection(RealtimeConnection):
     """A live connection to the Gemini Live API, backed by a `google-genai` session."""
 
@@ -1578,14 +1612,18 @@ class GoogleRealtimeConnection(RealtimeConnection):
         *,
         profile: RealtimeModelProfile | None = None,
         provider_name: str = 'google',
-        dial: Callable[[str | None], Awaitable[AsyncSession]] | None = None,
+        dial: GoogleRealtimeDial | None = None,
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
         async_tool_calls: bool = False,
         provider_url: str = '',
         text_output: bool = False,
+        vertexai: bool = False,
     ) -> None:
         self._session = session
+        # Whether the session is on Vertex AI rather than the Gemini Developer API, whose SDK refuses a function
+        # response without the call's id. A connection built without it assumes the stricter Developer API.
+        self._vertexai = vertexai
         # Whether the session asked for text rather than audio (`output_modality='text'`). A text-only model
         # streams its text answer as `output_transcription` (`gemini-robotics-er-2-streaming-preview`, verified
         # live), which is then the answer itself, written rather than spoken.
@@ -1640,8 +1678,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # following `code_execution_result` return with its call — mirroring the classic `GoogleModel`
         # streaming path, which threads a single id from the code part to its result.
         self._code_execution_tool_call_id: str | None = None
-        # `dial` re-establishes a configured session from the latest resumption handle; with a
-        # `reconnect` policy it recovers a dropped connection.
+        # `dial` re-establishes a configured session from the latest resumption handle, or without one
+        # replays the conversation into a fresh session; with a `reconnect` policy it recovers a dropped
+        # connection.
         self._dial = dial
         self._reconnect = reconnect
         self._resumption_handle: str | None = None
@@ -1684,14 +1723,6 @@ class GoogleRealtimeConnection(RealtimeConnection):
     def message_history(self) -> Callable[[], Sequence[ModelMessage]] | None:
         """The call so far, when a session has offered it for replay into a fresh session on reconnect."""
         return self._message_history
-
-    @property
-    def _asks_replies_again(self) -> bool:
-        """Whether the re-dial under way asks again for the replies to typed turns the drop lost.
-
-        Set while a reconnect without a resumption handle re-dials, for its replay (see `frames`).
-        """
-        return bool(self._asked_again)
 
     @property
     def _can_reconnect(self) -> bool:
@@ -1974,7 +2005,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         # result sent while re-dialing went to the dead socket, so the call is still owed.
                         for call_id, call in lost_tool_calls.items():
                             self._tool_calls.pop(call_id, None)
-                            if state_resumed:
+                            if state_resumed and self._can_answer(call):
                                 self._unanswered_lost_tool_calls.append(call)
                         reconnect_frame.append(ToolCallCancelled(tool_call_ids=list(lost_tool_calls)))
                     if self._turn_open:
@@ -2016,6 +2047,16 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 return
             # `receive()` returned normally → the turn ended; loop for the next one.
 
+    def _can_answer(self, call: tuple[str, str | None]) -> bool:
+        """Whether a lost call can be answered on the resumed session.
+
+        The Gemini Developer API only takes a function response carrying the call's id (`google-genai`
+        raises before sending one without), so an id-less call can't be answered there and is left
+        unanswered rather than ending the event stream. On Vertex AI the SDK sends one without an id.
+        """
+        _, gemini_id = call
+        return gemini_id is not None or self._vertexai
+
     async def _answer_lost_tool_calls(self) -> None:
         """Answer calls a resumed session lost with an error, so they don't swallow the next input.
 
@@ -2054,7 +2095,15 @@ class GoogleRealtimeConnection(RealtimeConnection):
     async def _attempt_reconnect(self) -> bool:
         assert self._dial is not None
         try:
-            self._session = await self._dial(self._resumption_handle)
+            if self._resumption_handle is None and self._message_history is not None:
+                # A fresh session: `dial` replays the conversation into it (see `frames`, which counts on it).
+                replay = GoogleRealtimeReplay(
+                    messages=self._message_history(), asks_replies_again=bool(self._asked_again)
+                )
+                self._session = await self._dial(None, replay=replay)
+            else:
+                # Passed on its own, so a `dial` from before `replay` existed keeps working here.
+                self._session = await self._dial(self._resumption_handle)
         except (genai_errors.APIError, ConnectionClosed, OSError, TimeoutError):
             # Expected dial failures: SDK-reported API errors, a closed socket, and network/timeout
             # errors. A retry may still succeed. Anything else is a bug in `dial()` and propagates

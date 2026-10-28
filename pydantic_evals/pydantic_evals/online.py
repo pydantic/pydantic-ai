@@ -596,7 +596,7 @@ class OnlineEvalConfig:
 
     def should_evaluate(self) -> bool:
         """Whether evaluators with this config should run, based on the current settings and context."""
-        return self.enabled and not _EVALUATION_DISABLED.get() and _task_run.CURRENT_TASK_RUN.get() is None
+        return _online_internal.evaluation_allowed(self) and _task_run.CURRENT_TASK_RUN.get() is None
 
 
 @dataclass(kw_only=True, frozen=True)

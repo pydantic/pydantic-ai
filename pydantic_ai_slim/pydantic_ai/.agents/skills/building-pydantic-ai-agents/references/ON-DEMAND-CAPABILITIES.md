@@ -100,6 +100,8 @@ agent = Agent(
 
 `Capability` is a convenience helper for simple bundles of instructions, descriptions, function tools, and toolsets. It accepts callable descriptions, dynamic instruction functions, and dynamic toolset functions. Use a custom `AbstractCapability` for model settings, hooks, native tools, wrapper toolsets, reusable public behavior, or custom per-run logic. Wrapper toolsets are applied during per-run toolset assembly; if wrapper behavior should wait for a deferred capability to load, gate that behavior inside the wrapper.
 
+To defer existing capabilities together (built-in, harness, or custom ones), wrap them instead of rebuilding them as one bundle: `CombinedCapability([WebSearch(), WebFetch()], id='web-research', description='...', defer_loading=True)`. Loading `web-research` activates every member at once. Each member keeps its own ordering position among the agent's capabilities. A `CombinedCapability` without `defer_loading=True` is only a grouping and is merged into the agent's capabilities.
+
 To keep a skill's tools hidden until the skill loads, wrap the skill's Markdown body in `Capability(id=..., description=..., instructions=body, toolsets=[...], defer_loading=True)`; no subclass is needed. The Pydantic AI Harness `Skills` capability delivers instructions only. A capability like this sits alongside `Skills` in the same catalog, but its `id` must differ from every skill name `Skills` exposes, or the run fails.
 
 ## Runtime Semantics
@@ -176,6 +178,7 @@ account_capability = AccountCapability(id='account-management', defer_loading=Tr
 - `load_capability` is reserved when any deferred capability exists.
 - Deferred capability instructions and model settings activate only after the capability is loaded.
 - Both function and native tools defer with the capability. Deferring a native tool delays its definition entering the request, which breaks the prompt-cache prefix on load — only worth it for tools that materially bloat the prompt.
+- A deferred capability cannot contain another deferred capability; pass the inner one to the agent separately if the model should load it on its own.
 - Capability-level `defer_loading=True` gates the bundle as a unit. Once the model loads the capability, all tools owned by that deferred capability become visible together. Use tool-level `defer_loading=True` outside a deferred capability when individual tools should stay behind `search_tools`.
 
 ## Choosing Between Deferral Mechanisms
