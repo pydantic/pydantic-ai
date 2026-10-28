@@ -8,6 +8,7 @@ import hmac
 import importlib
 import itertools
 import json
+import threading
 import warnings
 from collections import deque
 from collections.abc import (
@@ -3023,9 +3024,7 @@ class _ResponsesWebSocketState:
     loop: asyncio.AbstractEventLoop
     leases: int = 0
     external_leases: int = 0
-    contexts: dict[object, list[_ResponsesWebSocketLease]] = field(
-        default_factory=dict[object, list['_ResponsesWebSocketLease']]
-    )
+    external_ownership_known: bool = True
     in_flight: int = 0
     socket: ResponsesWebSocket | None = None
     open_lock: anyio.Lock | None = None
@@ -3065,35 +3064,68 @@ class _ResponsesWebSocketState:
 
 
 _ResponsesWebSocketLease = tuple[_ResponsesWebSocketState, bool]
+# Context teardown can run on another task or loop. Never hold this lock during network I/O.
+_WEBSOCKET_LIFECYCLE_LOCK = threading.RLock()
 
 
 @dataclass(eq=False)
 class _ResponsesWebSocketHolder:
     """Loop-local sockets shared by a model and its request copies.
 
-    Each loop alone creates and changes its entry; no socket or asyncio lock crosses a thread boundary.
+    Each loop opens its own socket; teardown on another loop schedules closure on the socket's loop.
     Entries are removed when their last lease and request finish, including after failed handshakes.
     """
 
     states: dict[asyncio.AbstractEventLoop, _ResponsesWebSocketState] = field(
         default_factory=dict[asyncio.AbstractEventLoop, _ResponsesWebSocketState]
     )
+    contexts: dict[object, list[_ResponsesWebSocketLease | None]] = field(
+        default_factory=dict[object, list['_ResponsesWebSocketLease | None']]
+    )
+    active_contexts: int = 0
 
     def acquire(self, *, external: bool = False) -> _ResponsesWebSocketLease | None:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return None
-        if (state := self.states.get(loop)) is None:
-            state = self.states[loop] = _ResponsesWebSocketState(loop)
-        state.leases += 1
-        state.external_leases += external
-        return state, external
+        with _WEBSOCKET_LIFECYCLE_LOCK:
+            if (state := self.states.get(loop)) is None:
+                state = self.states[loop] = _ResponsesWebSocketState(loop)
+            state.leases += 1
+            state.external_leases += external
+            return state, external
+
+    def enter(self, key: object, *, external: bool) -> None:
+        with _WEBSOCKET_LIFECYCLE_LOCK:
+            self.contexts.setdefault(key, []).append(self.acquire(external=external))
+            self.active_contexts += 1
+
+    async def exit(self, key: object) -> None:
+        with _WEBSOCKET_LIFECYCLE_LOCK:
+            self.active_contexts -= 1
+            acquired: list[_ResponsesWebSocketLease | None] = []
+            if contexts := self.contexts.get(key):
+                acquired.append(contexts.pop())
+                if not contexts:
+                    self.contexts.pop(key)
+            elif self.active_contexts:
+                # A raw context moved tasks without an identity. Retain its receipts until the last exit;
+                # the remaining contexts cannot prove which external owner is still alive.
+                for state in self.states.values():
+                    state.external_ownership_known = False
+            if not self.active_contexts:
+                acquired.extend(lease for contexts in self.contexts.values() for lease in contexts)
+                self.contexts.clear()
+        for lease in acquired:
+            if lease is not None:
+                await self.release(lease)
 
     async def release(self, lease: _ResponsesWebSocketLease) -> None:
         state, external = lease
-        state.leases -= 1
-        state.external_leases -= external
+        with _WEBSOCKET_LIFECYCLE_LOCK:
+            state.leases -= 1
+            state.external_leases -= external
         await self.close_if_unused(state)
 
     @asynccontextmanager
@@ -3107,13 +3139,18 @@ class _ResponsesWebSocketHolder:
             await self.release(acquired)
 
     async def close_if_unused(self, state: _ResponsesWebSocketState) -> None:
-        if state.leases or state.in_flight:
-            return
-        self.states.pop(state.loop)
-        socket, state.socket = state.socket, None
-        state.open_lock = None
+        with _WEBSOCKET_LIFECYCLE_LOCK:
+            if state.leases or state.in_flight or self.states.get(state.loop) is not state:
+                return
+            self.states.pop(state.loop)
+            socket, state.socket = state.socket, None
+            state.open_lock = None
         if socket is not None:
-            await socket.close()
+            if state.loop is not asyncio.get_running_loop() and state.loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(socket.close(), state.loop)
+                await anyio.to_thread.run_sync(future.result)
+            else:
+                await socket.close()
 
 
 @dataclass(init=False)
@@ -3162,10 +3199,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # A Responses WebSocket a request opens stays open until the model exits, so later runs reuse it.
         from ..durable_exec._operation_backend import in_durable_unit
 
-        acquired = self._websocket.acquire(external=not in_durable_unit())
-        if acquired is not None:
-            key = _model_context_key()
-            acquired[0].contexts.setdefault(key, []).append(acquired)
+        self._websocket.enter(_model_context_key(), external=not in_durable_unit())
         return self
 
     async def __aexit__(
@@ -3174,18 +3208,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> bool | None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            pass
-        else:
-            state = self._websocket.states[loop]
-            key = _model_context_key()
-            contexts = state.contexts[key]
-            acquired = contexts.pop()
-            if not contexts:
-                state.contexts.pop(key)
-            await self._websocket.release(acquired)
+        await self._websocket.exit(_model_context_key())
         return await super().__aexit__(exc_type, exc_val, exc_tb)
 
     def _run_scope(self) -> AbstractAsyncContextManager[None]:
@@ -3382,20 +3405,27 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return
         loop = asyncio.get_running_loop()
         holder = self._websocket
-        state = holder.states.get(loop)
         extra_body = settings.get('extra_body')
-        if (
-            state is None
-            or (in_durable_unit() and not state.external_leases)
-            # The socket can't run a background response, or retrieve a suspended one.
-            or settings.get('openai_background')
-            or (_is_str_dict(extra_body) and extra_body.get('background'))
-            or self._get_continuation_info(messages, settings) is not None
-        ):
+        with _WEBSOCKET_LIFECYCLE_LOCK:
+            state = holder.states.get(loop)
+            if state is not None and (
+                not in_durable_unit() or (state.external_leases and state.external_ownership_known)
+            ):
+                state.in_flight += 1
+            else:
+                state = None
+        if state is None:
             yield None
             return
-        state.in_flight += 1
         try:
+            if (
+                # The socket can't run a background response, or retrieve a suspended one.
+                settings.get('openai_background')
+                or (_is_str_dict(extra_body) and extra_body.get('background'))
+                or self._get_continuation_info(messages, settings) is not None
+            ):
+                yield None
+                return
             response = await self._reserve_websocket_lane(loop, messages, settings)
             if response is None:
                 yield None
@@ -3403,7 +3433,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             async with response:
                 yield _utils.replace_no_init(self, _websocket_stream=response)
         finally:
-            state.in_flight -= 1
+            with _WEBSOCKET_LIFECYCLE_LOCK:
+                state.in_flight -= 1
             await holder.close_if_unused(state)
 
     async def _reserve_websocket_lane(

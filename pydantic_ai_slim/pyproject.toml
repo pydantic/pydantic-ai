@@ -127,7 +127,7 @@ realtime = ["websockets>=14.0"]
 # event types come from the OpenAI SDK.
 openai-realtime = ["pydantic-ai-slim[openai,realtime]"]
 # OpenAI Responses over a WebSocket needs the SDK's WebSocket client, not the realtime session stack.
-openai-responses-websocket = ["pydantic-ai-slim[openai]", "openai[realtime]>=3.26.0", "websockets>=14.0"]
+openai-responses-websocket = ["pydantic-ai-slim[openai]", "websockets>=14.0,<16"]
 google-realtime = ["pydantic-ai-slim[google,realtime]"]
 xai-realtime = ["pydantic-ai-slim[xai,openai,realtime]"]
 # ElevenLabs needs no provider SDK: its REST preflight uses the built-in HTTP client, so the extra

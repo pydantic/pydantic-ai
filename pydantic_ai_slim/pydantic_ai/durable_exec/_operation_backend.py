@@ -33,7 +33,8 @@ def in_durable_unit() -> bool:
     In-process engines need it where their own container check stays true inside a unit (Prefect's
     `FlowRunContext` is set inside a task), so a `DurableWorkspace` call or a capability's durable
     operation called from a tool goes direct. Every engine also sets it around a model unit, so an
-    `OpenAIResponsesModel` sends that one request over HTTP instead of opening a WebSocket for it.
+    `OpenAIResponsesModel` uses HTTP unless it can borrow an explicit outer model or agent scope's
+    WebSocket on the same event loop.
     """
     return _IN_DURABLE_UNIT.get()
 

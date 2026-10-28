@@ -1021,7 +1021,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         Pairing the two here means a unit can't get its model without the guard, instead of each
         engine remembering to install it per unit (Temporal has its own chokepoint in
         `deserialize_run_context`, so it doesn't use this). The unit scope tells the model it serves one request, on
-        every engine, so it doesn't open a connection to keep for the next.
+        every engine, so it doesn't open a connection to keep for the next unless an explicit outer
+        model or agent scope owns that connection on the same event loop.
         """
         with (
             self._durable_run_context_scope(run_context) as ctx,
