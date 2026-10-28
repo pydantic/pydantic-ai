@@ -106,7 +106,8 @@ class ComputerResult(TypedDict):
     """Why the action after the performed ones failed; the rest did not run."""
 
     screenshot_size: NotRequired[tuple[int, int]]
-    """The closing screenshot's `(width, height)` in pixels."""
+    """The `(width, height)` of the screenshot in this result, as the model saw it: the space of the model's next
+    coordinates, which may be smaller than the display."""
 
     coordinate_grid: NotRequired[int]
     """The grid the call's coordinates were on, when they weren't pixels, so history says which they were."""
@@ -123,9 +124,10 @@ to send back when the call is approved.
 """
 
 DISPLAY_SIZE = 'display_size'
-"""The `ToolDefinition.metadata` key under which the `computer` tool gives the display's `(width, height)`.
+"""The `ToolDefinition.metadata` key under which the `computer` tool gives the `(width, height)` of the screenshots
+the model sees, which may be smaller than the display.
 
-A provider whose native tool declares the display size, such as Claude's `computer_20251124`, reads it from there.
+A provider whose native tool declares a display size, such as Claude's `computer_20251124`, sends this one.
 """
 
 COMPUTER_KIND = ToolKind._core('computer', args=_ComputerArgs, content=_ComputerContent)  # pyright: ignore[reportPrivateUsage]
