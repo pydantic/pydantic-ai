@@ -1,4 +1,4 @@
-"""Opt-in herdr state, session, metadata, and conversation-title integration."""
+"""Herdr state, session, metadata, and conversation-title integration in managed terminal panes."""
 
 import os
 import re

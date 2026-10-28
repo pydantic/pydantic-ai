@@ -553,7 +553,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
         if (primed := self._primed_segment) is not None:
             self._primed_segment = None
             self._current_sub = None
-            with self.segment_context():
+            # Shielded like the stitched close below: teardown can run inside a cancelled graph scope, where the
+            # segment's `request_stream(...)` exit would otherwise be cancelled before it closes the connection.
+            with anyio.CancelScope(shield=True), self.segment_context():
                 await primed[0].aclose()
         if self._primed_stitched and self._first_chunk_monotonic is None and self._segment_stream is not None:
             # `prime()` carried on into the stitched stream, whose open segment is closed here for the same reason.

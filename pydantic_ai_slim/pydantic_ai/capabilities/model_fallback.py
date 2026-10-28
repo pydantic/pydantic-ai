@@ -41,11 +41,11 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     from pydantic_ai import Agent
     from pydantic_ai.capabilities import ModelFallback
 
-    # Try gpt-5.6-sol, then Fable.
-    agent = Agent('openai:gpt-5.6-sol', capabilities=[ModelFallback('anthropic:claude-fable-5')])
+    # Try gpt-6.1-sol, then Fable 5.1.
+    agent = Agent('openai:gpt-6.1-sol', capabilities=[ModelFallback('anthropic:claude-fable-5-1')])
 
     # No agent model: the first candidate is used for the first attempt.
-    agent = Agent(capabilities=[ModelFallback('openai:gpt-5.6-sol', 'anthropic:claude-fable-5')])
+    agent = Agent(capabilities=[ModelFallback('openai:gpt-6.1-sol', 'anthropic:claude-fable-5-1')])
     ```
 
     A model already attempted this step is skipped, so listing the agent's own model as the first
