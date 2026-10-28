@@ -6,6 +6,7 @@ describer calls, set model profiles by hand and control concurrency, none of whi
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, patch
 
 import anyio
@@ -396,10 +397,9 @@ async def test_a_file_only_in_the_request_is_recorded_on_the_latest_request():
         model_request_parameters=ModelRequestParameters(),
     )
 
-    run = await capability.for_run(ctx)
-    await run.prepare_model_request(ctx, request_context)
-    await run.after_model_request(ctx, request_context=request_context, response=ModelResponse(parts=[]))
-    await run.prepare_model_request(ctx, request_context)
+    await capability.prepare_model_request(ctx, request_context)
+    # A fresh run reads the description from the history it was recorded in.
+    await (await capability.for_run(ctx)).prepare_model_request(ctx, request_context)
     assert describer.calls == 1
     [request] = history
     assert isinstance(request, ModelRequest)
@@ -653,3 +653,37 @@ async def test_a_description_is_made_once_across_the_attempts_of_a_step():
     await agent.run(['What is this?', ImageUrl('https://example.com/cat.png')])
     assert describer.calls == 1
     assert sent[0] == sent[1]
+
+
+async def test_a_streamed_run_records_its_descriptions_for_the_next_turn():
+    describer = Describer()
+    seen: list[list[ModelMessage]] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        seen.append(messages)
+        yield 'a cat'
+
+    agent = Agent(
+        FunctionModel(stream_function=stream, profile=ModelProfile(supports_image_input=False)),
+        capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))],
+    )
+    async with agent.run_stream(['What is this?', ImageUrl('https://example.com/cat.png')]) as first:
+        assert await first.get_output() == 'a cat'
+    request = first.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.metadata == snapshot(
+        {
+            '__pydantic_ai__': {
+                'file_understanding': {
+                    'file_understanding': {'url:https://example.com/cat.png': 'A description of 750ff4.'}
+                }
+            }
+        }
+    )
+
+    async with agent.run_stream('And now?', message_history=first.all_messages()) as second:
+        await second.get_output()
+    assert describer.calls == 1
+    first_sent, again_sent = seen[0][0], seen[-1][0]
+    assert isinstance(first_sent, ModelRequest) and isinstance(again_sent, ModelRequest)
+    assert again_sent.parts == first_sent.parts

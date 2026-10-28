@@ -15,7 +15,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
-    ModelResponse,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -49,10 +48,12 @@ _DEFAULT_INSTRUCTIONS = (
 class FileUnderstanding(AbstractCapability[AgentDepsT]):
     """Describe the files the agent's model cannot read, with a model that can.
 
-    Before each request, every image, document, audio file or video in a user prompt or a tool result that
-    the model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] says it does not accept is replaced by a
-    text description of it, written by `fallback_subagent_model`. The agent's model sees the description in
-    the file's place; files it accepts are sent as they are. Without this capability, a file a tool returned
+    Before each attempt at a request, every image, document, audio file or video in a user prompt or a tool
+    result that the [`ModelProfile`][pydantic_ai.profiles.ModelProfile] of the model serving that attempt says
+    it does not accept is replaced by a text description of it, written by `fallback_subagent_model`. The model
+    sees the description in the file's place; files it accepts are sent as they are. With
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback], each candidate is judged by its own profile, so
+    one that reads the file gets it and only one that can't gets the description. Without this capability, a file a tool returned
     that the model cannot read is replaced by a note saying so instead.
 
     ```python
@@ -108,15 +109,15 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     which keeps the last. Pass a distinct `id` to keep both, or `id=None` for derived ids.
     """
 
-    _unrecorded: dict[str, str] = field(default_factory=lambda: {}, init=False, repr=False)
-    """Descriptions made for this run's attempts and not yet in its history, by file identity.
+    _described: dict[str, str] = field(default_factory=lambda: {}, init=False, repr=False)
+    """Descriptions made in this run, by file identity.
 
-    `prepare_model_request` can't change the history, so a description waits here until `after_model_request`
-    records it. Another attempt at the same step, on another model, uses it rather than describing the file again.
+    They're also recorded in the history, which is what later turns read. This keeps them for the rest of the run
+    when there is no request in the history to record them on.
     """
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> FileUnderstanding[AgentDepsT]:
-        """A copy for this run, so descriptions waiting to be recorded don't leak into another run."""
+        """A copy for this run, so its descriptions don't reach another run except through a shared history."""
         return replace(self)
 
     async def prepare_model_request(
@@ -136,7 +137,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
             return request_context
 
         # Every file is found first, so the distinct ones can be described at once rather than one after another.
-        recorded = {**self._recorded_descriptions([*ctx.messages, *request_context.messages]), **self._unrecorded}
+        recorded = {**self._recorded_descriptions([*ctx.messages, *request_context.messages]), **self._described}
         descriptions: dict[str, str] = {}
         pending: dict[str, SendableFile] = {}
         unaccepted = False
@@ -159,27 +160,14 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
 
         if pending:
             await self._describe_pending(ctx, pending, descriptions)
-            self._unrecorded.update({identity: descriptions[identity] for identity in pending})
+            new = {identity: descriptions[identity] for identity in pending}
+            self._described.update(new)
+            # Through `ctx.messages`, which persists, unlike `request_context`: a description depends on the file and
+            # `instructions`, not on the attempt, so a later attempt, request or turn reuses it.
+            self._record(ctx.messages, new)
 
         messages = [_substitute(message, profile, descriptions) for message in request_context.messages]
         return replace(request_context, messages=messages)
-
-    async def after_model_request(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        request_context: ModelRequestContext,
-        response: ModelResponse,
-    ) -> ModelResponse:
-        """Record the descriptions this run's attempts made in its history, for later requests, turns and replays.
-
-        A description depends on the file and `instructions`, not on the model it was made for, so one made for an
-        attempt that is then rejected is recorded all the same.
-        """
-        if self._unrecorded:
-            self._record(ctx.messages, self._unrecorded)
-            self._unrecorded.clear()
-        return response
 
     @property
     def _metadata_key(self) -> str:
