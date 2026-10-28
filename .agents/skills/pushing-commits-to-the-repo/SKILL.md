@@ -57,6 +57,12 @@ A human approval does not substitute for douwebot.
 
 ## When you open the PR
 
+### Carry maintainer ownership onto the PR
+
+For [immediate maintainer work](../file-followup-issue/SKILL.md#maintainer-routing-mechanics), assign the PR to the same human maintainer.
+Use `gh pr create --assignee <maintainer-login>` or `gh pr edit <number> --add-assignee <maintainer-login>`.
+Recover the owner from existing context or the linked issue's maintainer assignee and `pydanty:skip` label.
+
 ### Write the title and body
 
 Follow the title and template rules in the root `AGENTS.md`.

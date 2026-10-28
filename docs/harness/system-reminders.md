@@ -217,7 +217,7 @@ Reminders never go into the leading system prompt or instructions, and the histo
 
 ## Composition
 
-- [Planning](planning.md) surfaces the plan in a request-only reminder of its own; both compose in one agent. The plan reminder opens with a cache breakpoint on the content before it, and the `SystemReminders` reminder is sent after the plan reminder with no breakpoint of its own, so neither displaces the other.
+- [Planning](planning.md) shows the plan in its plan tools' results, with a note on it in its instructions, and records it in the history only when it isn't visible any more. Both compose in one agent, and neither places a cache breakpoint.
 - Loop detection (detect-and-interrupt with a nudge that stays in history) is [Detect Loops](detect-loops.md). `SystemReminders` is cadence/condition steering, request-scoped by default or [lasting](#lasting-reminders).
 
 The reminder is only added when the last message in the request is a `ModelRequest` and at least one reminder fires, so a turn where nothing fires adds nothing to the request. Provider-resume turns (where the request tail is a suspended `ModelResponse` that is echoed back verbatim) are skipped and do not consume a cadence slot.

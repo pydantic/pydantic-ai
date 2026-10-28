@@ -1540,6 +1540,10 @@ class SessionCore:
                 self._obligations[input_id] = 'void'
         self._settled_calls.update(self._call_response)
 
+    def release_annotator(self) -> None:
+        """Drop the response annotator, which holds a bound method back to the session."""
+        self._annotate_response = None
+
     def set_conversation_id(self, conversation_id: str) -> None:
         """The conversation id the session resolved late: what the core records from now on, and has recorded, carries it."""
         self._conversation_id = conversation_id

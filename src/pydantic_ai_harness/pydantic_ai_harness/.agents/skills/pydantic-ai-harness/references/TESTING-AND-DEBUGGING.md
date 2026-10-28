@@ -11,7 +11,7 @@ Harness capabilities are real code (they write files, run commands, call answere
 model with a `FunctionModel` and let the capabilities execute against temp directories and in-memory
 stores. `Agent.override(model=..., workspace=...)` swaps both without touching the production agent;
 `workspace=` takes a backend such as `LocalWorkspaceBackend(tmp_dir)`. This also works on an agent
-with `ModalSandbox`/`E2BSandbox`/`SpritesSandbox`/`DaytonaSandbox` attached: no sandbox is created, no factory needed.
+with `ModalSandbox`/`E2BSandbox`/`SpritesSandbox`/`DaytonaSandbox`/`BoxdSandbox` attached: no sandbox is created, no factory needed.
 
 - `FunctionModel`: return a `ToolCallPart` on the first request and a `TextPart` once results are in.
 - `TestModel(call_tools=[])`: smoke test that the agent builds and runs. Plain `TestModel()` calls every

@@ -174,14 +174,15 @@ UNSUPPORTED: dict[tuple[str, Provider], str] = {
 }
 """(capability, provider) pairs where the capability refuses the provider, so there is no conversation to check."""
 
-KNOWN: dict[str, tuple[Known, ...]] = {
-    'agent:dynamic_system_prompt': (
-        Known('prefix', 'https://github.com/pydantic/pydantic-ai/issues/10521', 'system', 'system-prompt'),
-    ),
-}
+KNOWN: dict[str, tuple[Known, ...]] = {}
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
 ALLOWED: dict[str, Allowed] = {
+    'agent:dynamic_system_prompt': Allowed(
+        'docs/agent.md: by default, a dynamic system prompt that changes is rewritten in place in the history, so '
+        "the start of every later request changes; `on_change='append'` keeps it (#10521)",
+        (('system', 'system-prompt'),),
+    ),
     'agent:effort_change': Allowed(
         'docs/capabilities/thinking.md: an API without a mid-conversation effort channel gets each change as the request-level '
         'effort, which is part of the cache key',
@@ -232,6 +233,22 @@ def _dynamic_system_prompt(agent: Agent[Any, Any], clock: Clock) -> None:
         return f'The time is {clock.now:%H:%M}.'
 
 
+def _dynamic_system_prompt_append(agent: Agent[Any, Any], clock: Clock) -> None:
+    @agent.system_prompt(dynamic=True, on_change='append')
+    def now() -> str:
+        return f'The time is {clock.now:%H:%M}.'
+
+
+def _dynamic_system_prompt_withdrawal(agent: Agent[Any, Any], clock: Clock) -> None:
+    calls = 0
+
+    @agent.system_prompt(dynamic=True, on_change='append')
+    def now() -> str | None:
+        nonlocal calls
+        calls += 1
+        return f'The time is {clock.now:%H:%M}.' if calls == 1 else None
+
+
 def _dynamic_instructions(agent: Agent[Any, Any], clock: Clock) -> None:
     @agent.instructions
     def now() -> str:
@@ -246,6 +263,8 @@ def _effort_by_step(ctx: RunContext[Any]) -> ModelSettings:
 
 AGENT_FEATURES: dict[str, Scenario] = {
     'agent:dynamic_system_prompt': Scenario(configure=_dynamic_system_prompt, check_ids=False),
+    'agent:dynamic_system_prompt_append': Scenario(configure=_dynamic_system_prompt_append, check_ids=False),
+    'agent:dynamic_system_prompt_withdrawal': Scenario(configure=_dynamic_system_prompt_withdrawal, check_ids=False),
     'agent:dynamic_instructions': Scenario(configure=_dynamic_instructions, check_ids=False),
     # The models whose APIs can change effort mid-conversation (#10385); Chat Completions can't.
     'agent:effort_change': Scenario(
@@ -633,7 +652,7 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
                 'example',
                 (('messages', 'tool-return'),),
                 tail=True,
-                records=('request-only user prompt',),
+                records=('request-scoped system prompt',),
             ),
             'fail',
             'request 2 rewrote the last message of request 1',
@@ -646,7 +665,7 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
                 'example',
                 (('messages', 'tool-return'), ('messages', 'user-prompt')),
                 tail=True,
-                records=('request-only user prompt',),
+                records=('request-scoped system prompt',),
             ),
             'fail',
             'dropped UserPromptPart (persisted history) from the last message of request 0',
