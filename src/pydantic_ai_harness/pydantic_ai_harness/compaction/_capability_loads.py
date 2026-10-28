@@ -1,4 +1,4 @@
-"""Keep deferred capabilities loaded across compaction, or tell the model which ones it unloaded.
+"""Keep deferred capabilities loaded and discovered tools discovered across compaction.
 
 Core counts a deferred capability as loaded while its `load_capability` exchange is in the
 [`post_compaction_window`][pydantic_ai.messages.post_compaction_window], the same rule as tool search's
@@ -8,7 +8,7 @@ say it is loaded. So every shipped strategy that removes history records each su
 replaced it, and core then delivers the capability's current instructions again. With
 `preserve_loaded_capabilities=False`, it leaves them unloaded and says so instead.
 
-This module imports only Pydantic AI, and `keep_capability_loads` is a plain function of messages and
+This module imports only Pydantic AI, and `keep_loaded_state` is a plain function of messages and
 capability ids, so it runs workflow-side in a durable run and can move into core's compaction step
 (#11454), which will call it once per attempt after whichever compaction ran, a provider's included.
 """
@@ -36,6 +36,7 @@ from pydantic_ai.messages import (
     post_compaction_window,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.toolsets._tool_search import discovered_tool_names_in_order, parse_discovered_tools
 
 RECORDED_LOAD_METADATA_KEY = 'pydantic-ai-harness.compaction.recorded-load.v1'
 """Marks a `load_capability` exchange a compaction recorded, rather than one the model made.
@@ -194,10 +195,6 @@ def keep_capability_loads(
     It depends only on the two histories, not on how one became the other: the latest compaction part may
     be a summary a strategy wrote into a request or a provider's in a response. A no-op when nothing was
     lost, including on its own result, so calling it again on what it returned changes nothing.
-
-    TODO: tool search discoveries follow the same window rule and are lost the same way (#11264). A local
-    `search_tools` exchange could be recorded again like a load; a provider's native search can't be, so
-    that's left for the core compaction step (#11454) to settle.
     """
     after = _loads(compacted)
     lost = [
@@ -213,6 +210,60 @@ def keep_capability_loads(
     records = _recorded_exchange(lost) if preserve else [_unloaded_note([load.capability_id for load in lost])]
     index = _insert_index(compacted, kept_from)
     return [*compacted[:index], *records, *compacted[index:]]
+
+
+def _load_reveals(messages: Sequence[ModelMessage]) -> set[str]:
+    """The tools a `load_capability` exchange in the post-compaction window of *messages* revealed."""
+    window = post_compaction_window(messages)
+    loads = {
+        part.tool_call_id for message in window for part in message.parts if isinstance(part, LoadCapabilityReturnPart)
+    }
+    return {
+        name
+        for message in window
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart) and part.tool_call_id in loads
+        for name in part.tools_added
+    }
+
+
+def keep_tool_discoveries(
+    original: Sequence[ModelMessage], compacted: list[ModelMessage], *, kept_from: int
+) -> list[ModelMessage]:
+    """Record again each tool discovery *compacted* lost from *original*, as a `ToolAvailabilityDeltaPart`.
+
+    A discovery is lost when *original*'s post-compaction window records it and *compacted*'s doesn't, whether
+    it was a local `search_tools` exchange, a provider's native search result or a tool's `ToolReturn(tools=...)`.
+    The reveal names the lost tools in the order they were discovered and goes where `keep_capability_loads`
+    puts its records. A tool a capability load revealed is left to that load: it is recorded with it, or
+    unloaded with it. A no-op when nothing was lost, including on its own result.
+    """
+    after = parse_discovered_tools(compacted)
+    by_loads = _load_reveals(original)
+    lost = [name for name in discovered_tool_names_in_order(original) if name not in after and name not in by_loads]
+    if not lost:
+        return compacted
+    index = _insert_index(compacted, kept_from)
+    return [*compacted[:index], ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=lost)]), *compacted[index:]]
+
+
+def keep_loaded_state(
+    original: Sequence[ModelMessage],
+    compacted: list[ModelMessage],
+    *,
+    kept_from: int,
+    deferred_ids: Collection[str] | None,
+    preserve: bool = True,
+) -> list[ModelMessage]:
+    """Keep the capability loads and tool discoveries *compacted* lost from *original*.
+
+    See `keep_capability_loads` and `keep_tool_discoveries`; *kept_from* is the index in *compacted* where the
+    kept messages start.
+    """
+    result = keep_capability_loads(
+        original, compacted, kept_from=kept_from, deferred_ids=deferred_ids, preserve=preserve
+    )
+    return keep_tool_discoveries(original, result, kept_from=kept_from + len(result) - len(compacted))
 
 
 def is_load_part(part: ModelRequestPart | ModelResponsePart) -> bool:

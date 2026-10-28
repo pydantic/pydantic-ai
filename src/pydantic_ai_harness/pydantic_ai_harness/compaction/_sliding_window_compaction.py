@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_capability_loads
+from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_loaded_state
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -174,7 +174,7 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
         kept_from = next(
             (index for index, message in enumerate(trimmed) if any(message is k for k in kept)), len(trimmed) - 1
         )
-        return keep_capability_loads(
+        return keep_loaded_state(
             messages,
             trimmed,
             kept_from=kept_from,

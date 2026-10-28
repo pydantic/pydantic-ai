@@ -648,9 +648,9 @@ which stay exactly as they were, and the original first user turn when `preserve
 keeps it. Each provider model receives it as user-voice text inside `<conversation_summary>`, saying a
 separate summarization model wrote it (a `FunctionModel` gets the part itself), never as part of the
 system prompt: a model wrote it, from a history that can include tool output. Because it is a compaction
-part, Pydantic AI also treats it as a compaction boundary, so tool discoveries from before it are announced
-again, on-demand capability loads from before it are recorded again after it (see "On-demand capabilities
-across compaction" below), and `WarnOnCacheBusts` reports the cache drop it causes as
+part, Pydantic AI also treats it as a compaction boundary, so tool discoveries and on-demand capability
+loads from before it are recorded again after it (see "Tool search discoveries across compaction" and
+"On-demand capabilities across compaction" below), and `WarnOnCacheBusts` reports the cache drop it causes as
 `compacted`. The part carries `{'pydantic-ai-harness.compaction.summary.v1': True}` in its `metadata`,
 which the model never sees; that marker, together with the part having no provider data, is how
 `SummarizingCompaction` recognizes its own summaries, so a `CompactionPart` your application wrote is
@@ -880,6 +880,18 @@ summary treats it as data rather than as the user's words.
 `ClearToolResults`, `DeduplicateFileReads` and `ClampOversizedMessages` keep every message and leave
 `load_capability` calls and returns as they are, so loads survive them unchanged. Provider-native
 compaction (`OpenAICompaction`, `AnthropicCompaction`) runs no harness strategy, so it still unloads them.
+
+## Tool search discoveries across compaction
+
+A tool found through tool search stays discovered while the record of its discovery is in the history
+after the latest compaction: the model's `search_tools` exchange, the provider's native search result, or
+a `ToolReturn.tools` reveal. When `SummarizingCompaction`, `SlidingWindowCompaction` or
+`RelevanceCompaction` removes that record, it records the discovery again as a `ToolAvailabilityDeltaPart`
+naming the tools, in the place it records capability loads. That's a framework record of what the model
+has been shown, not a search the model never made, so a provider's native search result is kept the same
+way as a local one. The tools stay in the request and the model can call them without searching again. A
+tool revealed by a capability load is left to that load, so `preserve_loaded_capabilities=False` unloads it
+along with its capability. Provider-native compaction still drops discoveries, so the model searches again.
 
 ## Keeping user messages (`keep_user_messages`)
 

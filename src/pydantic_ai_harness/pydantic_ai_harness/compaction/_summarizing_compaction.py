@@ -42,7 +42,7 @@ from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction._capability_loads import (
     deferred_capability_ids,
     is_load_part,
-    keep_capability_loads,
+    keep_loaded_state,
 )
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
@@ -871,7 +871,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         before, after = ([], extra) if self.keep_user_messages else (extra, [])
         result: list[ModelMessage] = [*standing, *before, summary_message, *after, *preserved]
         result = reinject_pinned(messages, result, protected_tail=len(preserved) if self.keep_tokens else 0)
-        result = keep_capability_loads(
+        result = keep_loaded_state(
             messages,
             result,
             kept_from=len(result) - len(preserved),
