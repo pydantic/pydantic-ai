@@ -50,25 +50,6 @@ class TestFakeBoxdSandboxBackend(WorkspaceBackendSuite):
 @pytest.mark.boxd_live
 # The live tier runs without coverage; in CI only its gate fixtures run, to skip it.
 class TestLiveBoxdSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
-    # Destructive rules need their own machine, not the shared class-scoped one. Each is deleted
-    # here if a failed rule left it behind, and the client it opened is closed.
-    @pytest.fixture
-    async def destructive_backend(self) -> AsyncIterator[Callable[[], WorkspaceBackend]]:
-        created: list[BoxdSandboxBackend] = []
-
-        def create() -> WorkspaceBackend:
-            backend = BoxdSandboxBackend(auto_suspend_timeout=LIVE_AUTO_SUSPEND_TIMEOUT)
-            created.append(backend)
-            return backend
-
-        yield create
-        for backend in created:
-            try:
-                if backend.ref is not None:
-                    await BoxdSandbox().destroy(backend.ref)
-            finally:
-                await backend.aclose()
-
     # Class-scoped so the rules share one machine instead of creating one each; the suite runs
     # its destroy rule last.
     @pytest.fixture(scope='class')
@@ -85,7 +66,8 @@ class TestLiveBoxdSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
             finally:
                 await backend.aclose()
 
-    # The suite never deletes what `fresh_backend` creates, so each machine is deleted here.
+    # The suite never deletes what `fresh_backend` creates, and uses it for its destructive rules too,
+    # so each machine is deleted here.
     @pytest.fixture
     async def fresh_backend(self) -> AsyncIterator[Callable[[], WorkspaceBackend]]:
         created: list[BoxdSandboxBackend] = []

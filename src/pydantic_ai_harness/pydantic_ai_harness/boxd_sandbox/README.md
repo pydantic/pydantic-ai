@@ -135,7 +135,7 @@ async def main() -> None:
         agent.run('Speed up the slowest test by caching what it builds.', workspace=ref),
         agent.run('Speed up the slowest test by mocking its network calls.', workspace=copy),
     )
-    await sandbox.destroy(copy)
+    await asyncio.gather(sandbox.destroy(ref), sandbox.destroy(copy))
 
 
 asyncio.run(main())

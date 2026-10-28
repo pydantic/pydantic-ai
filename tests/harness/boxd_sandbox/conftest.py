@@ -6,6 +6,7 @@ import importlib.util
 import os
 import types
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -84,3 +85,9 @@ if _HAS_BOXD:  # pragma: no branch - the fixture cannot be defined without its S
         monkeypatch.setattr('pydantic_ai_harness.boxd_sandbox._backend._POLL_INTERVAL', 0)
         yield fake
         await fake.reap()
+
+    @pytest.fixture
+    def host(fake_boxd: FakeBoxd, tmp_path: Path) -> FakeBoxd:
+        """The fake with its machines' commands running in a temporary host directory."""
+        fake_boxd.host_root = tmp_path.resolve()
+        return fake_boxd

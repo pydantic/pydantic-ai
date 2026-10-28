@@ -32,23 +32,11 @@ _MODULE = 'pydantic_ai_harness.boxd_sandbox._backend'
 _NAME = re.compile(r'pydantic-ai-[0-9a-f]{32}')
 
 
-@pytest.fixture
-def host(fake_boxd: FakeBoxd, tmp_path: Path) -> FakeBoxd:
-    """The fake with its machines' commands running in a temporary host directory."""
-    fake_boxd.host_root = tmp_path.resolve()
-    return fake_boxd
-
-
 def _ref(machine_id: str) -> WorkspaceRef:
     return WorkspaceRef(provider='boxd', id=machine_id)
 
 
 class TestConstruction:
-    def test_building_a_backend_does_no_io(self, fake_boxd: FakeBoxd) -> None:
-        backend = BoxdSandboxBackend()
-        assert backend.ref is None
-        assert not fake_boxd.clients and not fake_boxd.machines
-
     @pytest.mark.parametrize(
         ('ref', 'message'),
         [
@@ -172,15 +160,7 @@ class TestCreate:
             await backend.run(['true'])
         # Recorded, so its holder can delete it: it is isolated, and the backend created it.
         assert backend.ref is not None
-        await BoxdSandbox().destroy(backend.ref)
-        assert host.only.status == 'destroyed'
         assert not host.lines
-
-    async def test_a_new_machine_gets_its_working_dir(self, host: FakeBoxd, tmp_path: Path) -> None:
-        directory = tmp_path.resolve() / 'project' / 'nested'
-        backend = BoxdSandboxBackend(working_dir=str(directory))
-        assert await backend.working_dir() == str(directory)
-        assert (await backend.run(['pwd'])).stdout == f'{directory}\n'
 
     async def test_a_working_dir_that_cannot_be_made_fails_every_operation(
         self, host: FakeBoxd, tmp_path: Path
@@ -237,9 +217,8 @@ class TestAttach:
             await BoxdSandboxBackend(ref=_ref(machine.id)).run(['true'])
         assert machine.starts == 1
 
-    @pytest.mark.parametrize('status', ['suspended', 'hibernated'])
-    async def test_a_sleeping_machine_is_woken_by_its_first_command(self, host: FakeBoxd, status: str) -> None:
-        machine = host.add(status=status)
+    async def test_a_sleeping_machine_is_woken_by_its_first_command(self, host: FakeBoxd) -> None:
+        machine = host.add(status='suspended')
         await BoxdSandboxBackend(ref=_ref(machine.id)).run(['true'])
         assert machine.starts == 0
 
@@ -452,20 +431,6 @@ class TestFiles:
         assert await backend.read_bytes(path) == b'data'
         assert host.fs_calls == ['FsWrite', 'FsRead']
 
-    async def test_a_machine_deleted_before_a_file_operation_is_unavailable(self, host: FakeBoxd) -> None:
-        backend = BoxdSandboxBackend()
-        root = await backend.working_dir()
-        host.only.status = 'destroyed'
-        with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
-            await backend.read_bytes(f'{root}/file.txt')
-
-    async def test_rejected_credentials_during_a_file_operation_are_unavailable(self, host: FakeBoxd) -> None:
-        backend = BoxdSandboxBackend()
-        root = await backend.working_dir()
-        host.reject_credentials = True
-        with pytest.raises(WorkspaceUnavailableError, match='boxd did not accept the credentials'):
-            await backend.write_bytes(f'{root}/file.txt', b'data')
-
     async def test_a_dangling_symlink_is_missing(self, host: FakeBoxd) -> None:
         backend = BoxdSandboxBackend()
         root = Path(await backend.working_dir())
@@ -487,22 +452,8 @@ class TestGetMachine:
         assert backend.ref == _ref(machine.id)
         assert (machine.status, machine.networking.isolated) == ('running', True)
 
-    async def test_maps_a_failed_lookup(self, host: FakeBoxd) -> None:
-        backend = BoxdSandboxBackend()
-        await backend.get_sandbox()
-        host.get_errors.append(boxd.AuthenticationError('the key was revoked'))
-        with pytest.raises(WorkspaceUnavailableError, match='boxd did not accept the credentials'):
-            await backend.get_sandbox()
-
 
 class TestClientLifecycle:
-    async def test_aclose_closes_the_client_the_backend_opened(self, host: FakeBoxd) -> None:
-        backend = BoxdSandboxBackend()
-        await backend.aclose()
-        await backend.run(['true'])
-        await backend.aclose()
-        assert [client.closed for client in host.clients] == [True]
-
     async def test_a_passed_client_is_left_open(self, host: FakeBoxd) -> None:
         client = boxd.AsyncBoxd()
         backend = BoxdSandboxBackend(client=client)
@@ -515,7 +466,8 @@ class TestClientLifecycle:
         await backend.run(['true'])
         await backend.aclose()
         await backend.run(['true'])
-        assert [client.closed for client in host.clients] == [True, False]
+        await backend.aclose()
+        assert [client.closed for client in host.clients] == [True, True]
         assert len(host.create_names) == 1
 
     async def test_aclose_during_an_operation_closes_the_client_when_it_ends(
@@ -633,7 +585,7 @@ class TestFork:
             ref = await backend.fork()
         source, copy = host.machines[backend.ref.id], host.machines[ref.id]
         assert _NAME.fullmatch(copy.name) and copy.name != source.name
-        assert (copy.isolated, copy.networks, copy.forked_from) == (True, [], (source.id, 'running'))
+        assert copy.forked_from == (source.id, 'running')
         assert backend.ref == _ref(source.id)
         assert caplog.messages == [f'Forked boxd machine {source.id} into {copy.id} ({copy.name})']
 

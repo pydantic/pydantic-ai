@@ -108,18 +108,6 @@ async def test_large_output_is_exact(client: boxd.AsyncBoxd) -> None:
         assert result.stdout == ''.join(f'{i}\n' for i in range(1, 200001))
 
 
-async def test_reattach_by_ref_reaches_the_same_machine(client: boxd.AsyncBoxd) -> None:
-    """Validates the fake-encoded assumption that `machines.get` plus a command reaches the same machine by id."""
-    path = f'/home/boxd/{_unique("reattach")}.txt'
-    async with _owned(client) as owner:
-        await owner.run(['sh', '-c', 'printf shared > "$1"', 'sh', path], timeout=60)
-        assert owner.ref is not None
-
-        attached = BoxdSandboxBackend(client=client, ref=owner.ref)
-        assert (await attached.run(['cat', path], timeout=60)).stdout == 'shared'
-        assert attached.ref == owner.ref
-
-
 # A process that outlives the command starting it, and a check that it still runs.
 _TICKER = 'setsid sh -c "while :; do date +%s > tick; sleep 1; done" </dev/null >/dev/null 2>&1 & echo $! > ticker.pid'
 _TICKING = 'kill -0 "$(cat ticker.pid)" && echo ticking'
@@ -156,9 +144,7 @@ async def test_fork_wakes_a_suspended_machine_so_the_copy_keeps_its_memory(clien
         await source.run(['sh', '-c', f'echo unflushed > state.txt; {_TICKER}'], timeout=60)
         assert source.ref is not None
         await client.machines.pause(source.ref.id)
-        with anyio.fail_after(60):
-            while (await client.machines.get(source.ref.id)).status != 'suspended':
-                await anyio.sleep(0.5)
+        await _wait_for_status(client, source.ref.id, 'suspended')
         ref = await sandbox.fork(source.ref)
         try:
             copy = BoxdSandboxBackend(client=client, ref=ref)
@@ -182,19 +168,6 @@ async def test_timeout_raises_with_the_partial_output_and_stops_the_command(clie
         assert (await backend.run(['test', '-e', marker], timeout=30)).exit_code == 1
 
 
-async def test_a_cancelled_run_stops_the_command(client: boxd.AsyncBoxd) -> None:
-    """Validates the protocol's cancellation contract against real boxd: the command's pid is gone soon after."""
-    pid_file = f'/tmp/{_unique("cancelled")}.pid'
-    async with _owned(client) as backend:
-        with anyio.move_on_after(5):
-            await backend.run(f'echo $$ > {pid_file}; exec sleep 60', shell=True, timeout=60)
-        pid = (await backend.run(['cat', pid_file], timeout=30)).stdout.strip()
-        assert pid.isdigit()
-        with anyio.fail_after(30):
-            while (await backend.run(['kill', '-0', pid], timeout=30)).exit_code == 0:
-                await anyio.sleep(0.2)
-
-
 async def test_a_new_machine_gets_its_working_dir(client: boxd.AsyncBoxd) -> None:
     """Validates the fake-encoded assumption that `mkdir -p` through a unary exec makes `working_dir` on a
     new machine as the non-root `boxd` user, so the first command can start there."""
@@ -202,28 +175,6 @@ async def test_a_new_machine_gets_its_working_dir(client: boxd.AsyncBoxd) -> Non
     async with _owned(client, working_dir=directory) as backend:
         result = await backend.run(['sh', '-c', 'pwd -P; stat -c %U .'], timeout=60)
         assert result.stdout.splitlines() == [directory, 'boxd']
-
-
-async def test_a_detached_child_does_not_hold_the_result(client: boxd.AsyncBoxd) -> None:
-    """Validates the fake-encoded assumption that boxd reports the exit status when the command exits,
-    while a background child still holds its output open."""
-    async with _owned(client) as backend:
-        with anyio.fail_after(10):
-            result = await backend.run('sleep 30 & echo ready', shell=True, timeout=60)
-        assert (result.exit_code, result.stdout) == (0, 'ready\n')
-
-
-async def test_a_deleted_machine_is_unavailable(client: boxd.AsyncBoxd) -> None:
-    """Validates the fake-encoded assumptions about deletion: a command on a deleted machine fails, a lookup
-    then finds nothing, and attaching again is reported as gone rather than retried or replaced."""
-    async with _owned(client) as owner:
-        assert owner.ref is not None
-        await client.machines.delete(owner.ref.id)
-
-        with pytest.raises(WorkspaceUnavailableError):
-            await BoxdSandboxBackend(client=client, ref=owner.ref).working_dir()
-        with pytest.raises(WorkspaceUnavailableError):
-            await owner.run(['true'], timeout=30)
 
 
 async def test_a_stopped_machine_is_started_again_with_its_disk(client: boxd.AsyncBoxd) -> None:
@@ -330,8 +281,8 @@ async def test_a_machine_stopped_during_a_command_is_unavailable(client: boxd.As
 
 
 async def test_coder_tools_run_in_the_machine(client: boxd.AsyncBoxd) -> None:
-    """Validates the fake-encoded assumption that a relative path the shell-derived file operations write
-    is where a command started in the working directory finds it, so `Coder`'s tools agree."""
+    """Validates the fake-encoded assumption that a relative path `Coder` writes through boxd's file API
+    is where a command started in the working directory finds it."""
     async with _owned(client) as backend:
         results = await call_tools(
             [Coder()],

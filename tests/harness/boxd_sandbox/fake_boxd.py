@@ -186,7 +186,6 @@ class _FakeExecCall:
             yield _ExecChunk(exit_code=returncode if returncode >= 0 else 128 - returncode)
 
     def cancel(self) -> None:
-        self._owner.closed_streams += 1
         process = self._process
         if process is not None and process.returncode is None:
             os.killpg(process.pid, signal.SIGTERM)
@@ -520,7 +519,6 @@ class FakeBoxd:
         self.agent_outdated = False
         # Every command stream's pipe readers, which `reap` finishes before it reads the pipes itself.
         self.readers: list[asyncio.Task[None]] = []
-        self.closed_streams = 0
         self.boot_polls = 0
         self.reject_credentials = False
         self.lose_create_reply = False
