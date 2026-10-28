@@ -101,8 +101,6 @@ class FakeMachine:
     create_kwargs: dict[str, Any] = field(default_factory=dict[str, Any])
     # Lookups that report the machine as `starting` before it runs, after a create or a start.
     boot_polls: int = 0
-    # Lookups that still report a deleted machine as running, as production does for a moment.
-    delete_lag: int = 0
     processes: list[asyncio.subprocess.Process] = field(default_factory=list[asyncio.subprocess.Process])
     starts: int = 0
     org: str | None = None
@@ -430,9 +428,6 @@ class FakeMachines:
             raise owner.get_errors.pop(0)
         machine = owner.find(machine_id)
         if machine.status == 'destroyed':
-            if machine.delete_lag:
-                machine.delete_lag -= 1
-                return machine.record('running')
             raise _not_found(machine_id)
         if machine.boot_polls:
             machine.boot_polls -= 1
@@ -454,7 +449,6 @@ class FakeMachines:
         owner.check_call()
         machine = owner.find(machine_id)
         machine.status = 'destroyed'
-        machine.delete_lag = owner.delete_lag
         for process in machine.processes:
             if process.returncode is None:
                 os.killpg(process.pid, signal.SIGKILL)
@@ -528,7 +522,6 @@ class FakeBoxd:
         self.readers: list[asyncio.Task[None]] = []
         self.closed_streams = 0
         self.boot_polls = 0
-        self.delete_lag = 0
         self.reject_credentials = False
         self.lose_create_reply = False
         self.lose_fork_reply = False

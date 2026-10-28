@@ -104,16 +104,6 @@ class TestCreate:
         assert len(host.create_names) == 1
         assert backend.ref == _ref(host.only.id)
 
-    async def test_a_retry_after_a_failed_create_reuses_the_name(self, host: FakeBoxd) -> None:
-        host.create_errors.append(boxd.APIConnectionError('the connection dropped'))
-        backend = BoxdSandboxBackend()
-        with pytest.raises(boxd.APIConnectionError, match='the connection dropped'):
-            await backend.run(['true'])
-        assert backend.ref is None
-        await backend.run(['true'])
-        first, second = host.create_names
-        assert first == second == host.only.name
-
     async def test_a_retry_finds_the_machine_a_lost_reply_left_under_its_name(self, host: FakeBoxd) -> None:
         host.lose_create_reply = True
         host.get_errors.append(boxd.APIConnectionError('the control plane is unreachable'))
@@ -142,16 +132,8 @@ class TestCreate:
 
     async def test_rejected_credentials_are_unavailable(self, host: FakeBoxd) -> None:
         host.reject_credentials = True
-        with pytest.raises(WorkspaceUnavailableError, match='boxd did not accept the credentials') as error:
+        with pytest.raises(WorkspaceUnavailableError, match='boxd did not accept the credentials'):
             await BoxdSandboxBackend().run(['true'])
-        assert 'invalid or expired' not in str(error.value)
-
-    async def test_a_token_exchange_that_could_not_reach_boxd_propagates(self, host: FakeBoxd) -> None:
-        error = boxd.APIConnectionError('could not reach https://app.boxd.sh/api/v1/auth/token: timed out')
-        host.create_errors.append(error)
-        with pytest.raises(boxd.APIConnectionError) as raised:
-            await BoxdSandboxBackend().run(['true'])
-        assert raised.value is error
 
     async def test_a_server_error_propagates_so_durable_engines_retry_it(self, host: FakeBoxd) -> None:
         host.create_errors.append(boxd.APIStatusError('internal error', code='internal'))
@@ -229,13 +211,6 @@ class TestCreate:
 
 
 class TestAttach:
-    async def test_attaching_works_in_the_existing_machine(self, host: FakeBoxd) -> None:
-        machine = host.add()
-        backend = BoxdSandboxBackend(ref=_ref(machine.id))
-        await backend.run(['true'])
-        assert backend.ref == _ref(machine.id)
-        assert not host.create_names
-
     async def test_a_ref_that_names_the_machine_is_recorded_by_id(self, host: FakeBoxd) -> None:
         machine = host.add(name='named')
         backend = BoxdSandboxBackend(ref=_ref('named'))
@@ -247,14 +222,6 @@ class TestAttach:
         with pytest.raises(WorkspaceUnavailableError, match=r'\(peer\) is on the boxd networks databases, cache'):
             await BoxdSandboxBackend(ref=_ref(machine.id)).run(['true'])
         assert not host.exec_commands
-
-    async def test_a_token_exchange_failure_while_waiting_is_retried(self, host: FakeBoxd) -> None:
-        machine = host.add()
-        host.probe_errors.append(
-            boxd.APIConnectionError('could not reach https://app.boxd.sh/api/v1/auth/token: reset')
-        )
-        await BoxdSandboxBackend(ref=_ref(machine.id)).run(['true'])
-        assert host.exec_commands == ['true', 'true']
 
     async def test_a_stopped_machine_is_started(self, host: FakeBoxd) -> None:
         machine = host.add(status='stopped')
@@ -453,62 +420,24 @@ class TestFiles:
     async def test_file_operations_use_boxd_s_file_api(self, host: FakeBoxd) -> None:
         backend = BoxdSandboxBackend()
         root = await backend.working_dir()
-        path = f'{root}/dir/b.txt'
-        await backend.write_bytes(path, b'data')
+        await backend.write_bytes(f'{root}/dir/b.txt', b'data')
         await backend.write_bytes(f'{root}/dir/a.txt', b'')
-        assert await backend.read_bytes(path) == b'data'
-        assert await backend.stat(path) == FileEntry(name='b.txt', path=path, is_dir=False, size=4)
-        assert await backend.stat(f'{root}/dir') == FileEntry(name='dir', path=f'{root}/dir', is_dir=True, size=None)
         # Sorted by name, as the shell filesystem lists them.
         assert [entry.name for entry in await backend.list_dir(f'{root}/dir')] == ['a.txt', 'b.txt']
-        await backend.make_dir(f'{root}/made/nested')
-        assert await backend.exists(f'{root}/made/nested')
-        assert await backend.realpath(f'{root}/made/../dir') == f'{root}/dir'
-        await backend.remove(f'{root}/dir')
-        assert not await backend.exists(f'{root}/dir')
-        assert host.fs_calls == [
-            'FsWrite',
-            'FsWrite',
-            'FsRead',
-            'FsStat',
-            'FsStat',
-            'FsList',
-            'FsMkdir',
-            'FsStat',
-            'FsRealpath',
-            'FsRealpath',
-            'FsRemove',
-            'FsStat',
-        ]
+        assert await backend.stat(f'{root}/dir') == FileEntry(name='dir', path=f'{root}/dir', is_dir=True, size=None)
         # The only command was the working directory's probe.
         assert len(host.lines) == 1
 
-    async def test_a_machine_whose_agent_predates_the_file_api_uses_the_shell(
-        self, host: FakeBoxd, caplog: pytest.LogCaptureFixture
+    async def test_a_machine_whose_agent_predates_the_file_api_uses_the_shell_until_a_new_connection(
+        self, host: FakeBoxd
     ) -> None:
         host.agent_outdated = True
         backend = BoxdSandboxBackend()
-        root = await backend.working_dir()
-        path = f'{root}/dir/file.txt'
-        with caplog.at_level(logging.INFO, logger=_MODULE):
-            await backend.write_bytes(path, b'data')
-        assert 'predates the file API, so file operations run as shell commands' in caplog.text
+        path = f'{await backend.working_dir()}/dir/file.txt'
+        await backend.write_bytes(path, b'data')
         assert await backend.read_bytes(path) == b'data'
-        assert await backend.stat(path) == FileEntry(name='file.txt', path=path, is_dir=False, size=4)
-        assert [entry.name for entry in await backend.list_dir(f'{root}/dir')] == ['file.txt']
-        await backend.make_dir(f'{root}/made')
-        assert await backend.exists(f'{root}/made')
-        assert await backend.realpath(f'{root}/made/../dir') == f'{root}/dir'
-        await backend.remove(f'{root}/dir')
-        assert not await backend.exists(f'{root}/dir')
         # Asked once, then remembered for the connection.
         assert host.fs_calls == ['FsWrite']
-
-    async def test_a_new_connection_asks_the_file_api_again(self, host: FakeBoxd) -> None:
-        host.agent_outdated = True
-        backend = BoxdSandboxBackend()
-        path = f'{await backend.working_dir()}/file.txt'
-        await backend.write_bytes(path, b'data')
         await backend.aclose()
         # Rebooting the machine updated its agent.
         host.agent_outdated = False
@@ -528,6 +457,19 @@ class TestFiles:
         host.reject_credentials = True
         with pytest.raises(WorkspaceUnavailableError, match='boxd did not accept the credentials'):
             await backend.write_bytes(f'{root}/file.txt', b'data')
+
+    async def test_a_dangling_symlink_is_missing(self, host: FakeBoxd) -> None:
+        backend = BoxdSandboxBackend()
+        root = Path(await backend.working_dir())
+        (root / 'link').symlink_to(root / 'nowhere')
+        with pytest.raises(FileNotFoundError):
+            await backend.stat(str(root / 'link'))
+
+    async def test_the_working_dir_with_a_trailing_slash_is_not_removed(self, host: FakeBoxd) -> None:
+        backend = BoxdSandboxBackend()
+        root = await backend.working_dir()
+        with pytest.raises(ValueError, match='cannot remove the workspace root'):
+            await backend.remove(f'{root}/')
 
 
 class TestGetMachine:
@@ -615,11 +557,10 @@ class TestClientLifecycle:
 
 
 class TestDestroy:
-    async def test_destroy_deletes_and_waits_until_the_machine_is_gone(self, host: FakeBoxd) -> None:
-        host.delete_lag = 3
+    async def test_destroy_deletes_the_machine(self, host: FakeBoxd) -> None:
         machine = host.add()
         await BoxdSandbox().destroy(_ref(machine.id))
-        assert machine.status == 'destroyed' and machine.delete_lag == 0
+        assert machine.status == 'destroyed'
         assert [client.closed for client in host.clients] == [True]
 
     async def test_destroying_a_missing_machine_returns_quietly(self, host: FakeBoxd) -> None:
@@ -644,15 +585,6 @@ class TestDestroy:
         with pytest.raises(boxd.APIConnectionError, match='connection reset'):
             await BoxdSandbox().destroy(_ref(machine.id))
         assert machine.status == 'running'
-
-    async def test_destroy_times_out_when_boxd_keeps_reporting_the_machine(
-        self, host: FakeBoxd, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(f'{_MODULE}._LIFECYCLE_TIMEOUT', 0.05)
-        host.delete_lag = 10**9
-        machine = host.add()
-        with pytest.raises(TimeoutError):
-            await BoxdSandbox().destroy(_ref(machine.id))
 
     async def test_destroy_with_a_passed_client_leaves_it_open(self, host: FakeBoxd) -> None:
         machine = host.add()

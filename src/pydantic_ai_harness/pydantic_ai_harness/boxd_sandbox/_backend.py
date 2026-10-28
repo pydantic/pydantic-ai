@@ -36,7 +36,9 @@ changing acquisition, command, file, or error handling:
 
 from __future__ import annotations
 
+import errno
 import logging
+import os
 import posixpath
 import shlex
 import uuid
@@ -168,7 +170,7 @@ def _credentials_rejected(error: Exception) -> bool:
 
 
 async def destroy_machine(client: AsyncBoxd | None, machine_id: str) -> None:
-    """Delete an isolated machine by id, whatever state it is in, and wait until boxd no longer reports it.
+    """Delete an isolated machine by id, whatever state it is in.
 
     A machine that no longer exists returns quietly; rejected credentials raise
     `WorkspaceUnavailableError`, like any other operation. Without `client`, one is opened from the
@@ -177,7 +179,7 @@ async def destroy_machine(client: AsyncBoxd | None, machine_id: str) -> None:
     Raises:
         UserError: The event loop is not asyncio.
         ValueError: The machine is not isolated, so it is not one `BoxdSandbox` created.
-        TimeoutError: boxd did not confirm the deletion in time.
+        TimeoutError: boxd did not answer in time.
     """
     _require_asyncio()
     if not machine_id.strip():
@@ -196,10 +198,6 @@ async def destroy_machine(client: AsyncBoxd | None, machine_id: str) -> None:
                         'delete it. Delete it with the boxd CLI or SDK if you mean to.'
                     )
                 await client.machines.delete(machine.id)
-                # boxd's `get` raises `NotFoundError` once the deletion has gone through.
-                while True:
-                    await client.machines.get(machine.id)
-                    await anyio.sleep(_POLL_INTERVAL)
             except boxd.NotFoundError:
                 return
             except boxd.BoxdError as error:
@@ -341,12 +339,7 @@ def _command_line(argv: Sequence[str], *, cwd: str | None, env: Mapping[str, str
 
 def _file_entry(entry: FsEntry) -> FileEntry:
     """The protocol's view of a boxd entry: a symlink as what it points to, with a size only for a regular file."""
-    return FileEntry(
-        name=entry.name,
-        path=entry.path,
-        is_dir=entry.target_type == 'directory',
-        size=entry.size if entry.target_type == 'file' else None,
-    )
+    return FileEntry(name=entry.name, path=entry.path, is_dir=entry.is_dir, size=entry.size if entry.is_file else None)
 
 
 class _Output:
@@ -635,7 +628,7 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         client, self._client = self._client, None
         self._ready = False
         self._resolved_working_dir = None
-        # Rebooting a machine updates its agent.
+        # A later connection may find the machine rebooted with a newer agent.
         self._agent_outdated = False
         return client
 
@@ -724,10 +717,15 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         await self._files(f'Could not write {path!r}', write, lambda shell: shell.write_bytes(path, data))
 
     async def stat(self, path: str) -> FileEntry:
-        async def stat(client: AsyncBoxd, machine_id: str) -> FileEntry:
-            return _file_entry(await client.machines.fs.stat(machine_id, path))
+        async def stat(client: AsyncBoxd, machine_id: str) -> FileEntry | None:
+            entry = await client.machines.fs.stat(machine_id, path)
+            # boxd describes a dangling or looping symlink instead of refusing it; the protocol calls it missing.
+            return None if entry.target_type is None else _file_entry(entry)
 
-        return await self._files(f'Could not stat {path!r}', stat, lambda shell: shell.stat(path))
+        entry = await self._files(f'Could not stat {path!r}', stat, lambda shell: shell.stat(path))
+        if entry is None:
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), path)
+        return entry
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
         async def list_dir(client: AsyncBoxd, machine_id: str) -> Sequence[FileEntry]:
@@ -748,7 +746,9 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             # The removal is recursive, so refuse the working directory and its ancestors, like the
             # built-in backends. The leaf stays unresolved: removing a link removes only the link.
             root = await self.working_dir()
-            target = posixpath.join(await self.realpath(posixpath.dirname(path)), posixpath.basename(path))
+            target = posixpath.normpath(
+                posixpath.join(await self.realpath(posixpath.dirname(path)), posixpath.basename(path))
+            )
             if root == target or root.startswith(target.rstrip('/') + '/'):
                 raise ValueError('cannot remove the workspace root or its ancestor')
             await self._files(

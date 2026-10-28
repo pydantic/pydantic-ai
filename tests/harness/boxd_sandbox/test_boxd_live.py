@@ -75,7 +75,6 @@ async def _owned(client: boxd.AsyncBoxd, working_dir: str | None = None) -> Asyn
         yield backend
     finally:
         if backend.ref is not None:
-            # Waits until boxd no longer reports the machine, so nothing this test made is left behind.
             await BoxdSandbox(client=client).destroy(backend.ref)
 
 
