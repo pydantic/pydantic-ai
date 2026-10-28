@@ -233,6 +233,20 @@ Each attempt emits a `repair_tool_arguments` span through `ctx.tracer`, without 
 contents. Other Coder operations rely on core tool spans and on the events its `FileSystem` and `Shell`
 capabilities emit.
 
+## Strict tool schemas
+
+`Coder` turns off [strict mode](../tools-advanced.md#strict-mode) for its own tools by setting their `strict` to `False`.
+Left unset, OpenAI constrains tool-call arguments to the schema whenever it is strict-compatible, and
+Gemini 2.5 and newer uses its `VALIDATED` function-calling mode. `Coder` relies on [tool argument
+repair](#tool-argument-repair) and validation retries instead, so a malformed or invalid argument is repaired
+or corrected from the error message. Anthropic and Bedrock leave strict mode off unless a tool asks
+for it, so nothing changes there.
+
+`Coder(strict=True)` forces strict mode on its tools, and `Coder(strict=None)` leaves the choice to the
+provider. Tools bound next to `Coder`, and tools that set `strict` themselves, keep their own value.
+Gemini's mode is request-wide: while a `Coder` tool has `strict=False`, the whole request stays on
+`AUTO`, including tools bound next to `Coder`.
+
 ## Prompt caching
 
 `Coder` turns on [prompt caching](../capabilities/caching.md) by setting the unified `cache` model setting to `True`. A coding run
@@ -266,6 +280,8 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 ## Upgrading
 
 `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
+
+`Coder` now turns off strict mode for its own tools; pass `strict=None` to keep the provider's default (see [Strict tool schemas](#strict-tool-schemas)).
 
 This release makes the workspace the single place that decides where an agent works. Removed arguments are still accepted, emit a `HarnessDeprecationWarning` naming the fix, and are ignored.
 
