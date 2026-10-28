@@ -61,6 +61,21 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   fragment to the status row with get_status_segments; you cannot redesign or
   replace the row itself.
 
+## User worktree removal commands
+
+`worktrees.remove_commands` is a user setting, not a plugin API. It maps each
+canonical absolute Git common directory to a nonempty argv list. Only complete
+argv tokens substitute `{path}` (absolute checkout), `{branch}` (current branch,
+empty when detached), and `{repo}` (main checkout root, or the bare repository's
+common directory). Project settings cannot set this option.
+
+CLAI runs a registered command only after you confirm removal on interactive
+exit. It inherits the terminal streams, has no timeout, and runs outside the
+worktree being removed. Automatic removal of unchanged worktrees and forced
+`remove_worktree` or `workspaces` destruction continue to use Git. See the
+[worktree removal reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
+for configuration and command details.
+
 Pydantic AI core owns the agent loop, model/provider protocols, hooks and tools.
 Harness owns reusable, non-terminal capabilities. CLAI owns the prompt loop,
 commands, plugin loading and rendering. Do not implement a second agent loop in

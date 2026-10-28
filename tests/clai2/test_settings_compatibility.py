@@ -1,12 +1,13 @@
 """Settings survive upgrades, branch switches, and rejected operations."""
 
 import io
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 
 import pytest
-from pydantic import JsonValue, ValidationError
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from rich.console import Console
 
 from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent
@@ -23,16 +24,19 @@ from pydantic_clai2.builtin_plugins.logfire_mcp import LogfireMCPSettings
 from pydantic_clai2.builtin_plugins.notion import NotionSource
 from pydantic_clai2.builtin_plugins.ordinal import OrdinalSource
 from pydantic_clai2.builtin_plugins.workspaces import WorkspacesSettings, WorkspacesSource
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Commands, config_command, plugins_command
 from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, Settings, features
 from pydantic_clai2.config.api_keys import KeyReference
 from pydantic_clai2.config.plugin_requirements import apply_requirements, stored_requirements
+from pydantic_clai2.config.project_settings import PROJECT_FILE, load_project_settings
 from pydantic_clai2.config.settings_store import SettingsStore, StoredAccount
 from pydantic_clai2.models.model_settings import model_settings_from_json
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
+from pydantic_clai2.ui.menus.set_menu import SettingsSource
 from tests.clai2.dialog_script import ScriptedDialogs, Type
 from tests.clai2.test_logfire import Recorder, observability_loader, recorder as recorder
 
@@ -450,6 +454,7 @@ def test_database_from_before_account_pooling_pools_and_keeps_its_settings(tmp_p
     settings = store.load()
     # Turning pooling on for existing databases is the intended default; named profiles stay pinned.
     assert settings.pool_accounts is True
+    assert settings.worktree_remove_commands == {}
     assert settings.model == 'claude-code@work:opus' and settings.thinking is False
     config_command(store, ['set', 'accounts.pool', 'false'])
     assert SettingsStore(path).load().pool_accounts is False
@@ -1191,3 +1196,95 @@ async def test_delegate_models_survive_feature_downgrade_and_unrelated_edits(
     reopened = SettingsStore(store.path)
     assert reopened.plugins()[0].settings['delegate_models'] == original
     assert reopened.plugins()[0].settings['review_agent'] is True
+
+
+def test_worktree_command_setting_validation(tmp_path: Path) -> None:
+    key = str((tmp_path / 'repo.git').resolve())
+    valid = {key: ['sh', '-c', 'rm -r "$1"', 'clai', '{path}']}
+    assert Settings(worktree_remove_commands=valid).worktree_remove_commands == valid
+    literal_tokens = {key: ['tool', '{"key": 1}', '{ echo hello; }']}
+    assert Settings(worktree_remove_commands=literal_tokens).worktree_remove_commands == literal_tokens
+    assert SETTING_FIELDS['worktrees.remove_commands'] == 'worktree_remove_commands'
+
+    invalid_values: list[dict[str, list[str]]] = [
+        {'relative': ['command']},
+        {key: []},
+        {key: ['', 'argument']},
+        {key: ['command', '\x00']},
+        {key: ['command', '{unknown}']},
+    ]
+    for value in invalid_values:
+        with pytest.raises(ValidationError):
+            Settings(worktree_remove_commands=value)
+
+
+def test_project_cannot_register_worktree_commands(tmp_path: Path) -> None:
+    project = tmp_path / PROJECT_FILE
+    project.parent.mkdir()
+    project.write_text('{"worktree_remove_commands": {"/repo": ["command"]}}')
+    with pytest.raises(ValueError, match='user-only'):
+        load_project_settings(tmp_path)
+
+
+def test_worktree_commands_roundtrip_and_older_reader(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    store.set('model', 'test:model')
+    store.set('display.thinking', False)
+    store.save_plugin(PluginSettings(id='sample', factory='sample:Plugin'))
+    store.save_model_settings('test:model', {'temperature': 0.2})
+    key = str((tmp_path / 'repo.git').resolve())
+    command_map = {key: ['tool', '{path}']}
+    config_command(store, ['set', 'worktrees.remove_commands', json.dumps(command_map)])
+    assert config_command(SettingsStore(path), ['get', 'worktrees.remove_commands']) == json.dumps(command_map)
+    reopened = SettingsStore(path)
+    settings = reopened.load()
+    assert settings.worktree_remove_commands == command_map
+    assert settings.model == 'test:model' and settings.thinking is False
+    assert reopened.plugins() == store.plugins()
+    assert reopened.model_settings('test:model') == {'temperature': 0.2}
+    assert SettingsStore(path).load().worktree_remove_commands == command_map
+
+    older = {name: field for name, field in SETTING_FIELDS.items() if name != 'worktrees.remove_commands'}
+    monkeypatch.setattr('pydantic_clai2.config.SETTING_FIELDS', older)
+    monkeypatch.setattr('pydantic_clai2.config.settings_store.SETTING_FIELDS', older)
+    old_store = SettingsStore(path)
+    assert old_store.load().worktree_remove_commands == {}
+    old_store.set('display.thinking', True)
+    old_store.reset('display.thinking')
+    assert SettingsStore(path).load().worktree_remove_commands == {}
+    monkeypatch.setattr('pydantic_clai2.config.SETTING_FIELDS', SETTING_FIELDS)
+    monkeypatch.setattr('pydantic_clai2.config.settings_store.SETTING_FIELDS', SETTING_FIELDS)
+    assert SettingsStore(path).load().worktree_remove_commands == command_map
+
+
+def test_invalid_worktree_command_write_preserves_saved_map(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    key = str((tmp_path / 'repo').resolve())
+    original = {key: ['remove', '{path}']}
+    json_values: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+    store.set('worktrees.remove_commands', json_values.validate_python(original))
+    for invalid in ({key: ['bad', '\x00']}, {'/bad\x00key': ['bad']}):
+        with pytest.raises(ValidationError):
+            store.set('worktrees.remove_commands', json_values.validate_python(invalid))
+        assert SettingsStore(store.path).load().worktree_remove_commands == original
+
+
+def test_worktree_command_symlink_key_is_canonical_and_menu_is_json(tmp_path: Path) -> None:
+    target = tmp_path / 'repo.git'
+    target.mkdir()
+    alias = tmp_path / 'alias.git'
+    alias.symlink_to(target, target_is_directory=True)
+    settings = Settings(worktree_remove_commands={str(alias): ['remove']})
+    assert settings.worktree_remove_commands == {str(target.resolve()): ['remove']}
+    store = SettingsStore(tmp_path / 'config.db')
+    context = CommandContext(settings=Settings(), store=store, apply_setting=lambda key, settings: None)
+    source = SettingsSource(context)
+    row = next(row for row in source.rows() if row.key == 'worktrees.remove_commands')
+    assert source.current(row) == '{}'
+    assert row.default == '{}'
+    assert source.problem(row, '{"/repo": ["remove"]}') is None
+    assert context.set_setting(['worktrees.remove_commands', '{"/repo": ["remove"]}']).startswith('Saved')
+    assert source.current(row) == '{"/repo": ["remove"]}'
+    context.reset_setting('worktrees.remove_commands')
+    assert source.current(row) == '{}'

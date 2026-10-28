@@ -4,9 +4,12 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
+
+from pydantic_clai2.ui.stderr_relay import terminal_stderr
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -190,11 +193,14 @@ def current_worktree() -> Worktree | None:
     return Worktree(path=Path(root).resolve(), branch=branch, head=head, created=False)
 
 
-def offer_worktree_cleanup(*, worktree: Worktree | None) -> None:
+def offer_worktree_cleanup(
+    *, worktree: Worktree | None, remove_commands: Mapping[str, Sequence[str]] | None = None
+) -> None:
     """After interactive shutdown, remove an unchanged checkout marked `remove_if_unchanged`, or offer to remove a changed one.
 
     Uncommitted or untracked files, or a commit other than the one at launch, count as changes. Other
-    unchanged checkouts are kept without asking. A confirmed removal keeps the branch and dirty files.
+    unchanged checkouts are kept without asking. By default, a confirmed removal keeps the branch and
+    dirty files. A registered command owns explicitly confirmed removal for its repository only.
     """
     if worktree is None or not sys.stdin.isatty():
         return
@@ -209,16 +215,64 @@ def offer_worktree_cleanup(*, worktree: Worktree | None) -> None:
         if worktree.remove_if_unchanged:
             _remove(worktree, unchanged=True)
         return
+    custom: tuple[Path, list[str]] | None = None
+    if remove_commands:
+        try:
+            common = (worktree.path / _git('-C', root, 'rev-parse', '--git-common-dir')).resolve()
+            registered = remove_commands.get(str(common))
+            if registered is not None:
+                listing = _git('-C', str(common), 'worktree', 'list', '--porcelain', '-z')
+                repo = Path(listing.split('\0', 1)[0].removeprefix('worktree '))
+                values = {
+                    '{path}': root,
+                    '{branch}': _git('-C', root, 'branch', '--show-current'),
+                    '{repo}': str(repo),
+                }
+                custom = repo, [values.get(arg, arg) for arg in registered]
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print(f'Cannot prepare worktree removal command for {root}: {exc}', file=sys.stderr)
+            return
+    prompt = f'Remove worktree {root}? The branch will be kept. [y/N] '
+    if custom is not None:
+        print(f'Registered removal command: {custom[1]!r}')
+        prompt = (
+            f'Run registered removal command for worktree {root}? '
+            'It may delete the branch and uncommitted files. [y/N] '
+        )
     try:
-        answer = input(f'Remove worktree {root}? The branch will be kept. [y/N] ')
+        answer = input(prompt)
     except (EOFError, KeyboardInterrupt):
         answer = ''
         print()
     if answer.strip().lower() not in ('y', 'yes'):
         print(f'Worktree kept at {root}.')
         return
-    if _remove(worktree, unchanged=False):
+    if custom is not None:
+        _remove_with_command(path=worktree.path, repo=custom[0], command=custom[1])
+    elif _remove(worktree, unchanged=False):
         print(f'Removed worktree {root}. Branch kept.')
+
+
+def _remove_with_command(*, path: Path, repo: Path, command: list[str]) -> None:
+    """Let a user-confirmed command own removal, with the restored terminal and no Git fallback."""
+    original = Path.cwd()
+    try:
+        os.chdir(repo)
+        subprocess.run(command, check=True, stderr=terminal_stderr())
+    except (OSError, subprocess.CalledProcessError, KeyboardInterrupt) as exc:
+        detail = 'interrupted' if isinstance(exc, KeyboardInterrupt) else str(exc)
+        print(f'Worktree removal command {command!r} failed for {path}: {detail}', file=sys.stderr)
+    else:
+        if path.exists():
+            print(
+                f'Worktree removal command {command!r} completed without removing the worktree at {path}.',
+                file=sys.stderr,
+            )
+        else:
+            print(f'Removed worktree {path}.')
+    finally:
+        if original.exists():
+            os.chdir(original)
 
 
 def _remove(worktree: Worktree, *, unchanged: bool) -> bool:

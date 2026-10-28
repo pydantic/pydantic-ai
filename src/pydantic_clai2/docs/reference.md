@@ -2461,13 +2461,52 @@ unchanged worktree that CLAI reopened, or one you launched inside, is kept witho
 asking.
 
 If the worktree changed, CLAI asks whether to remove its checkout. Enter, Ctrl-C,
-or EOF keeps it; only `y` or `yes` confirms removal, and the branch is kept. Git
-removal runs without `--force`, so dirty or locked worktrees are kept with an
-explanation. The main checkout is never removed. Headless runs, piped input, and
-startup errors keep the worktree without prompting. `/new`, `/resume`, and `/reload` do not remove the checkout:
+or EOF keeps it; only `y` or `yes` confirms removal. By default, removal keeps
+the branch and uses Git without `--force`, so dirty or locked worktrees are kept
+with an explanation. You can register a user-only removal command for an exact
+repository in `config.db` with the `worktrees.remove_commands` user setting; when
+unset or empty (`{}`), removal uses Git. See
+[Register a removal command](#register-a-worktree-removal-command). The command runs
+only after this explicit confirmation, from outside the target checkout, and CLAI
+considers it successful only if the checkout is actually gone. The main checkout is never
+removed. Headless runs, piped input, and startup errors keep the worktree without
+prompting. `/new`, `/resume`, and `/reload` do not remove the checkout:
 they leave the shell using the same working directory.
 Enter a retained directory and run `clai2 --continue` or `clai2 --resume` to continue a saved session.
 `--worktree` cannot be combined with `--resume`, `--continue`, `config`, or `plugins`.
+
+#### Register a worktree removal command
+
+For a repository where Git cannot perform the cleanup you want, set
+`worktrees.remove_commands` in your user settings. It maps the repository's
+canonical absolute Git common directory to a nonempty argv list. Find the key
+with `git rev-parse --path-format=absolute --git-common-dir` inside that repository.
+The match is exact, with no wildcards. For example:
+
+```sh
+clai2 config set worktrees.remove_commands '{"/absolute/path/to/repo/.git": ["zsh", "-ic", "pyai-remove \"$1\"", "clai2-remove", "{branch}"]}'
+```
+
+`pyai-remove` here is a user-defined shell function, not a CLAI command. This
+example invokes it through interactive zsh; `clai2-remove` becomes `$0` and the
+branch becomes `$1`. The function has no `-y`, so its own confirmation remains
+in effect. Interactive shell startup reads your rc files, which adds startup
+overhead and may print output. This branch-based example cannot remove a
+detached worktree.
+
+Only whole argv tokens are substituted: `{path}` is the absolute target checkout,
+`{branch}` is its current branch (empty when detached), and `{repo}` is the main
+checkout root or, for a bare repository, its common directory. CLAI does not
+invoke a shell or expand variables. Shell arguments must be quoted safely in the
+argv; the example's `"$1"` is interpreted by zsh.
+
+The exact prompt is `Run registered removal command for worktree <path>? It may delete the branch and uncommitted files. [y/N]`.
+The command inherits stdin, stdout, stderr, and terminal, has no timeout, and can
+be interrupted with Ctrl-C. A command failure does not fall back to Git. The
+project setting `worktree_remove_commands` in `.clai/settings.json` rejects this
+configuration; it is available only in user settings. Automatic removal of
+unchanged worktrees and forced `remove_worktree` or `workspaces` destruction
+continue to use Git.
 
 When you no longer need the checkout, use Git's own cleanup commands from your
 original repository root. Without `--force`, Git refuses to remove a dirty worktree:

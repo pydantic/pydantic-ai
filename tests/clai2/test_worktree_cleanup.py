@@ -3,7 +3,7 @@
 import os
 import subprocess
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
@@ -11,7 +11,10 @@ import pytest
 from pydantic_clai2 import app
 from pydantic_clai2.cli import cli
 from pydantic_clai2.cli.self_update import Relaunch
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime import worktrees
 from pydantic_clai2.runtime.worktrees import Worktree, current_worktree, offer_worktree_cleanup, open_worktree
+from pydantic_clai2.ui.stderr_relay import terminal_stderr
 
 
 def git(directory: Path, *args: str) -> str:
@@ -140,6 +143,212 @@ def test_git_refusal_keeps_checkout(
         assert (launched.path / 'unsaved.txt').read_text() == 'keep me'
 
 
+@dataclass
+class RemovalCommand:
+    action: Callable[[], None] = lambda: None
+    calls: list[tuple[list[str], Path, int | None]] = field(default_factory=list[tuple[list[str], Path, int | None]])
+
+
+@pytest.fixture
+def removal_command(monkeypatch: pytest.MonkeyPatch) -> RemovalCommand:
+    """Run Git normally, but execute the registered command's filesystem effects in-process."""
+    command = RemovalCommand()
+    original_run = subprocess.run
+
+    def run(
+        args: list[str],
+        *,
+        check: bool,
+        capture_output: bool = False,
+        text: bool = False,
+        encoding: str | None = None,
+        stderr: int | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        if args[0] == 'git':
+            return original_run(
+                args, check=check, capture_output=capture_output, text=text, encoding=encoding, stderr=stderr
+            )
+        # The narrow signature also rejects pipes, stdin overrides, shell=True, and timeouts.
+        assert check and not capture_output and not text and encoding is None
+        command.calls.append((args, Path.cwd(), stderr))
+        command.action()
+        return subprocess.CompletedProcess(args, 0)
+
+    def confirm(prompt: str) -> str:
+        return 'yes'
+
+    monkeypatch.setattr(subprocess, 'run', run)
+    monkeypatch.setattr('builtins.input', confirm)
+    return command
+
+
+@pytest.mark.parametrize('branch', ['feature', 'current;branch', ''])
+def test_custom_removal_command_uses_safe_argv_and_repo_cwd(
+    launched: Worktree,
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    removal_command: RemovalCommand,
+    branch: str,
+) -> None:
+    if branch:
+        git(launched.path, 'branch', '-m', branch)
+    else:
+        git(launched.path, 'checkout', '--detach')
+
+    def remove() -> None:
+        launched.path.rename(launched.path.with_name('removed'))
+
+    def confirm(prompt: str) -> str:
+        assert prompt == (
+            f'Run registered removal command for worktree {launched.path}? '
+            'It may delete the branch and uncommitted files. [y/N] '
+        )
+        return 'yes'
+
+    monkeypatch.setattr('builtins.input', confirm)
+    removal_command.action = remove
+    token = 'literal; $(not-a-shell)'
+    commands = {str(repo / '.git'): ['remove', '{path}', '{repo}', '{branch}', token]}
+    offer_worktree_cleanup(worktree=launched, remove_commands=commands)
+    assert removal_command.calls == [
+        (['remove', str(launched.path), str(repo), branch, token], repo, terminal_stderr())
+    ]
+    assert not launched.path.exists()
+    assert Path.cwd() == repo
+    output = capsys.readouterr()
+    assert f'Removed worktree {launched.path}.' in output.out
+    assert 'Branch kept' not in output.out
+    assert not output.err
+
+
+def test_custom_removal_from_bare_repository(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, removal_command: RemovalCommand
+) -> None:
+    bare = repo.parent / 'bare; repo\n.git'
+    git(repo, 'clone', '--bare', str(repo), str(bare))
+    path = repo.parent / 'bare checkout'
+    git(bare, 'worktree', 'add', '-b', 'task', str(path))
+    monkeypatch.chdir(path)
+    worktree = Worktree(path=path, branch='task', head=git(path, 'rev-parse', 'HEAD'), created=False)
+    (path / 'tracked.txt').write_text('changed')
+
+    def remove() -> None:
+        path.rename(path.with_name('removed'))
+
+    removal_command.action = remove
+    offer_worktree_cleanup(worktree=worktree, remove_commands={str(bare): ['remove', '{repo}']})
+    assert removal_command.calls == [(['remove', str(bare)], bare, terminal_stderr())]
+    assert Path.cwd() == bare
+
+
+def test_custom_removal_command_decline_keeps_checkout(
+    launched: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, removal_command: RemovalCommand
+) -> None:
+    def decline(prompt: str) -> str:
+        return ''
+
+    monkeypatch.setattr('builtins.input', decline)
+    offer_worktree_cleanup(worktree=launched, remove_commands={str(repo / '.git'): ['remove', '{path}']})
+    assert launched.path.exists()
+    assert not removal_command.calls
+
+
+@pytest.mark.parametrize('outcome', ['zero', 'nonzero', 'spawn', 'interrupt', 'partial'])
+def test_custom_removal_failure_does_not_fall_back(
+    launched: Worktree,
+    repo: Path,
+    capsys: pytest.CaptureFixture[str],
+    removal_command: RemovalCommand,
+    outcome: str,
+) -> None:
+    def fail() -> None:
+        if outcome == 'zero':
+            return
+        if outcome == 'spawn':
+            raise OSError('missing command')
+        if outcome == 'interrupt':
+            raise KeyboardInterrupt
+        if outcome == 'partial':
+            launched.path.rename(launched.path.with_name('partial'))
+        raise subprocess.CalledProcessError(2, ['remove'])
+
+    removal_command.action = fail
+    offer_worktree_cleanup(worktree=launched, remove_commands={str(repo / '.git'): ['remove']})
+    assert len(removal_command.calls) == 1
+    assert launched.path.exists() == (outcome != 'partial')
+    assert Path.cwd() == (repo if outcome == 'partial' else launched.path)
+    output = capsys.readouterr()
+    assert ('without removing' if outcome == 'zero' else 'failed') in output.err
+    assert str(launched.path) in output.err
+    assert 'Removed worktree' not in output.out
+    assert 'Worktree kept' not in output.err
+
+
+def test_custom_command_preparation_failure(
+    launched: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def confirm(prompt: str) -> str:
+        pytest.fail('Cannot ask about a command whose metadata could not be read')
+
+    def fail(*args: str) -> str:
+        if '--git-common-dir' in args:
+            raise subprocess.CalledProcessError(1, ['git'], stderr='metadata unavailable')
+        return git(Path.cwd(), *args)
+
+    monkeypatch.setattr(worktrees, '_git', fail)
+    monkeypatch.setattr('builtins.input', confirm)
+    offer_worktree_cleanup(worktree=launched, remove_commands={str(repo / '.git'): ['remove']})
+    assert launched.path.exists()
+    assert 'Cannot prepare worktree removal command' in capsys.readouterr().err
+
+
+def test_custom_command_not_offered_without_tty(
+    launched: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, removal_command: RemovalCommand
+) -> None:
+    monkeypatch.setattr('sys.stdin.isatty', lambda: False)
+    monkeypatch.setattr('builtins.input', no_prompt)
+    offer_worktree_cleanup(worktree=launched, remove_commands={str(repo / '.git'): ['custom']})
+    assert launched.path.exists()
+    assert not removal_command.calls
+
+
+def test_mismatched_repository_uses_git_removal(
+    launched: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, removal_command: RemovalCommand
+) -> None:
+    def confirm(prompt: str) -> str:
+        assert prompt == f'Remove worktree {launched.path}? The branch will be kept. [y/N] '
+        return 'yes'
+
+    monkeypatch.setattr('builtins.input', confirm)
+    offer_worktree_cleanup(worktree=launched, remove_commands={str(repo / 'other.git'): ['custom']})
+    assert not launched.path.exists()
+    assert git(repo, 'branch', '--list', 'feature')
+    assert not removal_command.calls
+
+
+def test_unmodified_worktree_ignores_custom_command(
+    created: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, removal_command: RemovalCommand
+) -> None:
+    monkeypatch.setattr('builtins.input', no_prompt)
+    offer_worktree_cleanup(worktree=created, remove_commands={str(repo / '.git'): ['custom']})
+    assert not created.path.exists()
+    assert not removal_command.calls
+
+
+def test_forced_removal_ignores_registered_command(
+    launched: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, removal_command: RemovalCommand
+) -> None:
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(repo.parent / 'config'))
+    SettingsStore().set('worktrees.remove_commands', {str(repo / '.git'): ['custom']})
+    (launched.path / 'tracked.txt').write_text('uncommitted changes')
+    monkeypatch.chdir(repo)
+    worktrees.remove_worktree(path=launched.path)
+    assert not launched.path.exists()
+    assert git(repo, 'branch', '--list', 'feature')
+    assert not removal_command.calls
+
+
 def test_missing_git_keeps_checkout(launched: Worktree, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('PATH', '')
     monkeypatch.setattr('builtins.input', no_prompt)
@@ -184,6 +393,26 @@ def test_piped_input_keeps_without_prompt(created: Worktree, monkeypatch: pytest
 def test_no_worktree_is_a_no_op(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr('builtins.input', no_prompt)
     offer_worktree_cleanup(worktree=None)
+
+
+def test_cli_uses_custom_command_saved_during_session(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(repo)
+    commands: list[list[str]] = []
+
+    def remove(*, path: Path, repo: Path, command: list[str]) -> None:
+        commands.append(command)
+
+    monkeypatch.setattr(worktrees, '_remove_with_command', remove)
+
+    def save_command() -> None:
+        SettingsStore(repo.parent / 'config.db').set(
+            'worktrees.remove_commands', {str(repo / '.git'): ['remove', '{path}']}
+        )
+        git(Path.cwd(), 'commit', '--allow-empty', '-m', 'Work')
+
+    prompts = run_cli(monkeypatch, '-w', 'task', repo=repo, session=save_command, answer='yes')
+    assert len(prompts) == 1
+    assert commands == [['remove', str(repo / '.worktrees/task')]]
 
 
 def test_unchanged_hand_made_checkout_is_kept_silently(
@@ -272,6 +501,7 @@ def run_cli(
     repo: Path,
     session: Callable[[], None] = lambda: None,
     relaunch: bool = False,
+    answer: str = '',
 ) -> list[str]:
     """Run `clai2` with a stand-in shell; `relaunch` ends it as `/update` does. Returns the prompts asked on exit."""
     prompts: list[str] = []
@@ -283,7 +513,7 @@ def run_cli(
 
     def respond(prompt: str) -> str:
         prompts.append(prompt)
-        return ''
+        return answer
 
     monkeypatch.setattr(app, 'chat', chat)
 
