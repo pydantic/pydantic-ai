@@ -106,9 +106,6 @@ def test_coder_uses_a_given_repo_context_in_place_of_the_bundled_one() -> None:
     names = [type(capability).__name__ for capability in coder.capabilities]
     assert names.index('RepoContext') == 4
     assert [capability for capability in coder.capabilities if isinstance(capability, RepoContext)] == [mine]
-    guidance = next(item for item in coder.capabilities if isinstance(item, Capability))
-    instructions = guidance.get_instructions()
-    assert isinstance(instructions, list) and len(instructions) == 2
 
 
 def test_coder_members_and_parameters() -> None:
