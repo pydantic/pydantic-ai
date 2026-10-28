@@ -34,6 +34,7 @@ from weekly_ce_audit import (
     reconcile,
     submitted_branches,
     validate_edits,
+    validate_policy_checkout,
     validate_review,
 )
 
@@ -140,6 +141,27 @@ def test_inventory_ignores_local_object_replacements(repository: tuple[Path, str
     git(root, 'replace', oid, replacement)
     assert subprocess.check_output(['git', '-C', str(root), 'cat-file', 'blob', oid]) == b'Replacement instruction\n'
     assert inventory(root, source) == original
+
+
+def test_policy_validation_ignores_configured_clean_filter(repository: tuple[Path, str]):
+    """A clean filter cannot execute or hide changed reviewer policy."""
+    root, source = repository
+    hook = root / '.git/clean-filter'
+    marker = root / 'filter-invoked'
+    hook.write_text('#!/bin/sh\n: > "$PWD/filter-invoked"\nprintf "First line\\nSecond line\\n"\n')
+    hook.chmod(0o755)
+    (root / '.git/info/attributes').write_text('AGENTS.md filter=ce-probe\n')
+    git(root, 'config', 'filter.ce-probe.clean', str(hook))
+    (root / 'AGENTS.md').write_text('Changed policy\n')
+    subprocess.run(['git', '-C', str(root), 'diff', '--quiet', source, '--'], check=True)
+    assert marker.exists()
+    marker.unlink()
+    with pytest.raises(subprocess.CalledProcessError):
+        validate_policy_checkout(root, source, root / '.ce-audit')
+    assert not marker.exists()
+    assert validate_edits(root, source, inventory(root, source)) == ['AGENTS.md']
+    assert git(root, 'status', '--porcelain').decode().splitlines() == [' M AGENTS.md']
+    assert not marker.exists()
 
 
 def test_receipt_reconciles_canonical_report_only_and_paged_reads(repository: tuple[Path, str]):

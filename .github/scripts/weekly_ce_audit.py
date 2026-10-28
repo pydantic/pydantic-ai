@@ -62,10 +62,18 @@ def classify(path: str) -> Literal['editable', 'report-only', 'excluded']:
 
 
 def git(root: Path, *args: str) -> bytes:
-    """Use actual objects and disable repository filesystem monitor commands."""
-    return subprocess.check_output(
-        ['git', '--no-replace-objects', '-c', 'core.fsmonitor=false', '-C', str(root), *args]
-    )
+    """Use original objects without repository filesystem monitors or content filters."""
+    command: list[str] = ['git', '--no-replace-objects', '-c', 'core.fsmonitor=false', '-C', str(root)]
+    try:
+        filters = subprocess.check_output(
+            [*command, 'config', '--null', '--name-only', '--get-regexp', r'^filter\..*\.(clean|smudge|process)$']
+        )
+    except subprocess.CalledProcessError as error:
+        if error.returncode != 1:
+            raise
+        filters = b''
+    overrides: list[str] = [option for key in filters.decode().split('\0') if key for option in ('-c', f'{key}=')]
+    return subprocess.check_output([*command, *overrides, *args])
 
 
 def inventory(root: Path, source: str) -> list[Entry]:
