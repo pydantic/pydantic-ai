@@ -449,12 +449,12 @@ Python up to 3.14.
 
 `LocalDesktop(working_dir, *, size=(1280, 800), real_screen=False, ...)` (backend `LocalDesktopBackend`) is a
 `LocalWorkspace` with a screen for `ComputerUse()`, on Linux only. Needs `apt install xvfb fluxbox x11-utils xdotool
-x11-xserver-utils scrot`.
+x11-xserver-utils scrot util-linux`.
 
 - By default the screen is a private Xvfb display with a window manager, started on first use and shared by later and
   concurrent runs of the capability; it stops when the program exits. Commands run on it, so apps the agent starts open there.
 - `real_screen=True` drives the X screen you're logged in to; pair with `ComputerUse(requires_approval=True)`. A Wayland
-  session or a missing `DISPLAY` raises on first use.
+  session or a missing `DISPLAY` fails the run at its first request; commands still run.
 - Commands and files are on this machine, as with `LocalWorkspace`: no isolation.
 
 ## Remote hosts and bubblewrap
