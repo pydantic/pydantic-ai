@@ -100,6 +100,15 @@ async def test_screenshots_zooms_and_the_pointer_come_from_the_display(fake_e2b:
     assert await workspace.zoom(Region(left=2, top=3, right=12, bottom=8)) == FAKE_SCREENSHOT
     assert await workspace.cursor_position() == Point(x=5, y=6)
     assert display.captures[-1].endswith(' sh -a 2,3,10,5')
+    assert await workspace.scaled_screenshot(640, 400) == FAKE_SCREENSHOT
+    assert display.captures[-1].endswith(' sh 640x400')
+
+
+async def test_the_desktop_names_its_screen_by_the_sandboxs_ref(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
+    backend = E2BSandboxBackend(desktop=True)
+    await Workspace(backend).display_size()
+    assert backend.display is not None and backend.ref is not None
+    assert backend.display.screen_key == backend.ref
 
 
 async def test_the_live_view_url_opens_the_viewer_with_its_password(fake_e2b: FakeE2B, display: FakeDisplay) -> None:

@@ -61,6 +61,7 @@ __all__ = (
     'SupportsDisplay',
     'SupportsFilesystem',
     'SupportsRealpath',
+    'SupportsScaledScreenshot',
     'SupportsZoom',
 )
 
@@ -244,7 +245,8 @@ class Display(Protocol):
 
     It can come from a different source than the backend's commands, such as this machine's screen beside a local
     workspace, and may start on its first call. It can also implement
-    [`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom] and
+    [`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom],
+    [`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot] and
     [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition].
     """
 
@@ -296,6 +298,21 @@ class SupportsZoom(Protocol):
 
         The region is in screenshot pixels. On a display whose screenshots are scaled down, the capture shows detail
         the screenshot lost.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsScaledScreenshot(Protocol):
+    """Optional on a [`Display`][pydantic_ai.workspaces.Display]: the whole display, scaled down.
+
+    For a model that takes smaller screenshots than the display: actions stay in `display_size` pixels.
+    """
+
+    async def scaled_screenshot(self, width: int, height: int) -> bytes:
+        """Capture the whole display as PNG bytes of `width` by `height` pixels, give or take one for rounding.
+
+        Callers read the size from the PNG, so a display that scales by a ratio may round either way.
         """
         ...
 

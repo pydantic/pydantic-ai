@@ -294,8 +294,14 @@ async def test_a_scaled_screenshot_is_taken_at_the_scale_that_fits(fake_daytona:
     backend, sandbox = await _started(fake_daytona)
     assert backend.display is not None
 
-    assert await backend.display.scaled_screenshot(640, 400) == sandbox.computer_use.png
+    assert await Workspace(backend).scaled_screenshot(640, 400) == sandbox.computer_use.png
     assert sandbox.desktop_calls == ['get_info', 'take_compressed png 0.5']
+
+
+async def test_the_desktop_names_its_screen_by_the_sandboxs_ref(fake_daytona: FakeDaytona) -> None:
+    backend, _ = await _started(fake_daytona)
+    assert backend.display is not None and backend.ref is not None
+    assert backend.display.screen_key == backend.ref
 
 
 async def test_a_failed_look_starts_the_desktop_again_and_looks_again(fake_daytona: FakeDaytona) -> None:

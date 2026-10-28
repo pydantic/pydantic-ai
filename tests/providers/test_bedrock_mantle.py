@@ -344,6 +344,7 @@ def test_bedrock_mantle_profiles() -> None:
             'openai_supports_prompt_cache_breakpoints': True,
             'bedrock_mantle_interface': 'openai-responses',
             'openai_supports_minimal_reasoning_effort': False,
+            'computer_use_screenshot_limit': (2560, 3686400),
             'openai_responses_tool_call_ids_are_response_scoped': True,
             'supported_native_tools': frozenset(),
             'openai_supports_computer_tool': True,

@@ -357,7 +357,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         if self._desktop_size:
             # Commands see the desktop too, so a program the agent starts from the shell opens on it.
             self._env = {'DISPLAY': DISPLAY, **(self._env or {})}
-        self._display = None if self._desktop_size is None else ManagedDisplay(self._start_display)
+        self._display = (
+            None if self._desktop_size is None else ManagedDisplay(self._start_display, screen_key=lambda: self.ref)
+        )
         self._setsid: bool | None = None
         self._setsid_lock = anyio.Lock()
 

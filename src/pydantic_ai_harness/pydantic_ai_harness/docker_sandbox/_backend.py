@@ -332,7 +332,9 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         self._image = image
         self._ref = ref
         self._desktop_size = _DEFAULT_DESKTOP_SIZE if desktop is True else desktop or None
-        self._display = None if self._desktop_size is None else ManagedDisplay(self._start_display)
+        self._display = (
+            None if self._desktop_size is None else ManagedDisplay(self._start_display, screen_key=lambda: self.ref)
+        )
         self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
         # Commands see the desktop too, so a program the agent starts from the shell opens on it.
         display_env = {'DISPLAY': DISPLAY} if self._desktop_size else {}
