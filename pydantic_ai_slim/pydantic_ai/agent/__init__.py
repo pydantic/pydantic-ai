@@ -2777,7 +2777,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         /,
         *,
-        dynamic: bool | None = None,
+        dynamic: bool = False,
         name: str | None = None,
         on_change: _messages.InstructionChangePolicy = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
@@ -2787,7 +2787,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         func: SystemPromptFunc[AgentDepsT] | None = None,
         /,
         *,
-        dynamic: bool | None = None,
+        dynamic: bool = False,
         name: str | None = None,
         on_change: _messages.InstructionChangePolicy = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
@@ -2806,8 +2806,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             func: The function to decorate
             dynamic: If True, the system prompt will be reevaluated even when `messages_history` is provided,
                 see [`SystemPromptPart.dynamic_ref`][pydantic_ai.messages.SystemPromptPart.dynamic_ref].
-                Defaults to `False`, or to `True` with `on_change='append'`, which can't be combined with
-                `dynamic=False`.
+                `on_change='append'` makes the prompt dynamic whatever this says.
             name: The name in the id `'system_prompt:<name>'` of the `<context>` element a system prompt with
                 `on_change='append'` is sent as, which the model sees. Defaults to the function's `__name__`.
                 It has no effect without `on_change='append'`. Existing histories tie the prompt to the
@@ -2835,11 +2834,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return f'{ctx.deps} is the best'
         ```
         """
-        if on_change == 'append' and dynamic is False:
-            raise exceptions.UserError(
-                "`on_change='append'` only applies to a dynamic system prompt: drop `dynamic=False`."
-            )
-        is_dynamic = on_change == 'append' or bool(dynamic)
+        is_dynamic = dynamic or on_change == 'append'
         if func is None:
 
             def decorator(

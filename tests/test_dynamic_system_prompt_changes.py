@@ -610,12 +610,6 @@ The user's name is Bob.
     )
 
 
-def test_append_rejects_explicit_static():
-    agent = Agent('test')
-    with pytest.raises(UserError, match="`on_change='append'` only applies to a dynamic system prompt"):
-        agent.system_prompt(dynamic=False, on_change='append')
-
-
 def test_renamed_function_is_disconnected_from_history():
     """History ties the prompt to its function's `__qualname__`, even with `name=`, so a renamed function isn't sent."""
     first = Agent(Recorder().model(), deps_type=str)
