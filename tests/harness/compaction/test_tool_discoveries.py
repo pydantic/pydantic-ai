@@ -20,10 +20,6 @@ from pydantic_ai import Agent, Tool, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, Capability, ToolSearch, Toolset
 from pydantic_ai.messages import (
     CompactionPart,
-    InstructionBaselinePart,
-    InstructionDeltaPart,
-    LoadCapabilityCallPart,
-    LoadCapabilityReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -33,6 +29,7 @@ from pydantic_ai.messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolSearchReturnContent,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -79,9 +76,9 @@ def _discovering_turn(discovery: ToolCallPart) -> Callable[[list[ModelMessage], 
 
 
 async def _discovered_in_a_run(discovery: ToolCallPart) -> list[ModelMessage]:
-    result = await Agent(FunctionModel(_discovering_turn(discovery)), capabilities=_capabilities()).run(
-        'Weather in Athens?'
-    )
+    result = await Agent(
+        FunctionModel(_discovering_turn(discovery)), deps_type=type(None), capabilities=_capabilities()
+    ).run('Weather in Athens?')
     return result.all_messages()
 
 
@@ -103,7 +100,7 @@ async def _searched_natively() -> list[ModelMessage]:
                     args={'queries': ['forecast']}, tool_call_id='search', provider_name='anthropic'
                 ),
                 NativeToolSearchReturnPart(
-                    content={'discovered_tools': [{'name': 'get_forecast', 'description': None}]},
+                    content=ToolSearchReturnContent(discovered_tools=[{'name': 'get_forecast'}]),
                     tool_call_id='search',
                     provider_name='anthropic',
                 ),
@@ -187,12 +184,7 @@ def _shape(messages: Sequence[ModelMessage]) -> list[str]:
     def describe(part: object) -> str:
         match part:
             case ToolAvailabilityDeltaPart():
-                via = f' via {part.tool_call_id}' if part.tool_call_id else ''
-                return f'reveal {part.tools_added}{via}'
-            case LoadCapabilityCallPart():
-                return f'load_capability({part.capability_id})'
-            case LoadCapabilityReturnPart():
-                return 'load_capability return'
+                return f'reveal {part.tools_added}'
             case ToolCallPart():
                 return f'{part.tool_name}({part.args})'
             case ToolReturnPart():
@@ -202,11 +194,7 @@ def _shape(messages: Sequence[ModelMessage]) -> list[str]:
             case TextPart():
                 return f'text {part.content!r}'
             case CompactionPart():
-                return 'compaction' + (f' ({part.provider_name})' if part.provider_name else '')
-            case InstructionDeltaPart():
-                return f'instructions {part.id}'
-            case InstructionBaselinePart():
-                return 'baseline'
+                return 'compaction'
             case _:  # pragma: no cover
                 return type(part).__name__
 
@@ -223,9 +211,9 @@ class TestToolDiscoveriesAcrossCompaction:
     ) -> None:
         history = await discover()
         later_turn = _LaterTurn()
-        result = await Agent(FunctionModel(later_turn), capabilities=[*_capabilities(), make()]).run(
-            'And in Oslo?', message_history=history
-        )
+        result = await Agent(
+            FunctionModel(later_turn), deps_type=type(None), capabilities=[*_capabilities(), make()]
+        ).run('And in Oslo?', message_history=history)
 
         # The first request after the compaction still offers the discovered tool, and the model's call to it runs.
         assert 'get_forecast' in later_turn.tools[0]
@@ -237,6 +225,7 @@ class TestToolDiscoveriesAcrossCompaction:
     async def test_the_record_goes_right_after_the_summary(self) -> None:
         result = await Agent(
             FunctionModel(_LaterTurn()),
+            deps_type=type(None),
             capabilities=[
                 *_capabilities(),
                 SummarizingCompaction[None](max_messages=6, keep_messages=1, model=FunctionModel(_summarize)),
@@ -260,9 +249,9 @@ class TestToolDiscoveriesAcrossCompaction:
         history = await _searched()
         for city in ['Oslo', 'Paris']:
             later_turn = _LaterTurn(city)
-            result = await Agent(FunctionModel(later_turn), capabilities=[*_capabilities(), compaction]).run(
-                f'And in {city}?', message_history=history
-            )
+            result = await Agent(
+                FunctionModel(later_turn), deps_type=type(None), capabilities=[*_capabilities(), compaction]
+            ).run(f'And in {city}?', message_history=history)
             history = result.all_messages()
             assert 'get_forecast' in later_turn.tools[0]
             assert result.output == f'Sunny in {city}'
@@ -280,20 +269,17 @@ class TestToolDiscoveriesAcrossCompaction:
         assert _reveals(compacted) == []
 
     async def test_a_tool_a_capability_load_revealed_is_left_to_the_load(self) -> None:
-        def forecast(city: str) -> str:
-            return f'Sunny in {city}'
-
         def weather() -> Capability[None]:
-            return Capability(
-                id='weather', description='Weather.', tools=[Tool(forecast, name='forecast')], defer_loading=True
-            )
+            return Capability(id='weather', description='Weather.', tools=[Tool(get_forecast)], defer_loading=True)
 
         def load_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) == 1:
                 return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'weather'})])
             return ModelResponse(parts=[TextPart('Loaded.')])
 
-        first = await Agent(FunctionModel(load_then_answer), capabilities=[weather()]).run('Weather in Athens?')
+        first = await Agent(FunctionModel(load_then_answer), deps_type=type(None), capabilities=[weather()]).run(
+            'Weather in Athens?'
+        )
         next_prompt = ModelRequest(parts=[UserPromptPart('And in Oslo?')])
         compacted = await compact_now(
             SummarizingCompaction[None](max_messages=1, keep_messages=1, preserve_loaded_capabilities=False),
