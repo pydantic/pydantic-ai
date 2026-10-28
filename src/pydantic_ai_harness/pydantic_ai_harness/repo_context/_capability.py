@@ -17,7 +17,7 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, HarnessDeprecationWarning, warn_argument_ignored
 from pydantic_ai_harness._workspace import in_working_dir, require_workspace, workspace_path
-from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent, FileWrittenEvent
+from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileEditedEvent, FileReadEvent, FileWrittenEvent
 from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
@@ -129,7 +129,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     nested_traversal: bool = False
     """Strategy 3: surface a directory's instruction file when the model lists or
-    reads that directory. Off by default -- it couples to the list/read tools."""
+    reads that directory, or writes or edits a file in it. Off by default -- it couples
+    to the filesystem tools."""
 
     nested_inject: Literal['pointer', 'contents'] = 'pointer'
     """For Strategy 3: append a one-line `pointer`, or inline the file `contents`."""
@@ -280,8 +281,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         working_dir = await self._working_dir(ctx.workspace)
         path = Path(await ctx.workspace.resolve(event.path, base=event.root_dir))
         directory = path if isinstance(event, DirectoryListedEvent) else path.parent
-        # Only `write_file` shows the model a whole file: a read can return a window of it, and an edit changes part.
-        written_file = path if type(event) is FileWrittenEvent else None
+        # Only a full write shows the model a whole file: a read can return a window of it, and an edit changes part.
+        full_write = isinstance(event, FileWrittenEvent) and not isinstance(event, FileEditedEvent)
+        written_file = path if full_write else None
         try:
             directory.relative_to(working_dir)
         except ValueError:
