@@ -121,7 +121,24 @@ Or initialise the model and provider directly, for example to process a document
 
 ## Prompt caching
 
-On GPT-5.6 and later deployments, Azure's v1 API honors OpenAI's explicit [prompt caching](openai.md#prompt-caching) settings: [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_options], [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_cache_instructions] and [`CachePoint`][pydantic_ai.messages.CachePoint] markers, with both the Chat Completions and Responses APIs. Cache writes and reads are reported as [`cache_write_tokens`][pydantic_ai.usage.RequestUsage.cache_write_tokens] and [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens] in the response's usage, as on OpenAI. See [Monitoring cache efficiency](../capabilities/caching.md#monitoring-cache-efficiency).
+On GPT-5.6 and later, Azure's v1 API honors OpenAI's explicit [prompt caching](openai.md#prompt-caching) settings: [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_options], [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_cache_instructions] and [`CachePoint`][pydantic_ai.messages.CachePoint] markers, with both the Chat Completions and Responses APIs. Cache writes and reads are reported as [`cache_write_tokens`][pydantic_ai.usage.RequestUsage.cache_write_tokens] and [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens] in the response's usage, as on OpenAI. See [Monitoring cache efficiency](../capabilities/caching.md#monitoring-cache-efficiency).
+
+Pydantic AI recognizes these models by the deployment name you pass as the model name, so this applies to deployments whose names start with `gpt-5.6` or a GPT-6 model name, such as `gpt-6-sol` or `gpt-6.1-sol` (case-insensitive). For a deployment with another name, such as `prod-chat`, `CachePoint` markers and `openai_cache_instructions` are ignored. Pass a profile that turns breakpoints on: it's merged over the one `AzureProvider` provides.
+
+```python
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.profiles.openai import OpenAIModelProfile
+from pydantic_ai.providers.azure import AzureProvider
+
+model = OpenAIResponsesModel(
+    'prod-chat',
+    provider=AzureProvider(
+        azure_endpoint='https://your-resource.openai.azure.com/openai/v1/',
+        api_key='your-api-key',
+    ),
+    profile=OpenAIModelProfile(openai_supports_prompt_cache_breakpoints=True),
+)
+```
 
 The unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting and the [`Caching`][pydantic_ai.capabilities.Caching] capability don't turn these on with `AzureProvider`, so set them yourself:
 
@@ -131,7 +148,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModel
 from pydantic_ai.providers.azure import AzureProvider
 
 model = OpenAIResponsesModel(
-    'gpt-5.6-sol',
+    'gpt-6.1-sol',
     provider=AzureProvider(
         azure_endpoint='https://your-resource.openai.azure.com/openai/v1/',
         api_key='your-api-key',
