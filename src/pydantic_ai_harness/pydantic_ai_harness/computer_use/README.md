@@ -81,10 +81,12 @@ far: on Claude, a run costs several times more without it. Set `cache=False` in 
 
 ## Screen size
 
-A model's profile can limit the size of the screenshots it takes, as `computer_use_screenshot_limit`. On a larger
-screen, `ComputerUse` sends the model the screenshot scaled down and scales its positions back up, when the display
-can scale its screenshots; otherwise the run stops with an error naming the largest screen that fits. A zoom into a
-region larger than the limit fails that action, so the model zooms into a smaller one.
+A model's profile can limit the size of the screenshots it takes, as `computer_use_screenshot_limit`: Claude Opus 4.7,
+Opus 4.8 and the Claude 5 models take up to 2576 pixels on the longer side, earlier Claude models 1568 pixels and
+about 1.15 megapixels. A 1280x800 screen fits every model. On a larger screen, `ComputerUse` sends the model the
+screenshot scaled down and scales its positions back up, when the display can scale its screenshots; otherwise the
+run stops with an error naming the largest screen that fits. A zoom into a region larger than the limit fails that
+action, so the model zooms into a smaller one.
 
 ## When an action fails
 
