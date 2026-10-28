@@ -26,9 +26,11 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -345,9 +347,10 @@ async def test_openrouter_cache_instructions_system_prompt_dynamic_e2e(
 async def test_openrouter_cache_instructions_dynamic_only_e2e(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
-    """Instruction caching is skipped for Anthropic when the only instructions are dynamic and there is no static prefix.
+    """With only dynamic instructions on Anthropic, the one static block ahead of them gets the breakpoint.
 
-    With no static block to anchor the breakpoint to, no `cache_control` is added anywhere.
+    OpenRouter routes take no mid-conversation system messages, so the standing prompt opens with the `<system>` tag
+    announcement, which every conversation shares. The dynamic instructions after it carry no `cache_control`.
     """
     model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(model, model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True))
@@ -359,9 +362,41 @@ async def test_openrouter_cache_instructions_dynamic_only_e2e(
     result = await agent.run('What do you specialize in? Answer in one sentence.')
 
     assert isinstance(result.output, str)
-    for m in single_request_body(vcr)['messages']:
+    announcement, *rest = single_request_body(vcr)['messages']
+    assert announcement == {
+        'role': 'system',
+        'content': [
+            {'type': 'text', 'text': SYSTEM_VOICE_ANNOUNCEMENT, 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}
+        ],
+    }
+    for m in rest:
         content = m['content']
         assert isinstance(content, str) or all('cache_control' not in part for part in content)
+
+
+async def test_openrouter_cache_instructions_dynamic_only_without_a_static_prefix(allow_model_requests: None) -> None:
+    """With only dynamic instructions and nothing static ahead of them, no `cache_control` is added anywhere.
+
+    A profile that declares mid-conversation system messages gets no `<system>` tag announcement, so nothing static
+    precedes the instructions.
+    """
+    mock_client = _done_mock_client()
+    model = OpenRouterModel(
+        'anthropic/claude-sonnet-4.6',
+        provider=OpenRouterProvider(openai_client=mock_client),
+        profile=ModelProfile(supports_inline_system_prompts=True),
+    )
+    agent = Agent(model, model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True))
+
+    @agent.instructions
+    def dynamic_instructions() -> str:
+        return 'Dynamic instructions.'
+
+    await agent.run('Hi')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [{'role': 'system', 'content': 'Dynamic instructions.'}, {'role': 'user', 'content': 'Hi'}]
+    )
 
 
 async def test_openrouter_cache_instructions_no_instructions_e2e(

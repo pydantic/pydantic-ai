@@ -18,6 +18,8 @@ SUPPORTED_FEATURES: frozenset[str] = frozenset(
         'coder-skill-folders',
         'coder-disabled-skills',
         'coder-task-control',
+        'coder-delegate-models',
+        'coder-review-agent',
         'logfire-variables-key',
         'compaction-background',
         'mcp-defer-loading',
