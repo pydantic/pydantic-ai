@@ -29,7 +29,12 @@ from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, R
 from pydantic_ai.exceptions import ModelAPIError, UserError
 
 from ._activity_execution import execute_activity, execute_child_workflow
-from ._model_errors import model_errors_as_application_errors, rebuilt_model_errors
+from ._model_errors import (
+    model_errors_as_application_errors,
+    rebuilt_model_errors,
+    rebuilt_retry_requests,
+    retry_requests_as_application_errors,
+)
 from ._operation_names import TemporalOperationNamer
 from ._toolset import (
     ChildWorkflowOperationConfig,
@@ -192,6 +197,11 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
                 return await execute_activity(
                     activity=self.registration, args=cast(Sequence[Any], payload), **activity_config
                 )
+        if isinstance(operation_id, CapabilityOperationId):
+            with rebuilt_retry_requests():
+                return await execute_activity(
+                    activity=self.registration, args=cast(Sequence[Any], payload), **activity_config
+                )
         return await execute_activity(activity=self.registration, args=cast(Sequence[Any], payload), **activity_config)
 
 
@@ -244,12 +254,16 @@ class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfi
         model_operation = isinstance(
             operation.operation_id, ModelRequestId | ModelCompactMessagesId | ModelCancelSuspendedResponseId
         )
+        capability_operation = isinstance(operation.operation_id, CapabilityOperationId)
 
         async def activity_handler(params: Any, deps: Any = None) -> ResultT:
             semantic_params = transport.load(cast(WireT, (params, deps)), runtime=self._runtime)
             async with heartbeating():
                 if model_operation:
                     with model_errors_as_application_errors(self._non_retryable_model_errors):
+                        return await operation.handler(semantic_params)
+                if capability_operation:
+                    with retry_requests_as_application_errors():
                         return await operation.handler(semantic_params)
                 return await operation.handler(semantic_params)
 

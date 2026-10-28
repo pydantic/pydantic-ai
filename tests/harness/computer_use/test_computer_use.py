@@ -48,6 +48,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness.compaction import ClampOversizedMessages
 from pydantic_ai_harness.computer_use import ComputerUse
+from tests.function_model_prefix import HOOK_REWRITES_REQUEST
 
 from ...workspace_fakes import FAKE_SCREENSHOT, InMemoryProvider, ProviderBackend, WorkspaceCapability
 
@@ -308,6 +309,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert resumed.output == 'done'
         assert provider.actions == [Click(x=1, y=1)]
 
+    @pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
     async def test_old_screenshots_are_dropped_in_batches_and_history_keeps_them_all(self) -> None:
         requests: list[list[str]] = []
 
@@ -381,6 +383,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             [Click(x=2, y=1), TypeText(text='second'), Click(x=1, y=1), TypeText(text='first')],
         )
 
+    @pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
     @pytest.mark.parametrize(
         'after',
         [
@@ -408,6 +411,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert sent[-1] == 2
         assert all(part.content_items()[1] == SCREENSHOT for part in _returns(result.all_messages()))
 
+    @pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
     @pytest.mark.parametrize(
         'padding,calls,last_requests',
         [

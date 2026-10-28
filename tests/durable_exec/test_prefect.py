@@ -70,6 +70,7 @@ from pydantic_ai.capabilities import (
     DynamicCapability,
     Hooks,
     Instrumentation,
+    ModelFallback,
     ProcessEventStream,
     ResolveModelId,
     SelectModel,
@@ -141,6 +142,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
 )
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 try:
     from prefect import flow, task
@@ -1870,6 +1872,7 @@ def toggle(ctx: RunContext[ToggleableDeps]):
 dynamic_prefect_agent = PrefectAgent(dynamic_agent)  # pyright: ignore[reportDeprecated]
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 def test_dynamic_toolset():
     """Test that dynamic toolsets work correctly."""
     weather_deps = ToggleableDeps('weather')
@@ -3993,7 +3996,7 @@ def test_prefect_durability_get_ordering() -> None:
     """PrefectDurability declares innermost ordering."""
     from pydantic_ai.capabilities.abstract import CapabilityOrdering
 
-    assert PrefectDurability().get_ordering() == CapabilityOrdering(position='innermost')
+    assert PrefectDurability().get_ordering() == CapabilityOrdering(position='innermost', wrapped_by=(ModelFallback,))
 
 
 def test_prefect_durability_get_serialization_name() -> None:
@@ -4393,6 +4396,7 @@ WRAPPERS_EXPOSING_FAIL: dict[str, Callable[[DynamicToolset[object], str], Abstra
 
 
 @pytest.mark.parametrize('wrapper', WRAPPERS_EXPOSING_FAIL)
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_prefect_dynamic_toolset_under_two_wrappers_replays_each_listing(wrapper: str) -> None:
     """One dynamic toolset listed under two prefixes, or two renames, keeps a discovery result per wrapper.
 

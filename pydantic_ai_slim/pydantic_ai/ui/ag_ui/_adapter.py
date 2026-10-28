@@ -74,9 +74,11 @@ from .._adapter import (
     compaction_payload,
     model_settings_delta_from_payload,
     model_settings_delta_payload,
+    pending_tool_calls,
     structured_content_from_payload,
     structured_content_payload,
     tool_availability_delta_from_payload,
+    warn_dropped_tool_results,
 )
 from .._utils import MCP_APPS_UI_TYPE, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
 
@@ -432,6 +434,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         ag_ui_version: str = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
         manage_system_prompt: Literal['server', 'client'] = 'server',
+        manage_message_history: Literal['client', 'server'] = 'client',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -446,6 +449,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             ag_ui_version=ag_ui_version,
             preserve_file_data=preserve_file_data,
             manage_system_prompt=manage_system_prompt,
+            manage_message_history=manage_message_history,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -458,6 +462,35 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     def messages(self) -> list[ModelMessage]:
         """Pydantic AI messages from the AG-UI run input."""
         return self.load_messages(self.run_input.messages, preserve_file_data=self.preserve_file_data)
+
+    def _server_held_client_messages(self, message_history: Sequence[ModelMessage]) -> list[ModelMessage]:
+        """Load a tool result the client sends without its call against the call `message_history` is waiting on.
+
+        A `ToolMessage` carries no tool name, so it only loads after the `AssistantMessage` that made the
+        call, which a client sending only its new messages leaves out. The stored history's pending call
+        stands in for it, so nothing the client sends decides which call it answers. A result for a call
+        that isn't pending is dropped with a warning, as `manage_message_history='server'` drops it anyway.
+        """
+        messages = self.run_input.messages
+        called = {call.id for m in messages if isinstance(m, AssistantMessage) for call in m.tool_calls or ()}
+        orphaned = {m.tool_call_id for m in messages if isinstance(m, ToolMessage) and m.tool_call_id not in called}
+        if not orphaned:
+            return self.messages
+        pending = [call for call in pending_tool_calls(message_history) if call.tool_call_id in orphaned]
+        if dropped := len(orphaned) - len(pending):
+            warn_dropped_tool_results(dropped, stacklevel=5)
+        answered = {call.tool_call_id for call in pending}
+        dropped_ids = orphaned - answered
+        kept = [m for m in messages if not isinstance(m, ToolMessage) or m.tool_call_id not in dropped_ids]
+        if pending:
+            calls = [
+                ToolCall(
+                    id=call.tool_call_id, function=FunctionCall(name=call.tool_name, arguments=call.args_as_json_str())
+                )
+                for call in pending
+            ]
+            kept = [AssistantMessage(id='pydantic_ai-pending-tool-calls', tool_calls=calls), *kept]
+        return self.load_messages(kept, preserve_file_data=self.preserve_file_data)
 
     @cached_property
     def toolset(self) -> AbstractToolset[AgentDepsT] | None:
