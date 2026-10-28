@@ -44,7 +44,7 @@ def blockbuster_excluded_modules() -> tuple[str, ...]:
 @pytest.fixture(autouse=True)
 def setup_logfire_instrumentation() -> Iterator[None]:
     # Recording the evaluators' span tree needs a configured tracer provider. Prefect sets the
-    # `traceparent` header, so distributed tracing is enabled explicitly to avoid the warning.
+    # `traceparent` header, so `distributed_tracing` is set explicitly to avoid the warning.
     logfire.configure(metrics=False, distributed_tracing=False)
     yield
 
