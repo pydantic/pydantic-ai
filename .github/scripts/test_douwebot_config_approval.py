@@ -222,7 +222,7 @@ def test_workflow_routes_events_and_cancellation_without_relying_on_label_presen
     assert publish_review['permissions']['pull-requests'] == 'write'
     cleanup = next(step for step in publish_review['steps'] if step.get('name') == 'Remove douwebot label')
     assert cleanup['if'] == "always() && github.event.action == 'labeled' && github.event.label.name == 'douwebot'"
-    assert all(APPROVAL_LABEL not in step.get('run', '') for step in steps if step is cleanup)
+    assert APPROVAL_LABEL not in cleanup['run']
 
     claude_index = next(
         index for index, step in enumerate(steps) if step.get('uses', '').startswith('anthropics/claude-code-action@')
