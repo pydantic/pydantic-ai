@@ -291,6 +291,23 @@ def test_workflow_retains_separate_pr_sink_and_protected_review():
     assert outputs['steps'][0]['env']['AGENT_RESULT'] == '${{ needs.agent.result }}'
     assert outputs['steps'][0]['run'] == 'test "$AGENT_RESULT" = success'
     assert outputs['threat-detection']['engine']['env']['CLAUDE_CODE_ENABLE_TELEMETRY'] == '1'
+    shared = workflow.parent / 'shared/engine-zai.md'
+    inherited = yaml.safe_load(shared.read_text().split('---', 2)[1])['safe-outputs']['threat-detection']
+    expected: dict[str, object] = {
+        **inherited,
+        'engine': {
+            **inherited['engine'],
+            'env': {
+                **inherited['engine']['env'],
+                'CLAUDE_CODE_ENABLE_TELEMETRY': '1',
+                'OTEL_LOGS_EXPORTER': 'otlp',
+                'OTEL_METRICS_EXPORTER': 'none',
+                'OTEL_EXPORTER_OTLP_PROTOCOL': 'http/protobuf',
+                'OTEL_SERVICE_NAME': 'gh-aw.threat-detection',
+            },
+        },
+    }
+    assert outputs['threat-detection'] == expected
     preflight = config['pre-agent-steps'][0]['run']
     pagination_lines = [line for line in preflight.splitlines() if 'gh api --paginate --slurp' in line]
     assert pagination_lines and all('--jq' not in line for line in pagination_lines)

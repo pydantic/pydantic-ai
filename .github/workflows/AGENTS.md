@@ -193,27 +193,21 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 
 ## Weekly CE audit
 
-`pydantic-ai-weekly-ce-audit.md` audits tracked instruction Markdown weekly and on manual dispatch.
-The schedule takes effect after its lock reaches the default branch.
-It proposes one focused trimming PR, or records a noop.
-An open PR with its reserved branch prefix stops primary inference before the agent starts.
-Threat detection remains enabled and can still run for that noop.
+`pydantic-ai-weekly-ce-audit.md` audits tracked context engineering (CE) Markdown weekly and on manual dispatch, proposing at most one focused trimming PR or a noop.
+An existing workflow PR stops primary inference; threat detection remains enabled.
 
-`.github/scripts/weekly_ce_audit.py` inventories committed objects, resolves tracked aliases, and classifies excluded and report-only paths.
-Workflow sources, imports and the packaged gh-aw definition are report-only.
-The `weekly-ce-audit` artifact preserves the manifest, reported read ranges, findings and coverage summary.
-Coverage receipts attest reads; validation does not establish comprehension or whole-audit performance.
-Incomplete coverage cannot publish edits.
-Candidate edits live in a separate worktree; the root checkout remains the immutable policy base.
-A fresh read-only Task reviews the frozen candidate diff before the PR sink can publish that exact head and tree.
-The review gate also checks the proposed PR metadata and issue requirements.
-Issue alignment is checked against frozen host evidence, with matching staged copies for the reviewer.
-Local Task evidence does not provide tamper-resistant attestation against a compromised coordinator; the fresh review remains mandatory.
-Template-exempt typos, broken links and small documentation improvements need no issue.
-Nontrivial changes require the supplied existing issue, maintainer agreement and assignment to the dispatching actor; otherwise the run reports findings and noops.
-The separate PR sink uses the existing Docs app and retains protected-file review.
-Hosted token minting, whole-set completion and automatic PR CI require an actual run to verify.
-Detection request events use the supported Claude OTel configuration; complete accounting remains tracked in [#11225](https://github.com/pydantic/pydantic-ai/issues/11225).
+`.github/scripts/weekly_ce_audit.py` inventories committed objects, resolves tracked aliases, and rejects incomplete reported coverage or edits outside existing canonical instruction Markdown.
+Workflow sources, imports and the packaged gh-aw definition remain report-only.
+Keep candidate edits in a separate worktree and the reviewer checkout at the immutable policy base.
+
+A fresh read-only Task must assess the actual diff, template exemption and scope of cited maintainer agreement.
+Typos, broken links and small documentation improvements may omit an issue; nontrivial changes need an existing aligned issue assigned to the workflow actor, or noop.
+For non-exempt proposals, host validation checks frozen issue identity, open state, assignment, cited maintainer authority and closing reference.
+It also checks staged evidence and binds the review to the candidate, task and PR metadata; semantic classification belongs to the mandatory reviewer.
+Local Task evidence is an execution check, not attestation against a compromised coordinator.
+
+The separate PR publication job uses the existing Docs app and retains protected-file review.
+The validator's regressions live in `.github/scripts/test_weekly_ce_audit.py`; use the compilation rules above when changing the workflow source.
 
 ## Shared Z.AI account limits
 

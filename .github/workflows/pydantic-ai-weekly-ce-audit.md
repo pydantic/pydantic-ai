@@ -235,6 +235,8 @@ For a nontrivial change, require the supplied existing issue, explicit maintaine
 Use `.ce-audit/issue*.json` for that issue's discussion, assignment and resolved maintainer permissions.
 If that evidence is absent or does not cover the proposed scope, preserve findings and emit `noop`.
 Do not create issues or invent alignment to make a candidate publishable.
+The fresh reviewer must determine whether the template exemption applies to the actual diff and whether the cited agreement covers its scope.
+Host validation checks the review bindings and frozen issue fields for non-exempt proposals; it does not classify the change's semantics.
 
 Before requesting a PR, finish the receipt and commit one focused candidate in `.ce-audit/candidate/`.
 Explain the concrete defect, canonical policy owner, loading evidence, and preserved exceptions.

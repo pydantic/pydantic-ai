@@ -295,7 +295,7 @@ def review_material(
     prompt = (
         'Review this candidate independently under .agents/skills/pre-push-review/SKILL.md.\n'
         f'Policy-base and merge-base: {source}. Candidate head: {head}. Candidate tree: {tree}.\n'
-        'This is the candidate PR mandatory pre-push review, call 1 of 3, not an optional second opinion.\n'
+        'This mandatory pre-push review is the only review attempt for this candidate in this run.\n'
         'Work from the unchanged policy checkout at the workspace root.\n'
         'Read root AGENTS.md, agent_docs/index.md and relevant policy/directory guides there.\n'
         'Read .ce-audit/review/task.md, proposal.json, candidate.json and candidate.diff.\n'
@@ -309,6 +309,7 @@ def review_material(
         'Behavioral instruction changes require an existing issue, explicit maintainer agreement and assignment to the actor.\n'
         'Do not infer alignment from a related issue number. Verify the exact proposed scope and the cited agreement.\n'
         'Review the issue_exemption and exemption_reason declared in proposal.json; only template exemptions apply.\n'
+        'Determine whether the exemption applies from the actual diff, not the author declaration alone.\n'
         'For a nontrivial change, verify proposal.json issue_number and alignment_url against the supplied evidence.\n'
         f'With no actionable findings, return exactly: current {metadata["digest"]}\n'
         'This compact approval binds every bundle input and fits the existing Task stream preview.\n'
@@ -392,7 +393,7 @@ def validate_review(
     log: Path,
     issue_evidence: Path | None = None,
 ) -> None:
-    """Bind the independent review and issue contract to the exact published tree."""
+    """Bind semantic review to the tree and check frozen issue fields for non-exempt proposals."""
     validate_policy_checkout(root, source, directory)
     expected, diff, prompt = review_material(root, source, revision, directory, issue_evidence)
     prepared: object = json.loads((directory / 'review/candidate.json').read_text())
