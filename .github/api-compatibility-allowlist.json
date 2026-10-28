@@ -1,7 +1,7 @@
 {
   "allowed_breakages": [
     {
-      "against": "v2.62.0",
+      "against": "v2.63.0",
       "fingerprint": "84fb821d708b64736da58e040ef0638c11ebd5209ef92d20b804dd2a03fd5ff2",
       "reason": "False positive: `SPECULATIVE_TOOLS` only gains `search_clai_docs` and `read_clai_docs`; every existing key and owner is unchanged. The class-valued registry cannot be compared as a literal collection.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11672"
