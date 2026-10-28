@@ -174,9 +174,9 @@ class AzureProvider(_OpenAISDKProvider):
         """The model profile, with the unified `cache` setting turned on where this provider's API takes it.
 
         The [Azure OpenAI v1 API](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle)
-        honors GPT-5.6's `prompt_cache_options`, whose only TTL is `'30m'`, and explicit breakpoints, which the
-        unified `cache` setting maps onto, as on `OpenAIProvider`. Dated `api-version` deployments and Azure AI
-        Foundry serverless endpoints aren't verified to accept them, so `cache` stays off there.
+        honors the `prompt_cache_options` (whose only TTL is `'30m'`) and explicit breakpoints of GPT-5.6 and later,
+        which the unified `cache` setting maps onto, as on `OpenAIProvider`. Dated `api-version` deployments and
+        Azure AI Foundry serverless endpoints aren't verified to accept them, so `cache` stays off there.
         """
         profile = self.model_profile(model_name)
         if (
