@@ -476,6 +476,10 @@ print(agent.run_sync('Set up storage').output)
 - Answerer: any `async (AskUserRequest) -> AskUserResponse`. `request.id` matches replies in a UI.
 - Decline: return `AskUserResponse(cancelled=True)`; the model gets a "user declined" tool result.
 - Free text: `AskUserAnswer(header=..., custom_answer='...')` with `selected` empty.
+- Answer notes: `AskUserAnswer.note` accompanies selected labels or a custom answer with text and attachments.
+  Notes reach the user channel in `answer_note` frames and remain user turns during compaction.
+  See [Adding notes to an answer](https://pydantic.dev/docs/ai/harness/ask-user/#adding-notes-to-an-answer)
+  for supported content, validation and provenance; annotate tool results with `AskUserResult` from `pydantic_ai_harness.ask_user`.
 - An answer that does not fit (unknown header/label, several picks on single-select, missing
   answer) raises `ValueError` and fails the run; call `check_response(request, response)` (from
   `pydantic_ai_harness.ask_user`) first.

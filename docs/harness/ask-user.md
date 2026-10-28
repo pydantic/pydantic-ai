@@ -29,6 +29,8 @@ The capability owns the schema and validation. It never prints, reads stdin, or 
 terminal library: the `answerer` is whatever puts the questions in front of a person, and you
 supply it. There is no default, because a capability that reads stdin is unusable from a server.
 
+Import `AskUser` at module level, before framing data or running agents, to register its note tag up front.
+
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import AskUser

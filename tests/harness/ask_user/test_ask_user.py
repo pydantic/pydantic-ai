@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from collections.abc import AsyncIterator, Sequence
@@ -9,10 +10,13 @@ from collections.abc import AsyncIterator, Sequence
 import anyio
 import pytest
 from inline_snapshot import snapshot
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
-from pydantic_ai.capabilities import AbstractCapability, PrefixTools, on_event
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation, PrefixTools, on_event
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.framing import wrap
 from pydantic_ai.messages import (
@@ -36,6 +40,7 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import AskUser
 from pydantic_ai_harness.ask_user import (
@@ -613,6 +618,77 @@ class TestCustomAnswers:
 
 
 class TestAnswerNotes:
+    """In-process tests pin pre-request validation and message/trace shapes that HTTP cassettes cannot validate."""
+
+    @pytest.mark.parametrize('deferred', [False, True])
+    @pytest.mark.parametrize(
+        ('include_content', 'include_binary_content'), [(True, True), (True, False), (False, True)]
+    )
+    async def test_trace_content_settings_cover_note_text_and_attachments(
+        self, deferred: bool, include_content: bool, include_binary_content: bool
+    ) -> None:
+        note_text = 'PRIVATE_NOTE_TEXT'
+        note_bytes = b'PRIVATE_NOTE_BYTES'
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        response = AskUserResponse(
+            answers=(
+                AskUserAnswer(
+                    header='Approach',
+                    selected=('Patch',),
+                    note=(
+                        note_text,
+                        BinaryContent(data=note_bytes, media_type='image/png'),
+                    ),
+                ),
+                AskUserAnswer(header='Targets', selected=('api.py',)),
+            )
+        )
+        agent = Agent(
+            calling(raw_questions()),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[
+                AskUser(answerer=None if deferred else ScriptedAnswerer(response)),
+                Instrumentation(
+                    settings=InstrumentationSettings(
+                        tracer_provider=provider,
+                        include_content=include_content,
+                        include_binary_content=include_binary_content,
+                    )
+                ),
+            ],
+        )
+        result = await agent.run('go')
+        if deferred:
+            assert isinstance(result.output, DeferredToolRequests)
+            (call,) = result.output.calls
+            request = AskUserRequest.from_tool_call(call)
+            await agent.run(
+                message_history=result.all_messages(),
+                deferred_tool_results=DeferredToolResults(
+                    calls={call.tool_call_id: ask_user_result(request, response)}
+                ),
+            )
+        spans = exporter.get_finished_spans()
+        blob = json.dumps(
+            [
+                {
+                    'name': span.name,
+                    'attributes': dict(span.attributes or {}),
+                    'events': [dict(event.attributes or {}) for event in span.events],
+                }
+                for span in spans
+            ]
+        )
+        assert (note_text in blob) is include_content
+        assert (base64.b64encode(note_bytes).decode() in blob) is (include_content and include_binary_content)
+        assert note_bytes.decode() not in blob
+        if not deferred:
+            (tool_span,) = [span for span in spans if span.name == 'execute_tool ask_user_question']
+            assert (note_text in json.dumps(dict(tool_span.attributes or {}))) is include_content
+        provider.shutdown()
+
     @pytest.mark.parametrize('keep_user_messages', [False, True])
     async def test_compaction_treats_notes_as_user_constraints(self, keep_user_messages: bool) -> None:
         request = AskUserRequest(questions=(question(),))
