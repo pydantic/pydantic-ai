@@ -125,6 +125,8 @@ def test_gh_cli_parses_github_responses(monkeypatch: pytest.MonkeyPatch):
     responses['repos/o/r/pulls/7'] = '{"changed_files": 3}'
     with pytest.raises(GateError, match='Retrieved only 2 of 3'):
         github.changed_files()
+    responses['repos/o/r/pulls/7'] = '{"changed_files": 1}'
+    assert len(github.changed_files()) == 2
 
 
 class _Trigger(BaseModel):
@@ -200,6 +202,73 @@ def test_review_observer_is_read_only_and_schema_matches_the_trusted_publisher()
     assert json.loads(args[args.index('--json-schema') + 1]) == ReviewResult.model_json_schema()
 
 
+@pytest.mark.parametrize('missing_ref', [False, True])
+def test_observer_cannot_choose_the_status_target(missing_ref: bool):
+    workflow = _Workflow.model_validate(yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader))
+    resolve = workflow.jobs['review-target'].steps[0].settings['script']
+    pending = workflow.jobs['review-statuses'].steps[0].settings['script']
+    # Execute the actual JavaScript host steps; Python cannot run these in-process.
+    harness = (
+        """
+const data = JSON.parse(process.argv[1]);
+const outputs = {};
+const writes = [];
+const calls = [];
+const core = {setOutput: (name, value) => {outputs[name] = value;}};
+const context = {
+  eventName: 'workflow_run', serverUrl: 'https://github.com', runId: 1,
+  repo: {owner: 'pydantic', repo: 'pydantic-ai'},
+  payload: {workflow_run: {
+    display_title: data.title, path: '.github/workflows/pr-gates-events.yml',
+    repository: {full_name: 'pydantic/pydantic-ai'}
+  }}
+};
+const require = (name) => {
+  if (name !== 'node:child_process') throw new Error('Unexpected dependency');
+  return {execFileSync: (command, args) => {calls.push([command, ...args]); return data.ref;}};
+};
+const github = {rest: {repos: {createCommitStatus: async (value) => {writes.push(value);}}}};
+async function resolve() {
+"""
+        + resolve
+        + """
+}
+async function pending() {
+  process.env.PR_NUMBER = String(outputs.number);
+  process.env.MERGE_GROUP_SHA = outputs.group || '';
+"""
+        + pending
+        + """
+}
+resolve().then(pending).then(() => {
+  console.log(JSON.stringify({outputs, writes, calls}));
+}).catch(error => {
+  console.log(JSON.stringify({outputs, writes, calls, error: error.message}));
+  process.exitCode = 1;
+});
+"""
+    )
+    data: dict[str, str] = {
+        'title': f'PR Gates Events #7 @ {OLD_HEAD}',
+        'ref': '' if missing_ref else f'{HEAD}\trefs/pull/7/head\n',
+    }
+    result = subprocess.run(
+        ['node', '--input-type=module', '-e', harness, json.dumps(data)], capture_output=True, text=True
+    )
+    output = json.loads(result.stdout)
+    assert output['outputs'] == {'number': 7}
+    assert output['calls'] == [['git', 'ls-remote', 'https://github.com/pydantic/pydantic-ai.git', 'refs/pull/7/head']]
+    if missing_ref:
+        assert result.returncode == 1
+        assert output['writes'] == []
+        assert output['error'] == 'Cannot resolve a verified PR head'
+    else:
+        assert result.returncode == 0
+        assert [(write['sha'], write['context'], write['state']) for write in output['writes']] == [
+            (HEAD, context, 'pending') for context in pr_gates.REVIEW_CONTEXTS.values()
+        ]
+
+
 HEAD = 'a' * 40
 OLD_HEAD = 'b' * 40
 BOT = pr_gates.ReviewUser(id=1, login='github-actions[bot]', type='Bot')
@@ -234,11 +303,11 @@ class ReviewGitHub:
     labels: list[str] | None = None
     current_reviews: list[pr_gates.Review] = field(default_factory=lambda: [review()])
     comments: list[pr_gates.ReviewComment] = field(default_factory=list[pr_gates.ReviewComment])
-    permissions: dict[str, str] = field(default_factory=lambda: {'maintainer': 'write'})
+    permissions: dict[str, pr_gates.Permission] = field(default_factory=lambda: {'maintainer': 'write'})
     verified: bool = True
     head: str = HEAD
-    statuses: list[tuple[str, pr_gates.ReviewGate, str]] = field(
-        default_factory=list[tuple[str, pr_gates.ReviewGate, str]]
+    statuses: list[tuple[str, pr_gates.ReviewGate, pr_gates.CommitStatus]] = field(
+        default_factory=list[tuple[str, pr_gates.ReviewGate, pr_gates.CommitStatus]]
     )
 
     def pull_request(self) -> pr_gates.ReviewPullRequest:
@@ -264,14 +333,16 @@ class ReviewGitHub:
     def review_comments(self) -> list[pr_gates.ReviewComment]:
         return self.comments.copy()
 
-    def permission(self, login: str) -> str:
+    def permission(self, login: str) -> pr_gates.Permission:
         return self.permissions.get(login, 'read')
 
     def verified_review_run(self, run_id: int, head: str) -> bool:
         assert (run_id, head) == (20, HEAD)
         return self.verified
 
-    def status(self, head: str, gate: pr_gates.ReviewGate, state: str, description: str, url: str) -> None:
+    def status(
+        self, head: str, gate: pr_gates.ReviewGate, state: pr_gates.CommitStatus, description: str, url: str
+    ) -> None:
         self.statuses.append((head, gate, state))
 
 
@@ -376,7 +447,9 @@ def test_other_review_receipt_does_not_count_as_douwebot_finding(workflow: str):
         (MAINTAINER, 'write', ['APPROVED', 'COMMENTED'], True),
     ],
 )
-def test_human_approval_semantics(user: pr_gates.ReviewUser, permission: str, states: list[str], passes: bool):
+def test_human_approval_semantics(
+    user: pr_gates.ReviewUser, permission: pr_gates.Permission, states: list[str], passes: bool
+):
     github = ReviewGitHub(size_label='size: L', permissions={user.login: permission})
     github.current_reviews += [review(11 + index, user, state, OLD_HEAD, '') for index, state in enumerate(states)]
     assert bool(verdicts(github)['human'].failures) is not passes
@@ -412,6 +485,16 @@ def test_errors_and_changing_snapshots_fail_closed():
     assert all(state == 'failure' for _, _, state in moving.statuses[-2:])
 
 
+def test_no_snapshot_cannot_write_to_an_unverified_environment_head():
+    class NoSnapshot(ReviewGitHub):
+        def pull_request(self) -> pr_gates.ReviewPullRequest:
+            raise GateError('PR does not exist or cannot be read')
+
+    github = NoSnapshot()
+    assert pr_gates.reconcile_reviews(github, {**ENV, 'HEAD_SHA': OLD_HEAD}) == 1
+    assert github.statuses == []
+
+
 def test_merge_group_skips_metadata_and_reports_both_contexts():
     class NoMetadata(ReviewGitHub):
         def pull_request(self) -> pr_gates.ReviewPullRequest:
@@ -437,13 +520,13 @@ def test_publisher_binds_inline_comments_to_one_marked_review():
     assert json.loads(publication(result.model_copy(update={'verdict': 'INCOMPLETE'}), HEAD, 20))['event'] == 'COMMENT'
 
 
-@pytest.mark.parametrize('moved', [False, True])
-def test_publisher_checks_live_head_before_publication(monkeypatch: pytest.MonkeyPatch, moved: bool):
+@pytest.mark.parametrize('state', ['open', 'moved', 'closed'])
+def test_publisher_checks_live_head_before_publication(monkeypatch: pytest.MonkeyPatch, state: str):
     for key, value in {
         **ENV,
         'GH_TOKEN': 'token',
         'PR_NUMBER': '7',
-        'REVIEW_RESULT': '{"verdict":"APPROVE","comments":[],"discussion":""}',
+        'REVIEW_RESULT': '{"verdict":"APPROVE","comments":[],"discussion":""}' if state == 'open' else '',
     }.items():
         monkeypatch.setenv(key, value)
     calls: list[list[str]] = []
@@ -451,16 +534,16 @@ def test_publisher_checks_live_head_before_publication(monkeypatch: pytest.Monke
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[-1].startswith('"'):
-            return subprocess.CompletedProcess(args, 0, f'open at {OLD_HEAD if moved else HEAD}', '')
+            live = f'closed at {HEAD}' if state == 'closed' else f'open at {OLD_HEAD if state == "moved" else HEAD}'
+            return subprocess.CompletedProcess(args, 0, live, '')
         assert args[-1] == 'repos/o/r/pulls/7/reviews'
         assert '--input' in args
         assert kwargs['input'] == publication(ReviewResult(verdict='APPROVE', comments=[], discussion=''), HEAD, 100)
         return subprocess.CompletedProcess(args, 0, '', '')
 
     monkeypatch.setattr(publish_douwebot_review.subprocess, 'run', fake_run)
-    if moved:
-        with pytest.raises(RuntimeError, match='closed or moved'):
-            publish_douwebot_review.main()
+    if state != 'open':
+        publish_douwebot_review.main()
         assert len(calls) == 1
     else:
         publish_douwebot_review.main()

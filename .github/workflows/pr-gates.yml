@@ -40,6 +40,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             .github/scripts/pr_gates.py
+            .github/scripts/publish_douwebot_review.py
             .github/scripts/check_api_compatibility.py
           sparse-checkout-cone-mode: false
       - name: Install pinned script dependencies
@@ -57,9 +58,9 @@ jobs:
     name: Resolve review gate target
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       number: ${{ steps.target.outputs.number }}
-      head: ${{ steps.target.outputs.head }}
       group: ${{ steps.target.outputs.group }}
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -68,7 +69,6 @@ jobs:
           script: |
             if (context.eventName === 'merge_group') {
               core.setOutput('group', context.payload.merge_group.head_sha);
-              core.setOutput('head', context.payload.merge_group.head_sha);
               return;
             }
             let number;
@@ -85,16 +85,11 @@ jobs:
               }
               number = Number(match[2]);
               if (!Number.isSafeInteger(number)) throw new Error('Invalid PR number');
-              core.setOutput('number', number);
-              core.setOutput('head', match[3]);
-              return;
             } else {
               number = context.payload.pull_request.number;
             }
             if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid PR number');
-            const pull = context.payload.pull_request;
             core.setOutput('number', number);
-            core.setOutput('head', pull.head.sha);
 
   review-statuses:
     name: Publish size-dependent review gates
@@ -115,12 +110,28 @@ jobs:
       - name: Mark both review requirements pending
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          HEAD_SHA: ${{ needs.review-target.outputs.head }}
+          PR_NUMBER: ${{ needs.review-target.outputs.number }}
+          MERGE_GROUP_SHA: ${{ needs.review-target.outputs.group }}
         with:
           script: |
+            let head = process.env.MERGE_GROUP_SHA;
+            if (!head) {
+              // The observer's title supplies only a PR number. Resolve its live
+              // canonical ref inside the PR lock before any write or setup step.
+              const number = Number(process.env.PR_NUMBER);
+              if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid PR number');
+              const ref = `refs/pull/${number}/head`;
+              const output = require('node:child_process').execFileSync('git', [
+                'ls-remote', `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}.git`, ref
+              ], {encoding: 'utf8'}).trim().split(/\s+/);
+              if (output.length !== 2 || !/^[a-f0-9]{40}$/.test(output[0]) || output[1] !== ref) {
+                throw new Error('Cannot resolve a verified PR head');
+              }
+              head = output[0];
+            }
             for (const name of ['Gate: clean douwebot approval', 'Gate: human approval']) {
               await github.rest.repos.createCommitStatus({
-                ...context.repo, sha: process.env.HEAD_SHA, context: name,
+                ...context.repo, sha: head, context: name,
                 state: 'pending', description: 'Reading current size and reviews.',
                 target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
               });
@@ -132,6 +143,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             .github/scripts/pr_gates.py
+            .github/scripts/publish_douwebot_review.py
             .github/scripts/pr_size.sh
             .github/scripts/check_api_compatibility.py
           sparse-checkout-cone-mode: false
@@ -141,6 +153,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.review-target.outputs.number }}
-          HEAD_SHA: ${{ needs.review-target.outputs.head }}
           MERGE_GROUP_SHA: ${{ needs.review-target.outputs.group }}
         run: python3 .github/scripts/pr_gates.py review-gates

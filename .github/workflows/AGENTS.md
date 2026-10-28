@@ -8,10 +8,10 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 | Name | Where | Runs when |
 |------|-------|-----------|
 | `CI Review` | `pydantic-ai-pr-review.md` | when a user with write access or higher **approves** the PR's current head, on applying the **`final-review` label**, or on dispatch, once `CI` has passed on that head. Never in the merge queue. Z.AI Coding Plan engine, submits formal `REQUEST_CHANGES` for verified HIGH or CRITICAL findings, `COMMENT` for incomplete coverage without those findings, and `APPROVE` after complete coverage without them. Same-repo PRs only. |
-| `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and Claude Opus 5.5. Deletes the label when it finishes. Posts inline findings and a formal `APPROVE` or `REQUEST_CHANGES` review for the reviewed head. |
+| `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and Claude Opus 5.5. Deletes the label when it finishes. A trusted publisher posts structured findings as one formal `APPROVE`, `REQUEST_CHANGES`, or incomplete `COMMENT` review. |
 | `douwebot:review-agent-config` | `bots.yml` | one explicit review request for one PR head; the labeling sender must be a `User` with current `write` or `admin` permission. The label is not standing approval. |
 
-`douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It requests changes while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It approves after a complete review with no outstanding blocking findings; optional findings may remain. It submits no verdict when the review is incomplete or the PR head changes before publication. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review.
+`douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It returns `REQUEST_CHANGES` while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It returns `APPROVE` after a complete review with no outstanding blocking findings; optional findings may remain. Incomplete coverage returns `INCOMPLETE`, which the publisher records as `COMMENT`. A host-verified closed PR or moved head needs no publication and ends successfully. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review.
 
 The `douwebot:review-agent-config` label requests one review only from its first `labeled` event. The workflow checks the sender's current repository permission, the event's immutable head against the live PR head, and that the label is still present immediately before Claude starts. API errors, non-`User` senders, reruns, stale heads, and removed labels deny the request. An ordinary `douwebot` event never inherits approval from the label. To retry or approve a new head, a maintainer removes and reapplies the label; do not rerun the old event. The workflow never removes this label automatically because an old run could consume a newer request.
 
@@ -218,6 +218,8 @@ dismissal in the ruleset to enforce human freshness when the diff changes.
 including forks. Its completion wakes a privileged `workflow_run`; its title supplies only a PR
 number, never a verdict. PR Bots completion also wakes the gate because `GITHUB_TOKEN` writes do
 not trigger review or label workflows. Fork observer runs may require contributor approval.
+Resolve that number through GitHub's canonical `refs/pull/<number>/head` before any status write.
+Ignore the SHA in an observer's title. A missing or unreadable canonical ref cannot target a status.
 Rerun an existing default-branch `PR Gates` run to retry after an API failure or delayed observer.
 Do not add branch-selectable dispatch to this privileged workflow.
 

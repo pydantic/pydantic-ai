@@ -559,7 +559,7 @@ jobs:
             - friendly without being sycophantic: use the tone and language of a helpful and encouraging project maintainer, but no need to compliment the author on positive aspects of the PR or point out changes that are good.
             - non-repetitive: don't repeat things pointed out in earlier review comments, unless it looks like they'll be forgotten if you don't point them out; e.g. when they're marked as resolved/outdated but the problem persists without a satisfactory resolution (like a maintainer comment saying the comment does not need to be addressed).
 
-            Before publishing review feedback, run `gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json headRefOid --jq .headRefOid` and compare the result with the reviewed head `${{ github.event.pull_request.head.sha }}`. If they differ, stop without publishing findings or a verdict.
+            Before returning the structured result, run `gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json headRefOid --jq .headRefOid` and compare the result with the reviewed head `${{ github.event.pull_request.head.sha }}`. If they differ, return INCOMPLETE with no findings. The trusted publisher checks the head again and skips publication for a closed or moved PR.
 
             # Structured review result
 
@@ -574,7 +574,7 @@ jobs:
             Do not duplicate earlier findings; assess them when choosing the verdict.
 
             You are meant to be helpful to the contributor and the maintainer, so your comments should never add noise to the conversation:
-            - Do not post a redundant top-level summary comment. Submit the required concise formal review body, and use inline comments for actionable findings.
+            - Do not add a redundant summary to discussion. Return actionable inline findings in comments.
             - Do not comment on lines that do not need improvement, maintainer awareness, or discussion; comments pointing out a good choice are just noise.
             - Do not post multiple comments for the same exact issue unless it shows up in different places.
 
@@ -595,13 +595,13 @@ jobs:
         if: needs.review.result == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
-          TRUSTED_SHA: ${{ github.event.repository.default_branch }}
+          TRUSTED_REF: ${{ github.event.repository.default_branch }}
           REVIEW_RESULT: ${{ needs.review.outputs.result }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          gh api -H 'Accept: application/vnd.github.raw+json' "repos/${GITHUB_REPOSITORY}/contents/.github/scripts/publish_douwebot_review.py?ref=${TRUSTED_SHA}" > "$RUNNER_TEMP/publish_douwebot_review.py"
+          gh api -H 'Accept: application/vnd.github.raw+json' "repos/${GITHUB_REPOSITORY}/contents/.github/scripts/publish_douwebot_review.py?ref=${TRUSTED_REF}" > "$RUNNER_TEMP/publish_douwebot_review.py"
           python3 -m pip install --quiet 'pydantic==2.13.4'
           python3 "$RUNNER_TEMP/publish_douwebot_review.py"
 

@@ -9,16 +9,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Protocol, assert_never
+from typing import Literal, Protocol, TypeVar, assert_never
 
 from check_api_compatibility import Allowlist
+from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 ALLOWLIST = '.github/api-compatibility-allowlist.json'
@@ -27,11 +27,12 @@ Gate = Literal['compatibility-waiver']
 TITLES: dict[Gate, str] = {'compatibility-waiver': 'Compatibility waiver labeled'}
 ReviewGate = Literal['douwebot', 'human']
 Size = Literal['size: S', 'size: M', 'size: L', 'size: XL']
+Permission = Literal['admin', 'write', 'read', 'none']
+CommitStatus = Literal['pending', 'success', 'failure']
 REVIEW_CONTEXTS: dict[ReviewGate, str] = {
     'douwebot': 'Gate: clean douwebot approval',
     'human': 'Gate: human approval',
 }
-DOUWEBOT_MARKER = re.compile(r'\n\n<!-- douwebot:review run=([1-9][0-9]*) head=([a-f0-9]{40}) -->\Z')
 
 
 class GateError(Exception):
@@ -123,7 +124,7 @@ class _Jobs(BaseModel):
 
 
 class _Permission(BaseModel):
-    permission: Literal['admin', 'write', 'read', 'none']
+    permission: Permission
 
 
 class _SizedFile(ChangedFile):
@@ -143,9 +144,9 @@ class ReviewGitHub(Protocol):
     def size(self, pull: ReviewPullRequest) -> Size: ...
     def reviews(self) -> list[Review]: ...
     def review_comments(self) -> list[ReviewComment]: ...
-    def permission(self, login: str) -> str: ...
+    def permission(self, login: str) -> Permission: ...
     def verified_review_run(self, run_id: int, head: str) -> bool: ...
-    def status(self, head: str, gate: ReviewGate, state: str, description: str, url: str) -> None: ...
+    def status(self, head: str, gate: ReviewGate, state: CommitStatus, description: str, url: str) -> None: ...
 
 
 def review_verdicts(
@@ -193,24 +194,15 @@ def douwebot_approval(
         marker = DOUWEBOT_MARKER.search(review.body)
         if marker and marker[2] == pull.head.sha:
             marked_ids.add(review.id)
+            if review.state == 'APPROVED' and review.body[: marker.start()] != APPROVAL_BODY:
+                verdict.failures.append('Douwebot has discussion findings on this head.')
             if github.verified_review_run(int(marker[1]), pull.head.sha):
                 own_reviews.append(review)
 
-    decisions = [review for review in own_reviews if review.state in ('APPROVED', 'CHANGES_REQUESTED')]
-    if (
-        not decisions
-        or max(
-            decisions, key=lambda review: (review.submitted_at.timestamp() if review.submitted_at else 0, review.id)
-        ).state
-        != 'APPROVED'
-    ):
+    decisions: list[Review] = [review for review in own_reviews if review.state in ('APPROVED', 'CHANGES_REQUESTED')]
+    if not decisions or max(decisions, key=review_order).state != 'APPROVED':
         verdict.failures.append('Requires a marked, successful douwebot approval on the current head.')
-    if any(
-        review.state == 'APPROVED' and review.body.split('\n\n<!-- douwebot:review')[0] != 'No blocking findings.'
-        for review in own_reviews
-    ):
-        verdict.failures.append('Douwebot has discussion findings on this head.')
-    by_id = {review.id: review for review in reviews}
+    by_id: dict[int, Review] = {review.id: review for review in reviews}
     for comment in comments:
         if comment.user.login != 'github-actions[bot]' or comment.user.type != 'Bot':
             continue
@@ -245,9 +237,7 @@ def human_approval(github: ReviewGitHub, pull: ReviewPullRequest, reviews: list[
     """Accept the latest non-dismissed decision from a different human with current write access."""
     verdict = Verdict()
     latest: dict[int, Review] = {}
-    for review in sorted(
-        reviews, key=lambda review: (review.submitted_at.timestamp() if review.submitted_at else 0, review.id)
-    ):
+    for review in sorted(reviews, key=review_order):
         if (
             review.user.type == 'User'
             and review.user.id != pull.user.id
@@ -262,6 +252,11 @@ def human_approval(github: ReviewGitHub, pull: ReviewPullRequest, reviews: list[
     return verdict
 
 
+def review_order(review: Review) -> tuple[float, int]:
+    """Order submitted decisions chronologically, including reviews created as drafts."""
+    return (review.submitted_at.timestamp() if review.submitted_at else 0, review.id)
+
+
 def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
     """Serialize externally, read live state, and replace the statuses on that exact head."""
     url = f'{env["GITHUB_SERVER_URL"]}/{env["GITHUB_REPOSITORY"]}/actions/runs/{env["GITHUB_RUN_ID"]}'
@@ -269,7 +264,7 @@ def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
         for gate in REVIEW_CONTEXTS:
             github.status(group, gate, 'success', 'Admission-only review gate; merge-group evaluation skipped.', url)
         return 0
-    head = env['HEAD_SHA']
+    head = ''
     verdicts: dict[ReviewGate, Verdict]
     try:
         for _ in range(3):
@@ -288,6 +283,11 @@ def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
         else:
             raise GateError('PR changed repeatedly while evaluating reviews; retry the gate.')
     except (GateError, ValidationError, OSError) as error:
+        if not head:
+            # Setup already left the independently verified target pending.
+            # Never write to a caller-supplied SHA when no PR snapshot was read.
+            print(f'Cannot read live PR: {type(error).__name__}: {error}')
+            return 1
         verdicts = {gate: Verdict(failures=[f'{type(error).__name__}: {error}']) for gate in REVIEW_CONTEXTS}
     failed = False
     for gate, verdict in verdicts.items():
@@ -363,6 +363,12 @@ def _waivers(text: str | None) -> set[tuple[str, str]]:
 
 _FILE_PAGES = TypeAdapter(list[list[ChangedFile]])
 _LABEL_PAGES = TypeAdapter(list[list[_Label]])
+_SIZED_FILE_PAGES = TypeAdapter(list[list[_SizedFile]])
+_SIZED_FILES = TypeAdapter(list[_SizedFile])
+_REVIEW_PAGES = TypeAdapter(list[list[Review]])
+_COMMENT_PAGES = TypeAdapter(list[list[ReviewComment]])
+_JOB_PAGES = TypeAdapter(list[_Jobs])
+FileT = TypeVar('FileT', bound=ChangedFile)
 
 
 class GhCli:
@@ -381,12 +387,18 @@ class GhCli:
 
     def changed_files(self) -> list[ChangedFile]:
         total = _PullRequest.model_validate_json(self._api(self._pull)).changed_files
-        pages = _FILE_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/files?per_page=100'))
-        files = [file for page in pages for file in page]
+        return self.file_pages(_FILE_PAGES, total, exact=False)
+
+    def file_pages(self, adapter: TypeAdapter[list[list[FileT]]], total: int, *, exact: bool) -> list[FileT]:
+        """Read the whole file list with the caller's snapshot-completeness requirement."""
+        pages = adapter.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/files?per_page=100'))
+        files: list[FileT] = [file for page in pages for file in page]
         # The endpoint caps at 3000 files and truncates silently; deciding on a partial list
         # could miss a changed allowlist.
         if len(files) < total:
             raise GateError(f'Retrieved only {len(files)} of {total} changed files (the PR files API caps at 3000).')
+        if exact and len(files) != total:
+            raise GateError('PR file count changed during review evaluation; retry the gate.')
         return files
 
     def labels(self) -> set[str]:
@@ -399,11 +411,7 @@ class GhCli:
 
     def size(self, pull: ReviewPullRequest) -> Size:
         """Use the same Git-attribute-aware calculation as PR Bots."""
-        adapter = TypeAdapter(list[list[_SizedFile]])
-        pages = adapter.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/files?per_page=100'))
-        files = [file for page in pages for file in page]
-        if len(files) != pull.changed_files:
-            raise GateError('Incomplete PR files response; cannot determine size.')
+        files = self.file_pages(_SIZED_FILE_PAGES, pull.changed_files, exact=True)
         # Fetch base objects as data only; never check out or execute PR code.
         present = subprocess.run(['git', 'cat-file', '-e', f'{pull.base.sha}^{{commit}}'], capture_output=True)
         if present.returncode:
@@ -414,7 +422,7 @@ class GhCli:
                 raise GateError('Cannot fetch base attributes for size calculation.')
         result = subprocess.run(
             ['bash', str(Path(__file__).with_name('pr_size.sh')), pull.base.sha],
-            input=TypeAdapter(list[_SizedFile]).dump_json(files).decode(),
+            input=_SIZED_FILES.dump_json(files).decode(),
             capture_output=True,
             text=True,
             check=False,
@@ -425,19 +433,15 @@ class GhCli:
 
     def reviews(self) -> list[Review]:
         """Read every review, including superseded and dismissed decisions."""
-        pages = TypeAdapter(list[list[Review]]).validate_json(
-            self._api('--paginate', '--slurp', f'{self._pull}/reviews?per_page=100')
-        )
+        pages = _REVIEW_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/reviews?per_page=100'))
         return [review for page in pages for review in page]
 
     def review_comments(self) -> list[ReviewComment]:
         """Read every inline comment; resolution does not make a finding clean."""
-        pages = TypeAdapter(list[list[ReviewComment]]).validate_json(
-            self._api('--paginate', '--slurp', f'{self._pull}/comments?per_page=100')
-        )
+        pages = _COMMENT_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/comments?per_page=100'))
         return [comment for page in pages for comment in page]
 
-    def permission(self, login: str) -> str:
+    def permission(self, login: str) -> Permission:
         """Resolve the reviewer's current base permission."""
         return _Permission.model_validate_json(self._api(f'{self._repo}/collaborators/{login}/permission')).permission
 
@@ -453,13 +457,13 @@ class GhCli:
             and run.conclusion == 'success'
         ):
             return False
-        pages = TypeAdapter(list[_Jobs]).validate_json(
+        pages = _JOB_PAGES.validate_json(
             self._api('--paginate', '--slurp', f'{self._repo}/actions/runs/{run_id}/jobs?per_page=100')
         )
-        jobs = {job.name: job.conclusion for page in pages for job in page.jobs}
+        jobs: dict[str, str | None] = {job.name: job.conclusion for page in pages for job in page.jobs}
         return jobs.get('douwebot') == 'success' and jobs.get('Publish douwebot review') == 'success'
 
-    def status(self, head: str, gate: ReviewGate, state: str, description: str, url: str) -> None:
+    def status(self, head: str, gate: ReviewGate, state: CommitStatus, description: str, url: str) -> None:
         """Latest-per-context commit statuses replace a previous failing verdict."""
         payload: dict[str, str] = {
             'context': REVIEW_CONTEXTS[gate],

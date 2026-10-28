@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from typing import Literal
 
 from pydantic import BaseModel, Field
+
+APPROVAL_BODY = 'No blocking findings.'
+DOUWEBOT_MARKER = re.compile(r'\n\n<!-- douwebot:review run=([1-9][0-9]*) head=([a-f0-9]{40}) -->\Z')
 
 
 class Finding(BaseModel):
@@ -29,8 +33,8 @@ class ReviewResult(BaseModel):
 
 def publication(result: ReviewResult, head: str, run_id: int) -> str:
     """Bind the formal review and all inline findings to this run and reviewed head."""
-    bodies = {
-        'APPROVE': 'No blocking findings.',
+    bodies: dict[Literal['APPROVE', 'REQUEST_CHANGES', 'INCOMPLETE'], str] = {
+        'APPROVE': APPROVAL_BODY,
         'REQUEST_CHANGES': 'Blocking findings are recorded inline.',
         'INCOMPLETE': 'Review incomplete.',
     }
@@ -50,14 +54,15 @@ def publication(result: ReviewResult, head: str, run_id: int) -> str:
 def main() -> None:
     """Read only host-bound repository/PR/head values, then publish through `gh`."""
     env = os.environ
-    result = ReviewResult.model_validate_json(env['REVIEW_RESULT'])
     head = env['HEAD_SHA']
     endpoint = f'repos/{env["GITHUB_REPOSITORY"]}/pulls/{int(env["PR_NUMBER"])}'
     live = subprocess.run(
         ['gh', 'api', endpoint, '--jq', r'"\(.state) at \(.head.sha)"'], check=True, capture_output=True, text=True
     )
     if live.stdout.strip() != f'open at {head}':
-        raise RuntimeError('PR closed or moved while douwebot was reviewing; no review published.')
+        print('PR closed or moved while douwebot was reviewing; no review needed.')
+        return
+    result = ReviewResult.model_validate_json(env['REVIEW_RESULT'])
     subprocess.run(
         ['gh', 'api', '--method', 'POST', '--input', '-', f'{endpoint}/reviews'],
         input=publication(result, head, int(env['GITHUB_RUN_ID'])),
