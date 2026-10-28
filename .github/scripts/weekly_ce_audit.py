@@ -54,7 +54,17 @@ def classify(path: str) -> Literal['editable', 'report-only', 'excluded']:
     )
     if not ce:
         return 'excluded'
-    if path.startswith(('.github/', '.macroscope/', 'src/pydantic_ai_harness/gh-aw/')):
+    # Package instruction assets ship to users, beyond this contributor audit's edit scope.
+    if path.startswith(
+        (
+            '.github/',
+            '.macroscope/',
+            'src/pydantic_ai_harness/gh-aw/',
+            'pydantic_ai_slim/pydantic_ai/',
+            'src/pydantic_ai_harness/pydantic_ai_harness/',
+            'src/pydantic_clai2/pydantic_clai2/',
+        )
+    ):
         return 'report-only'
     if path.startswith('tests/') and parts[-1] not in {'AGENTS.md', 'CLAUDE.md'}:
         return 'report-only'

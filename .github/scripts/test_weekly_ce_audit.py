@@ -32,6 +32,7 @@ from weekly_ce_audit import (
     main,
     prepare_review,
     reconcile,
+    sequence,
     submitted_proposal,
     validate_edits,
     validate_policy_checkout,
@@ -80,13 +81,19 @@ def repository(tmp_path: Path) -> tuple[Path, str]:
     ('path', 'scope'),
     [
         ('docs/harness/AGENTS.md', 'editable'),
-        ('pydantic_ai_slim/pydantic_ai/.agents/skills/example/references/tools.md', 'editable'),
+        ('pydantic_ai_slim/pydantic_ai/.agents/skills/example/references/tools.md', 'report-only'),
+        ('pydantic_ai_slim/pydantic_ai/AGENTS.md', 'report-only'),
+        ('src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/example/SKILL.md', 'report-only'),
+        ('src/pydantic_clai2/pydantic_clai2/customization.md', 'report-only'),
         ('src/pydantic_clai2/FILE_MAP.md', 'editable'),
         ('.macroscope/correctness/review-discipline.md', 'report-only'),
         ('.github/workflows/shared/engine-zai.md', 'report-only'),
         ('src/pydantic_ai_harness/gh-aw/pydantic.md', 'report-only'),
         ('tests/harness/skills/temporal_workspace/skills/reviewer/SKILL.md', 'report-only'),
         ('docs/tools.md', 'excluded'),
+        ('pydantic_ai_slim/pydantic_ai/guide.md', 'excluded'),
+        ('src/pydantic_ai_harness/pydantic_ai_harness/guide.md', 'excluded'),
+        ('src/pydantic_clai2/pydantic_clai2/guide.md', 'excluded'),
         ('.claude/skills/branch-context/issue-brief.md', 'excluded'),
         ('.agents/memory/notes.md', 'excluded'),
         ('PAPERCUTS.md', 'excluded'),
@@ -252,6 +259,42 @@ def test_write_boundary_rejects_report_only_product_and_new_files(repository: tu
         validate_edits(root, source, inventory(root, source))
 
 
+@pytest.mark.parametrize(
+    'path',
+    [
+        'pydantic_ai_slim/pydantic_ai/.agents/skills/example/SKILL.md',
+        'src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/example/SKILL.md',
+        'src/pydantic_clai2/pydantic_clai2/customization.md',
+    ],
+)
+def test_write_boundary_rejects_distributed_instructions(repository: tuple[Path, str], path: str):
+    """Audit committed package guidance without allowing automatic product edits."""
+    root, _ = repository
+    target = root / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('Distributed guidance\n')
+    git(root, 'add', path)
+    git(
+        root,
+        '-c',
+        'user.name=Audit Test',
+        '-c',
+        'user.email=audit@example.com',
+        '-c',
+        'core.hooksPath=/dev/null',
+        'commit',
+        '--quiet',
+        '-m',
+        'Package instructions',
+    )
+    source = git(root, 'rev-parse', 'HEAD').decode().strip()
+    entries = inventory(root, source)
+    target.write_text('Unauthorized product change\n')
+    with pytest.raises(ValueError, match='allowlist'):
+        validate_edits(root, source, entries)
+    assert next(entry for entry in entries if entry.path == path).scope == 'report-only'
+
+
 def test_write_boundary_rejects_symlink_replacement_and_deletion(repository: tuple[Path, str]):
     """Preserve tracked alias and regular-file boundaries."""
     root, source = repository
@@ -323,6 +366,14 @@ def test_workflow_retains_separate_pr_sink_and_protected_review():
     assert pr['max'] == 1 and pr['draft'] is False and pr['fallback-as-issue'] is False
     assert pr['protected-files'] == 'request_review'
     assert '.github/**' in pr['excluded-files']
+    assert '**/.agents/**/*.md' not in pr['allowed-files']
+    assert 'src/pydantic_clai2/pydantic_clai2/customization.md' not in pr['allowed-files']
+    for prefix in (
+        'pydantic_ai_slim/pydantic_ai/**',
+        'src/pydantic_ai_harness/pydantic_ai_harness/**',
+        'src/pydantic_clai2/pydantic_clai2/**',
+    ):
+        assert prefix in pr['excluded-files']
     assert 'create-issue' not in outputs
     assert outputs['steps'][0]['env']['AGENT_RESULT'] == '${{ needs.agent.result }}'
     assert outputs['steps'][0]['run'] == 'test "$AGENT_RESULT" = success'
@@ -464,6 +515,13 @@ def test_compiled_publication_gate_and_health_dependencies():
     assert gate < handler
     publication: dict[str, dict[str, object]] = json.loads(steps[handler]['env']['GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG'])
     assert 'title_prefix' not in publication['create_pull_request']
+    exclusions = sequence(publication['create_pull_request']['excluded_files'], 'Missing compiled exclusions')
+    for prefix in (
+        'pydantic_ai_slim/pydantic_ai/**',
+        'src/pydantic_ai_harness/pydantic_ai_harness/**',
+        'src/pydantic_clai2/pydantic_clai2/**',
+    ):
+        assert prefix in exclusions
     detection = next(step for step in jobs['detection']['steps'] if step.get('id') == 'detection_agentic_execution')
     assert str(detection['env']['GH_AW_HARNESS_MAX_RETRIES']) == '3'
 

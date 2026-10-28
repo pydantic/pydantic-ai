@@ -197,7 +197,7 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 An existing workflow PR stops primary inference; threat detection remains enabled.
 
 `.github/scripts/weekly_ce_audit.py` inventories committed objects, resolves tracked aliases, and rejects incomplete reported coverage or edits outside existing canonical instruction Markdown.
-Workflow sources, imports and the packaged gh-aw definition remain report-only.
+Workflow sources, imports, distributed package instructions and the packaged gh-aw definition remain report-only.
 Keep candidate edits in a separate worktree and the reviewer checkout at the immutable policy base.
 
 A fresh read-only Task must assess the actual diff, template exemption and scope of cited maintainer agreement.
