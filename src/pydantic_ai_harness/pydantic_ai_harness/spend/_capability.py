@@ -312,7 +312,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         Billed attempts that did not produce the response, such as responses a `FallbackModel`
         rejected, are accrued too: from `ModelResponse.failed_attempts` ahead of the response that
         carries them, and from the attempts core records on the request context when every model
-        failed, whether or not a hook then recovered from the error.
+        failed, whether or not a hook then recovered from the error. A response a hook rejected to
+        make another attempt, as the `ModelFallback` capability does, is accrued as a failed attempt too.
 
         The segments of a continuation chain are observed too, so the merged response they
         produce can be accrued boundary by boundary: see `_accrue_response`.
@@ -328,6 +329,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             usage_responses = request_context._usage_responses[usage_response_offset:]  # pyright: ignore[reportPrivateUsage]
             # Segments are attributed only to a lifecycle's single committed response, which core merged them into.
             boundaries = _continuation_boundaries(request_context, segments) if len(usage_responses) == 1 else []
+            # A response a hook rejected to make another attempt, such as one the `ModelFallback` capability rejected,
+            # is a failed attempt like one a `FallbackModel` rejected, though core lists it as a billed response.
+            rejected = request_context._rejected_usage_responses  # pyright: ignore[reportPrivateUsage]
             errors: list[Exception | None] = []
             for response_index, usage_response in enumerate(usage_responses, start=usage_response_offset):
                 response_token = cache(partial(self._dedup_token, ctx, usage_response, response_index))
@@ -338,7 +342,15 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 anchors = [*boundary_tokens, (usage_response, response_token)]
                 for billed in _billed_attempts(usage_response.failed_attempts or (), partial(_anchored_token, anchors)):
                     errors.append(await self._accrue_safely(ctx, *billed, failed_attempt=True))
-                errors.append(await self._accrue_safely(ctx, usage_response, response_token, boundary_tokens))
+                errors.append(
+                    await self._accrue_safely(
+                        ctx,
+                        usage_response,
+                        response_token,
+                        boundary_tokens,
+                        failed_attempt=any(usage_response is response for response in rejected),
+                    )
+                )
             unanswered = request_context._usage_attempts[usage_attempt_offset:]  # pyright: ignore[reportPrivateUsage]
             if unanswered:
                 unanswered_token = cache(partial(_unanswered_token, ctx, unanswered))
