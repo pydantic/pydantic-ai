@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 import pytest
-from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UsageLimitExceeded
@@ -48,15 +47,12 @@ with workflow.unsafe.imports_passed_through():
     except ImportError:  # pragma: lax no cover
         pytest.skip('pydantic_evals not installed', allow_module_level=True)
 
+    from ..online_evaluation_helpers import Answer
     from ._shared import workflow_activity_raises
 
 pytestmark = [pytest.mark.xdist_group(name='temporal-online-evaluation')]
 
 TASK_QUEUE = 'online-evaluation-task-queue'
-
-
-class Answer(BaseModel):
-    text: str
 
 
 _evaluated: list[tuple[str, str | None, object]] = []

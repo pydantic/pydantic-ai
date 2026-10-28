@@ -242,8 +242,8 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
                 result = await handler()
         except Exception as e:
             assert get_eval_context_kwargs is not None
-            await _dispatch_failed_run(
-                [dispatch(e, failed=True), *run_evaluation.dispatchers], get_eval_context_kwargs()
+            await _dispatch_all(
+                [dispatch(e, failed=True), *run_evaluation.dispatchers], get_eval_context_kwargs(), run_failed=True
             )
             raise
         finally:
@@ -284,16 +284,15 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         )
 
 
-async def _dispatch_all(dispatchers: list[_Dispatch], eval_context_kwargs: dict[str, Any]) -> None:
-    for run_dispatch in dispatchers:
-        await run_dispatch(eval_context_kwargs)
-
-
-async def _dispatch_failed_run(dispatchers: list[_Dispatch], eval_context_kwargs: dict[str, Any]) -> None:
+async def _dispatch_all(
+    dispatchers: list[_Dispatch], eval_context_kwargs: dict[str, Any], *, run_failed: bool = False
+) -> None:
     for run_dispatch in dispatchers:
         try:
             await run_dispatch(eval_context_kwargs)
         except Exception as dispatch_error:
+            if not run_failed:
+                raise
             # The run's own exception is what the caller needs to see.
             warnings.warn(f'Online evaluation of the failed agent run was not dispatched: {dispatch_error!r}')
 

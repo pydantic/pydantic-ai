@@ -259,7 +259,7 @@ The version applies to all results the evaluator produces (so one evaluator clas
 Control evaluation frequency with per-evaluator sample rates to balance quality monitoring against cost.
 
 !!! note
-    Sampling is decided **before** the decorated function runs. When no evaluators are sampled for a given call, the function executes without any additional instrumentation overhead (no logfire span or span tree capture).
+    Sampling is decided **before** the decorated function runs. When no evaluators are sampled for a given call, the function executes without any additional instrumentation overhead (no logfire span or span tree capture). Under [durable execution](#durable-execution), `OnlineEvaluation` samples after the agent run instead, inside a durable operation that a run records whenever an evaluator may be sampled.
 
 ### Static Sample Rates
 
