@@ -19,6 +19,7 @@ from pydantic_ai import (
     ModelResponse,
     RunContext,
     TextPart,
+    ToolApproved,
     ToolCallPart,
     ToolReturnPart,
     UserError,
@@ -749,6 +750,29 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
         )
         assert provider.actions == [Click(x=640, y=400)]
+
+    async def test_a_call_changed_before_it_ran_says_what_ran(self) -> None:
+        provider = InMemoryProvider()
+        agent = Agent(
+            _scripted([{'type': 'click', 'x': 1, 'y': 1}, {'type': 'type', 'text': 'rm -rf /'}]),
+            capabilities=[provider.capability(), ComputerUse(requires_approval=True, settle_seconds=0)],
+            output_type=[str, DeferredToolRequests],
+        )
+        paused = await agent.run('Go.')
+        assert isinstance(paused.output, DeferredToolRequests)
+        (call,) = paused.output.approvals
+
+        only_the_click = ToolApproved(override_args={'actions': [{'type': 'click', 'x': 1, 'y': 1}]})
+        resumed = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: only_the_click}),
+        )
+        assert provider.actions == [Click(x=1, y=1)]
+        (tool_return,) = _returns(resumed.all_messages())
+        assert tool_return.content_items()[0] == snapshot(
+            'Before it ran, this call was changed to: [{"type":"click","x":1,"y":1,"button":"left","count":1,"modifiers":[]}]. Ran 1 action. Screenshot attached (1280x800).'
+        )
+        assert tool_return.metadata == {'performed': 1, 'changed': True, 'screenshot_size': (1280, 800)}
 
     async def test_the_declared_display_size_is_the_live_one_not_the_last_seen(self) -> None:
         seen: list[Any] = []

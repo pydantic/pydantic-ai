@@ -9,7 +9,7 @@ from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Annotated, Any, Protocol, cast, runtime_checkable
 
 import anyio
-from pydantic import Field
+from pydantic import Field, TypeAdapter, ValidationError
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.computer_use import (
@@ -108,6 +108,8 @@ _CALL_SPACE = 'computer_use'
 """The `ModelResponse.metadata` key that records the coordinates of the response's `computer` calls: the grid the
 model pointed on and the size of the latest screenshot it saw, so each call is scaled as it was meant, whichever model
 runs it."""
+
+_ACTIONS = TypeAdapter(list[ComputerToolAction])
 
 _FRESH_SCREEN = 'The display restarted since your last screenshot, so the windows that were open are gone.'
 
@@ -231,6 +233,8 @@ class _Call:
 
     grid: int | None
     """The grid the model pointed on, if any."""
+    changed: list[ComputerToolAction] | None = None
+    """The actions to run, in the model's coordinates, when they differ from the ones it asked for."""
     space: tuple[int, int] | None = None
     """The model's coordinate space, once the display size has been read."""
     display: tuple[int, int] | None = None
@@ -307,19 +311,32 @@ def _last_screenshot_size(messages: list[ModelMessage]) -> tuple[int, int] | Non
     return None
 
 
-def _recorded_call(ctx: RunContext[Any]) -> tuple[int | None, tuple[int, int] | None] | None:
-    """The grid and screenshot size recorded on the response that made this call, if they were."""
+def _the_call(ctx: RunContext[Any]) -> tuple[ModelResponse, ToolCallPart] | None:
+    """The response that made this call, and the call as the model made it."""
     for message in reversed(ctx.messages):
-        if isinstance(message, ModelResponse) and any(
-            isinstance(part, ToolCallPart) and part.tool_call_id == ctx.tool_call_id for part in message.parts
-        ):
-            record: Any = (message.metadata or {}).get(_CALL_SPACE)
-            if not isinstance(record, dict):
-                return None
-            record = cast(dict[str, Any], record)
-            size = record.get('screenshot_size')
-            return record.get('coordinate_grid'), (size[0], size[1]) if size else None
+        if isinstance(message, ModelResponse):
+            for part in message.parts:
+                if isinstance(part, ToolCallPart) and part.tool_call_id == ctx.tool_call_id:
+                    return message, part
     return None
+
+
+def _recorded_space(response: ModelResponse) -> tuple[int | None, tuple[int, int] | None] | None:
+    """The grid and screenshot size recorded on the response when it was made, if they were."""
+    record: Any = (response.metadata or {}).get(_CALL_SPACE)
+    if not isinstance(record, dict):
+        return None
+    record = cast(dict[str, Any], record)
+    size = record.get('screenshot_size')
+    return record.get('coordinate_grid'), (size[0], size[1]) if size else None
+
+
+def _changed(call: ToolCallPart, actions: list[ComputerToolAction]) -> bool:
+    """Whether `actions` differ from the ones the model asked for, such as after an approval changed them."""
+    try:
+        return _ACTIONS.validate_python(call.args_as_dict().get('actions')) != actions
+    except ValidationError:
+        return True
 
 
 def _display(ctx: RunContext[Any]) -> object | None:
@@ -459,9 +476,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         acts = any(action.type not in _OBSERVING_ACTIONS for action in actions)
         if self.requires_approval and acts and not ctx.tool_call_approved:
             raise ApprovalRequired
+        made = _the_call(ctx)
         # Scaled the way the model meant it, even when another model runs the call, such as after an approval.
-        grid, seen = _recorded_call(ctx) or (_grid(ctx.model), None)
-        call = _Call(grid)
+        grid, seen = (made and _recorded_space(made[0])) or (_grid(ctx.model), None)
+        call = _Call(grid, changed=actions if made and _changed(made[1], actions) else None)
         if any(_points(action) or action.type == 'cursor_position' for action in actions):
             call.display = await _display_size(ctx)
             # A screenshot the model saw, or the next one, may be scaled down from the display.
@@ -482,15 +500,19 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         performed, error, outputs = await _perform(ctx, actions, call, self.settle_seconds, limit)
 
         result = ComputerResult(performed=performed)
+        summary: list[str] = []
         if call.grid is not None:
             result['coordinate_grid'] = call.grid
+        if call.changed is not None:
+            result['changed'] = True
+            summary.append(f'Before it ran, this call was changed to: {_ACTIONS.dump_json(call.changed).decode()}.')
         if error is None:
-            summary = [f'Ran {_plural(len(actions), "action")}.']
+            summary.append(f'Ran {_plural(len(actions), "action")}.')
         else:
             result['error'] = error
-            summary = [
+            summary.append(
                 f'Action {performed + 1} of {len(actions)} ({actions[performed].type}) failed: {error.rstrip(".")}.'
-            ]
+            )
             if skipped := len(actions) - performed - 1:
                 summary.append(f'The {_plural(skipped, "action")} after it did not run.')
 

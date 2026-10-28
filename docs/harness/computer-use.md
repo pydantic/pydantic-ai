@@ -69,6 +69,7 @@ Give such an agent a deferred tool handler, such as [`HandleDeferredToolCalls`](
 a flagged call ends the run with an error. The checks are in the call's `provider_details['safety_checks']`.
 
 The actions to approve are in the model's coordinates: pixels in the latest screenshot, or the 0-999 grid for Gemini 3.
+If an approval changes them, the result tells the model the actions that ran.
 
 `ComputerUse` turns on [prompt caching](../capabilities/caching.md), since every request carries the screenshots so
 far: on Claude, a run costs several times more without it. Set `cache=False` in the model settings to turn it off.
