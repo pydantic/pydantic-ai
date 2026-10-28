@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextContent,
     TextPart,
+    ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -33,6 +34,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness import HarnessDeprecationWarning
+from pydantic_ai_harness.compaction import SummarizingCompaction
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repo_context import (
     AgentContextInventory,
@@ -791,6 +793,54 @@ class TestNestedTraversal:
         assert _repo_notes(result.all_messages()) == snapshot(
             ['<context-file path="sub/AGENTS.md">\nNESTED BODY\n</context-file>']
         )
+
+    @pytest.mark.parametrize('nested_inject', ['pointer', 'contents'])
+    async def test_summarizing_compaction_drops_the_note_and_the_next_read_resurfaces_it(
+        self, tmp_path: Path, nested_inject: Literal['pointer', 'contents']
+    ) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        for name in ('sub/one.py', 'sub/two.py', 'a.py', 'b.py', 'c.py'):
+            _write(tmp_path / name, name)
+        reads = ['sub/one.py', 'a.py', 'b.py', 'c.py', 'sub/two.py']
+        step = 0
+        summarized: list[list[ModelMessage]] = []
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            nonlocal step
+            current, step = step, step + 1
+            if current < len(reads):
+                args = json.dumps({'path': reads[current]})
+                yield {0: DeltaToolCall(name='read_file', json_args=args, tool_call_id=f'read{current}')}
+            else:
+                yield 'done'
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            summarized.append(messages)
+            return ModelResponse(parts=[TextPart('The agent read some files.')])
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject=nested_inject),
+                SummarizingCompaction(model=FunctionModel(summarize), max_messages=6, keep_messages=2),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+
+        history = result.all_messages()
+        assert summarized, 'compaction ran'
+        assert any(isinstance(part, CompactionPart) for message in history for part in message.parts)
+        # The original note was summarized away, so the only note left is the one the read of `sub/two.py` surfaced.
+        positions = [i for i, message in enumerate(history) if _repo_notes([message])]
+        two_call = next(
+            i
+            for i, message in enumerate(history)
+            if isinstance(message, ModelResponse)
+            and any(
+                isinstance(part, ToolCallPart) and 'sub/two.py' in part.args_as_json_str() for part in message.parts
+            )
+        )
+        assert len(positions) == 1 and positions[0] > two_call
 
     async def test_compaction_resurfaces_a_note_it_summarized_away(self, tmp_path: Path) -> None:
         _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')

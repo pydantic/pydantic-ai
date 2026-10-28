@@ -401,8 +401,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
 def _stamp(parts: Sequence[str | SystemPromptPart], directory: str) -> Iterator[TextContent | SystemPromptPart]:
     """Mark a note's parts as RepoContext's, so history scans and compaction recognize them by metadata."""
-    metadata = {'origin': _NESTED_NOTE_ORIGIN, 'directory': directory}
     for part in parts:
+        # A dict per part, so mutating one part's metadata doesn't change the other's.
+        metadata = {'origin': _NESTED_NOTE_ORIGIN, 'directory': directory}
         yield (
             replace(part, metadata=metadata)
             if isinstance(part, SystemPromptPart)
