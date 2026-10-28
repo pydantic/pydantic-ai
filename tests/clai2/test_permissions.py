@@ -11,17 +11,17 @@ from pydantic_ai import Agent, DeferredToolRequests, Tool
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo
-from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse
+from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse
 from pydantic_ai_harness.permissions import PermissionDecision, PermissionRequest
 from pydantic_ai_harness.shell import Shell
-from pydantic_clai2.builtin_plugins.ask_user_menu import terminal_approver
+from pydantic_clai2.builtin_plugins.ask_user_menu import QuestionMenu, TerminalAnswerer, terminal_approver
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer
 from pydantic_clai2.builtin_plugins.web.protocol import QuestionAsked, QuestionClosed
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import PluginHost, bare_screen
 from pydantic_clai2.runtime.permissions import (
     APPROVE,
     APPROVE_SESSION,
@@ -179,15 +179,28 @@ def test_proposed_diff() -> None:
     assert edited is not None and '-a\n+b\n' in edited and '-c\n+d\n' in edited
 
 
-async def test_terminal_approver_asks_the_question() -> None:
-    asked: list[AskUserRequest] = []
+@pytest.mark.parametrize(
+    ('subject', 'printed'),
+    [
+        pytest.param('ls', False, id='short'),
+        pytest.param('echo ' + 'x' * 600 + ' && rm -rf doomed', True, id='long'),
+    ],
+)
+async def test_terminal_approver_prints_a_command_too_long_for_the_question(subject: str, printed: bool) -> None:
+    """The picker's question is cut at its limit, so a longer command is printed in full before it is approved."""
+    output = io.StringIO()
+    asked: list[str] = []
 
-    async def answerer(question: AskUserRequest) -> AskUserResponse:
-        asked.append(question)
-        return AskUserResponse(answers=(AskUserAnswer(header=HEADER, selected=(APPROVE_SESSION,)),))
+    def pick(menu: QuestionMenu) -> tuple[str, ...]:
+        asked.append(menu.question.question)
+        return (APPROVE_SESSION,)
 
-    assert await terminal_approver(answerer)(request()) == PermissionDecision(approved=True, remember=True)
-    assert asked[0].id == 'call1'
+    answerer = TerminalAnswerer(full_screen=bare_screen, console=Console(file=output, width=1000), runner=pick)
+    assert await terminal_approver(answerer)(request(subject=subject)) == PermissionDecision(
+        approved=True, remember=True
+    )
+    assert ('rm -rf doomed' in output.getvalue()) is printed
+    assert asked[0].endswith('…') is printed
 
 
 async def test_the_browser_shows_an_approval_card() -> None:
@@ -277,3 +290,12 @@ async def test_code_mode_holds_a_shell_call_from_run_code(tmp_path: Path) -> Non
     await Agent(streamed(respond), capabilities=capabilities).run('go')
     assert [held.subject for held in asked] == ['rm -rf doomed']
     assert (tmp_path / 'doomed').is_dir()
+
+
+async def test_the_terminal_can_answer_the_browsers_approval_first() -> None:
+    async def terminal(held: PermissionRequest) -> AskUserResponse:
+        return AskUserResponse(answers=(AskUserAnswer(header=HEADER, selected=(APPROVE,)),))
+
+    answerer = BrowserAnswerer(publish=lambda message, _: None, terminal=None, terminal_approval=terminal)
+    assert await answerer.approve(request()) == PermissionDecision(approved=True)
+    assert answerer.questions == []

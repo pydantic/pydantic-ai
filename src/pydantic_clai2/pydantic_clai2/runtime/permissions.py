@@ -41,7 +41,7 @@ APPROVE_SESSION = 'Approve for this session'
 DENY = 'Deny'
 UNANSWERED = 'No one could be asked to approve it here; /permissions full lets such calls run.'
 _QUESTION_LENGTH = 500
-"""What an `ask_user` question may hold; a longer command is cut, and the card shows it in full."""
+"""What an `ask_user` question may hold; a longer command is cut, so the terminal prints it in full first."""
 
 Approve = Callable[[PermissionRequest], Awaitable[PermissionDecision]]
 
@@ -96,11 +96,7 @@ def approval_handler(approve: Approve) -> HandleDeferredToolCalls[AgentDepsT]:
 
 def approval_question(request: PermissionRequest) -> AskUserRequest:
     """`request` as a question: approve once, approve for the session, or deny; a typed answer denies with it."""
-    if request.action == 'command':
-        text = f'{request.reason} Run this command?\n{request.subject}'
-    else:
-        text = f'{request.reason} Write {request.subject}?'
-    text = _printable(text)
+    text = _question_text(request)
     if len(text) > _QUESTION_LENGTH:
         text = text[: _QUESTION_LENGTH - 1] + '…'
     noun = 'command' if request.action == 'command' else 'file'
@@ -120,6 +116,17 @@ def approval_question(request: PermissionRequest) -> AskUserRequest:
             ),
         ),
     )
+
+
+def shown_in_full(request: PermissionRequest) -> bool:
+    """Whether `approval_question` shows all of `request`'s command or path, rather than cutting it."""
+    return len(_question_text(request)) <= _QUESTION_LENGTH
+
+
+def _question_text(request: PermissionRequest) -> str:
+    if request.action == 'command':
+        return _printable(f'{request.reason} Run this command?\n{request.subject}')
+    return _printable(f'{request.reason} Write {request.subject}?')
 
 
 def decision(response: AskUserResponse) -> PermissionDecision:
