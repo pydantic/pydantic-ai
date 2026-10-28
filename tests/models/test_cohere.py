@@ -843,6 +843,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 5, 22, 7, 17, tzinfo=UTC),

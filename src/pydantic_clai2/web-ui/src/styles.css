@@ -368,8 +368,27 @@ pre {
   border-radius: 6px;
 }
 
+.worktree-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.worktree-head > .worktree-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.worktree-head > .session-more {
+  height: 22px;
+}
+
+.worktree-head:hover > .session-more {
+  display: grid;
+}
+
 .worktree-title:hover,
-.worktree.current > .worktree-title {
+.worktree.current > .worktree-head > .worktree-title {
   color: var(--text-soft);
 }
 
@@ -650,6 +669,130 @@ pre {
 
 .activity.busy {
   color: var(--text-soft);
+}
+
+/* The git chip: the session's branch and its uncommitted and unpushed counts, opening the git dialog. */
+.git-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.git-chip:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.git-branch {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-soft);
+}
+
+.git-counts {
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.git-dialog .dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.git-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.git-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.git-view[hidden] {
+  display: none;
+}
+
+.git-section + .git-section {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.git-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.git-file,
+.git-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-soft);
+  font-size: 12.5px;
+}
+
+.git-file-status {
+  width: 14px;
+  color: var(--muted);
+  font-weight: 600;
+  text-align: center;
+}
+
+.git-file-status.status-new,
+.git-file-status.status-A {
+  color: var(--green);
+}
+
+.git-file-status.status-D {
+  color: var(--red);
+}
+
+.git-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-message-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.git-message {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.git-problem {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.git-done {
+  margin: 0;
+  color: var(--green);
+  font-size: 12.5px;
+}
+
+.git-remote-actions {
+  justify-content: flex-start;
 }
 
 /* Shown only when opening a session takes long enough to notice; a quick switch never flashes it. */
@@ -4045,4 +4188,166 @@ textarea.setting-input {
   margin-right: auto;
   color: var(--faint);
   font-size: 11.5px;
+}
+
+/* The Changes panel, in the side panel's column */
+
+.changes-toggle {
+  position: relative;
+}
+
+.changes-count {
+  position: absolute;
+  top: -3px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--lithium);
+  color: var(--bg);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+}
+
+.side-panel.changes .changes-refresh {
+  margin-left: auto;
+}
+
+.changes-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.changes-scopes button {
+  padding: 3px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.changes-scopes button:hover {
+  color: var(--text);
+}
+
+.changes-scopes button.active {
+  border-color: var(--border);
+  background: var(--active);
+  color: var(--lithium);
+}
+
+.changes-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 12px 20px;
+}
+
+.changes-empty {
+  padding: 24px 4px;
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.changes-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 8px;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.changes-files {
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.changes-files button,
+.changes-file-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  background: none;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.changes-files li + li {
+  border-top: 1px solid var(--border);
+}
+
+.changes-files button:hover,
+.changes-file-head:hover {
+  background: var(--hover);
+}
+
+.changes-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.changes-status {
+  flex: none;
+  width: 14px;
+  font: 600 11px ui-monospace, 'SF Mono', monospace;
+  text-align: center;
+}
+
+.changes-status.status-A {
+  color: var(--green);
+}
+
+.changes-status.status-D {
+  color: var(--red);
+}
+
+.changes-status.status-M {
+  color: var(--lithium);
+}
+
+.changes-file {
+  margin-bottom: 10px;
+  scroll-margin-top: 8px;
+}
+
+.changes-file-head {
+  padding: 4px 2px;
+}
+
+.changes-chevron {
+  flex: none;
+  transition: transform 0.12s;
+}
+
+.changes-chevron.open {
+  transform: rotate(90deg);
+}
+
+.changes-note {
+  padding: 6px 10px;
+  color: var(--faint);
+  font-size: 12.5px;
 }
