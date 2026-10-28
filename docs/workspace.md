@@ -534,7 +534,7 @@ symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#res
 A backend whose environments can have a graphical display implements
 [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: a `display` property that returns a
 [`Display`][pydantic_ai.workspaces.Display], or `None` for an environment without one, decided without I/O.
-It returns the same object for the backend's lifetime. The display can come from elsewhere, such as this
+It returns the same object for the backend's lifetime, but two backends attached to one environment may each have their own, so key per-screen state such as a lock on the backend's `ref`. The display can come from elsewhere, such as this
 machine's screen beside a local workspace. A `Display` has `display_size`, `screenshot` (PNG bytes), and `act`,
 which performs one [`ComputerAction`][pydantic_ai.workspaces.ComputerAction] such as a click or a key press.
 Tools reach them as `ctx.workspace.screenshot()` and `ctx.workspace.act(...)`.
