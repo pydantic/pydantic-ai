@@ -3856,12 +3856,14 @@ class _RepeatedMalformedToolArgsConnection(FakeRealtimeConnection):
 async def test_repeated_malformed_json_args_exceed_tool_retry_budget() -> None:
     session = RealtimeSession(_RepeatedMalformedToolArgsConnection([]), _noop_runner)
 
-    with pytest.raises(UnexpectedModelBehavior, match="Tool 'noop' exceeded max retries count of 1"):
-        await collect_events(session)
-
-    assert session._tool_manager.failed_tools == set()  # pyright: ignore[reportPrivateUsage]
-    assert session._tool_manager.ctx is not None  # pyright: ignore[reportPrivateUsage]
-    assert session._tool_manager.ctx.retries == {'noop': 1}  # pyright: ignore[reportPrivateUsage]
+    async with session:
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'noop' exceeded max retries count of 1"):
+            async for _ in session:
+                pass
+        # Read before closing: teardown releases the tool manager's run context.
+        assert session._tool_manager.failed_tools == set()  # pyright: ignore[reportPrivateUsage]
+        assert session._tool_manager.ctx is not None  # pyright: ignore[reportPrivateUsage]
+        assert session._tool_manager.ctx.retries == {'noop': 1}  # pyright: ignore[reportPrivateUsage]
 
 
 class _RecordsUnanswered(FakeRealtimeConnection):
@@ -4326,7 +4328,8 @@ async def test_close_completes_when_the_closing_task_is_cancelled() -> None:
             watchdog.cancel()
 
     assert session.closed
-    assert session._pump_task is not None and session._pump_task.done()  # pyright: ignore[reportPrivateUsage]
+    # The teardown finished, releasing the pump task along with the rest of the run state.
+    assert session._pump_task is None  # pyright: ignore[reportPrivateUsage]
     assert tool_task is not None and tool_task.done()
     assert tool_cancelled.is_set()
     assert [
