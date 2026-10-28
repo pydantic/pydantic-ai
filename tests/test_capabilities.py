@@ -90,6 +90,7 @@ from pydantic_ai.toolsets._deferred_capability_loader import (
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -389,6 +390,7 @@ def test_stale_loaded_eager_capability_is_not_revealed() -> None:
     assert tool_defs_from_pre_definition_load_returns(ctx, [tool_def]) == {}
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_is_tool_available_definition_survives_aggregator_fold() -> None:
     """A caller-held definition stays available after an aggregator removes it from resolved tools."""
     capability_tools = FunctionToolset()
@@ -445,6 +447,9 @@ async def test_is_tool_available_definition_survives_aggregator_fold() -> None:
     assert folding_toolset.availability == [False, True, True]
 
 
+@pytest.mark.moves_cache_prefix(
+    reason="the second run is given a hand-built history that branches from the first run's"
+)
 async def test_stale_loaded_eager_capability_tool_stays_hidden() -> None:
     """Resumed loaded state does not reveal a tool owned by a capability that is now eager."""
     toolset = FunctionToolset()

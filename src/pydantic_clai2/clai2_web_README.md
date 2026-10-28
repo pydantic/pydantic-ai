@@ -17,7 +17,8 @@ ends every session. There, each session you open is live in its own directory, w
 directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
 there; CLAI's own working directory never changes. **New session** asks where the session runs: a
 project or worktree from the sidebar or any other worktree Git lists for its repository, by default
-the current one, or any directory by its absolute path. The header shows where the session works.
+the current one, or any directory by its absolute path, which it completes as you type, listing each
+repository's worktrees. The header shows where the session works.
 `/workspace DIRECTORY` or `/resume ID` typed in a session moves that session instead, never while a
 turn, a background `/fork`, or a delegated task runs in it. `clai2 --web --resume ID` starts in that
 session's directory. A session left idle for an hour, with nothing running or queued and no browser
@@ -69,6 +70,21 @@ what the cell printed and returned, keeps the state with the session, and stays 
 of the conversation; your next prompt tells the model what you ran, since the
 variables are in its sandbox now. A cell that fails is reported, not retried. In the
 web UI, the Monty panel's input runs `/monty` too.
+
+<!-- From #11590 -->
+The **Changes** button in the header (Cmd/Ctrl+Shift+E) opens a review panel of what the session
+changed, with the number of files it changed so far on the button. Pick a scope: **Last turn** and
+**This session** come from the session's own `write_file` and `edit_file` calls, so they work
+outside Git too, and show each file once, as one diff from before the first change to what is on
+disk now. A file the session wrote whole counts as created, unless the last commit has it with
+content the session did not write, which it is then compared with. These scopes read the
+conversation, so after `/compact` they start from the compacted summary. **Uncommitted** is
+`git diff HEAD` in the session's directory (untracked files are left out, as there), and **Branch
+vs base** compares the files, uncommitted changes included, with where the branch left its base:
+`origin/HEAD`, else `main` or `master`. Each file shows its status (A, M, or D) and added and
+removed lines; click it to jump to its diff. Files with many changed lines start collapsed. The
+panel asks again when a turn ends, and **Refresh** asks at once. It takes the plugin side panels'
+place, so opening one closes the other.
 
 <!-- From #10442 -->
 The **Settings** window (the gear in the sidebar's footer, or Cmd/Ctrl+,) has a section per area
@@ -356,6 +372,7 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 |---|---|
 | `GET /api/sessions/{id}/state` | its `snapshot` |
 | `GET /api/sessions/{id}/images/{image_id}` | an image of a prompt in its transcript, by an ID its `user` item lists in `images` (the SHA-256 of the bytes); 404 for one it does not hold |
+| `GET /api/sessions/{id}/changes?scope=turn\|session\|uncommitted\|branch` | the Changes panel's files: `Changes` with each `FileChange`'s path, status (`A`, `M`, `D`), added and removed lines, and unified diff (shapes in `web-ui/src/protocol.ts`); `session` by default; `diffs=false` leaves the diffs out, for a count (the session scopes then leave the line counts at 0 too) |
 | `POST /api/sessions/{id}/input` | enter a prompt or `/command`, body `{"text": "…"}`, as `/api/input` |
 | `POST /api/sessions/{id}/interrupt` | interrupt its turn only |
 | `POST /api/sessions/{id}/steer` | Alt+Enter: send a prompt to its running turn, body `{"text": "…"}`; answers `{"steered": true, "menu": null}`, or, when nothing takes it (no turn runs, or a `/command`), enters it as `/input` does and answers `{"steered": false, "menu": …}` |
@@ -363,6 +380,7 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 | `DELETE /api/sessions/{id}/queue/{input_id}` | remove a queued input; 404 once it ran or was removed |
 | `POST /api/sessions/{id}/queue/{input_id}/steer` | send a queued prompt to the running turn, taking it out of the queue; answers `{"steered": false}` and leaves it queued when nothing takes it |
 | `GET /api/sessions/{id}/complete?text=…` | Tab completions |
+| `GET /api/sessions/{id}/files?q=…` | the composer's `@` picker: the 50 files and folders in the session's folder that best match `q` (Git's tracked and unignored files in a checkout), each a completion of `@q` |
 | `POST /api/sessions/{id}/model` | select a model, body `{"name": "…"}` |
 | `POST /api/sessions/{id}/switch` | turn a `/set` switch on or off, body `{"key": "…", "on": true}`, as `/api/switch` |
 | `POST /api/sessions/{id}/questions/{request_id}` | answer its question |
@@ -386,8 +404,8 @@ choosing a model in session B's `/model` menu switches B alone, and B's `/effort
 CLAI shares, such as `display.*`, still reach every session, as typing `/set` does. Plugin menus
 (`/api/plugins/…`) and dialogs belong to the page.
 
-The unprefixed routes (`/api/state`, `/api/images/…`, `/api/input`, `/api/steer`, `/api/queue/…`, `/api/interrupt`,
-`/api/complete`, `/api/model`, `/api/switch`, `/api/dialogs/…`, `/api/commands/…`) and a `/ws` without `watch` keep working on the
+The unprefixed routes (`/api/state`, `/api/images/…`, `/api/changes`, `/api/input`, `/api/steer`, `/api/queue/…`, `/api/interrupt`,
+`/api/complete`, `/api/files`, `/api/model`, `/api/switch`, `/api/dialogs/…`, `/api/commands/…`) and a `/ws` without `watch` keep working on the
 default session: the one this page last opened or started while it stays live, else the most recently opened.
 `/api/questions/…` answers any live session's question by its ID, as before. `web/client.py` and the
 orchestrators of other CLAI versions use them.
