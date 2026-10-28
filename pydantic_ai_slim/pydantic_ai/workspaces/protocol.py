@@ -310,7 +310,10 @@ class SupportsScaledScreenshot(Protocol):
     """
 
     async def scaled_screenshot(self, width: int, height: int) -> bytes:
-        """Capture the whole display as PNG bytes of exactly `width` by `height` pixels."""
+        """Capture the whole display as PNG bytes of `width` by `height` pixels, give or take one for rounding.
+
+        Callers read the size from the PNG, so a display that scales by a ratio may round either way.
+        """
         ...
 
 
