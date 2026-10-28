@@ -201,3 +201,15 @@ async def test_the_zoom_and_pointer_checks_skip_a_display_without_them() -> None
     for check in (suite.test_zoom_is_a_png_of_the_region, suite.test_the_cursor_position_is_on_the_screen):
         with pytest.raises(pytest.skip.Exception):
             await check(backend)
+
+
+@pytest.mark.anyio
+async def test_the_display_check_fails_a_backend_with_a_new_display_each_time() -> None:
+    class NewDisplayEachTime(DisplayOnlyBackend):
+        @property
+        def display(self) -> DisplayOnlyBackend:
+            return DisplayOnlyBackend(self._display)
+
+    backend = NewDisplayEachTime(InMemoryProvider().backend(None))
+    with pytest.raises(AssertionError):
+        await WorkspaceBackendSuite().test_display_is_the_same_object_each_time(backend)

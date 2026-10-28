@@ -15,7 +15,7 @@ import shlex
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Self
 
 import anyio
 import anyio.lowlevel
@@ -844,8 +844,9 @@ class DaytonaSandboxBackend(
             return True
 
     @property
-    def has_display(self) -> bool:
-        return self._desktop_size is not None
+    def display(self) -> Self | None:
+        """This backend, when created with `desktop=True`."""
+        return self if self._desktop_size is not None else None
 
     @asynccontextmanager
     async def _display(self) -> AsyncGenerator[DaytonaDesktop]:

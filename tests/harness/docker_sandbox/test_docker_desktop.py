@@ -143,8 +143,8 @@ async def test_a_refused_key_does_not_restart_the_display(docker: FakeDocker, co
     await workspace.display_size()
     checks = docker.xdotool_calls.count(':1 getdisplaygeometry')
 
-    with pytest.raises(WorkspaceUnsupportedActionError, match='NoSuchKey'):
-        await workspace.act(PressKeys(keys=('NoSuchKey',)))
+    with pytest.raises(WorkspaceUnsupportedActionError, match="cannot press the key '!'"):
+        await workspace.act(PressKeys(keys=('!',)))
     await workspace.act(Click(x=1, y=1))
 
     # The start script, which first checks the display with `getdisplaygeometry`, did not run again.
@@ -174,7 +174,7 @@ async def test_a_container_without_a_desktop_has_no_display(docker: FakeDocker, 
 
 def test_a_desktop_needs_no_image_and_still_refuses_both_image_and_ref() -> None:
     ref = WorkspaceRef(provider='docker', id='pydantic-ai-abc')
-    assert DockerSandboxBackend(desktop=True).has_display is True
+    assert DockerSandboxBackend(desktop=True).display is not None
     with pytest.raises(ValueError, match='pass exactly one of `image`'):
         DockerSandboxBackend(image='x', ref=ref, desktop=True)
     with pytest.raises(ValueError, match='pass exactly one of `image`'):
