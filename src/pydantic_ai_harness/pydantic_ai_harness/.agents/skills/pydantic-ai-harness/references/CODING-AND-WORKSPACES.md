@@ -518,8 +518,7 @@ RepoContext(home_dir='..', nested_traversal=True)  # walk up one level; follow t
 
 `root_markers=('.git',)` walks up to the repository root (`Coder` uses this); it cannot be combined with
 `home_dir`. With neither set (the default), only the working directory is scanned. Set `home_dir` to walk up
-to that ancestor. It is
-a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserError`.
+to that ancestor. It is a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserError`.
 `nested_traversal=True` surfaces the instruction files between the working directory and whatever
 `FileSystem` reads or lists, shallowest first and each directory once per run (`nested_inject='pointer'`
 or `'contents'`), in the message tail so the cached prefix stays stable.
