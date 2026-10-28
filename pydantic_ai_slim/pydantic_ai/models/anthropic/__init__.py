@@ -1912,7 +1912,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return OMIT
         previous_message_id: str | None = None
         for message in reversed(messages):
-            if isinstance(message, ModelResponse) and message.provider_name == self.system:
+            if isinstance(message, ModelResponse) and self.accepts_server_state(message):
                 if (response_id := message.provider_response_id) and response_id.startswith('msg_'):
                     previous_message_id = response_id
                 break
@@ -1958,7 +1958,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return None, False
 
         for m in reversed(messages):
-            if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
+            if isinstance(m, ModelResponse) and self.accepts_server_state(m) and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
                     return cid, True
         return None, False
