@@ -2161,6 +2161,39 @@ async def test_azure_responses_cache_instructions_e2e(
     assert second.usage.cache_read_tokens == first.usage.cache_write_tokens
 
 
+@pytest.mark.parametrize('model_name', _AZURE_CACHE_MODELS)
+@pytest.mark.vcr
+async def test_azure_chat_cache_instructions_e2e(
+    allow_model_requests: None, gateway_api_key: str | None, request_capture: RequestCapture, model_name: str
+):
+    """Azure OpenAI Chat honors an instruction breakpoint on the system message with the implicit-mode options, the
+    settings `cache=True` maps to on the OpenAI API, and the second request reads the cache the first wrote."""
+    model = OpenAIChatModel(model_name, provider=_azure_gateway_provider(gateway_api_key, request_capture))
+    settings = OpenAIChatModelSettings(
+        openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}, openai_cache_instructions=True
+    )
+    # Change the instructions' last line to re-record within the 30-minute TTL.
+    agent = Agent(
+        model,
+        instructions=_STABLE_PREFIX + f'\n(Azure Chat instruction breakpoint, {model_name})',
+        model_settings=settings,
+    )
+
+    first = await agent.run('Reply with exactly: OK')
+    second = await agent.run('Reply with exactly: OK')
+
+    bodies = cast('list[dict[str, Any]]', request_capture.bodies('/chat/completions'))
+    assert len(bodies) == 2
+    for body in bodies:
+        assert body['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
+        assert body['messages'][0]['role'] == 'system'
+        assert body['messages'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    assert first.usage.cache_read_tokens == 0
+    assert first.usage.cache_write_tokens >= 1024
+    assert second.usage.cache_write_tokens == 0
+    assert second.usage.cache_read_tokens == first.usage.cache_write_tokens
+
+
 def _assert_instruction_prefix_shared(first: RunUsage, second: RunUsage) -> None:
     """The second conversation reads the cached instructions written (or read) by the first.
 
