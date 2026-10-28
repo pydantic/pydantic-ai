@@ -15613,6 +15613,37 @@ async def test_anthropic_container_from_message_history(allow_model_requests: No
     assert completion_kwargs['container'] == 'container_from_history'
 
 
+@pytest.mark.parametrize(
+    'base_url', ['https://gateway-a.example', 'https://gateway-b.example'], ids=['same-endpoint', 'other-endpoint']
+)
+async def test_anthropic_container_from_history_scoped_by_endpoint(allow_model_requests: None, base_url: str):
+    """A code execution container from another endpoint with the same `provider_name` isn't reused.
+
+    https://github.com/pydantic/pydantic-ai/issues/11508
+    """
+    from datetime import datetime
+
+    producer_client = MockAnthropic.create_mock(
+        completion_message(
+            [BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+        ).model_copy(update={'container': BetaContainer(id='container_a', expires_at=datetime(2025, 1, 1))})
+    )
+    cast(MockAnthropic, producer_client).base_url = 'https://gateway-a.example'
+    producer = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=producer_client)))
+    history = (await producer.run('hello')).all_messages()
+
+    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    cast(MockAnthropic, mock_client).base_url = base_url
+    agent = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)))
+    await agent.run('follow up', message_history=history)
+
+    from anthropic import omit as OMIT
+
+    container = get_mock_chat_completion_kwargs(mock_client)[0].get('container')
+    assert container == ('container_a' if base_url == 'https://gateway-a.example' else OMIT)
+
+
 async def test_anthropic_container_setting_false_ignores_history(allow_model_requests: None):
     """Test that anthropic_container=False ignores container_id from history."""
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
