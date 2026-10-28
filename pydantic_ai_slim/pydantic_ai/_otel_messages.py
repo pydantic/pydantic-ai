@@ -19,6 +19,11 @@ class TextPart(TypedDict):
     visible: NotRequired[bool]
 
 
+def text_part(content: str, *, include_content: bool) -> TextPart:
+    """A text part, with its `content` only when content is included."""
+    return TextPart(type='text', content=content) if include_content else TextPart(type='text')
+
+
 class ToolCallPartOtelMetadata(TypedDict, total=False):
     """Typed metadata stored on `messages.BaseToolCallPart.otel_metadata` to inform OTel event rendering.
 

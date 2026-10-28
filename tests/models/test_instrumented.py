@@ -2911,9 +2911,9 @@ def _reminder_agent(profile: ModelProfile, *, include_content: bool = True) -> A
             )
         return ModelResponse(parts=[TextPart('done')])
 
-    class Reminder(AbstractCapability[None]):
+    class Reminder(AbstractCapability[Any]):
         async def before_model_request(
-            self, ctx: RunContext[None], request_context: ModelRequestContext
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
             ctx.enqueue(SystemPromptPart(f'Reminder {ctx.run_step}.', scope='request'))
             return request_context
