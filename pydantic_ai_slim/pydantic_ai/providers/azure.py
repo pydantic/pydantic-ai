@@ -152,6 +152,12 @@ class AzureProvider(_OpenAISDKProvider):
             # single honest boundary to record. Users pass `retention=` to `prompt_cache_outlook`.
             # https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/prompt-caching
             base = openai_model_profile(model_name)
+            # The Azure OpenAI v1 API honors GPT-5.6's `prompt_cache_options` and explicit breakpoints, which the
+            # unified `cache` setting maps onto, so it's configurable here as on `OpenAIProvider`.
+            base = merge_profile(
+                base,
+                OpenAIModelProfile(supports_cache=bool(base.get('openai_supports_prompt_cache_breakpoints'))),
+            )
 
         # Azure Chat Completions API doesn't support document input.
         base = merge_profile(base, OpenAIModelProfile(openai_chat_supports_document_input=False))
