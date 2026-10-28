@@ -165,7 +165,7 @@ class Reminder(Generic[AgentDepsT]):
                 old='system-reminder',
                 new=None,
                 impact=(
-                    'The reminder is sent as a request-scoped system prompt, so the model already sees it as '
+                    'The reminder is sent as a system prompt, so the model already sees it as '
                     'one, and its content is no longer wrapped in `<system-reminder>`.'
                 ),
             )
@@ -228,7 +228,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     """Deprecated, and has no effect; configure caching on the model instead.
 
     Reminders used to bring a cache breakpoint of their own, with a `'5m'` TTL by default. They're
-    request-scoped system prompts now, and the breakpoints the model's caching settings place (such as
+    system prompts at the tail of the request now, and the breakpoints the model's caching settings place (such as
     `anthropic_cache`) land before them. Set to `'5m'` or `'1h'`, it warns that it's ignored.
     """
 
@@ -283,9 +283,9 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Enqueue the reminders that fire on this request as a request-scoped system prompt.
+        """Enqueue the reminders that fire on this request as system prompts of their scope.
 
-        Enqueued from `before_model_request`, the prompt goes into this request and into the run's
+        Enqueued from `before_model_request`, the prompts go into this request and into the run's
         history, as a `ModelRequest` of its own that's sent merged into the request it follows.
         """
         messages = request_context.messages
