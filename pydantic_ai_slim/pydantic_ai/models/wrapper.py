@@ -242,7 +242,7 @@ class WrapperModel(Model):
 
     @property
     def provider(self) -> Provider[Any] | None:
-        return self.wrapped.provider  # pragma: no cover
+        return self.wrapped.provider
 
     @property
     def model_name(self) -> str:
