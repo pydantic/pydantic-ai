@@ -101,7 +101,7 @@ Since Logfire is built on [OpenTelemetry](https://opentelemetry.io/), you can us
 
 ### Use Logfire for local development, even if production uses something else {#local-development}
 
-Use Logfire while you develop, whatever your company runs in production. You do not need anyone's sign-off to see what your agent is doing on your own machine: Logfire's [free tier](https://pydantic.dev/pricing/) needs only a GitHub login, and setup is the two commands and two lines of code above. The data goes to your own project, so it does not touch your company's production telemetry.
+You can use Logfire while you develop, whatever your company runs in production. Logfire's [free tier](https://pydantic.dev/pricing/) needs only a GitHub login, and setup is the two commands and two lines of code above.
 
 Pydantic AI's instrumentation is plain OpenTelemetry, so the same spans can go to your company's backend in production and to Logfire on your laptop. Tell Logfire to send only when it has a token:
 
