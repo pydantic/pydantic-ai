@@ -123,11 +123,18 @@ _LEGACY_OFFICE = {'.doc': 'application/msword', '.xls': 'application/vnd.ms-exce
 
 
 def _office_open_xml(data: bytes) -> str | None:
-    """A Word or Excel document by the part its ZIP archive holds, or `None` for any other ZIP."""
+    """A Word or Excel document by the part its ZIP archive holds, or `None` for any other ZIP.
+
+    A file over `MAX_MEDIA_BYTES` is described rather than sent, so its archive isn't opened. Anything
+    `zipfile` can't parse (a broken archive, an unsupported entry version, a filename that isn't valid
+    UTF-8) is no document either, rather than a failed read.
+    """
+    if len(data) > MAX_MEDIA_BYTES:
+        return None
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             names = set(archive.namelist())
-    except zipfile.BadZipFile:
+    except (zipfile.BadZipFile, NotImplementedError, ValueError):
         return None
     if 'word/document.xml' in names:
         return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'

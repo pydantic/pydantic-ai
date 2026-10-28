@@ -319,7 +319,8 @@ def toolset(fs_root: Path) -> FileSystemToolset[None]:
 def _zip_with(name: str) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w') as archive:
-        archive.writestr(name, '<x/>')
+        # A fixed timestamp keeps the bytes, and so the test ids, the same in every xdist worker.
+        archive.writestr(zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0)), '<x/>')
     return buffer.getvalue()
 
 
@@ -858,6 +859,8 @@ class TestReadFile:
             b'\x00\x00\x00\x20ftypM4A \x00\x00',
             b'\xff\xfa\xf0\x00',  # MPEG audio sync with a reserved bitrate
             b'\xff\x00\x00\x00',
+            # A central directory entry needing a newer `zipfile` than the standard library has.
+            _zip_with('word/document.xml').replace(b'PK\x01\x02\x14\x03\x14\x00', b'PK\x01\x02\x14\x03\x50\x00'),
         ],
     )
     async def test_a_container_no_media_type_names_is_described(self, tmp_path: Path, data: bytes) -> None:
