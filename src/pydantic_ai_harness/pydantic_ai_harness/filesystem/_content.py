@@ -143,6 +143,15 @@ def _office_open_xml(data: bytes) -> str | None:
     return None
 
 
+SENT_AUDIO_MEDIA_TYPES = frozenset({'audio/wav', 'audio/mpeg'})
+"""The audio formats `read_file` returns as files; the others it recognizes are described.
+
+Core judges audio by category, not format, and `OpenAIChatModel` takes audio but only WAV and MP3, so
+another format would fail the request there instead of becoming a note. Widen this once a model can
+report which audio formats it takes.
+"""
+
+
 def _audio(data: bytes) -> str | None:
     if data.startswith(b'RIFF') and data[8:12] == b'WAVE':
         return 'audio/wav'

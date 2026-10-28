@@ -803,12 +803,8 @@ class TestReadFile:
             (_zip_with('word/document.xml'), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
             (_zip_with('xl/workbook.xml'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
             (b'RIFF\x24\x00\x00\x00WAVEfmt ', 'audio/wav'),
-            (b'FORM\x00\x00\x00\x00AIFFCOMM', 'audio/aiff'),
-            (b'OggS\x00\x02\x00\x00', 'audio/ogg'),
-            (b'fLaC\x00\x00\x00\x22', 'audio/flac'),
             (b'ID3\x04\x00\x00\x00\x00', 'audio/mpeg'),
             (b'\xff\xfb\x90\x64\x00', 'audio/mpeg'),
-            (b'\xff\xf1\x50\x80\x00', 'audio/aac'),
             (b'\x00\x00\x00\x18ftypisom', 'video/mp4'),
             (b'\x00\x00\x00\x14ftypqt  ', 'video/quicktime'),
             (b'\x00\x00\x00\x14ftyp3gp4', 'video/3gpp'),
@@ -830,6 +826,25 @@ class TestReadFile:
             f'[upload.bin | {media_type} | {len(data)} bytes]\n',
             BinaryContent(data=data, media_type=media_type),
         ]
+
+    @pytest.mark.parametrize(
+        ('data', 'media_type'),
+        [
+            (b'FORM\x00\x00\x00\x00AIFFCOMM', 'audio/aiff'),
+            (b'OggS\x00\x02\x00\x00', 'audio/ogg'),
+            (b'fLaC\x00\x00\x00\x22', 'audio/flac'),
+            (b'\xff\xf1\x50\x80\x00', 'audio/aac'),
+        ],
+    )
+    async def test_audio_other_than_wav_and_mp3_is_described(
+        self, tmp_path: Path, data: bytes, media_type: str
+    ) -> None:
+        # `OpenAIChatModel` takes audio but only WAV and MP3, and core judges audio by category, so another
+        # format sent as a file would fail the request there rather than become a note.
+        (tmp_path / 'clip').write_bytes(data)
+        result = await _unhashed_toolset().read_file('clip', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, str)
+        assert result.startswith(f'[clip | {media_type} | {len(data)} bytes]\nBinary file; the first bytes in hex:\n')
 
     @pytest.mark.parametrize(
         ('name', 'media_type'),

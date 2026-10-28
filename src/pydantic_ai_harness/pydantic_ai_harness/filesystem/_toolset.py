@@ -42,6 +42,7 @@ from pydantic_ai_harness.filesystem._command_search import run_posix_search
 from pydantic_ai_harness.filesystem._content import (
     MAX_MEDIA_BYTES,
     NOTICE_CHARS,
+    SENT_AUDIO_MEDIA_TYPES,
     Replacement,
     apply_replacements,
     bytes_hash,
@@ -807,7 +808,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         hash_suffix = f' | hash:{content_hash}' if self._content_hashes else ''
         shown_type = media_type or mimetypes.guess_type(path)[0] or 'application/octet-stream'
         header = f'[{self._path_label(path)} | {shown_type} | {len(raw)} bytes{hash_suffix}]\n'
-        if media_type is None:
+        if media_type is None or (media_type.startswith('audio/') and media_type not in SENT_AUDIO_MEDIA_TYPES):
             intro = 'Binary file; the first bytes in hex:\n'
             return header + intro + hex_preview(raw, self._body_budget(header + intro))
         if len(raw) <= MAX_MEDIA_BYTES:

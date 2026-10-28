@@ -167,7 +167,7 @@ Tool arguments (scripted tests need them; `expected_hash` exists only with `cont
 as under Coder.
 
 `read_file` returns `[header, BinaryContent]` up to 5 MB for an image (PNG, JPEG, GIF, WebP), PDF,
-Word or Excel document, audio file (WAV, MP3, OGG, FLAC, AIFF, AAC) or video (MP4, QuickTime, WebM,
+Word or Excel document, WAV or MP3 audio file or video (MP4, QuickTime, WebM,
 Matroska, FLV, MPEG, WMV, 3GP), detected from its leading bytes, not its extension. A legacy `.doc` or
 `.xls` is the exception: Word and Excel share its container, so the extension says which. A model whose
 profile says it can't take that kind of file gets a note in its place, or a description when
