@@ -74,6 +74,10 @@ def test_best_ranks_names_then_paths_then_scattered_letters() -> None:
         'r/e/a/d.py',
     ]
     assert best(paths, 'readers/') == ['readers/a.py'], 'a folder typed in full offers what it holds'
+    assert best(paths, 'readme.md')[:2] == ['README.md', 'docs/readme-extra.md'], 'a file typed in full comes first'
+    assert best(('readme.mdown', 'docs/readme.md', 'readme.md'), 'readme.md')[0] == 'readme.md', (
+        'before longer or deeper'
+    )
     assert best(paths, '')[:4] == ['docs/', 'readers/', 'README.md', 'unrelated.py'], 'the top level first'
     assert best(tuple(f'file{n}.py' for n in range(100)), 'file') == [f'file{n}.py' for n in range(50)]
 
