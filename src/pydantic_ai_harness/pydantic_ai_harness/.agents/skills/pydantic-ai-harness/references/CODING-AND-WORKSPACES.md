@@ -91,7 +91,8 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
 Keyword-only options: `instructions=None` (appended to the default guidance),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
 `repo_context=True` (`RepoContext` walking up to the repository root and surfacing nested instruction
-files as the agent reads, inlining up to 32,000 characters of them per run before switching to pointers), `sub_agents=True`, `agent_folders=None`, `task_control=None` (a `TaskControl`
+files as the agent reads, inlining up to 32,000 characters of them per run before switching to pointers; pass a
+`RepoContext` to configure it), `sub_agents=True`, `agent_folders=None`, `task_control=None` (a `TaskControl`
 is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`.
 
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless

@@ -93,7 +93,10 @@ class Coder(CombinedCapability[AgentDepsT]):
     `unrestricted_filesystem=True` lets the file tools reach the whole
     workspace filesystem rather than only the working directory.
     `repo_context=False` leaves out the bundled `RepoContext`, for hosts that
-    bind their own and would otherwise load the instruction files twice.
+    bind their own and would otherwise load the instruction files twice. Pass a
+    `RepoContext` instead to use it in the bundled one's place, keeping the
+    project-directory note: `repo_context=RepoContext(expose_inventory_tool=False)`
+    restores the configuration before it walked up to the repository root.
 
     `sub_agents=True` adds `delegate_task`, which hands a self-contained sub-task
     to a fresh run of the same agent `Coder` is bound to, so the delegate has
@@ -117,7 +120,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         *,
         instructions: str | None = None,
         unrestricted_filesystem: bool = False,
-        repo_context: bool = True,
+        repo_context: bool | RepoContext[AgentDepsT] = True,
         sub_agents: bool = True,
         agent_folders: str | Sequence[str | Path] | None = None,
         task_control: TaskControl | None = None,
@@ -142,7 +145,11 @@ class Coder(CombinedCapability[AgentDepsT]):
                     INSTRUCTIONS + ('\n' + instructions if instructions else ''),
                     # Naming the directory creates a lazily created sandbox, so it comes only with
                     # `RepoContext`, which reads the workspace at run start anyway.
-                    *([project_instructions(unrestricted=unrestricted_filesystem)] if repo_context else []),
+                    *(
+                        [project_instructions(unrestricted=unrestricted_filesystem)]
+                        if repo_context is not False
+                        else []
+                    ),
                 ],
             ),
             _file_system(unrestricted=unrestricted_filesystem),
@@ -154,7 +161,9 @@ class Coder(CombinedCapability[AgentDepsT]):
                 tools=['shell'],
             ),
         ]
-        if repo_context:
+        if isinstance(repo_context, RepoContext):
+            capabilities.append(repo_context)
+        elif repo_context:
             capabilities.append(
                 RepoContext[AgentDepsT](
                     expose_inventory_tool=False,

@@ -100,6 +100,14 @@ def test_coder_unknown_export() -> None:
         pydantic_ai_harness.coder.__getattr__('missing')
 
 
+def test_coder_uses_a_given_repo_context_in_place_of_the_bundled_one() -> None:
+    mine = RepoContext[object](expose_inventory_tool=False)
+    coder = Coder[object](repo_context=mine)
+    names = [type(capability).__name__ for capability in coder.capabilities]
+    assert names.index('RepoContext') == 4
+    assert [capability for capability in coder.capabilities if isinstance(capability, RepoContext)] == [mine]
+
+
 def test_coder_members_and_parameters() -> None:
     coder = Coder(instructions='Custom instructions')
     assert [type(capability).__name__ for capability in coder.capabilities] == [
