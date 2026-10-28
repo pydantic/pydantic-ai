@@ -16,8 +16,8 @@ from pydantic_ai._instructions import resolve_sourced_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
-    CapabilityAvailabilityDeltaPart,
     CapabilityInstructionSource,
+    CapabilityLoadDeltaPart,
     InstructionId,
     InstructionPart,
     ModelResponse,
@@ -203,11 +203,11 @@ def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx: RunCo
         raise UserError(_part_of_unloaded_group_message(ctx, capability_id))
 
     # Recorded without a `load_capability` call, which the request may have no tool for: a
-    # `CapabilityAvailabilityDeltaPart` naming the capability, then the same `ToolAvailabilityDeltaPart` a
+    # `CapabilityLoadDeltaPart` naming the capability, then the same `ToolAvailabilityDeltaPart` a
     # model's load leaves after its return, revealing its tools. The next request then states the
     # capability's instructions, as after a model's load.
     records: list[CapabilityLoadRecord] = [
-        CapabilityAvailabilityDeltaPart(capabilities_added=[capability_id], tool_call_id=ctx.tool_call_id)
+        CapabilityLoadDeltaPart(loaded=[capability_id], tool_call_id=ctx.tool_call_id)
     ]
     if tools := _capability_tool_names(ctx, capability_id):
         records.append(ToolAvailabilityDeltaPart(tools_added=tools, tool_call_id=ctx.tool_call_id))
@@ -236,7 +236,7 @@ def _part_of_unloaded_group_message(ctx: RunContext[Any], capability_id: str) ->
 def _is_active_or_loading(ctx: RunContext[Any], queue: PendingMessageQueue, capability_id: str) -> bool:
     """Whether `capability_id` is active, or a load of it is queued or among the model's calls being executed."""
     if capability_id in ctx.active_capability_ids or any(
-        isinstance(record, CapabilityAvailabilityDeltaPart) and capability_id in record.capabilities_added
+        isinstance(record, CapabilityLoadDeltaPart) and capability_id in record.loaded
         for record in queue.capability_loads
     ):
         return True

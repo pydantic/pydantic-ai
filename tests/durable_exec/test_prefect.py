@@ -35,9 +35,9 @@ from pydantic_ai import (
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
-    CapabilityAvailabilityDeltaPart,
     CapabilityEvent,
     CapabilityInstructionSource,
+    CapabilityLoadDeltaPart,
     CustomEvent,
     ExternalToolset,
     FinalResultEvent,
@@ -3187,7 +3187,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                     ToolReturnPart(
                         tool_name='open_case', content='Case opened.', tool_call_id='open', timestamp=IsDatetime()
                     ),
-                    CapabilityAvailabilityDeltaPart(capabilities_added=['billing'], tool_call_id='open'),
+                    CapabilityLoadDeltaPart(loaded=['billing'], tool_call_id='open'),
                     ToolAvailabilityDeltaPart(tools_added=['invoice_status'], tool_call_id='open'),
                 ],
                 timestamp=IsDatetime(),

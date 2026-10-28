@@ -42,8 +42,8 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
-    CapabilityAvailabilityDeltaEvent,
-    CapabilityAvailabilityDeltaPart,
+    CapabilityLoadDeltaEvent,
+    CapabilityLoadDeltaPart,
     EnqueuedMessagesEvent,
     InstructionDeltaPart,
     LoadCapabilityCallPart,
@@ -2925,7 +2925,7 @@ def _load_records(messages: list[ModelMessage]) -> list[tuple[str, str | None]]:
     for message in messages:
         for part in message.parts:
             for capability_id in exchanges.loads(part):
-                assert isinstance(part, LoadCapabilityReturnPart | CapabilityAvailabilityDeltaPart)
+                assert isinstance(part, LoadCapabilityReturnPart | CapabilityLoadDeltaPart)
                 records.append((capability_id, part.tool_call_id))
     return records
 
@@ -2947,7 +2947,7 @@ async def test_load_capability_from_sync_tool() -> None:
 async def test_load_capability_from_tool(by: str) -> None:
     """A tool's load is recorded after the tool's return, so the capability is active from the next request.
 
-    No `load_capability` call is written: the record is a `CapabilityAvailabilityDeltaPart` naming the capability
+    No `load_capability` call is written: the record is a `CapabilityLoadDeltaPart` naming the capability
     and the tool call that loaded it, then a `ToolAvailabilityDeltaPart` revealing its tool, and the request
     states the capability's instructions and its toolset's in the system voice, as after a model's load.
     """
@@ -3000,7 +3000,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                     ToolReturnPart(
                         tool_name='open_case', content='loaded: True', tool_call_id='open', timestamp=IsDatetime()
                     ),
-                    CapabilityAvailabilityDeltaPart(capabilities_added=['refunds'], tool_call_id='open'),
+                    CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='open'),
                     ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id='open'),
                     InstructionDeltaPart(
                         id=InstructionId(source=CapabilityInstructionSource(id='refunds')),
@@ -3202,7 +3202,7 @@ async def test_load_capability_without_tools_records_the_load() -> None:
     assert result.all_messages()[2].parts == snapshot(
         [
             ToolReturnPart(tool_name='open_case', content='Case opened.', tool_call_id='open', timestamp=IsDatetime()),
-            CapabilityAvailabilityDeltaPart(capabilities_added=['policy'], tool_call_id='open'),
+            CapabilityLoadDeltaPart(loaded=['policy'], tool_call_id='open'),
             InstructionDeltaPart(
                 id=InstructionId(source=CapabilityInstructionSource(id='policy')), content='Refunds take 5 days.'
             ),
@@ -3251,10 +3251,10 @@ async def test_loads_before_one_request_are_recorded_in_order() -> None:
         [
             ToolReturnPart(tool_name='open_case', content='Case opened.', tool_call_id='open', timestamp=IsDatetime()),
             ToolReturnPart(tool_name='escalate', content='Escalated.', tool_call_id='esc', timestamp=IsDatetime()),
-            CapabilityAvailabilityDeltaPart(capabilities_added=['refunds'], tool_call_id='open'),
+            CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='open'),
             ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id='open'),
-            CapabilityAvailabilityDeltaPart(capabilities_added=['policy'], tool_call_id='open'),
-            CapabilityAvailabilityDeltaPart(capabilities_added=['escalation'], tool_call_id='esc'),
+            CapabilityLoadDeltaPart(loaded=['policy'], tool_call_id='open'),
+            CapabilityLoadDeltaPart(loaded=['escalation'], tool_call_id='esc'),
             InstructionDeltaPart(
                 id=InstructionId(source=CapabilityInstructionSource(id='refunds')),
                 content="""\
@@ -3310,7 +3310,7 @@ async def test_content_enqueued_by_a_loading_tool_joins_its_return() -> None:
             [
                 'ToolReturnPart',
                 'UserPromptPart',
-                'CapabilityAvailabilityDeltaPart',
+                'CapabilityLoadDeltaPart',
                 'ToolAvailabilityDeltaPart',
                 'InstructionDeltaPart',
             ],
@@ -3520,7 +3520,7 @@ async def test_load_capability_is_delivered_with_a_message_that_continues_the_ru
             ['UserPromptPart', 'InstructionBaselinePart'],
             ['ToolCallPart', 'ToolCallPart'],
             ['ToolReturnPart', 'ToolReturnPart'],
-            ['UserPromptPart', 'CapabilityAvailabilityDeltaPart', 'ToolAvailabilityDeltaPart', 'InstructionDeltaPart'],
+            ['UserPromptPart', 'CapabilityLoadDeltaPart', 'ToolAvailabilityDeltaPart', 'InstructionDeltaPart'],
             ['ToolCallPart'],
             ['ToolReturnPart'],
         ]
@@ -3671,11 +3671,9 @@ async def test_load_capability_record_is_emitted_when_the_next_request_is_short_
 
     assert result.output == 'Answered without the model.'
     assert [
-        event.part
-        for event in events
-        if isinstance(event, ToolAvailabilityDeltaEvent | CapabilityAvailabilityDeltaEvent)
+        event.part for event in events if isinstance(event, ToolAvailabilityDeltaEvent | CapabilityLoadDeltaEvent)
     ] == [
-        CapabilityAvailabilityDeltaPart(capabilities_added=['refunds'], tool_call_id='open'),
+        CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='open'),
         ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id='open'),
     ]
 

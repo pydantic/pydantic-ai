@@ -22,7 +22,7 @@ from hashlib import sha256
 from pydantic_ai._deferred_capabilities import LoadExchanges
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
-    CapabilityAvailabilityDeltaPart,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
@@ -224,5 +224,5 @@ def is_load_part(part: ModelRequestPart | ModelResponsePart) -> bool:
     """
     return isinstance(
         part,
-        LoadCapabilityCallPart | LoadCapabilityReturnPart | CapabilityAvailabilityDeltaPart | ToolAvailabilityDeltaPart,
+        LoadCapabilityCallPart | LoadCapabilityReturnPart | CapabilityLoadDeltaPart | ToolAvailabilityDeltaPart,
     )

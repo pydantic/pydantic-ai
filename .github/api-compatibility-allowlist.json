@@ -2,14 +2,14 @@
   "allowed_breakages": [
     {
       "against": "v2.63.0",
-      "fingerprint": "d214853b6753da17efa07e6c1598165feb88c39bfb0d39c8ca322b81c718d733",
-      "reason": "Adds `CapabilityAvailabilityDeltaPart` to `ModelRequestPart`, the record `RunContext.load_capability` leaves for a capability loaded from code; the version policy permits new message parts, and every existing member is unchanged.",
+      "fingerprint": "c899f363810e6caff10f37ffc738cdeef40a8b9863fd3e231247155935a3f350",
+      "reason": "Adds `CapabilityLoadDeltaPart` to `ModelRequestPart`, the record `RunContext.load_capability` leaves for a capability loaded from code; the version policy permits new message parts, and every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10090"
     },
     {
       "against": "v2.63.0",
-      "fingerprint": "ba1ab327646b915f283a1cbc4ed1e479fccdfaa8c34c6cc5045ca2dddf1e3202",
-      "reason": "Adds `CapabilityAvailabilityDeltaEvent` to `HandleResponseEvent`, emitted when a request records a `CapabilityAvailabilityDeltaPart`; every existing member is unchanged.",
+      "fingerprint": "56230242ad0a14b12479047f6f0642d31f45b628331f2db068f7ea21eacaaf2f",
+      "reason": "Adds `CapabilityLoadDeltaEvent` to `HandleResponseEvent`, emitted when a request records a `CapabilityLoadDeltaPart`; every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10090"
     },
     {

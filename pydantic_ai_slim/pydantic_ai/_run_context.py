@@ -1028,7 +1028,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """Load an [on-demand capability](../capabilities/on-demand.md#loading-from-code) from a tool or tool hook.
 
         The load is recorded in message history as a
-        [`CapabilityAvailabilityDeltaPart`][pydantic_ai.messages.CapabilityAvailabilityDeltaPart] naming the
+        [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart] naming the
         capability, followed by a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]
         revealing its tools if it has any, without a `load_capability` call, so it works whether or not the
         request has a `load_capability` tool. It takes effect from the next model request: the capability's

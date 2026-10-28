@@ -28,8 +28,8 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
-    CapabilityAvailabilityDeltaPart,
     CapabilityEvent,
+    CapabilityLoadDeltaPart,
     Citation,
     CompactionPart,
     ContentCitationAnchor,
@@ -12257,9 +12257,9 @@ def test_capability_load_record_ui_round_trip():
     messages = [
         ModelRequest(
             parts=[
-                CapabilityAvailabilityDeltaPart(capabilities_added=['refunds'], tool_call_id='open'),
+                CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='open'),
                 ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id='open'),
-                CapabilityAvailabilityDeltaPart(capabilities_added=['policy'], tool_call_id='open'),
+                CapabilityLoadDeltaPart(loaded=['policy'], tool_call_id='open'),
             ]
         )
     ]
@@ -12534,7 +12534,7 @@ async def test_tool_availability_delta_round_trips_through_client_rebuilt_stream
 async def test_capability_loaded_from_code_round_trips_through_client_rebuilt_stream() -> None:
     """A capability a tool loads with `ctx.load_capability` stays loaded when the client rebuilds history from the stream.
 
-    The load's record streams as a `data-capability-availability-delta` chunk after the tool result, and loading the
+    The load's record streams as a `data-capability-load-delta` chunk after the tool result, and loading the
     assistant message back restores it where the server-side history has it.
     """
 
@@ -12568,8 +12568,8 @@ async def test_capability_loaded_from_code_round_trips_through_client_rebuilt_st
     ]
 
     tool_output = next(event for event in events if event['type'] == 'tool-output-available')
-    delta_chunk = next(event for event in events if event['type'] == 'data-capability-availability-delta')
-    assert delta_chunk['data'] == snapshot({'added': ['policy'], 'tool_call_id': 'open'})
+    delta_chunk = next(event for event in events if event['type'] == 'data-capability-load-delta')
+    assert delta_chunk['data'] == snapshot({'loaded': ['policy'], 'tool_call_id': 'open'})
     text = ''.join(event['delta'] for event in events if event['type'] == 'text-delta')
 
     assistant_message = UIMessage(
@@ -12589,12 +12589,12 @@ async def test_capability_loaded_from_code_round_trips_through_client_rebuilt_st
 
     assert parse_loaded_capabilities(loaded) == parse_loaded_capabilities(server_history) == {'policy'}
 
-    def load_records(messages: list[ModelMessage]) -> list[tuple[int, CapabilityAvailabilityDeltaPart]]:
+    def load_records(messages: list[ModelMessage]) -> list[tuple[int, CapabilityLoadDeltaPart]]:
         return [
             (index, part)
             for index, message in enumerate(messages)
             for part in message.parts
-            if isinstance(part, CapabilityAvailabilityDeltaPart)
+            if isinstance(part, CapabilityLoadDeltaPart)
         ]
 
     assert load_records(loaded) == load_records(server_history)

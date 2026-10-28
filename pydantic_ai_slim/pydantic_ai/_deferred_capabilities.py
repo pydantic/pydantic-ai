@@ -13,7 +13,7 @@ from typing_extensions import TypedDict
 from .messages import (
     _TYPED_PART_TAGS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS_BY_TYPE,  # pyright: ignore[reportPrivateUsage]
-    CapabilityAvailabilityDeltaPart,
+    CapabilityLoadDeltaPart,
     ToolCallPart,
     ToolKind,
     ToolReturnPart,
@@ -163,7 +163,7 @@ class LoadExchanges:
     """The one rule for which capabilities a part of history loads.
 
     A capability is loaded by a `load_capability` return completing its call, the model's load, or by a
-    [`CapabilityAvailabilityDeltaPart`][pydantic_ai.messages.CapabilityAvailabilityDeltaPart] naming it, which
+    [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart] naming it, which
     [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability] records without a call. A return
     loads the capability its call named, when the call was seen first and its arguments parsed. A failed load is a
     plain `ToolReturnPart`, so it loads nothing.
@@ -185,6 +185,6 @@ class LoadExchanges:
 
     def loads(self, part: ModelRequestPart | ModelResponsePart) -> list[str]:
         """Fold in `part`, returning the capabilities it loads, in order."""
-        if isinstance(part, CapabilityAvailabilityDeltaPart):
-            return list(part.capabilities_added)
+        if isinstance(part, CapabilityLoadDeltaPart):
+            return list(part.loaded)
         return [capability_id] if (capability_id := self.observe(part)) is not None else []

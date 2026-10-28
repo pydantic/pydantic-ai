@@ -15,7 +15,7 @@ from ._utils import fill_run_metadata
 from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
-    CapabilityAvailabilityDeltaPart,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     EnqueuedMessagesEvent,
     InstructionBaselinePart,
@@ -119,7 +119,7 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
                 RetryFeedbackPart,
                 ToolSearchReturnPart,
                 ToolAvailabilityDeltaPart,
-                CapabilityAvailabilityDeltaPart,
+                CapabilityLoadDeltaPart,
                 ModelSettingsDeltaPart,
                 InstructionDeltaPart,
                 InstructionBaselinePart,
@@ -200,7 +200,7 @@ class PendingMessage:
         return cls(messages=messages, priority=priority, _tool_call=_tool_call)
 
 
-CapabilityLoadRecord: TypeAlias = CapabilityAvailabilityDeltaPart | ToolAvailabilityDeltaPart
+CapabilityLoadRecord: TypeAlias = CapabilityLoadDeltaPart | ToolAvailabilityDeltaPart
 """A part recording a capability load from code: the load itself, or the reveal of the capability's tools."""
 
 

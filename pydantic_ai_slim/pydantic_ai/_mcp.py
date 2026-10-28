@@ -155,7 +155,7 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                     (
                         messages.SpeechPart,
                         messages.ToolAvailabilityDeltaPart,
-                        messages.CapabilityAvailabilityDeltaPart,
+                        messages.CapabilityLoadDeltaPart,
                         messages.ModelSettingsDeltaPart,
                     ),
                 ):

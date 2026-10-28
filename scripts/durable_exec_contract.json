@@ -3590,17 +3590,6 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_transports.py::<module>"
       ]
     },
-    "CapabilityAvailabilityDeltaEvent.event_kind": {
-      "engines": [
-        "temporal"
-      ],
-      "kinds": [
-        "attribute_read"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._call_event_stream_handler_activity"
-      ]
-    },
     "CapabilityEvent": {
       "engines": [
         "durable_exec",
@@ -3671,6 +3660,17 @@
       ],
       "sites": [
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::RenderRunContext.emit"
+      ]
+    },
+    "CapabilityLoadDeltaEvent.event_kind": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._call_event_stream_handler_activity"
       ]
     },
     "CustomEvent": {

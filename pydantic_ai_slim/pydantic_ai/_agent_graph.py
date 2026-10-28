@@ -2562,7 +2562,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> None:
         """Emit the records of the capability loads delivered on `request` as events, once.
 
-        A `CapabilityAvailabilityDeltaEvent` for each load, and a `ToolAvailabilityDeltaEvent` for the reveal of
+        A `CapabilityLoadDeltaEvent` for each load, and a `ToolAvailabilityDeltaEvent` for the reveal of
         its tools.
 
         Emitted after the `before_model_request` hooks, like the deltas the request records itself, so content a hook
@@ -2572,8 +2572,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """
         records, self._capability_load_records = self._capability_load_records, []
         ctx.state.event_stream_buffer.extend(
-            _messages.CapabilityAvailabilityDeltaEvent(part=part)
-            if isinstance(part, _messages.CapabilityAvailabilityDeltaPart)
+            _messages.CapabilityLoadDeltaEvent(part=part)
+            if isinstance(part, _messages.CapabilityLoadDeltaPart)
             else _messages.ToolAvailabilityDeltaEvent(part=part)
             for part in records
         )
@@ -3415,7 +3415,7 @@ def _deliver_capability_loads(
 ) -> list[_enqueue.CapabilityLoadRecord]:
     """Record the capability loads `RunContext.load_capability` queued on `request`, the request being prepared.
 
-    Each is a `CapabilityAvailabilityDeltaPart` naming the capability, followed by a `ToolAvailabilityDeltaPart`
+    Each is a `CapabilityLoadDeltaPart` naming the capability, followed by a `ToolAvailabilityDeltaPart`
     revealing its tools if it has any, the reveal a model's `load_capability` call leaves after its return.
     There's no call: the request may have no `load_capability` tool to call. Recorded before
     `_refresh_loaded_capability_ids`, so the request sees the loaded capability in full: its tools,

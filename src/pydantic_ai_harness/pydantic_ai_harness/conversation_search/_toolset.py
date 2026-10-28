@@ -24,7 +24,7 @@ from pydantic_core import ErrorDetails
 
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
-    CapabilityAvailabilityDeltaPart,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -252,7 +252,7 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
     # below stays a real branch at runtime rather than dead code.
     if isinstance(
         part,
-        (ToolAvailabilityDeltaPart, CapabilityAvailabilityDeltaPart, InstructionBaselinePart, ModelSettingsDeltaPart),
+        (ToolAvailabilityDeltaPart, CapabilityLoadDeltaPart, InstructionBaselinePart, ModelSettingsDeltaPart),
     ):
         return None
     # A part pydantic-ai added after this was written. Indexing it would mean guessing which

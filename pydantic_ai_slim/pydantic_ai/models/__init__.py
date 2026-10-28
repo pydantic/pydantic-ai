@@ -93,7 +93,7 @@ from ..messages import (
     BaseToolReturnPart,
     BinaryImage,
     CachePoint,
-    CapabilityAvailabilityDeltaPart,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     DocumentMediaType,
     FilePart,
@@ -1633,7 +1633,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         mid-conversation effort change and the profile sets `supports_mid_conversation_effort`; everywhere else it
         drops them, so the current effort goes out as the request-level setting.
 
-        Drops [`CapabilityAvailabilityDeltaPart`][pydantic_ai.messages.CapabilityAvailabilityDeltaPart]s: the
+        Drops [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart]s: the
         model sees a capability's load as its instructions and tools, not as the record that loads it.
 
         Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
@@ -1673,7 +1673,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
-        messages = _drop_capability_availability_deltas(messages)
+        messages = _drop_capability_load_deltas(messages)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
             # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
@@ -3561,7 +3561,7 @@ def _reaches_the_model_as_a_user_message(part: ModelRequestPart) -> bool:
         | InstructionDeltaPart
         | InstructionBaselinePart
         | ToolAvailabilityDeltaPart
-        | CapabilityAvailabilityDeltaPart
+        | CapabilityLoadDeltaPart
         | ModelSettingsDeltaPart,
     ):
         return False
@@ -3928,22 +3928,20 @@ def _project_instruction_state(
     return projected
 
 
-def _drop_capability_availability_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """`messages` without their `CapabilityAvailabilityDeltaPart`s, or `messages` itself when there are none.
+def _drop_capability_load_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """`messages` without their `CapabilityLoadDeltaPart`s, or `messages` itself when there are none.
 
     A request left with no parts is kept, as it is when every other part of it is dropped.
     """
     if not any(
-        isinstance(part, CapabilityAvailabilityDeltaPart)
+        isinstance(part, CapabilityLoadDeltaPart)
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
     ):
         return messages
     return [
-        replace(
-            message, parts=[part for part in message.parts if not isinstance(part, CapabilityAvailabilityDeltaPart)]
-        )
+        replace(message, parts=[part for part in message.parts if not isinstance(part, CapabilityLoadDeltaPart)])
         if isinstance(message, ModelRequest)
         else message
         for message in messages
@@ -4180,7 +4178,7 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 # TODO(v3): remove `RetryPromptPart`
 _UnpreparedPart: TypeAlias = (
     ToolAvailabilityDeltaPart
-    | CapabilityAvailabilityDeltaPart
+    | CapabilityLoadDeltaPart
     | ModelSettingsDeltaPart
     | RetryFeedbackPart
     | RetryPromptPart  # pyright: ignore[reportDeprecated]

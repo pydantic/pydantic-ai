@@ -56,7 +56,7 @@ from .._utils import generate_tool_call_id
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
-    CapabilityAvailabilityDeltaPart,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     FilePart,
     FinishReason,
@@ -593,7 +593,7 @@ async def _seed_request_items(
                 InstructionDeltaPart,
                 InstructionBaselinePart,
                 ToolAvailabilityDeltaPart,
-                CapabilityAvailabilityDeltaPart,
+                CapabilityLoadDeltaPart,
                 ModelSettingsDeltaPart,
             ),
         ):
