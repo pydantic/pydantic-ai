@@ -290,6 +290,23 @@ async def test_an_invalid_member_is_refused_and_nothing_runs(allow_model_request
     assert all('less than or equal to 30' in r['content'][0]['text'] for r in results)
 
 
+async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_requests: None) -> None:
+    # A press at a point would otherwise run at the pointer, and the point would be stored in the history.
+    client = MockAnthropic.create_mock(
+        [
+            _turn(_tool_use('toolu_1', 'left_mouse_down', {'coordinate': [5, 6]})),
+            _turn(BetaTextBlock(text='done', type='text')),
+        ]
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    provider = InMemoryProvider()
+    result = await _agent(model, provider).run('Go.')
+
+    assert provider.actions == []
+    call = next(part for part in result.all_messages()[1].parts if isinstance(part, ToolCallPart))
+    assert call.args_as_dict() == {'actions': [{'type': 'left_mouse_down', 'unsupported_fields': ['coordinate']}]}
+
+
 async def test_a_deferred_computer_tool_stays_a_deferred_function(allow_model_requests: None) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
@@ -413,6 +430,8 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ),
         ('zoom', {}, {'type': 'zoom', 'region': None}),
         ('cursor_position', {}, {'type': 'cursor_position'}),
+        ('teleport', {'coordinate': [1, 2]}, {'type': 'teleport', 'unsupported_fields': ['coordinate']}),
+        ('type', {'text': 'hi', 'delay': 5}, {'type': 'type', 'unsupported_fields': ['delay']}),
     ],
 )
 def test_toolset_members_map_onto_the_computer_tool(name: str, input: dict[str, Any], action: Any) -> None:

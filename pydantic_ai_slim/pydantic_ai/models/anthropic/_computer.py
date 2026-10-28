@@ -113,8 +113,34 @@ def _point(coordinate: Any) -> dict[str, Any]:
     return {'x': coordinate}
 
 
+_COMPUTER_MEMBER_FIELDS: dict[str, frozenset[str]] = {
+    **{name: frozenset({'coordinate', 'text'}) for name in _COMPUTER_CLICKS},
+    'mouse_move': frozenset({'coordinate', 'text'}),
+    'left_click_drag': frozenset({'start_coordinate', 'coordinate', 'text'}),
+    'left_mouse_down': frozenset(),
+    'left_mouse_up': frozenset(),
+    'scroll': frozenset({'coordinate', 'scroll_direction', 'scroll_amount', 'text'}),
+    'type': frozenset({'text'}),
+    'key': frozenset({'text', 'repeat'}),
+    'hold_key': frozenset({'text', 'duration'}),
+    'wait': frozenset({'duration'}),
+    'zoom': frozenset({'region'}),
+    'screenshot': frozenset(),
+    'cursor_position': frozenset(),
+}
+"""The input fields of each computer use member that map onto the `computer` tool."""
+
+
 def map_computer_member(name: str, input: dict[str, Any]) -> list[dict[str, Any]]:
-    """One computer use call as `computer` tool actions; an unknown member fails validation, so the model retries."""
+    """One computer use call as `computer` tool actions, mapped field by field.
+
+    A member or field that doesn't map fails validation, so the model retries; only the names of what didn't map are
+    kept, so the call never runs with part of what the model asked for.
+    """
+    fields = _COMPUTER_MEMBER_FIELDS.get(name)
+    unsupported = sorted(input.keys() - fields) if fields is not None else sorted(input.keys())
+    if fields is None or unsupported:
+        return [{'type': name, 'unsupported_fields': unsupported}]
     position = _point(input.get('coordinate'))
     modifiers = [input['text']] if input.get('text') else []  # keys held during a click, move, scroll or drag
     if name in _COMPUTER_CLICKS:
@@ -152,5 +178,5 @@ def map_computer_member(name: str, input: dict[str, Any]) -> list[dict[str, Any]
                 left, top, right, bottom = cast(list[Any], region)
                 return [{'type': 'zoom', 'region': {'left': left, 'top': top, 'right': right, 'bottom': bottom}}]
             return [{'type': 'zoom', 'region': region}]
-        case _:  # `screenshot` and `cursor_position` have the tool's own shape; anything else fails validation.
-            return [{**input, 'type': name}]
+        case _:  # `screenshot` and `cursor_position`, the only members left
+            return [{'type': name}]
