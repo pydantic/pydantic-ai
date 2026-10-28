@@ -16,6 +16,7 @@
             - SupportsDisplay
             - Display
             - SupportsZoom
+            - SupportsScaledScreenshot
             - SupportsCursorPosition
             - ComputerAction
             - Click
