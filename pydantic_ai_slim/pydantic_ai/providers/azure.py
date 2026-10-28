@@ -173,18 +173,19 @@ class AzureProvider(_OpenAISDKProvider):
     def _configured_model_profile(self, model_name: str) -> ModelProfile | None:
         """The model profile, with the unified `cache` setting turned on where this provider's API takes it.
 
-        The Azure OpenAI v1 API honors GPT-5.6's `prompt_cache_options` and explicit breakpoints, which the
-        unified `cache` setting maps onto, as on `OpenAIProvider`. A dated `api-version` deployment, reached
-        through an `AsyncAzureOpenAI` client, isn't verified to accept them, so `cache` stays off there.
+        The [Azure OpenAI v1 API](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle)
+        honors GPT-5.6's `prompt_cache_options`, whose only TTL is `'30m'`, and explicit breakpoints, which the
+        unified `cache` setting maps onto, as on `OpenAIProvider`. Dated `api-version` deployments and Azure AI
+        Foundry serverless endpoints aren't verified to accept them, so `cache` stays off there.
         """
         profile = self.model_profile(model_name)
         if (
             profile is None
-            or isinstance(self._client, AsyncAzureOpenAI)
             or not profile.get('openai_supports_prompt_cache_breakpoints')
+            or not _is_azure_openai_v1_api(self.base_url)
         ):
             return profile
-        return merge_profile(profile, OpenAIModelProfile(supports_cache=True))
+        return merge_profile(profile, OpenAIModelProfile(supports_cache=True, supported_cache_retentions=('30m',)))
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
@@ -437,6 +438,14 @@ class _AzureGrokJsonSchemaTransformer(
             result = transformer.walk()
             self.is_strict_compatible = transformer.is_strict_compatible
         return result
+
+
+def _is_azure_openai_v1_api(base_url: str) -> bool:
+    """Whether a client's base URL targets the Azure OpenAI v1 API (`/openai/v1/`), whatever its client class.
+
+    An `AsyncAzureOpenAI` client can reach it too, with `base_url` set and `api_version='preview'` or `'latest'`.
+    """
+    return urlparse(base_url).path.rstrip('/').endswith('/openai/v1')
 
 
 def _openai_compatible_v1_base_url(endpoint: str) -> str | None:
