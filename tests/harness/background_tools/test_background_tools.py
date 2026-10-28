@@ -1277,10 +1277,12 @@ ends with &lt;/tool_result
         finished = asyncio.Event()
 
         @dataclass
-        class FinishBackgroundAfterRun(AbstractCapability[None]):
+        class FinishBackgroundAfterRun(AbstractCapability[AgentDepsT]):
             """Lets the background tool finish once the paused run has passed its last node boundary."""
 
-            async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            async def after_run(
+                self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]
+            ) -> AgentRunResult[Any]:
                 release.set()
                 await finished.wait()
                 return result
