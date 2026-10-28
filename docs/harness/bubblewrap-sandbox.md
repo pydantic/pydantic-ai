@@ -14,7 +14,7 @@ Run your agent's commands in a Linux [bubblewrap](https://github.com/containers/
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,anthropic]"
 ```
 
 The sandbox's host must run Linux with `bwrap` installed (the `bubblewrap` package) and user namespaces allowed; otherwise commands raise `WorkspaceUnavailableError`. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra.

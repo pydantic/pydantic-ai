@@ -11,13 +11,13 @@ Run your agent's commands and file edits in an isolated [E2B](https://e2b.dev) c
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[e2b,anthropic]"
+uv add "pydantic-ai-harness[coder,e2b,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[e2b,anthropic]"
+pip install "pydantic-ai-harness[coder,e2b,anthropic]"
 ```
 
 The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `E2B_API_KEY` to your E2B API key, and `ANTHROPIC_API_KEY` for the examples.
@@ -227,13 +227,13 @@ Install the `temporal` extra too:
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[e2b,anthropic,temporal]"
+uv add "pydantic-ai-harness[coder,e2b,anthropic,temporal]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[e2b,anthropic,temporal]"
+pip install "pydantic-ai-harness[coder,e2b,anthropic,temporal]"
 ```
 
 Run a Temporal dev server on `localhost:7233` first. The agent and workflow must be defined at module level for activity registration.

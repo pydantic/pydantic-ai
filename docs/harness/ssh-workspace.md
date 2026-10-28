@@ -14,7 +14,7 @@ Run your agent's commands and file edits on another machine over SSH, using your
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,anthropic]"
 ```
 
 No extra is needed for SSH itself: the capability runs the `ssh` client already on your machine. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra.

@@ -1,3 +1,5 @@
+import importlib
+import sys
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
@@ -5,6 +7,8 @@ import json_repair
 import pytest
 from logfire.testing import CaptureLogfire
 
+import pydantic_ai_harness
+import pydantic_clai2
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -170,3 +174,27 @@ class TestRepairToolArguments:
         spans = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'repair_tool_arguments']
         assert len(spans) == int(isinstance(arguments, str) and arguments.endswith(',}'))
         assert 'secret' not in str(spans)
+
+
+@pytest.mark.parametrize('module', ['pydantic_ai_harness.repair_tool_arguments', 'pydantic_ai_harness.coder'])
+def test_missing_json_repair_fails_at_import_with_install_hint(monkeypatch: pytest.MonkeyPatch, module: str) -> None:
+    """`json-repair` ships in the `coder` extra, so importing either capability without it names that extra."""
+    monkeypatch.setitem(sys.modules, 'json_repair', None)
+    for name in [
+        name for name in sys.modules if name.startswith((module, 'pydantic_ai_harness.repair_tool_arguments'))
+    ]:
+        monkeypatch.delitem(sys.modules, name)
+    with pytest.raises(ImportError, match=r'Install it with: pip install "pydantic-ai-harness\[coder\]"$'):
+        importlib.import_module(module)
+
+
+def test_only_coder_enables_repair_by_default() -> None:
+    """Outside its own package, only `Coder` composes `RepairToolArguments`; every other surface must opt in."""
+    roots = [Path(pydantic_ai_harness.__file__).parent, Path(pydantic_clai2.__file__).parent]
+    users = sorted(
+        path.relative_to(root.parent).as_posix()
+        for root in roots
+        for path in root.rglob('*.py')
+        if path.parent.name != 'repair_tool_arguments' and 'RepairToolArguments' in path.read_text()
+    )
+    assert users == ['pydantic_ai_harness/coder/_capability.py']

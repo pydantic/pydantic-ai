@@ -14,7 +14,7 @@ Run your agent's commands and file edits in an isolated [Daytona](https://www.da
 ## Install
 
 ```bash
-pip/uv-add "pydantic-ai-harness[daytona,anthropic]"
+pip/uv-add "pydantic-ai-harness[coder,daytona,anthropic]"
 ```
 
 The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `DAYTONA_API_KEY` to an API key from your Daytona dashboard, and `ANTHROPIC_API_KEY` for the examples.

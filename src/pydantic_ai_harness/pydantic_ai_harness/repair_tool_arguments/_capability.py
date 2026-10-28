@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import json
 
-import json_repair
+try:
+    import json_repair
+except ImportError as _import_error:
+    raise ImportError(
+        'json-repair is required for RepairToolArguments, which Coder includes. '
+        'Install it with: pip install "pydantic-ai-harness[coder]"'
+    ) from _import_error
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability, RawToolArgs

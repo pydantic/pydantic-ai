@@ -7,18 +7,18 @@ or incomplete JSON. Use this capability on its own or through [Coder](../coder/)
 
 ## Usage
 
-Install `pydantic-ai-harness`; no extra is required for repair. This example uses a local test model.
+Install the Coder extra, which includes `json-repair`; without it, importing `RepairToolArguments` raises an `ImportError` naming the extra. This example uses a local test model.
 
 uv:
 
 ```bash
-uv add pydantic-ai-harness
+uv add "pydantic-ai-harness[coder]"
 ```
 
 pip:
 
 ```bash
-pip install pydantic-ai-harness
+pip install "pydantic-ai-harness[coder]"
 ```
 
 ```python

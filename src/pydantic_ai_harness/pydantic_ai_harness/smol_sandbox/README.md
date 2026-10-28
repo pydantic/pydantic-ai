@@ -11,13 +11,13 @@ Run your agent's commands and file edits in a [smolvm](https://github.com/smol-m
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[smol,anthropic]"
+uv add "pydantic-ai-harness[coder,smol,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[smol,anthropic]"
+pip install "pydantic-ai-harness[coder,smol,anthropic]"
 ```
 
 The `smol` extra installs [smolmachines](https://github.com/smol-machines/smol), the SDK that embeds the smolvm engine. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.

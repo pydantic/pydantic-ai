@@ -33,7 +33,8 @@ an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 ## RepairToolArguments
 
 Runs `json-repair` on raw tool-call argument strings in `before_tool_validate`, for every tool on the
-agent. No extra (`json-repair` is a base dependency), no options.
+agent. Needs the `coder` extra, which includes `json-repair`
+(`uv add "pydantic-ai-harness[coder]"`); no options.
 
 ```python
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart

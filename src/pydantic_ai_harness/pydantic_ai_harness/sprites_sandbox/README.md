@@ -11,13 +11,13 @@ Run your agent's commands and file edits in a persistent [Fly.io Sprite](https:/
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[sprites,anthropic]"
+uv add "pydantic-ai-harness[coder,sprites,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[sprites,anthropic]"
+pip install "pydantic-ai-harness[coder,sprites,anthropic]"
 ```
 
 The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `SPRITE_TOKEN` to your Sprites API token, and `ANTHROPIC_API_KEY` for the examples.

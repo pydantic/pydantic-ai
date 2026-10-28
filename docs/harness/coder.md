@@ -16,7 +16,7 @@ It works in the run's workspace, on this machine or in a sandbox. It is a regula
 
 ## Usage
 
-Install the Coder extra to include ripgrep (`rg`), which backs the `list_files` and `grep` tools:
+Install the Coder extra. It includes `json-repair`, which `RepairToolArguments` needs, and ripgrep (`rg`), which backs the `list_files` and `grep` tools. Without the extra, importing `Coder` raises an `ImportError` naming it:
 
 ```bash
 pip/uv-add "pydantic-ai-harness[coder]"
