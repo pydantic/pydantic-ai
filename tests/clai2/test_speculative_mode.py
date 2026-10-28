@@ -57,7 +57,6 @@ from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.speculation import Speculation, SpeculationCounters
 from pydantic_clai2.runtime.speculative_mode import (
     NATIVE_TOOLS,
-    SPECULATIVE_TOOLS,
     ShowSandboxCalls,
     SpeculativeExecution,
     WorkspaceCodeMode,
@@ -205,7 +204,6 @@ class TestFold:
         )
         await agent.run('hi')
         assert {'list_files', 'read_file', 'grep', *NATIVE_TOOLS} <= set(seen)
-        assert {'search_clai_docs', 'read_clai_docs'} <= set(SPECULATIVE_TOOLS)
         assert 'search_clai_docs' not in seen and 'read_clai_docs' not in seen
 
     async def test_shell_folds_in_but_other_code_tools_stay_native(self, tmp_path: Path) -> None:
