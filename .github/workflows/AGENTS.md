@@ -207,6 +207,8 @@ Incomplete coverage cannot publish edits.
 Candidate edits live in a separate worktree; the root checkout remains the immutable policy base.
 A fresh read-only Task reviews the frozen candidate diff before the PR sink can publish that exact head and tree.
 The review gate also checks the proposed PR metadata and issue requirements.
+Issue alignment is checked against frozen host evidence, with matching staged copies for the reviewer.
+Local Task evidence does not provide tamper-resistant attestation against a compromised coordinator; the fresh review remains mandatory.
 Template-exempt typos, broken links and small documentation improvements need no issue.
 Nontrivial changes require the supplied existing issue, maintainer agreement and assignment to the dispatching actor; otherwise the run reports findings and noops.
 The separate PR sink uses the existing Docs app and retains protected-file review.

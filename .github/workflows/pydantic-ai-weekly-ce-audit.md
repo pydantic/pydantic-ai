@@ -106,7 +106,7 @@ pre-agent-steps:
     run: |
       set -euo pipefail
       test -n "$SAFE_OUTPUTS"
-      mkdir -p "$RUNNER_TEMP/weekly-ce-audit" .ce-audit
+      mkdir -p "$RUNNER_TEMP/weekly-ce-audit/issue" .ce-audit
       git show "$SOURCE:.github/scripts/weekly_ce_audit.py" > "$RUNNER_TEMP/weekly-ce-audit/validate.py"
       gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
         > "$RUNNER_TEMP/weekly-ce-audit/open-pr-pages.json"
@@ -117,17 +117,19 @@ pre-agent-steps:
       git worktree add --detach .ce-audit/candidate "$SOURCE"
       if [ -n "$ISSUE_NUMBER" ]; then
         [[ "$ISSUE_NUMBER" =~ ^[1-9][0-9]*$ ]]
-        gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}" > .ce-audit/issue.json
+        gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}" > "$RUNNER_TEMP/weekly-ce-audit/issue/issue.json"
         gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments?per_page=100" \
           > "$RUNNER_TEMP/weekly-ce-audit/issue-comment-pages.json"
-        jq 'add' "$RUNNER_TEMP/weekly-ce-audit/issue-comment-pages.json" > .ce-audit/issue-comments.json
+        jq 'add' "$RUNNER_TEMP/weekly-ce-audit/issue-comment-pages.json" > "$RUNNER_TEMP/weekly-ce-audit/issue/issue-comments.json"
         jq -rs '[.[0].user.login, (.[1][].user.login)] | unique[]' \
-          .ce-audit/issue.json .ce-audit/issue-comments.json > "$RUNNER_TEMP/weekly-ce-audit/issue-authors.txt"
+          "$RUNNER_TEMP/weekly-ce-audit/issue/issue.json" "$RUNNER_TEMP/weekly-ce-audit/issue/issue-comments.json" \
+          > "$RUNNER_TEMP/weekly-ce-audit/issue-authors.txt"
         while IFS= read -r login; do
           gh api "repos/${GITHUB_REPOSITORY}/collaborators/${login}/permission" \
             --jq '{login: .user.login, permission: .permission}'
         done < "$RUNNER_TEMP/weekly-ce-audit/issue-authors.txt" > "$RUNNER_TEMP/weekly-ce-audit/issue-permissions.jsonl"
-        jq -s '.' "$RUNNER_TEMP/weekly-ce-audit/issue-permissions.jsonl" > .ce-audit/issue-permissions.json
+        jq -s '.' "$RUNNER_TEMP/weekly-ce-audit/issue-permissions.jsonl" > "$RUNNER_TEMP/weekly-ce-audit/issue/issue-permissions.json"
+        cp "$RUNNER_TEMP/weekly-ce-audit/issue/"*.json .ce-audit/
       fi
 post-steps:
   - name: Validate coverage and the canonical Markdown edit boundary
@@ -135,7 +137,8 @@ post-steps:
       SOURCE: ${{ github.sha }}
     run: |
       python3 "$RUNNER_TEMP/weekly-ce-audit/validate.py" validate --source "$SOURCE" \
-        --agent-output /tmp/gh-aw/agent_output.json --agent-log /tmp/gh-aw/agent-stdio.log
+        --agent-output /tmp/gh-aw/agent_output.json --agent-log /tmp/gh-aw/agent-stdio.log \
+        --issue-evidence "$RUNNER_TEMP/weekly-ce-audit/issue"
   - name: Publish audit coverage
     if: always()
     run: |
@@ -270,6 +273,8 @@ Do not synthesize an approval or treat an audit report as independent review.
 Only `current DIGEST` for the unchanged frozen bundle permits the PR safe output.
 The trusted utility reconstructs the prompt and Git diff and verifies hashes of the task, proposal, and issue evidence.
 The compact approval fits the shim's existing streamed Task-result preview without changing its limit.
+Local Task logs detect omitted or substituted review evidence; they are not tamper-resistant attestation against a compromised coordinator.
+The mandatory context-independent review and protected hosted review remain required.
 Use the exact title and body the independent reviewer assessed.
 
 Leave protected-file review enabled; a human must approve protected instruction edits.

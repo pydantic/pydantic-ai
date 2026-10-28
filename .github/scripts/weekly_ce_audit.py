@@ -260,7 +260,9 @@ def validate_policy_checkout(root: Path, source: str, directory: Path) -> None:
             raise ValueError('Review bundle must not introduce instruction overlays')
 
 
-def review_material(root: Path, source: str, revision: str, directory: Path) -> tuple[dict[str, str], bytes, str]:
+def review_material(
+    root: Path, source: str, revision: str, directory: Path, issue_evidence: Path | None = None
+) -> tuple[dict[str, str], bytes, str]:
     """Reconstruct the review prompt, diff and digest from git objects and supplied evidence."""
     git(root, 'merge-base', '--is-ancestor', source, revision)
     head = git(root, 'rev-parse', revision).decode().strip()
@@ -272,7 +274,12 @@ def review_material(root: Path, source: str, revision: str, directory: Path) -> 
     for name in ('task.md', 'proposal.json'):
         metadata[name] = hashlib.sha256((review / name).read_bytes()).hexdigest()
     for name in ('issue.json', 'issue-comments.json', 'issue-permissions.json'):
-        path = directory / name
+        staged = directory / name
+        path = (issue_evidence or directory) / name
+        if issue_evidence is not None and (
+            staged.exists() != path.exists() or (path.exists() and staged.read_bytes() != path.read_bytes())
+        ):
+            raise ValueError('Staged issue evidence differs from the frozen host snapshot')
         metadata[name] = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ''
     metadata['digest'] = hashlib.sha256(json.dumps(metadata, sort_keys=True).encode()).hexdigest()
     prompt = (
@@ -329,7 +336,7 @@ def prepare_review(root: Path, source: str, branch: str, default_branch: str, di
 
 
 def task_review(log: Path, prompt: str) -> str:
-    """Require a completed Task with the frozen review prompt, not an author-written approval."""
+    """Match local Task evidence; this is not attestation against a compromised coordinator."""
     calls: set[str] = set()
     reports: list[str] = []
     for line in log.read_text(encoding='utf-8').splitlines():
@@ -367,11 +374,17 @@ def task_review(log: Path, prompt: str) -> str:
 
 
 def validate_review(
-    root: Path, source: str, revision: str, directory: Path, proposal: dict[str, object], log: Path
+    root: Path,
+    source: str,
+    revision: str,
+    directory: Path,
+    proposal: dict[str, object],
+    log: Path,
+    issue_evidence: Path | None = None,
 ) -> None:
     """Bind the independent review and issue contract to the exact published tree."""
     validate_policy_checkout(root, source, directory)
-    expected, diff, prompt = review_material(root, source, revision, directory)
+    expected, diff, prompt = review_material(root, source, revision, directory, issue_evidence)
     prepared: object = json.loads((directory / 'review/candidate.json').read_text())
     if mapping(prepared) != expected:
         raise ValueError('Prepared candidate changed after review')
@@ -397,7 +410,8 @@ def validate_review(
         if not isinstance(reviewed_proposal.get('exemption_reason'), str) or not reviewed_proposal['exemption_reason']:
             raise ValueError('Missing independent rationale for the template issue exemption')
         return
-    issue_payload: object = json.loads((directory / 'issue.json').read_text())
+    issue_directory = issue_evidence or directory
+    issue_payload: object = json.loads((issue_directory / 'issue.json').read_text())
     issue = mapping(issue_payload)
     number = issue.get('number')
     if issue.get('state') != 'open' or 'pull_request' in issue or reviewed_proposal.get('issue_number') != number:
@@ -408,8 +422,8 @@ def validate_review(
     actor = os.environ.get('GITHUB_ACTOR')
     if not actor or not any(mapping(person).get('login') == actor for person in assignees):
         raise ValueError('Existing issue must be assigned to the workflow actor')
-    comments_payload: object = json.loads((directory / 'issue-comments.json').read_text())
-    permissions_payload: object = json.loads((directory / 'issue-permissions.json').read_text())
+    comments_payload: object = json.loads((issue_directory / 'issue-comments.json').read_text())
+    permissions_payload: object = json.loads((issue_directory / 'issue-permissions.json').read_text())
     if not is_container(comments_payload) or isinstance(comments_payload, dict):
         raise ValueError('Missing issue discussion')
     if not is_container(permissions_payload) or isinstance(permissions_payload, dict):
@@ -445,6 +459,7 @@ def main() -> None:
     parser.add_argument('--safe-outputs', type=Path)
     parser.add_argument('--agent-output', type=Path)
     parser.add_argument('--agent-log', type=Path)
+    parser.add_argument('--issue-evidence', type=Path)
     parser.add_argument('--branch')
     parser.add_argument('--default-branch')
     args = parser.parse_args()
@@ -480,9 +495,11 @@ def main() -> None:
             items = mapping(output).get('items')
             assert is_container(items) and not isinstance(items, dict)
             proposal = next(mapping(item) for item in items if mapping(item).get('type') == 'create_pull_request')
-            if not args.agent_log:
-                raise ValueError('Publication needs the independent Task execution log')
-            validate_review(args.root, args.source, branch, args.directory, proposal, args.agent_log)
+            if not args.agent_log or args.issue_evidence is None:
+                raise ValueError('Publication needs Task execution evidence and the frozen host issue directory')
+            validate_review(
+                args.root, args.source, branch, args.directory, proposal, args.agent_log, args.issue_evidence
+            )
     receipt_path = args.directory / 'receipt.json'
     unread = sorted(entry.path for entry in entries if entry.scope in {'editable', 'report-only'})
     if receipt_path.is_file():

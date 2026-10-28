@@ -512,7 +512,7 @@ def test_nontrivial_candidate_requires_aligned_assigned_issue(
 def test_saved_approval_without_independent_task_is_rejected(
     reviewed_candidate: tuple[Path, str, str, dict[str, object]],
 ):
-    """An author-written approval cannot replace the observed independent Task result."""
+    """Reject saved approval that does not match the local Task evidence."""
     root, source, revision, proposal = reviewed_candidate
     directory = root / '.ce-audit'
     log = directory / 'review/task.log'
@@ -527,6 +527,33 @@ def test_saved_approval_without_independent_task_is_rejected(
     (directory / 'review/result.txt').write_text('current author-written-replacement')
     with pytest.raises(ValueError, match='differs'):
         validate_review(root, source, revision, directory, proposal, log)
+
+
+def test_host_snapshot_rejects_staged_issue_evidence_changes(
+    reviewed_candidate: tuple[Path, str, str, dict[str, object]],
+):
+    """The coordinator cannot replace host-frozen issue, comment or permission evidence."""
+    root, source, revision, proposal = reviewed_candidate
+    directory = root / '.ce-audit'
+    trusted = root.parent / f'{root.name}-host-issue'
+    trusted.mkdir()
+    log = directory / 'review/task.log'
+    validate_review(root, source, revision, directory, proposal, log, trusted)
+    (directory / 'issue-permissions.json').write_text('[{"login":"invented","permission":"admin"}]')
+    approve_candidate(root, source, revision, directory)
+    with pytest.raises(ValueError, match='frozen host'):
+        validate_review(root, source, revision, directory, proposal, log, trusted)
+    for name in ('issue.json', 'issue-comments.json', 'issue-permissions.json'):
+        (trusted / name).write_text('{}')
+        (directory / name).write_text('{}')
+    approve_candidate(root, source, revision, directory)
+    validate_review(root, source, revision, directory, proposal, log, trusted)
+    for name in ('issue.json', 'issue-comments.json', 'issue-permissions.json'):
+        (directory / name).write_text('{"forged":true}')
+        approve_candidate(root, source, revision, directory)
+        with pytest.raises(ValueError, match='frozen host'):
+            validate_review(root, source, revision, directory, proposal, log, trusted)
+        (directory / name).write_text('{}')
 
 
 @pytest.mark.parametrize('filename', ['instructions.md', 'candidate.diff'])
