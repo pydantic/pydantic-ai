@@ -34,7 +34,7 @@ else:
 
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 try:
@@ -50,7 +50,7 @@ _DEFAULT_VOICE_LIVE_API_VERSION = '2026-07-15'
 """Default Azure AI Voice Live API version when neither `AZURE_VOICELIVE_API_VERSION` nor an argument is set."""
 
 
-class AzureProvider(_OpenAICompatibleProvider):
+class AzureProvider(_OpenAISDKProvider):
     """Provider for Azure OpenAI API.
 
     See <https://azure.microsoft.com/en-us/products/ai-foundry> for more information.
@@ -58,6 +58,12 @@ class AzureProvider(_OpenAICompatibleProvider):
 
     @property
     def name(self) -> str:
+        return 'azure'
+
+    @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing encrypted reasoning. Azure doesn't
+        # accept OpenAI's encrypted reasoning or compaction items, nor OpenAI Azure's.
         return 'azure'
 
     @property
