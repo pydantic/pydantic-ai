@@ -6084,7 +6084,24 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                                 provider_name=self.provider_name,
                             )
                         else:
-                            call_part = _map_tool_search_call(chunk.item, self.provider_name)
+                            # Added events (e.g. from Vercel AI Gateway) may omit `arguments`.
+                            # The args are discarded here anyway (`replace(..., args=None)`),
+                            # so skip normalization that would raise on None/missing.
+                            if getattr(chunk.item, 'arguments', None) is None:
+                                call_id = chunk.item.call_id or chunk.item.id
+                                call_part = NativeToolSearchCallPart(
+                                    provider_name=self.provider_name,
+                                    args={'queries': []},
+                                    tool_call_id=call_id,
+                                    id=chunk.item.id,
+                                    provider_details={
+                                        'call_id': chunk.item.call_id,
+                                        'execution': chunk.item.execution,
+                                        'status': chunk.item.status,
+                                    },
+                                )
+                            else:
+                                call_part = _map_tool_search_call(chunk.item, self.provider_name)
                             if chunk.item.call_id is None:
                                 pending_tool_search_call_ids.append(call_part.tool_call_id)
                             yield self._parts_manager.handle_part(
