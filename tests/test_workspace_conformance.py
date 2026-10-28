@@ -12,6 +12,7 @@ import anyio.to_thread
 import pytest
 
 from pydantic_ai.workspaces import (
+    ComputerAction,
     LocalWorkspaceBackend,
     Point,
     Region,
@@ -213,3 +214,33 @@ async def test_the_display_check_fails_a_backend_with_a_new_display_each_time() 
     backend = NewDisplayEachTime(InMemoryProvider().backend(None))
     with pytest.raises(AssertionError):
         await WorkspaceBackendSuite().test_display_is_the_same_object_each_time(backend)
+
+
+@pytest.mark.anyio
+async def test_the_zoom_check_allows_a_full_resolution_capture_of_the_region() -> None:
+    """On a display whose screenshots are scaled down, a zoom at full resolution is larger than the region."""
+
+    class ScaledZoom(_ProviderFilesAndDisplay):
+        async def zoom(self, region: Region) -> bytes:
+            return await super().zoom(Region(left=0, top=0, right=region.right * 2, bottom=region.bottom * 2))
+
+    class StretchedZoom(_ProviderFilesAndDisplay):
+        async def zoom(self, region: Region) -> bytes:
+            return await super().zoom(Region(left=0, top=0, right=region.right * 2, bottom=region.bottom))
+
+    rule = WorkspaceBackendSuite().test_zoom_is_a_png_of_the_region
+    await rule(ScaledZoom(InMemoryProvider().backend(None)))
+    with pytest.raises(AssertionError):
+        await rule(StretchedZoom(InMemoryProvider().backend(None)))
+
+
+@pytest.mark.anyio
+async def test_the_pointer_check_fails_a_display_that_ignores_actions() -> None:
+    class InertDisplay(_ProviderFilesAndDisplay):
+        async def act(self, action: ComputerAction) -> None:
+            pass
+
+    rule = WorkspaceBackendSuite().test_moving_the_mouse_puts_the_pointer_there
+    await rule(_ProviderFilesAndDisplay(InMemoryProvider().backend(None)))
+    with pytest.raises(AssertionError, match='pointer at'):
+        await rule(InertDisplay(InMemoryProvider().backend(None)))
