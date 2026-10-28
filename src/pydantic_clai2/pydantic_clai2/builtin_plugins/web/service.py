@@ -22,6 +22,7 @@ from pydantic_ai_harness.ask_user import Answerer
 from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.builtin_plugins.web.channel import SessionChannel
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
+from pydantic_clai2.builtin_plugins.web.files import WorkspaceFiles
 from pydantic_clai2.builtin_plugins.web.framing import FrameCheck
 from pydantic_clai2.builtin_plugins.web.host_session import HostSessions
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Client, Hub
@@ -118,6 +119,8 @@ class WebService:
         """The orchestrator chat, a separate agent with its own conversation, beside the sessions."""
         self.workspace_locks: defaultdict[str, Lock] = defaultdict(Lock)
         """One per workspace, so the page and the orchestrator opening its session at once start one, not two."""
+        self.files = WorkspaceFiles()
+        """Each session folder's files, for the composer's `@` picker."""
         self.frames = FrameCheck()
         """Which side panel pages this page can frame; each page's headers are read once."""
         self.version = installed().label

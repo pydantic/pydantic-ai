@@ -836,9 +836,6 @@ class RealtimeSession:
         # Where the audio of the current connection began: a reconnect's fresh conversation holds the items
         # before it only as replayed text, so a barge-in can't truncate them there, and history doesn't cut them.
         self._connection_audio_start_bytes = 0
-        # Transcript accumulated per streamed part index, so a `TranscriptUpdate` can carry the whole
-        # turn so far and a renderer can replace rather than append.
-        self._transcript_so_far: dict[int, str] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._pending_messages = _RealtimePendingMessages()
         self._pending_messages_lock = Lock()
@@ -3126,21 +3123,20 @@ class RealtimeSession:
                     self._emitted_audio_bytes += len(delta.audio_chunk)
                     for tap in self._audio_taps:
                         self._audio_tap_drops += tap.put(delta.audio_chunk)
-            if delta.transcript is not None and delta.speaker is not None:
+            if self._transcript_delta_taps and delta.transcript is not None and delta.speaker is not None:
                 # Keyed on the running transcript, not on the added text: a revision adds nothing, and
-                # gating on that would drop the very correction a caption UI needs.
-                text = delta.transcript_delta or ''
-                transcript = delta.transcript or self._transcript_so_far.get(event.index, '') + text
-                self._transcript_so_far[event.index] = transcript
-                if self._transcript_delta_taps:
-                    update = TranscriptUpdate(
-                        index=event.index, speaker=delta.speaker, delta=text, transcript=transcript
-                    )
-                    for queue in self._transcript_delta_taps:
-                        if _put_tap(queue, update) is not None:
-                            self._transcript_tap_drops += 1
+                # gating on that would drop the very correction a caption UI needs. An empty transcript
+                # is such a correction too, so it's passed on as is rather than treated as missing.
+                update = TranscriptUpdate(
+                    index=event.index,
+                    speaker=delta.speaker,
+                    delta=delta.transcript_delta or '',
+                    transcript=delta.transcript,
+                )
+                for queue in self._transcript_delta_taps:
+                    if _put_tap(queue, update) is not None:
+                        self._transcript_tap_drops += 1
         elif isinstance(event, PartEndEvent) and isinstance(part := event.part, SpeechPart):
-            self._transcript_so_far.pop(event.index, None)
             if part.transcript:
                 for queue in self._transcript_taps:
                     if _put_tap(queue, part) is not None:

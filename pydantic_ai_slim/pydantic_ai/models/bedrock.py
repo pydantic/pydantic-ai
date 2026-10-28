@@ -18,6 +18,7 @@ from pydantic_core import to_json
 from typing_extensions import ParamSpec, TypedDict
 
 try:
+    import botocore
     from botocore.client import BaseClient
     from botocore.eventstream import ParserError as EventStreamParserError
     from botocore.exceptions import (
@@ -76,7 +77,7 @@ from pydantic_ai import (
 from pydantic_ai._gateway_cost import fill_gateway_header_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._thinking_part import render_replayed_thinking
+from pydantic_ai._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinking
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
@@ -103,6 +104,13 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
+from pydantic_ai.models._anthropic_schema_limits import (
+    SCHEMA_TOO_COMPLEX_HINT,
+    default_output_mode_within_limits,
+    is_schema_too_complex_error,
+    limit_exceeded_error,
+    model_exceeded_limit,
+)
 from pydantic_ai.models._prompt_cache import (
     excess_cache_points,
     instruction_cache_boundaries,
@@ -120,7 +128,7 @@ from pydantic_ai.models._tool_choice import (
 from pydantic_ai.models._transport_errors import transport_error_message
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
 from pydantic_ai.output import StructuredOutputMode
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
@@ -193,7 +201,14 @@ _DATA_RETENTION_HINT = (
 
 
 @contextmanager
-def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Generator[None]:
+def _map_api_errors(
+    model_name: str, model_id_namespace: str = 'bedrock', *, strict_schema_limits: bool = False
+) -> Generator[None]:
+    """Map Bedrock errors to Pydantic AI exceptions.
+
+    `strict_schema_limits` says whether the model compiles strict schemas with Anthropic's limits, so that a 400 for
+    schemas too complex to compile gets a hint.
+    """
     try:
         yield
     except ClientError as e:
@@ -217,6 +232,8 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
             hint = (
                 _DATA_RETENTION_HINT if isinstance(message, str) and 'data retention mode' in message.lower() else None
             )
+            if strict_schema_limits and status_code == 400 and is_schema_too_complex_error(message):
+                hint = SCHEMA_TOO_COMPLEX_HINT
             raise ModelHTTPError.for_category(
                 category or _model_errors.http_status_category(status_code, message),
                 status_code=status_code,
@@ -947,6 +964,30 @@ class BedrockConverseModel(Model[BaseClient]):
         """The model provider."""
         return self._provider.name
 
+    @functools.cached_property
+    def profile(self) -> ModelProfile:
+        """The model profile.
+
+        `supports_json_schema_output` is narrowed when the installed `botocore` can't send `outputConfig`, so that a
+        structured `output_type` that doesn't pick an output mode uses the mode it would for a model without Native
+        Output, rather than failing before the request is sent.
+        """
+        _profile = super().profile
+        if _profile.get('supports_json_schema_output', False) and not self._botocore_supports_output_config:
+            _profile = merge_profile(_profile, ModelProfile(supports_json_schema_output=False))
+        return _profile
+
+    @property
+    def canonical_system(self) -> str:
+        """`'anthropic'` for Claude models, whose thinking signatures the Anthropic API verifies too, otherwise the provider's.
+
+        A model is taken to be Claude when its profile's `bedrock_thinking_variant` is `'anthropic'`, which you can
+        set in `profile=` for a model the name doesn't identify, such as an application inference profile ARN.
+        """
+        if self.profile.get('bedrock_thinking_variant') == 'anthropic':
+            return 'anthropic'
+        return super().canonical_system
+
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
 
@@ -1008,8 +1049,39 @@ class BedrockConverseModel(Model[BaseClient]):
         if model_request_parameters.output_tools and _thinking_rejects_tool_forcing(
             _effective_thinking_type(model_settings, model_request_parameters, profile), profile
         ):
-            return 'native' if profile.get('supports_json_schema_output', False) else 'prompted'
-        return super()._default_structured_output_mode(model_settings, model_request_parameters)
+            mode: StructuredOutputMode = 'native' if profile.get('supports_json_schema_output', False) else 'prompted'
+        else:
+            mode = super()._default_structured_output_mode(model_settings, model_request_parameters)
+        return default_output_mode_within_limits(
+            self, mode, model_settings, model_request_parameters, self._strict_schema_limit_exceeded
+        )
+
+    def _strict_schema_limit_exceeded(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> str | None:
+        """The limit the request's strict schemas exceed, for a Claude model, where Converse enforces Anthropic's limits."""
+        return model_exceeded_limit(
+            self,
+            model_settings,
+            model_request_parameters,
+            supports_strict_tools=lambda: (
+                self.profile.get('bedrock_supports_strict_tool_definition', False)
+                and self._botocore_supports_strict_tool_param
+            ),
+            sent_tools=self._sent_tool_defs,
+        )
+
+    def _sent_tool_defs(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> Iterable[ToolDefinition]:
+        """The tools sent with prepared request parameters, leaving out those of `tool_choice='none'`.
+
+        Converse only gets those once the history has tool blocks, which isn't known before the messages are mapped.
+        """
+        declarations = self._tool_choice_declarations(
+            cast(BedrockModelSettings | None, model_settings), model_request_parameters
+        )
+        return declarations[0].values() if declarations is not None else ()
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1022,6 +1094,12 @@ class BedrockConverseModel(Model[BaseClient]):
         model_request_parameters = model_request_parameters.with_default_output_mode(
             self._default_structured_output_mode(settings, model_request_parameters)
         )
+        if model_request_parameters.output_mode == 'native' and not self._botocore_supports_output_config:
+            raise UserError(
+                f'The installed `botocore` ({botocore.__version__}) is too old to send Native Output to Bedrock, as it '
+                "predates Converse's `outputConfig`. Upgrade `boto3`/`botocore`; on AWS Lambda, the runtime's bundled "
+                '`botocore` may be shadowing a newer one from your layer.'
+            )
         if (
             model_request_parameters.output_mode == 'tool'
             and not model_request_parameters.allow_text_output
@@ -1052,6 +1130,8 @@ class BedrockConverseModel(Model[BaseClient]):
             )
         # Pass unmerged model_settings; base class does its own merge
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
+            raise limit_exceeded_error(exceeded, self.model_name)
         if prepared_settings and (
             self.profile.get('anthropic_disallows_sampling_settings', False)
             or self.profile.get('bedrock_disallows_sampling_settings', False)
@@ -1120,6 +1200,16 @@ class BedrockConverseModel(Model[BaseClient]):
         """
         tool_spec_shape = self.client.meta.service_model.shape_for('ToolSpecification')
         return isinstance(tool_spec_shape, StructureShape) and 'strict' in tool_spec_shape.members
+
+    @property
+    def _botocore_supports_output_config(self) -> bool:
+        """Whether the installed `botocore` knows Converse's `outputConfig`, which carries Native Output.
+
+        Like `strict` on tools, `botocore` rejects it with a `ParamValidationError` when its bundled service model
+        predates it.
+        """
+        request_shape = self.client.meta.service_model.shape_for('ConverseRequest')
+        return not isinstance(request_shape, StructureShape) or 'outputConfig' in request_shape.members
 
     def _map_tool_definition(self, f: ToolDefinition) -> ToolTypeDef:
         tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
@@ -1264,6 +1354,7 @@ class BedrockConverseModel(Model[BaseClient]):
             _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
+        streamed_response.canonical_system = self._canonical_system_stamp
         try:
             yield streamed_response
         finally:
@@ -1374,6 +1465,7 @@ class BedrockConverseModel(Model[BaseClient]):
             provider_response_id=response_id,
             provider_name=self._provider.name,
             provider_url=self.base_url,
+            canonical_system=self._canonical_system_stamp,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -1522,7 +1614,11 @@ class BedrockConverseModel(Model[BaseClient]):
 
         # One client object for both registration and the call, in case the property is reassigned mid-request.
         client = self.client
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(
+            self.model_name,
+            self._provider.model_id_namespace,
+            strict_schema_limits=self.profile.get('anthropic_enforces_strict_schema_limits', False),
+        ):
             if stream:
                 model_response = await _call_bedrock(
                     client, client.converse_stream, params, settings.get('extra_headers')
@@ -1559,18 +1655,10 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings: BedrockModelSettings | None,
         bedrock_messages: Sequence[MessageUnionTypeDef],
     ) -> ToolConfigurationTypeDef | None:
-        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.declared_tool_defs
-
         profile = cast(BedrockModelProfile, self.profile)
-        supports = _support_tool_forcing(self.model_name, profile, model_settings, model_request_parameters)
-
-        tool_choice: ToolChoiceTypeDef | None
-        if resolved_tool_choice == 'auto':
-            tool_choice = {'auto': {}}
-        elif resolved_tool_choice == 'required':
-            tool_choice = {'any': {}} if supports else {'auto': {}}
-        elif resolved_tool_choice == 'none':
+        if (declarations := self._tool_choice_declarations(model_settings, model_request_parameters)) is not None:
+            tool_defs, tool_choice = declarations
+        else:
             # Converse's `toolChoice` has no 'none' mode
             # (https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html), so the tools are
             # dropped. Converse rejects `toolUse`/`toolResult` blocks without a `toolConfig`, though, so once history has
@@ -1579,22 +1667,7 @@ class BedrockConverseModel(Model[BaseClient]):
             if not _has_tool_blocks(bedrock_messages):
                 return None
             # TODO(#10435): enforce `'none'` in core for models without a native `none`, which can still call these.
-            tool_choice = None
-        elif isinstance(resolved_tool_choice, tuple):
-            tool_choice_mode, tool_names = resolved_tool_choice
-            if tool_choice_mode == 'required' and len(tool_names) == 1:
-                if supports:
-                    tool_choice = {'tool': {'name': next(iter(tool_names))}}
-                else:
-                    # Breaks caching, but native `toolChoice.tool` is unavailable here (unsupported profile or thinking enabled)
-                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                    tool_choice = {'auto': {}}
-            else:
-                # Breaks caching, but Bedrock's toolChoice only supports a single tool name
-                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = {'auto': {}} if tool_choice_mode == 'auto' or not supports else {'any': {}}
-        else:
-            assert_never(resolved_tool_choice)
+            tool_defs, tool_choice = model_request_parameters.declared_tool_defs, None
 
         tools: list[ToolTypeDef] = [self._map_tool_definition(t) for t in tool_defs.values()]
         for tool in model_request_parameters.native_tools:
@@ -1617,6 +1690,43 @@ class BedrockConverseModel(Model[BaseClient]):
             tool_config['toolChoice'] = tool_choice
 
         return tool_config
+
+    def _tool_choice_declarations(
+        self, model_settings: BedrockModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[dict[str, ToolDefinition], ToolChoiceTypeDef | None] | None:
+        """The tool definitions to declare, after any `tool_choice` restriction, and the `toolChoice` value.
+
+        `None` for `tool_choice='none'`, whose tools are only sent once the history has tool blocks.
+        """
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.declared_tool_defs
+
+        profile = cast(BedrockModelProfile, self.profile)
+        supports = _support_tool_forcing(self.model_name, profile, model_settings, model_request_parameters)
+
+        tool_choice: ToolChoiceTypeDef | None
+        if resolved_tool_choice == 'auto':
+            tool_choice = {'auto': {}}
+        elif resolved_tool_choice == 'required':
+            tool_choice = {'any': {}} if supports else {'auto': {}}
+        elif resolved_tool_choice == 'none':
+            return None
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
+                if supports:
+                    tool_choice = {'tool': {'name': next(iter(tool_names))}}
+                else:
+                    # Breaks caching, but native `toolChoice.tool` is unavailable here (unsupported profile or thinking enabled)
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                    tool_choice = {'auto': {}}
+            else:
+                # Breaks caching, but Bedrock's toolChoice only supports a single tool name
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                tool_choice = {'auto': {}} if tool_choice_mode == 'auto' or not supports else {'any': {}}
+        else:
+            assert_never(resolved_tool_choice)
+        return tool_defs, tool_choice
 
     async def _map_messages(  # noqa: C901
         self,
@@ -1800,12 +1910,13 @@ class BedrockConverseModel(Model[BaseClient]):
                         content.append({'text': item.content})
                     elif isinstance(item, ThinkingPart):
                         if (
-                            item.provider_name == self.system
-                            and item.signature
+                            item.signature
                             and profile.get('bedrock_send_back_thinking_parts', False)
+                            and self.accepts_stateless_artifacts(message, item)
                         ):
                             reasoning_content: ReasoningContentBlockOutputTypeDef
-                            if item.id == 'redacted_content':
+                            # `AnthropicModel` records redacted thinking as `redacted_thinking`, with the same data.
+                            if item.id in REDACTED_THINKING_PART_IDS:
                                 reasoning_content = {
                                     'redactedContent': item.signature.encode('utf-8'),
                                 }
