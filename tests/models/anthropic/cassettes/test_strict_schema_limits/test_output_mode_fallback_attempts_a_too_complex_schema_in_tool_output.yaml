@@ -1,0 +1,232 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1058"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Fill in the form with `field_0` set to "a" and every other field left empty.
+            type: text
+        model: claude-sonnet-5
+        output_config:
+          format:
+            type: json_schema
+            schema:
+              type: object
+              properties:
+                field_0:
+                  type: string
+                  description: "{default: }"
+                field_1:
+                  type: string
+                  description: "{default: }"
+                field_2:
+                  type: string
+                  description: "{default: }"
+                field_3:
+                  type: string
+                  description: "{default: }"
+                field_4:
+                  type: string
+                  description: "{default: }"
+                field_5:
+                  type: string
+                  description: "{default: }"
+                field_6:
+                  type: string
+                  description: "{default: }"
+                field_7:
+                  type: string
+                  description: "{default: }"
+                field_8:
+                  type: string
+                  description: "{default: }"
+                field_9:
+                  type: string
+                  description: "{default: }"
+                field_10:
+                  type: string
+                  description: "{default: }"
+                field_11:
+                  type: string
+                  description: "{default: }"
+                field_12:
+                  type: string
+                  description: "{default: }"
+              additionalProperties: false
+        stream: true
+  response:
+    status: 400
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=50017
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-f1892dfeb3e1c85d38c7c932e84e8cc6-6eace7c3a2a89899-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        type: error
+        error:
+          type: invalid_request_error
+          message: Schema is too complex.
+        request_id: req_011CgVP1wxUhQxZbcyThxcGF
+  recorded_at: 2026-10-28T21:56:04.154913+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "918"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Fill in the form with `field_0` set to "a" and every other field left empty.
+            type: text
+        model: claude-sonnet-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: final_result
+          description: The final response which ends this conversation
+          input_schema:
+            properties:
+              field_0:
+                default: ""
+                type: string
+              field_1:
+                default: ""
+                type: string
+              field_2:
+                default: ""
+                type: string
+              field_3:
+                default: ""
+                type: string
+              field_4:
+                default: ""
+                type: string
+              field_5:
+                default: ""
+                type: string
+              field_6:
+                default: ""
+                type: string
+              field_7:
+                default: ""
+                type: string
+              field_8:
+                default: ""
+                type: string
+              field_9:
+                default: ""
+                type: string
+              field_10:
+                default: ""
+                type: string
+              field_11:
+                default: ""
+                type: string
+              field_12:
+                default: ""
+                type: string
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=118
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-d9f87fea64497303b72e939c154d3d79-2e94a5c9255fca30-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CgVP5eMRyrCBFJ5dV9RQ6","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":683,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":17,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01EsHuaN9iuTQTyCSX27Pq5C","name":"final_result","input":{},"caller":{"type":"direct"}}      }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"field"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"_0\": \"a"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"}"}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":683,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":49,"output_tokens_details":{"thinking_tokens":0}}           }
+
+        event: message_stop
+        data: {"type":"message_stop"              }
+
+  recorded_at: 2026-10-28T21:56:05.097332+00:00

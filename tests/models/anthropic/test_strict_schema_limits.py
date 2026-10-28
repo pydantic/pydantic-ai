@@ -16,6 +16,7 @@ import pytest
 from pydantic import BaseModel, create_model
 
 from pydantic_ai import Agent, Tool
+from pydantic_ai.capabilities import OutputModeFallback, output_mode_fallback
 from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models import ModelRequestParameters
@@ -339,6 +340,38 @@ async def test_schema_too_complex_error_has_hint(allow_model_requests: None, ant
         'only on the tools that need it, or use `ToolOutput` without `strict=True` or `PromptedOutput` for a large '
         'output type. See https://pydantic.dev/docs/ai/models/anthropic/#schema-complexity-limits'
     )
+
+
+@pytest.mark.moves_cache_prefix(
+    reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
+)
+async def test_output_mode_fallback_attempts_a_too_complex_schema_in_tool_output(
+    allow_model_requests: None, anthropic_model: ANTHROPIC_MODEL_FIXTURE, request_capture: RequestCapture
+):
+    """On a request that thinks, a bare `output_type` infers Native Output, which Anthropic can reject as too complex.
+
+    `OutputModeFallback` then attempts the request again in Tool Output, which Anthropic doesn't compile, and the
+    process uses Tool Output for the schema from then on.
+    """
+    form = _model('Form', {f'field_{i}': (str, '') for i in range(13)})
+    # Thinks by default, adaptively.
+    agent = Agent(
+        anthropic_model('claude-sonnet-5', capture=True), output_type=form, capabilities=[OutputModeFallback()]
+    )
+    output_mode_fallback._too_complex_schemas.clear()  # pyright: ignore[reportPrivateUsage]
+
+    result = await agent.run('Fill in the form with `field_0` set to "a" and every other field left empty.')
+
+    assert result.output.model_dump(exclude_defaults=True) == {'field_0': 'a'}
+    assert [_request_shape(body) for body in request_capture.bodies()] == snapshot(
+        [
+            {'tool_choice': None, 'output_format': True, 'tools': []},
+            {'tool_choice': {'type': 'auto'}, 'output_format': False, 'tools': [('final_result', None)]},
+        ]
+    )
+    assert result.usage.requests == 1
+    assert len(output_mode_fallback._too_complex_schemas) == 1  # pyright: ignore[reportPrivateUsage]
+    output_mode_fallback._too_complex_schemas.clear()  # pyright: ignore[reportPrivateUsage]
 
 
 def _object(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
