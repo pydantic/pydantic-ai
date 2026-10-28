@@ -285,7 +285,9 @@ run yourself, in PowerShell syntax on Windows. For `main` installs, it also
 writes the overrides file and includes its path in the printed command.
 
 In the web UI, `/update` opens the same menu as the Settings window's **About** section, whose
-**Update…** button asks before it runs `/update now`.
+**Update…** button asks before it runs `/update now`. When CLAI can't restart from that session, for
+example while another live session runs a turn, **Update…** shows the reason as an error instead and
+saves nothing; in the terminal, the menu shows the reason and stays open.
 
 ### Environment variables
 
@@ -2518,8 +2520,9 @@ many sessions run at once.
   `README.md` for `@READ`. In a Git repository these are the files Git tracks or
   would add, so `.gitignore` applies; elsewhere, all but those in hidden folders,
   `node_modules`, and `__pycache__`. Up/down pick one, and Tab or Enter puts its
-  path in the prompt; a folder stays open to list what it holds. The path is sent
-  as you see it, and the agent reads the file with its tools.
+  path in the prompt; a folder stays open to list what it holds. Enter on a file
+  already typed in full sends the prompt as it is; Tab still takes the highlighted
+  one. The path is sent as you see it, and the agent reads the file with its tools.
 - **Idle closing.** A session closes after an hour with no turn, no queued input,
   no background fork or delegated task, and no browser or terminal showing it; a
   page counts as showing the last five sessions it showed. Its conversation stays saved: click it to resume it. The session `clai2 --web`
@@ -2682,7 +2685,10 @@ lists them all. Saved servers are available to the agent from the next prompt,
 with tool names prefixed by the server name. A server connects on the first
 prompt that needs it (or `/mcp start`) and stays connected; one that cannot
 connect is marked `error` and left out rather than failing the prompt. An OAuth
-server signs in only with `/mcp auth NAME`, never in the middle of a prompt. A
+server signs in only with `/mcp auth NAME`, never in the middle of a prompt.
+Switch on **On demand** (`"defer_loading": true`) to keep a server's tools out of
+prompts until the agent loads them by the server's description; see
+[Load a server's tools on demand](../PLUGINS.md#load-a-servers-tools-on-demand). A
 repository's Claude Code-style `.mcp.json` (or `.clai/mcp_servers.json`) loads
 once you review it and run `/mcp trust accept`. See
 [Connect MCP servers](../PLUGINS.md#connect-mcp-servers) for storage, secrets, OAuth,
