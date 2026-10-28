@@ -17,6 +17,7 @@ from pydantic_ai.workspaces import (
     Point,
     Region,
     SupportsCursorPosition,
+    SupportsScaledScreenshot,
     SupportsZoom,
     WorkspaceBackend,
     WorkspaceRef,
@@ -131,11 +132,14 @@ class TestRunOnlyWorkspaceBackend(WorkspaceBackendSuite):
         return _local_destroy_environment()
 
 
-class _ProviderFilesAndDisplay(DisplayOnlyBackend, SupportsZoom, SupportsCursorPosition):
+class _ProviderFilesAndDisplay(DisplayOnlyBackend, SupportsZoom, SupportsScaledScreenshot, SupportsCursorPosition):
     """The provider's files and display, without its stub `run`."""
 
     async def zoom(self, region: Region) -> bytes:
         return await self._display.zoom(region)
+
+    async def scaled_screenshot(self, width: int, height: int) -> bytes:
+        return await self._display.scaled_screenshot(width, height)
 
     async def cursor_position(self) -> Point:
         return await self._display.cursor_position()
@@ -201,6 +205,7 @@ async def test_the_zoom_and_pointer_checks_skip_a_display_without_them() -> None
     backend = DisplayOnlyBackend(InMemoryProvider().backend(None))
     for check in (
         suite.test_zoom_is_a_png_of_the_region,
+        suite.test_a_scaled_screenshot_is_a_png_of_the_size_asked,
         suite.test_the_cursor_position_is_on_the_screen,
         suite.test_moving_the_mouse_puts_the_pointer_there,
     ):
@@ -248,3 +253,15 @@ async def test_the_pointer_check_fails_a_display_that_ignores_actions() -> None:
     await rule(_ProviderFilesAndDisplay(InMemoryProvider().backend(None)))
     with pytest.raises(AssertionError, match='pointer at'):
         await rule(InertDisplay(InMemoryProvider().backend(None)))
+
+
+@pytest.mark.anyio
+async def test_the_scaled_screenshot_check_fails_a_display_that_ignores_the_size() -> None:
+    class FullSize(_ProviderFilesAndDisplay):
+        async def scaled_screenshot(self, width: int, height: int) -> bytes:
+            return await self.screenshot()
+
+    with pytest.raises(AssertionError):
+        await WorkspaceBackendSuite().test_a_scaled_screenshot_is_a_png_of_the_size_asked(
+            FullSize(InMemoryProvider().backend(None))
+        )

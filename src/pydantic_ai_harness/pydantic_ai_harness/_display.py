@@ -42,6 +42,9 @@ class ManagedDisplay:
 
     A call that only looks, such as a screenshot, is retried once after a failure, which starts a display that was
     lost; an action isn't, so nothing is done twice. The backend calls `started_fresh` when a new display started.
+
+    `screen_key` names the screen it shows, so `ComputerUse` runs on one screen take turns at it, whichever
+    workspace they reach it through: a sandbox's ref, or a local X server's `DISPLAY`.
     """
 
     def __init__(
@@ -49,13 +52,20 @@ class ManagedDisplay:
         start: Callable[[], Awaitable[DisplayDriver]],
         *,
         scope: Callable[[], AbstractAsyncContextManager[object]] = nullcontext,
+        screen_key: Callable[[], object | None] = lambda: None,
     ):
         self._start = start
         self._scope = scope
+        self._screen_key = screen_key
         self._driver: DisplayDriver | None = None
         self._lock = anyio.Lock()
         self._fresh = False
         self._fresh_starts = 0
+
+    @property
+    def screen_key(self) -> object | None:
+        """A hashable name for the screen this display shows, or `None` until it's known."""
+        return self._screen_key()
 
     def started_fresh(self) -> None:
         """Record that a new display started, without the windows that were open before."""
@@ -118,7 +128,10 @@ class ManagedDisplay:
         return await self._call(lambda driver: driver.screenshot(), observe=True)
 
     async def scaled_screenshot(self, width: int, height: int) -> bytes:
-        """The whole display scaled to `width` by `height`, for a model that can't take it at full size."""
+        """The whole display scaled to `width` by `height`, for a model that can't take it at full size.
+
+        This is [`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot].
+        """
         return await self._call(lambda driver: driver.scaled_screenshot(width, height), observe=True)
 
     async def act(self, action: ComputerAction) -> None:

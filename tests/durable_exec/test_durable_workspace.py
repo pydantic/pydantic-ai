@@ -454,6 +454,7 @@ async def test_result_workspace_calls_directly_once_the_container_has_ended() ->
         workspace.screenshot(),
         workspace.act(PressKeys(keys=('a',))),
         workspace.zoom(region),
+        workspace.scaled_screenshot(10, 10),
         workspace.cursor_position(),
     ):
         with pytest.raises(UserError, match='has no display to control'):
@@ -599,6 +600,7 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
         await workspace.act(HoldKeys(keys=('shift',), seconds=1))
     assert provider.actions == [PressKeys(keys=('ctrl', 's'))]
     assert (await workspace.zoom(Region(left=0, top=0, right=8, bottom=4)))[16:24] == struct.pack('>II', 8, 4)
+    assert (await workspace.scaled_screenshot(64, 40))[16:24] == struct.pack('>II', 64, 40)
     assert await workspace.cursor_position() == Point(x=640, y=400)
     assert _workspace_units(durability) == snapshot(
         [
@@ -622,6 +624,7 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
             'act',
             'act',
             'zoom',
+            'scaled_screenshot',
             'cursor_position',
         ]
     )
@@ -649,6 +652,8 @@ def test_display_calls_round_trip_through_json_and_pickle() -> None:
     assert pickle.loads(pickle.dumps(act)) == act
     zoom = WorkspaceCall(method='zoom', region=Region(left=1, top=2, right=3, bottom=4))
     assert JSON_CODEC.load(WorkspaceCall, JSON_CODEC.dump(WorkspaceCall, zoom)) == zoom
+    scaled = WorkspaceCall(method='scaled_screenshot', size=(64, 40))
+    assert JSON_CODEC.load(WorkspaceCall, JSON_CODEC.dump(WorkspaceCall, scaled)) == scaled
     for result in (WorkspaceCallResult(size=(1280, 800)), WorkspaceCallResult(point=Point(x=1, y=2))):
         assert JSON_CODEC.load(WorkspaceCallResult, JSON_CODEC.dump(WorkspaceCallResult, result)) == result
 
