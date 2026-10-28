@@ -292,10 +292,15 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         self._chain.exhausted()
 
     def _already_attempted(self, candidate: Model | KnownModelName | str) -> bool:
-        if isinstance(candidate, Model):
-            # The attempted model may be wrapped by now, e.g. by a durable-execution capability.
-            return any(_is_or_wraps(attempted, candidate) for attempted in self._attempted_models)
-        return candidate in self._attempted_ids
+        if not isinstance(candidate, Model):
+            return candidate in self._attempted_ids
+        # The attempted model may be wrapped by now, e.g. by a durable-execution capability.
+        for attempted in self._attempted_models:
+            while attempted is not candidate and isinstance(attempted, WrapperModel):
+                attempted = attempted.wrapped
+            if attempted is candidate:
+                return True
+        return False
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -305,12 +310,3 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
 def _pin_id(model: Model | str) -> str:
     """How a candidate is identified in a continuation pin: the string it was given as, or its `model_id`."""
     return model if isinstance(model, str) else model.model_id
-
-
-def _is_or_wraps(model: Model, candidate: Model) -> bool:
-    while True:
-        if model is candidate:
-            return True
-        if not isinstance(model, WrapperModel):
-            return False
-        model = model.wrapped

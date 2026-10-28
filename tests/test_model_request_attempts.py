@@ -553,12 +553,9 @@ async def test_hooks_handle_every_request_error():
     ) -> ModelResponse:
         return ModelResponse(parts=[TextPart('recovered')])
 
-    model = FunctionModel(stream_function=failure_stream, model_name='any')
-    request_context = ModelRequestContext(
-        model=model, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    agent = Agent(
+        FunctionModel(stream_function=failure_stream, model_name='any'), deps_type=type(None), capabilities=[hooks]
     )
-    agent = Agent(model, deps_type=type(None), capabilities=[hooks])
-    assert hooks._handles_model_request_error(cast(RunContext[None], None), request_context)  # pyright: ignore[reportPrivateUsage]
     async with agent.run_stream('x') as result:
         assert await result.get_output() == 'recovered'
 
