@@ -3916,6 +3916,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if not tools and not history_declared_tool_names:
             tool_choice = None
 
+        # Collected before the history is trimmed to what the server doesn't hold: a call's output acknowledges its
+        # checks even when the call itself stays in the stored response or conversation.
+        safety_checks = _computer_safety_checks(messages)
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
         if not sends_effort_changes:
             messages = _without_model_settings_deltas(messages)
@@ -3925,6 +3928,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_settings,
             wire_request_parameters,
             previous_response_id=previous_response_id,
+            safety_checks=safety_checks,
         )
         reasoning = self._translate_thinking(model_settings, effort_request_parameters)
 
@@ -4712,6 +4716,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         standing_prompt_retained: bool = True,
         previous_response_id: str | None = None,
+        safety_checks: dict[str, Any] | None = None,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -4815,9 +4820,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             and part.tool_kind == COMPUTER_KIND.id
                             and call_id not in replayed_call_ids
                         ):
-                            openai_messages.extend(
-                                _map_computer_call_output(part, call_id, computer_calls.get(call_id))
-                            )
+                            checks = computer_calls.get(call_id) or (safety_checks or {}).get(part.tool_call_id)
+                            openai_messages.extend(_map_computer_call_output(part, call_id, checks))
                         elif call_id in client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
                             # Replay the local `search_tools` result as a
                             # `tool_search_output` so the provider rehydrates the
@@ -7663,7 +7667,9 @@ def _map_computer_action(action: dict[str, Any]) -> list[dict[str, Any]]:
     map are kept, so the call never runs with part of what the model asked for.
     """
     if (unsupported := _unsupported_computer_fields(action)) is not None:
-        return [{'type': action.get('type'), 'unsupported_fields': unsupported}]
+        # Under the tool's own type, so the retry names the fields rather than refusing the type.
+        kind = action.get('type')
+        return [{'type': 'click' if kind == 'double_click' else kind, 'unsupported_fields': unsupported}]
     modifiers: list[str] = action.get('keys') or []
     position = {'x': action.get('x'), 'y': action.get('y')}
     match action['type']:
@@ -7742,6 +7748,17 @@ def _map_computer_call(
     )
 
 
+def _computer_safety_checks(messages: list[ModelMessage]) -> dict[str, Any]:
+    """The safety checks of each `computer` call in the history, by tool call ID."""
+    return {
+        part.tool_call_id: checks
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart) and (checks := (part.provider_details or {}).get(SAFETY_CHECKS))
+    }
+
+
 def _map_computer_call_output(
     part: ToolReturnPart, call_id: str, safety_checks: Any
 ) -> list[responses.ResponseInputItemParam]:
@@ -7767,8 +7784,15 @@ def _map_computer_call_output(
         output['acknowledged_safety_checks'] = safety_checks
     metadata: Any = part.metadata
     items: list[responses.ResponseInputItemParam] = [output]
-    # A result without metadata, such as one a UI rebuilt, may describe a failure, so its text goes along too.
-    if image is None or part.outcome != 'success' or not isinstance(metadata, dict) or 'error' in metadata:
+    # A result without metadata, such as one a UI rebuilt, may describe a failure, so its text goes along too. So does
+    # that of a call changed before it ran, which says what ran instead of the model's own actions.
+    if (
+        image is None
+        or part.outcome != 'success'
+        or not isinstance(metadata, dict)
+        or 'error' in metadata
+        or cast(dict[str, Any], metadata).get('changed')
+    ):
         # The output can only carry an image: say what didn't run, or why the image is blank.
         texts = [item for item in part.content_items() if isinstance(item, str)]
         note = ' '.join(texts) if texts else part.model_response_str(wrap_if_error=False)

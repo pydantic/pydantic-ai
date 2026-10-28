@@ -49,9 +49,9 @@ workspace the agent can take screenshots but not act.
 The model must accept images. Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them. Gemini gets `computer` as a function tool, not its own computer use tool, until `GoogleModel` moves to the Interactions API ([#6192](https://github.com/pydantic/pydantic-ai/issues/6192)).
 
 Claude 4 and later models and GPT-5.4 and later (except GPT-5.4 nano) get `computer` as their provider's native
-computer tool, the format they were trained on; see [Anthropic](../models/anthropic.md#computer-use) and
-[OpenAI](../models/openai.md) for which tool and platforms. Every other model that accepts images gets it as a function
-tool.
+computer tool, the format they were trained on, on the APIs listed for [Anthropic](../models/anthropic.md#computer-use) and
+[OpenAI](../models/openai.md); GPT gets it only through the Responses API. Every other model that accepts images gets it as a
+function tool.
 
 ## Computer use, Playwright, or Browser Use
 
@@ -66,17 +66,36 @@ tool.
 | Setting | Default | What it does |
 |---|---|---|
 | `requires_approval` | `False` | `True` asks before any call that does more than look, zoom or wait. Needs a [deferred tool handler](../deferred-tools.md#human-in-the-loop-tool-approval). Turn it on for anything you'd regret an agent clicking. |
-| `keep_screenshots` | `None` | Send at least the most recent N screenshots, dropping older ones 25 at a time so prompt caching keeps working; the run's history keeps all of them. Use it to bound the cost of long runs, but not on Claude Fable 5.1 or the Claude 5.5 models: dropping a screenshot makes Claude lose its earlier reasoning. With `None`, the oldest are still dropped once a request would carry more than 100 screenshots or about 15 MB of them, which providers refuse. |
-| `settle_seconds` | `0.5` | Pause after acting before the screenshot, so animations and page loads can finish. |
+| `keep_screenshots` | `None` | Send at least the most recent N images, screenshots and zooms, dropping older ones 25 at a time so prompt caching keeps working; the run's history keeps all of them. Use it to bound the cost of long runs, but not on Claude Fable 5.1 or the Claude 5.5 models: dropping a screenshot makes Claude lose its earlier reasoning. With `None`, the oldest are still dropped once a request would carry more than 100 images or about 15 MB of them, which providers refuse. |
+| `settle_seconds` | `0.5` | Pause after acting before the next zoom or the screenshot, so animations and page loads can finish. A `wait` the model asks for adds to it. |
 
 A call its provider flags with safety checks, as OpenAI does, needs approval even with `requires_approval=False`.
 Give such an agent a deferred tool handler, such as [`HandleDeferredToolCalls`](../deferred-tools.md); without one,
 a flagged call ends the run with an error. The checks are in the call's `provider_details['safety_checks']`.
 
 The actions to approve are in the model's coordinates: pixels in the latest screenshot, or the 0-999 grid for Gemini 3.
+If an approval changes them, the result tells the model the actions that ran.
 
 `ComputerUse` turns on [prompt caching](../capabilities/caching.md), since every request carries the screenshots so
 far: on Claude, a run costs several times more without it. Set `cache=False` in the model settings to turn it off.
+
+## Screen size
+
+A model's profile can limit the size of the screenshots it takes, as `computer_use_screenshot_limit`: Claude Opus 4.7,
+Opus 4.8 and the Claude 5 models take up to 2576 pixels on the longer side, earlier Claude models 1568 pixels and
+about 1.15 megapixels. A 1280x800 screen fits every model. On a larger screen, `ComputerUse` sends the model the
+screenshot scaled down and scales its positions back up, when the display can scale its screenshots; otherwise the
+run stops with an error naming the largest screen that fits. A zoom into a region larger than the limit fails that
+action, so the model zooms into a smaller one.
+
+## When an action fails
+
+The actions in a call run in order, and one that fails stops the call: the actions after it don't run, and the
+result says which action failed and why, ends with a screenshot as usual, and has the error in its `metadata`, a
+[`ComputerResult`][pydantic_ai.computer_use.ComputerResult]. A position outside the screen fails the whole call before anything runs.
+When the environment is gone, the run ends with [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
+When the display restarted since the model's last screenshot, such as after its sandbox was stopped, the next result
+tells the model that the windows that were open are gone.
 
 ## Watching a run
 
@@ -110,7 +129,7 @@ async def main():
   [`request_limit`](../agent.md#usage-limits) of 50. Pass higher [`UsageLimits`][pydantic_ai.usage.UsageLimits] for
   long tasks.
 - Under [durable execution](../durable_execution/overview.md), a retried action may repeat a click that already
-  happened. Temporal and Prefect retry each action on its own; DBOS, Absurd and pgtask retry the whole call.
+  happened. Temporal, Prefect and Render retry each action on its own; DBOS, Absurd and pgtask retry the whole call.
 - Every screenshot rides in each model request, so under Temporal a run passes the 2 MB payload limit after a few
   steps and then stops making progress. Configure Temporal's [external storage](../durable_execution/temporal.md#large-payloads),
   which keeps large payloads outside the history. `keep_screenshots` doesn't avoid this: it drops screenshots 25 at a

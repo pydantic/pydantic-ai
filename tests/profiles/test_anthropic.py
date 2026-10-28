@@ -634,6 +634,7 @@ def test_model_profile_fable_5_1():
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
+            'computer_use_screenshot_limit': (2576, 3600000),
         }
     )
 
@@ -717,6 +718,7 @@ def test_model_profile_opus_5():
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
+            'computer_use_screenshot_limit': (2576, 3600000),
         }
     )
 

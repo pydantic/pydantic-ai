@@ -870,6 +870,10 @@ Computer use is provided by the Pydantic AI Harness [`ComputerUse`](../harness/c
 
 Other models get a function tool.
 
+Claude Opus 4.7, Opus 4.8 and the Claude 5 models take screenshots up to 2576 pixels on the longer side, and earlier
+models up to 1568 pixels and about 1.15 megapixels; on a larger screen, `ComputerUse` sends them a scaled-down
+screenshot (see [Screen size](../harness/computer-use.md#screen-size)).
+
 ## Code Execution Tool Version
 
 By default, Pydantic AI chooses a compatible Anthropic code execution tool version for the selected model. You can override this with [`AnthropicModelSettings.anthropic_code_execution_tool_version`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_code_execution_tool_version] when you need a specific supported Anthropic tool version:

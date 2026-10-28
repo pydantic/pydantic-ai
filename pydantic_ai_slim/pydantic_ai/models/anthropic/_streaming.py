@@ -98,8 +98,9 @@ class AnthropicStreamedResponse(StreamedResponse):
         with map_api_errors(self._model_name, self._model_id_namespace):
             current_block: BetaContentBlock | None = None
             ignored_server_tool_use_indices: set[int] = set()
-            # A response's computer toolset calls are one batch: they stream as one `computer` call where the first
-            # of them was, updated as each one completes.
+            # A response's computer toolset calls are one batch: they become one `computer` call where the first of
+            # them was, kept up to date as each completes and started once, when the response ends, since the batch
+            # runs only then.
             native_computer = self._native_computer
             computer_blocks: list[dict[str, Any]] = []
             computer_input: list[str] = []
@@ -367,12 +368,16 @@ class AnthropicStreamedResponse(StreamedResponse):
                             'name': current_block.name,
                             'input': pydantic_core.from_json(computer_input_json, allow_partial=True),
                         }
-                        # A new list each time, so a part already yielded keeps its own.
-                        computer_blocks = [*computer_blocks, block] if native_computer.is_toolset else [block]
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=computer_blocks[0]['id'],
-                            part=native_computer.call_part(computer_blocks, self.provider_name),
-                        )
+                        if native_computer.is_toolset:
+                            computer_blocks.append(block)
+                            self._parts_manager.handle_part(
+                                vendor_part_id=computer_blocks[0]['id'],
+                                part=native_computer.call_part(list(computer_blocks), self.provider_name),
+                            )
+                        else:
+                            yield self._parts_manager.handle_part(
+                                vendor_part_id=block['id'], part=native_computer.call_part([block], self.provider_name)
+                            )
                     elif event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
                     elif isinstance(current_block, BetaMCPToolUseBlock):
@@ -400,6 +405,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                     current_block = None
                 elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
                     current_block = None
+            if native_computer and computer_blocks:
+                yield self._parts_manager.handle_part(
+                    vendor_part_id=computer_blocks[0]['id'],
+                    part=native_computer.call_part(computer_blocks, self.provider_name),
+                )
 
     async def close_stream(self) -> None:
         await self._response.source.close()
