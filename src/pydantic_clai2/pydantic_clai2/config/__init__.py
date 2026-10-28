@@ -124,6 +124,7 @@ class Settings(BaseModel):
         """Validate executable argv entries and canonical absolute repository keys."""
         placeholders = {'{path}', '{branch}', '{repo}'}
         normalized: dict[str, list[str]] = {}
+        original_keys: dict[str, str] = {}
         for directory, argv in value.items():
             if '\0' in directory:
                 raise ValueError('Worktree command keys cannot contain NUL')
@@ -140,7 +141,13 @@ class Settings(BaseModel):
             }
             if unknown:
                 raise ValueError(f'Unknown worktree command placeholders: {", ".join(sorted(unknown))}')
-            normalized[str(Path(directory).resolve())] = argv
+            canonical = str(Path(directory).resolve())
+            if canonical in original_keys:
+                raise ValueError(
+                    f'Worktree command keys {original_keys[canonical]!r} and {directory!r} resolve to the same directory'
+                )
+            original_keys[canonical] = directory
+            normalized[canonical] = argv
         return normalized
 
     @field_validator('update_channel', mode='before')

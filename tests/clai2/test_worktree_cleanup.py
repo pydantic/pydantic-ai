@@ -299,7 +299,7 @@ def test_custom_command_preparation_failure(
     monkeypatch.setattr('builtins.input', no_prompt)
     offer_worktree_cleanup(worktree=launched, read_remove_commands=lambda: {str(repo / '.git'): ['remove']})
     assert launched.path.exists()
-    assert 'Cannot prepare worktree removal command' in capsys.readouterr().err
+    assert f'Worktree kept at {launched.path}: cannot prepare removal command' in capsys.readouterr().err
 
 
 def test_custom_command_not_offered_without_tty(

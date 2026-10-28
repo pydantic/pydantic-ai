@@ -2481,7 +2481,8 @@ For a repository where Git cannot perform the cleanup you want, set
 `worktrees.remove_commands` in your user settings. It maps the repository's
 canonical absolute Git common directory to a nonempty argv list. Find the key
 with `git rev-parse --path-format=absolute --git-common-dir` inside that repository.
-The match is exact, with no wildcards. For example:
+The match is exact, with no wildcards. Keys resolving to the same directory are
+rejected rather than silently choosing one command. For example:
 
 ```sh
 clai2 config set worktrees.remove_commands '{"/absolute/path/to/repo/.git": ["/absolute/path/to/cleanup-worktree", "{path}", "{branch}"]}'
@@ -2495,17 +2496,15 @@ bare repository, its common directory. Embedded placeholders such as
 not invoke a shell or expand variables.
 
 To call a user-defined shell function, explicitly invoke its shell. For example,
-a zsh function named `pyai-remove` could use this argv:
+a zsh function named `cleanup_worktree` could use this argv:
 
 ```json
-["zsh", "-ic", "pyai-remove \"$1\"", "clai2-remove", "{branch}"]
+["zsh", "-ic", "cleanup_worktree \"$1\"", "clai2-remove", "{branch}"]
 ```
 
 Interactive zsh loads your rc files, adding startup overhead and possibly output.
-It passes the branch as `$1` without shell interpolation by CLAI. This example
-has no `-y`, retaining the function's own dirty-file confirmation, and cannot
-remove a detached worktree. Neither the function nor the cleanup program above
-ships with CLAI.
+The branch reaches the function as `$1`; CLAI never inserts it into shell text.
+Neither the function nor the cleanup program above ships with CLAI.
 
 CLAI warns that the command may delete the branch and uncommitted files before
 asking for confirmation. The command inherits stdin, stdout, stderr, and the

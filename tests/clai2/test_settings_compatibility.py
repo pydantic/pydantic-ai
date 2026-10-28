@@ -1286,6 +1286,26 @@ def test_invalid_worktree_command_write_preserves_saved_map(tmp_path: Path) -> N
         assert SettingsStore(store.path).load().worktree_remove_commands == original
 
 
+@pytest.mark.parametrize('alias_kind', ['symlink', 'trailing-slash'])
+def test_worktree_commands_reject_duplicate_repository_keys(tmp_path: Path, alias_kind: str) -> None:
+    directory = tmp_path / 'repo.git'
+    directory.mkdir()
+    if alias_kind == 'symlink':
+        link = tmp_path / 'alias.git'
+        link.symlink_to(directory, target_is_directory=True)
+        alias = str(link)
+    else:
+        alias = str(directory) + '/'
+    commands: dict[str, JsonValue] = {str(directory): ['first'], alias: ['second']}
+    store = SettingsStore(tmp_path / 'config.db')
+    store.set('worktrees.remove_commands', {str(directory): ['original']})
+    with pytest.raises(ValidationError, match='resolve to the same directory') as error:
+        store.set('worktrees.remove_commands', commands)
+    assert repr(str(directory)) in str(error.value)
+    assert repr(alias) in str(error.value)
+    assert store.worktree_remove_commands() == {str(directory.resolve()): ['original']}
+
+
 def test_worktree_command_symlink_key_is_canonical_and_menu_is_json(tmp_path: Path) -> None:
     target = tmp_path / 'repo.git'
     target.mkdir()

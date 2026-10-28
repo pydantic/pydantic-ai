@@ -238,7 +238,7 @@ def offer_worktree_cleanup(
                 }
                 custom = repo, [values.get(arg, arg) for arg in registered]
         except (OSError, subprocess.CalledProcessError) as exc:
-            print(f'Cannot prepare worktree removal command for {root}: {exc}', file=sys.stderr)
+            print(f'Worktree kept at {root}: cannot prepare removal command: {exc}', file=sys.stderr)
             return
     prompt = f'Remove worktree {root}? The branch will be kept. [y/N] '
     if custom is not None:
