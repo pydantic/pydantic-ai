@@ -8,8 +8,8 @@ try:
     import json_repair
 except ImportError as _import_error:
     raise ImportError(
-        '`json-repair` is required for `RepairToolArguments`, which `Coder` includes. '
-        'Install it with: pip install "pydantic-ai-harness[coder]"'
+        '`json-repair` is required for `RepairToolArguments`. Install `pydantic-ai-harness[coder]` to use `Coder`, '
+        'or `pydantic-ai-harness[repair-tool-arguments]` to use `RepairToolArguments` on its own.'
     ) from _import_error
 
 from pydantic_ai import RunContext

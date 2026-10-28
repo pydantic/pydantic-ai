@@ -179,13 +179,16 @@ class TestRepairToolArguments:
 
 @pytest.mark.parametrize('module', ['pydantic_ai_harness.repair_tool_arguments', 'pydantic_ai_harness.coder'])
 def test_missing_json_repair_fails_at_import_with_install_hint(monkeypatch: pytest.MonkeyPatch, module: str) -> None:
-    """`json-repair` ships in the `coder` extra, so importing either capability without it names that extra."""
+    """Importing either capability without `json-repair` names the extras that install it."""
     monkeypatch.setitem(sys.modules, 'json_repair', None)
     for name in [
         name for name in sys.modules if name.startswith((module, 'pydantic_ai_harness.repair_tool_arguments'))
     ]:
         monkeypatch.delitem(sys.modules, name)
-    with pytest.raises(ImportError, match=r'Install it with: pip install "pydantic-ai-harness\[coder\]"$'):
+    with pytest.raises(
+        ImportError,
+        match=r'Install `pydantic-ai-harness\[coder\]` to use `Coder`, or `pydantic-ai-harness\[repair-tool-arguments\]`',
+    ):
         importlib.import_module(module)
 
 

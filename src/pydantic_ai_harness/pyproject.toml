@@ -106,6 +106,7 @@ prompt-injection-defender-ml = [
 github = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 slack = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 coder = ["json-repair>=0.58.0", "ripgrep==14.1.0 ; sys_platform != 'android'"]
+repair-tool-arguments = ["json-repair>=0.58.0"]
 logfire-mcp = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 linear = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 notion = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
