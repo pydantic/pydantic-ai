@@ -12,7 +12,7 @@ from termflow.tui.pager import Pager
 from termflow.tui.terminal import terminal_size
 from termflow.tui.textinput import TextInput, TextInputResult
 
-from pydantic_clai2.plugins.menus import ChoicePreview, FieldRow, FieldSource
+from pydantic_clai2.plugins.menus import ChoicePreview, CloseMenu, FieldRow, FieldSource
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.text_editor import TextEditor, edit_text
@@ -291,7 +291,7 @@ async def run_flow_async(
     """`run_flow` driven from the event loop, for submenus that are themselves async, such as `prompt_api_key`.
 
     Each widget runs in its own `run_worker`, so a submenu can open its own worker without nesting one
-    terminal owner inside another.
+    terminal owner inside another. A submenu that returns `CloseMenu` closes the list too.
     """
     messages: list[str] = []
     cursor = 0
@@ -303,7 +303,10 @@ async def run_flow_async(
         if row is None:
             continue
         if submenus and row.key in submenus:
-            messages.extend(await submenus[row.key]())
+            done = await submenus[row.key]()
+            messages.extend(done)
+            if isinstance(done, CloseMenu):
+                return messages
             continue
         message = await run_worker(partial(_edit, menu, row, runners))
         if message is not None:

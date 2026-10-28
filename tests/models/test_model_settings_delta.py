@@ -14,6 +14,7 @@ import os
 from collections.abc import Mapping
 from typing import Any, cast
 
+import httpx2
 import pytest
 
 from pydantic_ai import (
@@ -26,6 +27,7 @@ from pydantic_ai import (
     TextPart,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import ModelFallback
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.models import ModelRequestParameters
@@ -39,6 +41,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import RequestCapture, try_import
 
 with try_import() as openai_imports_successful:
+    import openai
     from openai.types.chat import ChatCompletionMessage
     from openai.types.responses import ResponseOutputMessage, ResponseOutputText
     from openai.types.responses.response_output_message import Content
@@ -58,6 +61,7 @@ with try_import() as openai_imports_successful:
     )
 
 with try_import() as anthropic_imports_successful:
+    import anthropic
     from anthropic import (
         AsyncAnthropicBedrock,
         AsyncAnthropicBedrockMantle,
@@ -294,7 +298,8 @@ async def test_openrouter_effort_change_keeps_the_cache(
 
     _, second_request = request_capture.bodies()
     # The instructions are left out: they're the long cached prefix.
-    messages = cast(list[Any], second_request['messages'])[1:]
+    # Past the standing prompt: the `<system>` tag announcement and the catalogue.
+    messages = cast(list[Any], second_request['messages'])[2:]
     assert {'reasoning': second_request['reasoning'], 'messages': messages} == expected_request
     assert second.response.usage.cache_read_tokens >= first.response.usage.input_tokens - 100
 
@@ -778,3 +783,192 @@ async def test_anthropic_direct_request_without_the_channel_sends_effort_at_requ
     assert request['output_config'] == {'effort': 'xhigh'}
     assert not any('output_config' in message for message in request['messages'])
     assert 'mid-conversation-output-config-2026-07-01' not in str(request.get('betas'))
+
+
+def _mock_status_error(module: Any) -> Exception:
+    """A 500 from either SDK, which `ModelFallback` falls back from."""
+    request = httpx2.Request('POST', 'https://example.com/v1')
+    return module.APIStatusError('down', response=httpx2.Response(status_code=500, request=request), body=None)
+
+
+def _effort_on_the_wire(kind: str, client: Any) -> list[Any]:
+    """What each request a model sent says about the effort: the request-level effort, and every in-place change."""
+
+    def given(value: Any) -> Any:
+        # The SDKs' "not given" sentinels compare unequal to their copies, so they're left out as `None`.
+        # `Omit` and `NotGiven` are falsy, unlike every value an effort setting takes.
+        return value or None
+
+    if kind.startswith('anthropic'):
+        return [
+            (
+                given(request.get('thinking')),
+                given(request.get('output_config')),
+                'mid-conversation-output-config-2026-07-01' in (given(request.get('betas')) or ()),
+                [message for message in request['messages'] if message['role'] == 'system'],
+            )
+            for request in get_mock_chat_completion_kwargs(client)
+        ]
+    if kind == 'openai-chat':
+        return [given(request.get('reasoning_effort')) for request in get_mock_chat_kwargs(client)]
+    return [
+        (
+            given(request.get('reasoning')),
+            [item for item in request['input'] if item.get('type') == 'configuration_update'],
+        )
+        for request in get_mock_responses_kwargs(client)
+    ]
+
+
+def _sent(kind: str, client: Any) -> list[dict[str, Any]]:
+    """Every request a model's mock client was sent."""
+    if kind.startswith('anthropic'):
+        return get_mock_chat_completion_kwargs(client)
+    if kind == 'openai-chat':
+        return get_mock_chat_kwargs(client)
+    return get_mock_responses_kwargs(client)
+
+
+def _fallback_model(kind: str, *, fails: bool) -> tuple[Any, Any]:
+    """A model of `kind` with a mock client that answers, or that fails with a 500, and that client."""
+
+    if kind.startswith('anthropic'):
+        model_name = 'claude-opus-5-5' if kind == 'anthropic' else 'claude-haiku-4-5'
+        client = MockAnthropic.create_mock(_mock_status_error(anthropic) if fails else _anthropic_text('Shelf 40.'))
+        return AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client)), client
+    if kind == 'openai-chat':
+        client = MockOpenAI.create_mock(
+            _mock_status_error(openai)
+            if fails
+            else chat_completion_message(ChatCompletionMessage(content='Shelf 40.', role='assistant'))
+        )
+        return OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=client)), client
+    client = MockOpenAIResponses.create_mock(_mock_status_error(openai) if fails else _responses_text('Shelf 40.'))
+    return OpenAIResponsesModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=client)), client
+
+
+@pytest.mark.skipif(
+    not (openai_imports_successful() and anthropic_imports_successful()), reason='openai or anthropic not installed'
+)
+@pytest.mark.parametrize(
+    ('step', 'candidate', 'expected'),
+    [
+        pytest.param(
+            'anthropic',
+            'openai-responses',
+            snapshot(
+                (
+                    [
+                        (
+                            {'type': 'adaptive'},
+                            {'effort': 'low'},
+                            True,
+                            [{'role': 'system', 'content': [], 'output_config': {'effort': 'xhigh'}}],
+                        )
+                    ],
+                    [
+                        (
+                            {'effort': 'low', 'context': 'all_turns'},
+                            [{'type': 'configuration_update', 'reasoning': {'effort': 'xhigh'}}],
+                        )
+                    ],
+                )
+            ),
+            id='anthropic-to-openai',
+        ),
+        pytest.param(
+            'openai-responses',
+            'anthropic',
+            snapshot(
+                (
+                    [
+                        (
+                            {'effort': 'low', 'context': 'all_turns'},
+                            [{'type': 'configuration_update', 'reasoning': {'effort': 'xhigh'}}],
+                        )
+                    ],
+                    [
+                        (
+                            {'type': 'adaptive'},
+                            {'effort': 'low'},
+                            True,
+                            [{'role': 'system', 'content': [], 'output_config': {'effort': 'xhigh'}}],
+                        )
+                    ],
+                )
+            ),
+            id='openai-to-anthropic',
+        ),
+        pytest.param(
+            'anthropic',
+            'anthropic-without-channel',
+            snapshot(
+                (
+                    [
+                        (
+                            {'type': 'adaptive'},
+                            {'effort': 'low'},
+                            True,
+                            [{'role': 'system', 'content': [], 'output_config': {'effort': 'xhigh'}}],
+                        )
+                    ],
+                    [({'type': 'enabled', 'budget_tokens': 32768}, None, False, [])],
+                )
+            ),
+            id='anthropic-to-anthropic-without-channel',
+        ),
+        pytest.param(
+            'openai-responses',
+            'openai-chat',
+            snapshot(
+                (
+                    [
+                        (
+                            {'effort': 'low', 'context': 'all_turns'},
+                            [{'type': 'configuration_update', 'reasoning': {'effort': 'xhigh'}}],
+                        )
+                    ],
+                    ['xhigh'],
+                )
+            ),
+            id='openai-responses-to-chat',
+        ),
+    ],
+)
+async def test_a_fallback_candidate_sends_the_change_its_own_way(
+    allow_model_requests: None, step: str, candidate: str, expected: Any
+):
+    """A `ModelFallback` candidate sends the effort the step recorded as its own API takes it.
+
+    The step's model fails, and the request moves to a candidate of the same or another provider. The candidate
+    reads the recorded parts like any request: one with a mid-conversation channel opens at the conversation's
+    first effort and sends the change in place, and one without sends the current effort at request level. The
+    history the step leaves is the same either way, for the next request on either model.
+    """
+    step_model, step_client = _fallback_model(step, fails=True)
+    candidate_model, candidate_client = _fallback_model(candidate, fails=False)
+    agent = Agent(step_model, capabilities=[ModelFallback(candidate_model)])
+
+    result = await agent.run(message_history=_history(), model_settings=ModelSettings(thinking='xhigh'))
+
+    assert result.output == 'Shelf 40.'
+    assert (_effort_on_the_wire(step, step_client), _effort_on_the_wire(candidate, candidate_client)) == expected
+    # The candidate sends exactly what it sends serving the same request as the agent's own model.
+    alone, alone_client = _fallback_model(candidate, fails=False)
+    plain = await Agent(alone).run(message_history=_history(), model_settings=ModelSettings(thinking='xhigh'))
+    assert _sent(candidate, candidate_client) == _sent(candidate, alone_client)
+    assert _effort_parts_by_request(result.all_messages()) == [
+        [ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True)],
+        [ModelSettingsDeltaPart(settings={'thinking': 'xhigh'})],
+    ]
+
+    # The next request, on either model, says the same about the effort as after a step the candidate served alone.
+    for kind in (step, candidate):
+        efforts: list[list[Any]] = []
+        for history in (result.all_messages(), plain.all_messages()):
+            model, client = _fallback_model(kind, fails=False)
+            await Agent(model).run(
+                'And item 41?', message_history=history, model_settings=ModelSettings(thinking='xhigh')
+            )
+            efforts.append(_effort_on_the_wire(kind, client))
+        assert efforts[0] == efforts[1]
