@@ -588,7 +588,9 @@ class WorkspaceBackendSuite:
             await attach_backend(backend.ref).working_dir()
 
     async def test_display_is_the_same_object_each_time(self, backend: WorkspaceBackend) -> None:
+        """Before and after the display starts, so state keyed on it, such as a lock, survives the first call."""
         display = _display(backend)
+        await display.screenshot()
         assert isinstance(backend, SupportsDisplay) and backend.display is display
 
     async def test_screenshot_is_a_png_of_the_display_size(self, backend: WorkspaceBackend) -> None:
