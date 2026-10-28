@@ -78,6 +78,8 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+The function is called for each model request, with the model about to receive it as `ctx.model`, so it can decide by that model's provider or profile. When the [`ModelFallback`](capabilities/model-fallback.md) capability moves a request to another model, the function is called again with that model as `ctx.model`, so each model gets the tool it would get on its own.
+
 !!! note "Returning `None` under a `fallback_subagent_model`"
     Omission is what `None` means everywhere the native tool is the only path. [`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] are the exception: once `fallback_subagent_model` is set, their subagent tool is offered to the model whenever the factory returns `None`, and calling it raises [`UserError`][pydantic_ai.exceptions.UserError] instead of running with default settings. See [X Search](capabilities/x-search.md) and [Image Generation](capabilities/image-generation.md).
 

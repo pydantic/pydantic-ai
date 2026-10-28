@@ -39,8 +39,9 @@ from pydantic_ai import (
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback, WrapModelRequestHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.messages import (
     AgentInstructionSource,
     AgentStreamEvent,
@@ -2118,6 +2119,91 @@ async def test_rejected_usage_counts_towards_limits_before_a_continuation() -> N
     assert backup_calls == 1
 
 
+def _rejected_primary(response: ModelResponse) -> bool:
+    return response.model_name == 'primary'
+
+
+def _fallback_agent(via: str, primary: Model, backup: Model) -> Agent[None, str]:
+    if via == 'ModelFallback':
+        return Agent(primary, capabilities=[ModelFallback(backup, fallback_on=_rejected_primary)])
+    return Agent(FallbackModel(primary, backup, fallback_on=_rejected_primary))
+
+
+@pytest.mark.parametrize('via', ['FallbackModel', 'ModelFallback'])
+async def test_rejected_usage_survives_an_error_fallback_on_does_not_cover(via: str) -> None:
+    """A rejected response's usage still counts when a later model raises an error that ends the run."""
+
+    def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=1000, output_tokens=500))
+
+    def uncovered_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ValueError('not a fallback error')
+
+    agent = _fallback_agent(
+        via, FunctionModel(rejected, model_name='primary'), FunctionModel(uncovered_error, model_name='backup')
+    )
+    usage = RunUsage()
+    with pytest.raises(ValueError, match='not a fallback error'):
+        await agent.run('test', usage=usage)
+    assert usage == snapshot(RunUsage(input_tokens=1000, output_tokens=500))
+
+
+@pytest.mark.parametrize('wrapped', [False, True])
+async def test_fallback_model_called_by_another_model_commits_nothing_to_the_run(wrapped: bool) -> None:
+    """A `FallbackModel` that another model calls itself doesn't count its rejected responses towards the run.
+
+    Only the response of the run's own model is counted: here the outer model reports its own usage, and
+    the inner request's rejected response isn't on it, so the run doesn't count it.
+    """
+
+    def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=1000, output_tokens=500))
+
+    def accepted(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('accepted')], usage=RequestUsage(input_tokens=10, output_tokens=5))
+
+    inner: Model = FallbackModel(
+        FunctionModel(rejected, model_name='primary'),
+        FunctionModel(accepted, model_name='backup'),
+        fallback_on=_rejected_primary,
+    )
+    if wrapped:
+        inner = WrapperModel(inner)
+
+    async def outer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        inner_response = await direct_model_request(inner, [ModelRequest.user_text_prompt('hi')])
+        assert inner_response.failed_attempts is not None
+        return ModelResponse(parts=[TextPart('outer')], usage=RequestUsage(input_tokens=7, output_tokens=3))
+
+    result = await Agent(FunctionModel(outer)).run('test')
+    assert result.usage == snapshot(RunUsage(input_tokens=7, output_tokens=3, requests=1))
+
+
+@pytest.mark.parametrize('via', ['FallbackModel', 'ModelFallback'])
+async def test_rejected_usage_is_not_counted_twice_before_a_continuation(via: str) -> None:
+    """The limit checked before a suspended response is continued counts a rejected response's usage once."""
+    backup_calls = 0
+
+    def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(cost=Decimal('0.006')))
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal backup_calls
+        backup_calls += 1
+        return ModelResponse(
+            parts=[TextPart(f'part {backup_calls}')],
+            usage=RequestUsage(cost=Decimal('0.001')),
+            state='suspended' if backup_calls == 1 else 'complete',
+        )
+
+    agent = _fallback_agent(
+        via, FunctionModel(rejected, model_name='primary'), FunctionModel(backup, model_name='backup')
+    )
+    result = await agent.run('test', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+    assert result.usage == snapshot(RunUsage(cost=Decimal('0.008'), requests=1))
+    assert backup_calls == 2
+
+
 async def test_rejected_usage_counts_towards_token_limits() -> None:
     def reject_primary(response: ModelResponse) -> bool:
         return response.model_name == 'primary'
@@ -2844,7 +2930,7 @@ def test_fallback_on_single_exception_type_direct() -> None:
 
 def test_empty_fallback_on_list_error() -> None:
     """Test that empty fallback_on list raises UserError."""
-    with pytest.raises(UserError, match='empty fallback_on'):
+    with pytest.raises(UserError, match='empty `fallback_on`'):
         FallbackModel(
             primary_model,
             fallback_model_impl,
@@ -2854,7 +2940,7 @@ def test_empty_fallback_on_list_error() -> None:
 
 def test_empty_fallback_on_tuple_error() -> None:
     """Test that empty fallback_on tuple raises UserError."""
-    with pytest.raises(UserError, match='empty fallback_on'):
+    with pytest.raises(UserError, match='empty `fallback_on`'):
         FallbackModel(
             primary_model,
             fallback_model_impl,
@@ -4884,3 +4970,54 @@ async def test_fallback_on_mixed_tuple() -> None:
 
         result = await agent.run('hello')
         assert result.output == 'success'
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('via', ['FallbackModel', 'ModelFallback'])
+async def test_a_failed_pinned_continuation_job_is_cancelled_once_when_the_chain_fails(stream: bool, via: str) -> None:
+    """When the pinned continuation and then every fallback fail, the abandoned job is cancelled exactly once.
+
+    `FallbackModel` cancels it before moving on to its chain, and the error the chain then raises reaches the
+    continuation loop, which would otherwise cancel the same job again on its way out.
+    """
+    cancelled: list[tuple[str, str | None]] = []
+
+    class CancelRecordingModel(FunctionModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            cancelled.append((self.model_name, response.provider_response_id))
+
+    def failing(name: str) -> CancelRecordingModel:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelAPIError(name, 'down')
+
+        async def respond_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            raise ModelAPIError(name, 'down')
+            yield ''  # pragma: no cover
+
+        return CancelRecordingModel(respond, stream_function=respond_stream, model_name=name)
+
+    primary, backup = failing('primary'), failing('backup')
+    pin_key = 'fallback_model_id' if via == 'FallbackModel' else 'fallback_candidate'
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='test')]),
+        ModelResponse(
+            parts=[TextPart('paused')],
+            state='suspended',
+            provider_response_id='job-1',
+            model_name='primary',
+            metadata={'__pydantic_ai__': {pin_key: primary.model_id}},
+        ),
+    ]
+    agent = (
+        Agent(FallbackModel(primary, backup))
+        if via == 'FallbackModel'
+        else Agent(primary, capabilities=[ModelFallback(backup)])
+    )
+    with pytest.raises(FallbackExceptionGroup):
+        if stream:
+            # The stream fails to open, so it's never handed over.
+            async with AsyncExitStack() as stack:
+                await stack.enter_async_context(agent.run_stream(message_history=history))
+        else:
+            await agent.run(message_history=history)
+    assert cancelled == [('primary', 'job-1')]

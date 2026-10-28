@@ -358,6 +358,7 @@ def test_profile() -> None:
         supports_async_tool_calls=False,
         supports_tool_return_schema=False,
         emits_input_speech_events=False,
+        output_speech_timestamp_granularity=None,
         synthesizes_turn_boundary=False,
         responses_are_requests=True,
         response_usage_covers_context=False,

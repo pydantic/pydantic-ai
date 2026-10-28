@@ -9,8 +9,8 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import AdvisorTool, Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability, PrefixTools
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback, PrefixTools
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -89,6 +89,37 @@ class TestAdvisor:
 
         assert seen[0].function_tools == []
         assert seen[0].native_tools == [AdvisorTool(model='claude-opus-4-8', max_tokens=2048, caching='5m')]
+
+    async def test_fallback_model_gets_the_advisor_for_its_own_provider(self) -> None:
+        """A `ModelFallback` model is offered the advisor as it would be on its own, not as the failed model was.
+
+        The native advisor names an Anthropic model, which an OpenRouter model can't consult, so it gets the
+        local advisor tool instead.
+        """
+        seen: list[tuple[str, list[AdvisorTool], list[str]]] = []
+
+        def respond(name: str, *, fail: bool) -> FunctionDef:
+            def executor(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+                parameters = info.model_request_parameters
+                native = [tool for tool in parameters.native_tools if isinstance(tool, AdvisorTool)]
+                seen.append((name, native, [tool.name for tool in parameters.function_tools]))
+                if fail:
+                    raise ModelAPIError(model_name=name, message='boom')
+                return ModelResponse(parts=[TextPart('done')])
+
+            return executor
+
+        primary = _ProviderFunctionModel('anthropic', respond('primary', fail=True), supports_advisor=True)
+        backup = _ProviderFunctionModel('openrouter', respond('backup', fail=False), supports_advisor=True)
+
+        await Agent(primary, capabilities=[Advisor('anthropic:claude-opus-4-8'), ModelFallback(backup)]).run('Go.')
+        await Agent(backup, capabilities=[Advisor('anthropic:claude-opus-4-8')]).run('Go.')
+
+        assert seen == [
+            ('primary', [AdvisorTool(model='claude-opus-4-8')], []),
+            ('backup', [], ['advisor']),
+            ('backup', [], ['advisor']),
+        ]
 
     async def test_local_advisor_run_belongs_to_the_executor_conversation(self) -> None:
         advisor_conversations: set[str | None] = set()
