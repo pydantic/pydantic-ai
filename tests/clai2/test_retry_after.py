@@ -30,7 +30,6 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.errors import error_message
-from pydantic_clai2.models import retry_after
 from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import ModelProvider
 from tests.clai2.test_app_edges import inputs
@@ -110,7 +109,7 @@ def sdk_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     # Replace only the SDK's module reference, not anyio.sleep process-wide.
     monkeypatch.setattr('anthropic._base_client.anyio', SimpleNamespace(sleep=sleep))
     monkeypatch.setattr(
-        'pydantic_clai2.models.retry_after.time.time', lambda: datetime(2026, 10, 23, tzinfo=UTC).timestamp()
+        'pydantic_clai2.models._retry_after.time.time', lambda: datetime(2026, 10, 23, tzinfo=UTC).timestamp()
     )
     return waits
 
@@ -119,7 +118,17 @@ def sdk_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 @pytest.mark.parametrize(
     ('headers', 'notice', 'delay'),
     [
-        ({'retry-after': '10511', 'x-should-retry': 'true', 'request-id': 'kept'}, '2h 55m', None),
+        (
+            {
+                'retry-after': '10511',
+                'x-should-retry': 'true',
+                'request-id': 'kept',
+                'anthropic-ratelimit-unified-7d-status': 'rejected',
+                'anthropic-ratelimit-unified-7d-reset': '1793059200',
+            },
+            '2h 55m',
+            None,
+        ),
         ({'retry-after': '60'}, None, 60.0),
         ({'retry-after': '60.1'}, '1m 1s', None),
         ({'retry-after': '172801'}, '2d 0h', None),
@@ -178,6 +187,11 @@ async def test_claude_code_retry_budget(
                 error = caught.value
                 assert isinstance(error, ModelHTTPError)
                 assert error.status_code == 429
+                assert error.body == {
+                    'type': 'error',
+                    'error': {'type': 'rate_limit_error', 'message': 'subscription exhausted'},
+                }
+                assert error.provider_error_type == 'rate_limit_error'
                 assert error.headers is not None
                 assert all(error.headers[key] == value for key, value in headers.items() if key != 'x-should-retry')
                 assert error.headers['x-should-retry'] == 'false'
@@ -296,21 +310,30 @@ async def test_other_models_keep_their_retry_policy(sdk_sleeps: list[float]) -> 
     [('GET', '/api/oauth/usage'), ('POST', '/api/oauth/usage'), ('GET', '/v1/messages'), ('POST', '/v1/models')],
 )
 async def test_shared_client_non_model_requests_are_unchanged(method: str, path: str, sdk_sleeps: list[float]) -> None:
-    async with httpx2.AsyncClient(
-        transport=httpx2.MockTransport(
-            lambda request: rejection(headers={'retry-after': '10511', 'x-should-retry': 'true'})
+    calls = 0
+    responses: list[httpx2.Response] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        response = (
+            rejection(headers={'retry-after': '10511', 'x-should-retry': 'true'})
+            if calls == 1
+            else httpx2.Response(200, json={'ok': True})
         )
-    ) as client:
+        responses.append(response)
+        return response
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as client:
         model = claude_model(client)
         await plugin_resolver(model=model).resolve('claude-code:claude-sonnet-4-5')
         assert isinstance(model.client, AsyncAnthropic)
-        sdk = model.client.with_options(max_retries=0)
-        request = sdk.get if method == 'GET' else sdk.post
-        with pytest.raises(RateLimitError) as caught:
-            await request(path, cast_to=object)
-        assert caught.value.response.headers['x-should-retry'] == 'true'
-        assert 'clai2.rejected_retry_after' not in caught.value.response.extensions
-    assert sdk_sleeps == []
+        request = model.client.get if method == 'GET' else model.client.post
+        assert await request(path, cast_to=object) == {'ok': True}
+        assert responses[0].headers['x-should-retry'] == 'true'
+        assert 'clai2.rejected_retry_after' not in responses[0].extensions
+    assert calls == 2
+    assert sdk_sleeps == [10511.0]
 
 
 @pytest.mark.parametrize('guarded', [False, True])
@@ -353,7 +376,7 @@ async def test_nonstandard_anthropic_client_is_not_decorated() -> None:
             aws_access_key='test', aws_secret_key='test', aws_region='us-east-1', http_client=client
         )
         model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=sdk))
-        retry_after.limit_retry_after(model=model)
+        assert await plugin_resolver(model=model).resolve('claude-code:claude-sonnet-4-5') is model
         assert client.event_hooks['response'] == []
 
 

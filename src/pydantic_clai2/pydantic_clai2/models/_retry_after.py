@@ -42,7 +42,11 @@ async def _limit_retry_after(response: httpx2.Response) -> None:
 
 
 def _retry_after(*, headers: httpx2.Headers) -> float | None:
-    """Match the Anthropic SDK's milliseconds, fractional seconds, then HTTP-date precedence."""
+    """Match the SDK parser, not the core error-metadata parser.
+
+    The SDK accepts fractional seconds. Valid non-positive/NaN milliseconds do not fall through
+    to Retry-After; core's metadata parser intentionally has different semantics.
+    """
     if (milliseconds := headers.get('retry-after-ms')) is not None:
         try:
             return float(milliseconds) / 1000

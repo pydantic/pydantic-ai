@@ -28,7 +28,7 @@ def error_message(error: BaseException) -> str:
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         if isinstance(current, ModelRateLimitError):
-            from pydantic_clai2.models.retry_after import retry_after_message
+            from pydantic_clai2.models._retry_after import retry_after_message
 
             if (message := retry_after_message(error=current)) is not None:
                 return message
