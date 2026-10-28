@@ -1272,6 +1272,45 @@ ends with &lt;/tool_result
         with pytest.raises(RuntimeError, match='background failure'):
             await agent.run('go')
 
+    async def test_result_finishing_after_a_deferred_pause_ends_is_not_delivered(self) -> None:
+        release = asyncio.Event()
+        finished = asyncio.Event()
+
+        @dataclass
+        class FinishBackgroundAfterRun(AbstractCapability[None]):
+            """Lets the background tool finish once the paused run has passed its last node boundary."""
+
+            async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                release.set()
+                await finished.wait()
+                return result
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='slow', args='{}'), ToolCallPart(tool_name='needs_approval', args='{}')]
+            )
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[BackgroundTools(), FinishBackgroundAfterRun()],
+        )
+
+        @agent.tool_plain(metadata={'background': True})
+        async def slow() -> str:
+            await release.wait()
+            finished.set()
+            return 'late value'
+
+        @agent.tool_plain(requires_approval=True)
+        def needs_approval() -> str:
+            return 'approved'  # pragma: no cover -- never approved in this test
+
+        result = await agent.run('go')
+
+        assert isinstance(result.output, DeferredToolRequests)
+        assert not _follow_up_seen(result.all_messages(), 'late value')
+
     async def test_queued_result_is_not_delayed_by_an_unrelated_live_task(self) -> None:
         release = {'fast_bg': asyncio.Event(), 'slow_bg': asyncio.Event()}
 
