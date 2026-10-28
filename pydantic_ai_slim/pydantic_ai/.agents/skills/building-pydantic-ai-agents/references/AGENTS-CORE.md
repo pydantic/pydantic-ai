@@ -318,9 +318,9 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import ModelFallback
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    'openai:gpt-6.1-sol',
     name='fallback_agent',
-    capabilities=[ModelFallback('anthropic:claude-opus-5-5')],
+    capabilities=[ModelFallback('anthropic:claude-fable-5-1')],
 )
 ```
 

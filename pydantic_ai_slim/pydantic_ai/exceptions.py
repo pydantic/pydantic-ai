@@ -252,7 +252,7 @@ class RetryModelRequest(Exception):
                 raise error
             if request_context.attempt == 1:
                 raise RetryModelRequest()  # the same model again
-            raise RetryModelRequest('anthropic:claude-fable-5')  # a different model
+            raise RetryModelRequest('anthropic:claude-fable-5-1')  # a different model
     ```
 
     Each attempt re-runs
