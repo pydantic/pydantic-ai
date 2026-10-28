@@ -33,12 +33,14 @@ from .conftest import try_import
 from .durable_exec.test_durable_exec_compat import JournalDurability
 
 with try_import() as imports_successful:
-    import google.genai  # noqa: F401  # advertised as `gemini`, so `ADVERTISED` needs it
     from botocore.awsrequest import AWSResponse, HTTPHeaders
 
     # Imported here rather than when the gateway hands a request to an Anthropic model, which is in the event loop.
     from pydantic_ai.models.anthropic import AnthropicModel as AnthropicModel
     from pydantic_ai.models.bedrock import BedrockConverseModel
+
+    # `ADVERTISED` includes `gemini`, which is only advertised when `google-genai` is installed.
+    from pydantic_ai.models.google import GoogleModel as GoogleModel
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.profiles import merge_profile
     from pydantic_ai.profiles.openai import OpenAIModelProfile
