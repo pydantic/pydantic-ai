@@ -667,3 +667,36 @@ class TestDetectLoops:
 
         # The second response matches the third's recorded calls exactly, but its `busy` is not the third's result.
         assert loops == []
+
+    async def test_a_short_circuited_response_that_reuses_tool_call_ids_is_not_mistaken_for_the_recorded_one(self):
+        loops, detector = _collect()
+        outputs = iter(['first', 'second', 'second', 'second'])
+
+        @dataclass
+        class ShortCircuitSecondRequest(AbstractCapability[object]):
+            requests: int = 0
+
+            def get_ordering(self) -> CapabilityOrdering:
+                return CapabilityOrdering(position='outermost')
+
+            async def wrap_model_request(
+                self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+            ) -> ModelResponse:
+                self.requests += 1
+                if self.requests == 2:
+                    return ModelResponse(
+                        parts=[ToolCallPart('read_file', {'path': 'missing.txt'}, tool_call_id='call_0')]
+                    )
+                return await handler(request_context)
+
+        call = ToolCallPart('read_file', {'path': 'missing.txt'}, tool_call_id='call_0')
+        agent = Agent(_scripted(*[[call]] * 3), capabilities=[ShortCircuitSecondRequest(), detector])
+
+        @agent.tool_plain
+        def read_file(path: str) -> str:
+            return next(outputs)
+
+        await agent.run('Read it')
+
+        # The recorded calls returned `first`, `second`, `second`; the canned response's `second` is not the first's.
+        assert loops == []
