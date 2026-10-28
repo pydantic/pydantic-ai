@@ -22,11 +22,11 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
-class CerebrasProvider(_OpenAICompatibleProvider):
+class CerebrasProvider(_OpenAISDKProvider):
     """Provider for Cerebras API."""
 
     @property
