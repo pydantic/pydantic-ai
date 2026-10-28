@@ -186,14 +186,48 @@ Two consequences of the trigger, both easy to get backwards:
 
 # `PR Gates` answer merge questions from PR metadata
 
-`pr-gates.yml` runs one job per gate, and each job's check is the gate. The logic lives in
-`.github/scripts/pr_gates.py`. The workflow runs on `pull_request` with a read-only token, so a
-PR that changes either runs its own copy. `.github/CODEOWNERS` owns both, so that change needs a
-code owner's approval; keep them owned.
+`pr-gates.yml` runs `.github/scripts/pr_gates.py`. Keep the workflows and scripts owned in
+`.github/CODEOWNERS`. The compatibility job uses a read-only `pull_request` token and the PR's copy.
+The review publisher uses default-branch code and `statuses: write`; never execute PR code there.
 
 | Check | Fails when |
 |---|---|
 | `Gate: compatibility waiver labeled` | the PR adds a waiver to `.github/api-compatibility-allowlist.json` without `compatibility impact` |
+| `Gate: clean douwebot approval` | size M/L/XL lacks a clean douwebot approval on the current head |
+| `Gate: human approval` | size L/XL lacks a non-dismissed approval from another human with current write/admin permission |
+
+Both review contexts fail until exactly one size label matches the shared `pr_size.sh` calculation.
+PR Bots applies size labels on open and push. A manually changed label cannot lower the computed bar.
+Size S skips automated review enforcement; the manual trivial-S policy still applies.
+
+Clean means `APPROVE` with no inline or discussion findings, including optional or resolved findings.
+The trusted PR Bots publisher binds the review and its inline comments to a run/head marker.
+The model returns structured findings with a read-only token. The publisher supplies the marker.
+Validate the originating PR Bots run and both review jobs before accepting that marker.
+Associate comments through the parent review's commit, falling back to `original_commit_id` only when
+the parent is unavailable. GitHub can move a comment's `commit_id` forward without a new review.
+The separate gh-aw receipt identifies `CI Review`; that review cannot satisfy the douwebot requirement.
+An unmarked, unattributable bot comment on the current head fails closed. Obtain a fresh review/head.
+
+A human approval can precede the current head. A later change request supersedes that approval;
+a comment does not. Ignore dismissed reviews, bots, and the PR author. Enable native stale-approval
+dismissal in the ruleset to enforce human freshness when the diff changes.
+
+`pull_request_target` covers pushes, base edits, reopening, and label changes. Read-only
+`pr-gates-events.yml` observes review submissions, edits, dismissals and inline-comment changes,
+including forks. Its completion wakes a privileged `workflow_run`; its title supplies only a PR
+number, never a verdict. PR Bots completion also wakes the gate because `GITHUB_TOKEN` writes do
+not trigger review or label workflows. Fork observer runs may require contributor approval.
+Dispatch `PR Gates` with a PR number to retry after an API failure or delayed observer.
+
+Serialize publication per PR with `queue: max`. Re-read live head, labels and reviews before
+publishing; API errors or incomplete file pagination fail closed. The two review contexts are
+commit statuses: the latest value replaces earlier failures. Mark them pending before setup.
+On `merge_group`, publish success without inspecting queue members: these are admission-only gates.
+
+Deploy the workflows and producer before requiring the two new contexts. Existing unmarked reviews
+cannot satisfy the automated gate; request a fresh marked review. Require the compatibility check
+and both review contexts from GitHub Actions in the main ruleset, with stale-approval dismissal enabled.
 
 # Code owners approve dependency and CI config changes
 

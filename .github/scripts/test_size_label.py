@@ -110,6 +110,9 @@ def _run_step(
         path = tmp_path / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding='utf-8')
+    helper = tmp_path / '.github' / 'scripts' / 'pr_size.sh'
+    helper.parent.mkdir(parents=True, exist_ok=True)
+    helper.write_text((WORKFLOW.parents[1] / 'scripts' / 'pr_size.sh').read_text(encoding='utf-8'), encoding='utf-8')
     gh = tmp_path / 'gh'
     gh.write_text(FAKE_GH, encoding='utf-8')
     gh.chmod(0o755)
@@ -336,7 +339,9 @@ def test_attribute_overrides(tmp_path: Path, script: str):
 def test_generated_paths_on_later_pages(tmp_path: Path, script: str):
     """Handle deleted or new paths, shell metacharacters and NUL-delimited Git output."""
     filenames = ['new file.js', 'quote".js', 'line\nbreak.js', '$(touch injected).js', '-option.js', 'café.js']
-    changes: list[ChangedFile] = [{'filename': filename, 'additions': 1000, 'deletions': 1000} for filename in filenames]
+    changes: list[ChangedFile] = [
+        {'filename': filename, 'additions': 1000, 'deletions': 1000} for filename in filenames
+    ]
     result = _run_step(
         tmp_path,
         script,
@@ -358,5 +363,6 @@ def test_trusted_checkout():
     steps = workflow['jobs']['size-label']['steps']
 
     assert steps[0]['uses'].startswith('actions/checkout@')
-    assert steps[0]['with'] == {'ref': '${{ github.event.pull_request.base.sha }}', 'persist-credentials': False}
+    assert steps[0]['with'] == {'ref': '${{ github.event.repository.default_branch }}', 'persist-credentials': False}
     assert steps[1]['name'] == 'Calculate PR size and set label'
+    assert steps[1]['env']['BASE_SHA'] == '${{ github.event.pull_request.base.sha }}'

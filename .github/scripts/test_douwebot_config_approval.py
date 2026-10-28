@@ -212,7 +212,12 @@ def test_workflow_routes_events_and_cancellation_without_relying_on_label_presen
     assert APPROVAL_LABEL in workflow['concurrency']['cancel-in-progress']
 
     steps = review['steps']
-    cleanup = next(step for step in steps if step.get('name') == 'Remove douwebot label')
+    publish_review = jobs['publish-review']
+    assert review['permissions']['pull-requests'] == 'read'
+    assert publish_review['needs'] == 'review'
+    assert publish_review['if'] == "always() && needs.review.result != 'skipped'"
+    assert publish_review['permissions']['pull-requests'] == 'write'
+    cleanup = next(step for step in publish_review['steps'] if step.get('name') == 'Remove douwebot label')
     assert cleanup['if'] == "always() && github.event.action == 'labeled' && github.event.label.name == 'douwebot'"
     assert all(APPROVAL_LABEL not in step.get('run', '') for step in steps if step is cleanup)
 

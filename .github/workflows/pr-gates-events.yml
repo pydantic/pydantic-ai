@@ -1,0 +1,18 @@
+name: PR Gates Events
+run-name: 'PR Gates Events #${{ github.event.pull_request.number }} @ ${{ github.event.pull_request.head.sha }}'
+
+# Fork review events have read-only tokens. This observer supplies only a wake-up;
+# PR Gates evaluates live API metadata using default-branch code and its own token.
+on:
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+
+permissions: {}
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Review metadata changed.'

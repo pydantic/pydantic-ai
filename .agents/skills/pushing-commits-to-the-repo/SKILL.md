@@ -48,12 +48,19 @@ Address every douwebot comment, including non-blocking comments.
 After addressing comments, obtain a clean approval on the resulting head.
 Resolve every review thread.
 
-Douwebot posts as `github-actions[bot]` from the `review` job in [`.github/workflows/bots.yml`](../../../.github/workflows/bots.yml).
+Douwebot posts as `github-actions[bot]` through the trusted publisher in [`.github/workflows/bots.yml`](../../../.github/workflows/bots.yml).
 Distinguish douwebot from `CI Review`, which can use the same bot account.
-Douwebot posts `No blocking findings.` or `Blocking findings are recorded inline.` with its verdict.
-`CI Review` starts its body with `Reviewed at <sha>`.
+Douwebot binds its review to a successful PR Bots run and head with `<!-- douwebot:review run=<id> head=<sha> -->`.
+Associate inline comments with their parent review's commit; a comment's `commit_id` can move after a push.
+`CI Review` carries a separate gh-aw workflow receipt and cannot satisfy the douwebot requirement.
 For protected agent-config changes, a clean approval from a maintainer-authorized `douwebot:review-agent-config` run satisfies the same bar.
 A human approval does not substitute for douwebot.
+
+Count the latest non-dismissed human approval from a `User` other than the author with current write/admin permission.
+A later change request supersedes that approval. A comment does not.
+The approval may precede the head; GitHub's stale-approval dismissal enforces freshness when the diff changes.
+`PR Gates` enforces M/L/XL against the shared size calculation and exactly one matching size label.
+Size S remains a manual policy judgment. The automated review gates skip merge groups after admission.
 
 ## When you open the PR
 

@@ -1,8 +1,8 @@
 name: PR Gates
 
-# Merge gates a script answers from the pull request's metadata, each reported as its own check
-# so it can be made required. `.github/workflows/AGENTS.md` ("PR Gates") documents them. The
-# logic, and its tests, live in `.github/scripts/pr_gates.py`.
+# Metadata merge gates: one job check and two latest-per-context commit statuses.
+# `.github/workflows/AGENTS.md` ("PR Gates") documents their rules and trust boundaries.
+# The logic and tests live in `.github/scripts/pr_gates.py`.
 #
 # No `paths:` filter: a required check that never runs stays pending and blocks the merge, so
 # every PR event runs every gate.
@@ -12,6 +12,17 @@ on:
     # `labeled` and `unlabeled` change the verdict. `edited` is the only event fired when the base
     # branch changes, which changes the diff the gate judges.
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  pull_request_target: # zizmor: ignore[dangerous-triggers] -- executes only default-branch code and evaluates live metadata
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- no artifacts or upstream code are consumed; reevaluates live metadata
+    workflows: [PR Bots, PR Gates Events]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: Pull request to reevaluate
+        required: true
+        type: number
   # A required check has to report on the merge group's commit, or the queue stalls. The gate
   # judges the PR's own diff and labels, settled on its head before it could be enqueued, so it
   # skips here, and a job skipped by `if:` reports success.
@@ -47,3 +58,100 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 .github/scripts/pr_gates.py compatibility-waiver
+
+  review-target:
+    name: Resolve review gate target
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      number: ${{ steps.target.outputs.number }}
+      head: ${{ steps.target.outputs.head }}
+      group: ${{ steps.target.outputs.group }}
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        id: target
+        env:
+          INPUT_NUMBER: ${{ inputs.pull_request_number }}
+        with:
+          script: |
+            if (context.eventName === 'merge_group') {
+              core.setOutput('group', context.payload.merge_group.head_sha);
+              core.setOutput('head', context.payload.merge_group.head_sha);
+              return;
+            }
+            let number;
+            if (context.eventName === 'workflow_run') {
+              const run = context.payload.workflow_run;
+              const paths = {
+                'PR Bots': '.github/workflows/bots.yml',
+                'PR Gates Events': '.github/workflows/pr-gates-events.yml'
+              };
+              const match = /^(PR Bots|PR Gates Events) #([1-9][0-9]*) @ ([a-f0-9]{40})$/.exec(run.display_title);
+              if (!match || run.path !== paths[match[1]] ||
+                  run.repository.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+                throw new Error('Unrecognized review gate wake-up');
+              }
+              number = Number(match[2]);
+              if (!Number.isSafeInteger(number)) throw new Error('Invalid PR number');
+              core.setOutput('number', number);
+              core.setOutput('head', match[3]);
+              return;
+            } else {
+              number = context.payload.pull_request?.number ?? Number(process.env.INPUT_NUMBER);
+            }
+            if (!Number.isSafeInteger(number) || number < 1) throw new Error('Invalid PR number');
+            const pull = context.payload.pull_request ??
+              (await github.rest.pulls.get({...context.repo, pull_number: number})).data;
+            core.setOutput('number', number);
+            core.setOutput('head', pull.head.sha);
+
+  review-statuses:
+    name: Publish size-dependent review gates
+    needs: review-target
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: review-gates-${{ needs.review-target.outputs.number || needs.review-target.outputs.group }}
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      statuses: write
+    steps:
+      # Fail closed even if checkout or dependency installation fails after an earlier success.
+      - name: Mark both review requirements pending
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          HEAD_SHA: ${{ needs.review-target.outputs.head }}
+        with:
+          script: |
+            for (const name of ['Gate: clean douwebot approval', 'Gate: human approval']) {
+              await github.rest.repos.createCommitStatus({
+                ...context.repo, sha: process.env.HEAD_SHA, context: name,
+                state: 'pending', description: 'Reading current size and reviews.',
+                target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+              });
+            }
+      - name: Checkout trusted default-branch gate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/pr_gates.py
+            .github/scripts/pr_size.sh
+            .github/scripts/check_api_compatibility.py
+          sparse-checkout-cone-mode: false
+      - name: Install pinned script dependencies
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+      - name: Reevaluate live size and review requirements
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.review-target.outputs.number }}
+          HEAD_SHA: ${{ needs.review-target.outputs.head }}
+          MERGE_GROUP_SHA: ${{ needs.review-target.outputs.group }}
+        run: python3 .github/scripts/pr_gates.py review-gates
