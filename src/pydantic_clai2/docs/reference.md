@@ -2484,28 +2484,35 @@ with `git rev-parse --path-format=absolute --git-common-dir` inside that reposit
 The match is exact, with no wildcards. For example:
 
 ```sh
-clai2 config set worktrees.remove_commands '{"/absolute/path/to/repo/.git": ["zsh", "-ic", "pyai-remove \"$1\"", "clai2-remove", "{branch}"]}'
+clai2 config set worktrees.remove_commands '{"/absolute/path/to/repo/.git": ["/absolute/path/to/cleanup-worktree", "{path}", "{branch}"]}'
 ```
 
-`pyai-remove` here is a user-defined shell function, not a CLAI command. This
-example invokes it through interactive zsh; `clai2-remove` becomes `$0` and the
-branch becomes `$1`. The function has no `-y`, so its own confirmation remains
-in effect. Interactive shell startup reads your rc files, which adds startup
-overhead and may print output. This branch-based example cannot remove a
-detached worktree.
+The executable is your own cleanup program. Only whole argv tokens are
+substituted: `{path}` is the absolute target checkout, `{branch}` is its current
+branch (empty when detached), and `{repo}` is the main checkout root or, for a
+bare repository, its common directory. Embedded placeholders such as
+`--worktree={path}` are rejected; pass `"--worktree", "{path}"` instead. CLAI does
+not invoke a shell or expand variables.
 
-Only whole argv tokens are substituted: `{path}` is the absolute target checkout,
-`{branch}` is its current branch (empty when detached), and `{repo}` is the main
-checkout root or, for a bare repository, its common directory. CLAI does not
-invoke a shell or expand variables. Shell arguments must be quoted safely in the
-argv; the example's `"$1"` is interpreted by zsh.
+To call a user-defined shell function, explicitly invoke its shell. For example,
+a zsh function named `pyai-remove` could use this argv:
 
-The exact prompt is `Run registered removal command for worktree <path>? It may delete the branch and uncommitted files. [y/N]`.
-The command inherits stdin, stdout, stderr, and terminal, has no timeout, and can
-be interrupted with Ctrl-C. A command failure does not fall back to Git. The
-project setting `worktree_remove_commands` in `.clai/settings.json` rejects this
-configuration; it is available only in user settings. Automatic removal of
-unchanged worktrees and forced `remove_worktree` or `workspaces` destruction
+```json
+["zsh", "-ic", "pyai-remove \"$1\"", "clai2-remove", "{branch}"]
+```
+
+Interactive zsh loads your rc files, adding startup overhead and possibly output.
+It passes the branch as `$1` without shell interpolation by CLAI. This example
+has no `-y`, retaining the function's own dirty-file confirmation, and cannot
+remove a detached worktree. Neither the function nor the cleanup program above
+ships with CLAI.
+
+CLAI warns that the command may delete the branch and uncommitted files before
+asking for confirmation. The command inherits stdin, stdout, stderr, and the
+terminal, has no timeout, and can be interrupted with Ctrl-C. A command failure
+does not fall back to Git. `.clai/settings.json` cannot set
+`worktree_remove_commands`; CLAI refuses to start if it does. Automatic removal
+of unchanged worktrees and forced `remove_worktree` or `workspaces` destruction
 continue to use Git.
 
 When you no longer need the checkout, use Git's own cleanup commands from your

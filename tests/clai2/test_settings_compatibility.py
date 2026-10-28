@@ -1212,6 +1212,9 @@ def test_worktree_command_setting_validation(tmp_path: Path) -> None:
         {key: ['', 'argument']},
         {key: ['command', '\x00']},
         {key: ['command', '{unknown}']},
+        {key: ['command', '--worktree={path}']},
+        {key: ['command', '{repo}/scripts']},
+        {key: ['command', 'prefix-{branch}']},
     ]
     for value in invalid_values:
         with pytest.raises(ValidationError):

@@ -133,6 +133,8 @@ class Settings(BaseModel):
                 raise ValueError('Worktree removal commands must have a non-empty executable and argv')
             if any('\0' in token for token in argv):
                 raise ValueError('Worktree removal command arguments cannot contain NUL')
+            if any(token not in placeholders and any(name in token for name in placeholders) for token in argv):
+                raise ValueError('Worktree command placeholders must fill a whole argv token')
             unknown = {
                 token for token in argv if _WORKTREE_COMMAND_PLACEHOLDER.fullmatch(token) and token not in placeholders
             }
