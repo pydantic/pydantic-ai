@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from pydantic_ai._framing import TOOL_RESULT_TAG, close_tag, neutralize_tags, open_tag
+from pydantic_ai.framing import close_tag, neutralize_tags, open_tag
 from pydantic_ai.messages import TextContent, UserContent
+from pydantic_ai_harness import _framing_tags  # noqa: F401  # pyright: ignore[reportUnusedImport]  # registers every harness tag
 from pydantic_ai_harness._provenance import tagged_text
 
 _BACKGROUND_RESULT_ORIGIN = 'pydantic-ai-harness.background_tools.result.v1'
@@ -20,8 +21,8 @@ def tool_result_tags(tool_name: str, tool_call_id: str, *, failed: bool = False)
     """
     outcome = 'failed' if failed else None
     return (
-        open_tag(TOOL_RESULT_TAG, tool_name=tool_name, tool_call_id=tool_call_id, outcome=outcome),
-        close_tag(TOOL_RESULT_TAG),
+        open_tag('tool_result', tool_name=tool_name, tool_call_id=tool_call_id, outcome=outcome),
+        close_tag('tool_result'),
     )
 
 

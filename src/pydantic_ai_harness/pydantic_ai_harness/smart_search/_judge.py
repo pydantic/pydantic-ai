@@ -18,9 +18,10 @@ import anyio
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
-from pydantic_ai._framing import TOOL_RESULT_TAG, neutralize_tags, wrap
+from pydantic_ai.framing import neutralize_tags, wrap
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import RunContext
+from pydantic_ai_harness import _framing_tags  # noqa: F401  # pyright: ignore[reportUnusedImport]  # registers every harness tag
 from pydantic_ai_harness._judge import claim_request, claimed_request_limits
 from pydantic_ai_harness.smart_search._chunks import Chunk
 
@@ -57,7 +58,7 @@ class Relevance(BaseModel):
 def _state(chunk: Chunk) -> str:
     """What the judge sees: the snippet, framed as data with where it lives, so its text cannot pose as instructions."""
     lines = f'{chunk.line}-{chunk.end_line}'
-    return wrap(TOOL_RESULT_TAG, chunk.text, name='snippet', path=chunk.path, lines=lines, symbol=chunk.symbol)
+    return wrap('tool_result', chunk.text, name='snippet', path=chunk.path, lines=lines, symbol=chunk.symbol)
 
 
 def _instructions(query: str) -> str:

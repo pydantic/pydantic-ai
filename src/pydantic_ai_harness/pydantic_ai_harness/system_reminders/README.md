@@ -85,7 +85,7 @@ Every reminder is sent as a system prompt, so the model reads it with the author
 
 `SystemReminders` sends a `GeneratedReminder` as a fixed framework note in system voice, which ranks the reminder below your instructions and the user's request, and the generated text on the user channel in a `<generated_reminder model="...">` tag. The two are one record in the message history, kept and sent together on every later request and seen together by compaction and summaries, so in history kept on the server the generated text doesn't reach the model without the note that says what it is. History that round-trips through a UI client is the one exception: see [UI history](#ui-history). Both parts carry `origin` metadata, so the reminders recognize their own records.
 
-Every opening and closing spelling of a framing tag inside the generated text, `<system>` and the reminder tags included, is escaped (`&lt;system>`), so it can't end its tag, open another or speak as the system. `LLMReminder` also quotes the transcript it sends the reminder model, in `<summary>`, `<goal>` and `<message role="...">` elements, starting at the latest native compaction boundary.
+Every opening and closing spelling of a framing tag inside the generated text, `<system>`, the reminder tags and every other tag a capability registers included, is escaped (`&lt;system>`), so it can't end its tag, open another or speak as the system. `LLMReminder` also quotes the transcript it sends the reminder model, in `<summary>`, `<goal>` and `<message role="...">` elements, starting at the latest native compaction boundary.
 
 ### `GoalReanchor` -- zero-cost goal anchoring
 

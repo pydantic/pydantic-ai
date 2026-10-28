@@ -672,9 +672,9 @@ for a tool call or return, its tool name. Retry feedback, the correction a rejec
 got, is a `role="retry_feedback"` element carrying the retry's `cause` (and, for a tool call, its tool
 name), so the summary records the correction rather than the rejected call as something that happened;
 feedback that answers no tool call is shown as the model saw it. Content that looks like the transcript's
-own tags or a framing tag Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest), in
-any case or spacing, is escaped, so a tool return stays inside its own message and can't end the
-transcript early. Each tool return and retry feedback is capped, after that escaping, at
+own tags, a framing tag Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest) or one
+a capability registers, in any case or spacing, is escaped, so a tool return stays inside its own message
+and can't end the transcript early. Each tool return and retry feedback is capped, after that escaping, at
 `tool_return_max_chars` (default 500) characters using the same explicit truncation marker as kept user
 turns. Raise it, or set it to `None` to render each return and retry feedback whole, when the summarizer's context window is large enough to absorb the payloads.
 Content a harness capability added on the user channel and tagged with an `origin` in its
@@ -915,13 +915,13 @@ dispatch. `keep_user_messages` therefore needs no provider-specific handling.
 ## Anchored incremental summarization and the cross-model bridge
 
 With `incremental=True` (the default), a prior summary is not re-summarized (which decays over
-successive compactions). It is fed back as an anchored `<previous-summary>` block with an
+successive compactions). It is fed back as an anchored `<previous_summary>` block with an
 *update* instruction -- preserve still-true details, remove stale ones, merge in new facts --
 so the summary is a living document updated in place under a fixed structure.
 
 > **Behavior change: `incremental=True` is the default.** Every existing `SummarizingCompaction`
 > user gets a different summary-call prompt from this release on: once a prior summary exists, the
-> summarizer is asked to *update* it under `<previous-summary>` rather than regenerate one from the
+> summarizer is asked to *update* it under `<previous_summary>` rather than regenerate one from the
 > conversation. The summaries it produces will read differently. Set `incremental=False` to keep the
 > previous regenerate-from-scratch behavior.
 
