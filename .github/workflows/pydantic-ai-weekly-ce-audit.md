@@ -1,5 +1,5 @@
 ---
-name: Pydantic AI Weekly CE Audit
+name: Pydantic AI Weekly Agent Instructions Audit
 description: Audit tracked repository instructions and propose one focused trimming PR when justified.
 on:
   schedule: weekly on tuesday
@@ -37,20 +37,6 @@ safe-outputs:
     create-issue: false
   report-incomplete:
     create-issue: false
-  threat-detection:
-    max-ai-credits: -1
-    engine:
-      id: claude
-      model: ${{ vars.GH_AW_MODEL }}
-      env:
-        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
-        GH_AW_HARNESS_MAX_RETRIES: '3'
-        CLAUDE_CODE_ENABLE_TELEMETRY: '1'
-        OTEL_LOGS_EXPORTER: otlp
-        OTEL_METRICS_EXPORTER: none
-        OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
-        OTEL_SERVICE_NAME: gh-aw.threat-detection
   github-app:
     client-id: ${{ vars.DOCS_CLIENT_ID }}
     private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }}
@@ -221,7 +207,7 @@ Use the file's actual final line, rather than the illustrative bounds above.
 List each canonical file once. Do not list aliases or excluded paths as canonical reads.
 Record only completed reads; retain partial ranges when a file remains unfinished.
 The manifest records excluded paths and alias mappings separately.
-Structural receipt validation attests reported reads; it does not prove comprehension.
+Do not describe receipt validation as proof of semantic correctness.
 
 If time or context prevents full coverage, preserve partial receipts and emit `noop` with the remaining paths.
 Do not propose edits from an incomplete audit or describe a partial audit as complete.
@@ -236,7 +222,6 @@ Use `.ce-audit/issue*.json` for that issue's discussion, assignment and resolved
 If that evidence is absent or does not cover the proposed scope, preserve findings and emit `noop`.
 Do not create issues or invent alignment to make a candidate publishable.
 The fresh reviewer must determine whether the template exemption applies to the actual diff and whether the cited agreement covers its scope.
-Host validation checks the review bindings and frozen issue fields for non-exempt proposals; it does not classify the change's semantics.
 
 Before requesting a PR, finish the receipt and commit one focused candidate in `.ce-audit/candidate/`.
 Explain the concrete defect, canonical policy owner, loading evidence, and preserved exceptions.
@@ -263,19 +248,13 @@ python3 .github/scripts/weekly_ce_audit.py prepare-review --source SOURCE --bran
 
 Substitute the manifest source, committed candidate branch, and default branch named above.
 If the default branch moved, preserve findings and emit `noop` for a fresh audit next run.
-The utility freezes the candidate diff and IDs while the root checkout remains the stable policy base.
 Read `.ce-audit/review/instructions.md` and pass its exact contents as a new `Task` prompt.
-The shim starts that Task with fresh history and read-only tools, without shell, GitHub writes, or recursive delegation.
-The reviewer reads stable root policies and the staged diff, never the candidate worktree or continuity state.
+Launch the Task from the unchanged policy checkout.
 Do not mutate the candidate or root checkout during review.
 Keep one candidate review attempt per run; findings, timeout, unavailable tools, or incomplete review mean `noop`.
 Preserve the actual Task response verbatim in `.ce-audit/review/result.txt`.
 Do not synthesize an approval or treat an audit report as independent review.
 Only `current DIGEST` for the unchanged frozen bundle permits the PR safe output.
-The trusted utility reconstructs the prompt and Git diff and verifies hashes of the task, proposal, and issue evidence.
-The compact approval fits the shim's existing streamed Task-result preview without changing its limit.
-Local Task logs detect omitted or substituted review evidence; they are not tamper-resistant attestation against a compromised coordinator.
-The mandatory context-independent review and protected hosted review remain required.
 Use the exact title and body the independent reviewer assessed.
 
 Leave protected-file review enabled; a human must approve protected instruction edits.

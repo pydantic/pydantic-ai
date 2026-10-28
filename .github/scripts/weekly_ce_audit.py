@@ -241,12 +241,12 @@ def validate_edits(root: Path, source: str, entries: list[Entry], revision: str 
     return paths
 
 
-def submitted_branches(output: object) -> list[str]:
-    """Validate the selected PR branches independently of the final checkout."""
+def submitted_proposal(output: object) -> tuple[str, dict[str, object]] | None:
+    """Validate the sole PR proposal independently of the final checkout."""
     items = mapping(output).get('items')
     if not is_container(items) or isinstance(items, dict):
         raise ValueError('Invalid agent output items')
-    branches: list[str] = []
+    proposal: tuple[str, dict[str, object]] | None = None
     for item in items:
         row = mapping(item)
         if row.get('type') != 'create_pull_request':
@@ -254,10 +254,10 @@ def submitted_branches(output: object) -> list[str]:
         branch = row.get('branch')
         if not isinstance(branch, str) or not branch.startswith(BRANCH_PREFIX):
             raise ValueError('Invalid weekly audit branch')
-        branches.append(f'refs/heads/{branch}')
-    if len(branches) > 1:
-        raise ValueError('Only one focused PR is permitted')
-    return branches
+        if proposal is not None:
+            raise ValueError('Only one focused PR is permitted')
+        proposal = f'refs/heads/{branch}', row
+    return proposal
 
 
 def validate_policy_checkout(root: Path, source: str, directory: Path) -> None:
@@ -312,7 +312,6 @@ def review_material(
         'Determine whether the exemption applies from the actual diff, not the author declaration alone.\n'
         'For a nontrivial change, verify proposal.json issue_number and alignment_url against the supplied evidence.\n'
         f'With no actionable findings, return exactly: current {metadata["digest"]}\n'
-        'This compact approval binds every bundle input and fits the existing Task stream preview.\n'
         'Otherwise return actionable findings; do not emit a current approval.\n'
         'Return the independent report only; do not publish, select reviewers or request optional review.\n'
     )
@@ -474,13 +473,13 @@ def main() -> None:
     parser.add_argument('--branch')
     parser.add_argument('--default-branch')
     args = parser.parse_args()
-    entries = inventory(args.root, args.source)
     args.directory.mkdir(parents=True, exist_ok=True)
     if args.command == 'prepare-review':
         if not args.branch or not args.default_branch:
             raise ValueError('Review preparation needs branch and default-branch')
         prepare_review(args.root, args.source, args.branch, args.default_branch, args.directory)
         return
+    entries = inventory(args.root, args.source)
     if args.command == 'prepare':
         manifest = {'source': args.source, 'entries': [asdict(entry) for entry in entries]}
         (args.directory / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
@@ -496,16 +495,14 @@ def main() -> None:
                     )
         return
     paths = validate_edits(args.root, args.source, entries)
-    branches: list[str] = []
+    publication: tuple[str, dict[str, object]] | None = None
     if args.agent_output:
         output: object = json.loads(args.agent_output.read_text())
-        branches = submitted_branches(output)
-        for branch in branches:
+        publication = submitted_proposal(output)
+        if publication is not None:
+            branch, proposal = publication
             git(args.root, 'merge-base', '--is-ancestor', args.source, branch)
             paths = sorted(set(paths) | set(validate_edits(args.root, args.source, entries, branch)))
-            items = mapping(output).get('items')
-            assert is_container(items) and not isinstance(items, dict)
-            proposal = next(mapping(item) for item in items if mapping(item).get('type') == 'create_pull_request')
             if not args.agent_log or args.issue_evidence is None:
                 raise ValueError('Publication needs Task execution evidence and the frozen host issue directory')
             validate_review(
@@ -531,7 +528,7 @@ def main() -> None:
         *[f'- `{path}`' for path in paths],
     ]
     (args.directory / 'summary.md').write_text('\n'.join(summary) + '\n')
-    if (paths or branches) and unread:
+    if (paths or publication is not None) and unread:
         raise ValueError('Incomplete audit cannot publish trimming edits')
 
 

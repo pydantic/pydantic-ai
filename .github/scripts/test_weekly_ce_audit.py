@@ -32,7 +32,7 @@ from weekly_ce_audit import (
     main,
     prepare_review,
     reconcile,
-    submitted_branches,
+    submitted_proposal,
     validate_edits,
     validate_policy_checkout,
     validate_review,
@@ -308,24 +308,6 @@ def test_workflow_retains_separate_pr_sink_and_protected_review():
     assert 'create-issue' not in outputs
     assert outputs['steps'][0]['env']['AGENT_RESULT'] == '${{ needs.agent.result }}'
     assert outputs['steps'][0]['run'] == 'test "$AGENT_RESULT" = success'
-    assert outputs['threat-detection']['engine']['env']['CLAUDE_CODE_ENABLE_TELEMETRY'] == '1'
-    shared = workflow.parent / 'shared/engine-zai.md'
-    inherited = yaml.safe_load(shared.read_text().split('---', 2)[1])['safe-outputs']['threat-detection']
-    expected: dict[str, object] = {
-        **inherited,
-        'engine': {
-            **inherited['engine'],
-            'env': {
-                **inherited['engine']['env'],
-                'CLAUDE_CODE_ENABLE_TELEMETRY': '1',
-                'OTEL_LOGS_EXPORTER': 'otlp',
-                'OTEL_METRICS_EXPORTER': 'none',
-                'OTEL_EXPORTER_OTLP_PROTOCOL': 'http/protobuf',
-                'OTEL_SERVICE_NAME': 'gh-aw.threat-detection',
-            },
-        },
-    }
-    assert outputs['threat-detection'] == expected
     preflight = config['pre-agent-steps'][0]['run']
     pagination_lines = [line for line in preflight.splitlines() if 'gh api --paginate --slurp' in line]
     assert pagination_lines and all('--jq' not in line for line in pagination_lines)
@@ -396,9 +378,56 @@ def test_selected_branch_cannot_bypass_boundary_by_switching_checkout(repository
     )
     git(root, 'checkout', '--detach', source)
     assert validate_edits(root, source, inventory(root, source)) == []
-    branches = submitted_branches({'items': [{'type': 'create_pull_request', 'branch': branch}]})
+    proposal = submitted_proposal({'items': [{'type': 'create_pull_request', 'branch': branch}]})
+    assert proposal is not None
     with pytest.raises(ValueError, match='allowlist'):
-        validate_edits(root, source, inventory(root, source), branches[0])
+        validate_edits(root, source, inventory(root, source), proposal[0])
+
+
+@pytest.mark.parametrize(
+    'output, expected',
+    [
+        ({'items': []}, None),
+        ({'items': [{'type': 'noop'}]}, None),
+        (
+            {
+                'items': [
+                    {'type': 'create_pull_request', 'branch': 'gh-aw/weekly-ce-audit-example', 'title': 'Trim guidance'}
+                ]
+            },
+            (
+                'refs/heads/gh-aw/weekly-ce-audit-example',
+                {'type': 'create_pull_request', 'branch': 'gh-aw/weekly-ce-audit-example', 'title': 'Trim guidance'},
+            ),
+        ),
+    ],
+)
+def test_submitted_proposal(output: object, expected: tuple[str, dict[str, object]] | None):
+    """Retain the sole proposal and normalized branch, or accept a noop."""
+    assert submitted_proposal(output) == expected
+
+
+@pytest.mark.parametrize(
+    'output, message',
+    [
+        ({'items': {}}, 'Invalid agent output items'),
+        ({'items': [None]}, 'Expected an object'),
+        ({'items': [{'type': 'create_pull_request', 'branch': 'other'}]}, 'Invalid weekly audit branch'),
+        (
+            {
+                'items': [
+                    {'type': 'create_pull_request', 'branch': 'gh-aw/weekly-ce-audit-one'},
+                    {'type': 'create_pull_request', 'branch': 'gh-aw/weekly-ce-audit-two'},
+                ]
+            },
+            'Only one focused PR is permitted',
+        ),
+    ],
+)
+def test_submitted_proposal_rejects_invalid_output(output: object, message: str):
+    """Reject malformed proposals and multiple publication requests."""
+    with pytest.raises(ValueError, match=message):
+        submitted_proposal(output)
 
 
 def test_compiled_publication_gate_and_health_dependencies():
@@ -416,8 +445,6 @@ def test_compiled_publication_gate_and_health_dependencies():
     handler = next(i for i, step in enumerate(steps) if step.get('name') == 'Process Safe Outputs')
     assert gate < handler
     detection = next(step for step in jobs['detection']['steps'] if step.get('id') == 'detection_agentic_execution')
-    assert str(detection['env']['CLAUDE_CODE_ENABLE_TELEMETRY']) == '1'
-    assert detection['env']['OTEL_SERVICE_NAME'] == 'gh-aw.threat-detection'
     assert str(detection['env']['GH_AW_HARNESS_MAX_RETRIES']) == '3'
 
 
@@ -517,6 +544,37 @@ def reviewed_candidate(
     approve_candidate(root, source, revision, directory)
     monkeypatch.setenv('GITHUB_ACTOR', 'maintainer')
     return root, source, revision, proposal
+
+
+def test_main_prepares_review_bundle(
+    reviewed_candidate: tuple[Path, str, str, dict[str, object]], monkeypatch: pytest.MonkeyPatch
+):
+    """Route CLI review preparation through the real candidate and committed-object inventory."""
+    root, source, revision, _ = reviewed_candidate
+    directory = root / '.ce-audit'
+    (directory / 'review/candidate.json').unlink()
+    arguments: list[str] = [
+        'audit',
+        'prepare-review',
+        '--root',
+        str(root),
+        '--source',
+        source,
+        '--directory',
+        str(directory),
+        '--branch',
+        revision.removeprefix('refs/heads/'),
+        '--default-branch',
+        'main',
+    ]
+    monkeypatch.setattr(sys, 'argv', arguments)
+    main()
+    metadata: dict[str, str] = json.loads((directory / 'review/candidate.json').read_text())
+    assert metadata['policy'] == source
+    assert metadata['head'] == git(root, 'rev-parse', revision).decode().strip()
+    assert (directory / 'review/candidate.diff').read_bytes() == git(
+        root, 'diff', '--no-ext-diff', '--no-textconv', source, revision, '--'
+    )
 
 
 def test_independent_review_binds_candidate_and_metadata(reviewed_candidate: tuple[Path, str, str, dict[str, object]]):
