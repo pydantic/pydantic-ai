@@ -718,6 +718,30 @@ async def test_failed_write_shows_the_attempt_and_the_error(page: Page, web_ui: 
     assert '\\n' not in await body.inner_text()
 
 
+async def test_a_refused_update_shows_no_saved_badge(page: Page, web_ui: WebUI) -> None:
+    """Settings > About in a session the browser opened refuses Update…; its row must not claim it saved anything."""
+    await page.goto(f'{web_ui.url}/?token={TOKEN}')
+    await page.locator('.sidebar').get_by_text('Browser Beta', exact=True).click()
+    await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session.opening')).to_have_count(0)
+    await page.evaluate("location.hash = '#settings/about'")
+    settings = page.get_by_role('dialog', name='Settings')
+    version = settings.locator('.setting').filter(has=page.locator('.setting-label', has_text='Version'))
+    async with page.expect_response(f'**/api/sessions/{web_ui.beta}/commands/update/fields/version/action') as acted:
+        await version.get_by_role('button', name='Update Version').click()
+    assert (await acted.value).status == 400
+    # Read with the toast in one page call: a badge renders with it, and a retry would pass once its timer clears it.
+    badge = await page.wait_for_function(
+        """() => {
+          if (!document.querySelector('.toast.error')?.textContent?.includes('/reload and /update restart CLAI.')) return null
+          const row = [...document.querySelectorAll('.setting')]
+            .find((setting) => setting.querySelector('.setting-label')?.textContent === 'Version')
+          return row.querySelector('.setting-state')?.textContent ?? 'none'
+        }"""
+    )
+    assert await badge.json_value() == 'none'
+
+
 async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI) -> None:
     await page.goto(f'{web_ui.url}/?token={TOKEN}')
     sidebar = page.locator('.sidebar')
