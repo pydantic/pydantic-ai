@@ -29,14 +29,12 @@ from pydantic_ai import (
     ToolReturnPart,
 )
 from pydantic_ai.capabilities import HandleDeferredToolCalls, PrepareOutputTools
-from pydantic_ai.durable_exec._operation_backend import durable_unit_scope
+from pydantic_ai.durable_exec import durable_unit_scope
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import ToolDefinition
 
 from ._inline_snapshot import snapshot
-
-pytestmark = pytest.mark.anyio
 
 
 class Invoice(BaseModel):
