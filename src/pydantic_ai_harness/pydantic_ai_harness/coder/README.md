@@ -140,6 +140,7 @@ Then the plumbing, which the agent never calls directly:
 8. [`RepairToolArguments`](https://pydantic.dev/docs/ai/harness/repair-tool-arguments/) repairs malformed JSON tool arguments before normal validation (see below).
 9. Prompt caching, the same as [`Caching()`](https://pydantic.dev/docs/ai/capabilities/caching/) unless the model, the agent, or a capability listed before
    `Coder` already sets `cache` (see below). Pass `caching=False` to leave it out.
+10. Strict mode off for `Coder`'s own tools (see below). Pass `strict=None` to leave it out.
 
 Every tool comes from `FileSystem`, `Shell`, or `SubAgents`; those pages document each one in full. Build the same
 agent from the pieces to change any setting, for example to keep content hashes, add `list_directory`,

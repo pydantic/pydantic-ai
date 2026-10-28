@@ -181,10 +181,16 @@ class Coder(CombinedCapability[AgentDepsT]):
         ]
         if repo_context:
             capabilities.append(RepoContext[AgentDepsT](expose_inventory_tool=False))
+        tool_names = {*FILE_TOOL_NAMES, 'shell'}
         if sub_agents:
-            capabilities.append(
-                SubAgents[AgentDepsT](include_self=True, agent_folders=agent_folders, task_control=task_control)
+            delegation = SubAgents[AgentDepsT](
+                include_self=True, agent_folders=agent_folders, task_control=task_control
             )
+            capabilities.append(delegation)
+            tool_names.add(delegation.tool_name)
+            if task_control is not None:
+                # The task-control tools, and the `ask_parent` tool each delegated run gets.
+                tool_names |= {*CONTROL_TOOL_NAMES, ASK_PARENT_TOOL_NAME}
         capabilities += [
             ClearToolResults[AgentDepsT](max_fraction=0.7),
             _BoundToolOutputs[AgentDepsT](
@@ -196,11 +202,5 @@ class Coder(CombinedCapability[AgentDepsT]):
         if caching:
             capabilities.append(_DefaultCaching[AgentDepsT]())
         if strict is not None:
-            tool_names = {*FILE_TOOL_NAMES, 'shell'}
-            if sub_agents:
-                tool_names.add('delegate_task')
-            if task_control is not None:
-                # `ask_parent` is the tool `SubAgents` gives each delegated run.
-                tool_names |= {*CONTROL_TOOL_NAMES, ASK_PARENT_TOOL_NAME}
             capabilities.append(_SetToolStrict[AgentDepsT](strict=strict, tool_names=frozenset(tool_names)))
         super().__init__(capabilities)
