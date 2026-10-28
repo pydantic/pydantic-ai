@@ -224,25 +224,11 @@ class InstrumentationSettings:
             )
 
     def messages_to_otel_messages(
-        self,
-        messages: list[ModelMessage],
-        *,
-        mcp_url_ids: frozenset[str] = frozenset(),
-        current_request_start: int = 0,
+        self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str] = frozenset()
     ) -> list[_otel_messages.ChatMessage]:
-        """Convert messages to OTel GenAI chat messages.
-
-        Args:
-            messages: The messages to convert.
-            mcp_url_ids: MCP server identities whose names are redacted from native tool parts.
-            current_request_start: The index of the first message of the request being sent. A
-                [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt in a message
-                before it was sent with an earlier request and isn't seen by the model on this one, so its
-                part is marked `visible: false`.
-        """
         result: list[_otel_messages.ChatMessage] = []
         sensitive_names = {f'mcp_server:{identity}' for identity in mcp_url_ids}
-        for index, message in enumerate(messages):
+        for message in messages:
             if sensitive_names and isinstance(message, ModelResponse):
                 projected_parts: list[ModelResponsePart] = [
                     replace(part, tool_name='mcp_server:[REDACTED]')
@@ -261,12 +247,7 @@ class InstrumentationSettings:
                     message_parts: list[_otel_messages.MessagePart] = []
                     for part in group:
                         if hasattr(part, 'otel_message_parts'):
-                            otel_parts = part.otel_message_parts(self)
-                            if index < current_request_start and _is_request_scoped(part):
-                                for otel_part in otel_parts:
-                                    assert otel_part['type'] == 'text'
-                                    otel_part['visible'] = False
-                            message_parts.extend(otel_parts)
+                            message_parts.extend(part.otel_message_parts(self))
 
                     result.append(_otel_messages.ChatMessage(role=role, parts=message_parts))
             elif isinstance(message, ModelResponse):  # pragma: no branch
@@ -275,6 +256,56 @@ class InstrumentationSettings:
                     otel_message['finish_reason'] = message.finish_reason
                 result.append(otel_message)
         return result
+
+    def _span_input_messages(
+        self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str], current_request_start: int
+    ) -> list[_otel_messages.ChatMessage]:
+        """`messages_to_otel_messages`, with the parts of request-scoped system prompts the model no longer sees marked.
+
+        A [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt in a message before
+        `current_request_start` was sent with an earlier request, so its part gets `visible: false`. The marker
+        is added to what `messages_to_otel_messages` returns, so an override of it still applies. Where the
+        result doesn't have the shape the default conversion gives, the parts can't be told apart and none are
+        marked.
+        """
+        otel_messages = self.messages_to_otel_messages(messages, mcp_url_ids=mcp_url_ids)
+        if not any(_holds_request_scoped_prompt(message) for message in messages[:current_request_start]):
+            return otel_messages
+        # For each OTel message the default conversion gives, which of its parts to mark, or `None` to leave it.
+        expected: list[list[bool] | None] = []
+        for index, message in enumerate(messages):
+            if not isinstance(message, ModelRequest):
+                expected.append(None)
+                continue
+            mark = index < current_request_start and _holds_request_scoped_prompt(message)
+            request_parts = [part for part in message.parts if not isinstance(part, InstructionBaselinePart)]
+            for _, group in itertools.groupby(
+                request_parts, key=functools.partial(_otel_message_role, version=self.version)
+            ):
+                expected.append(
+                    [
+                        _is_request_scoped(part)
+                        for part in group
+                        if hasattr(part, 'otel_message_parts')
+                        for _ in part.otel_message_parts(self)
+                    ]
+                    if mark
+                    else None
+                )
+        if len(expected) != len(otel_messages) or any(
+            marks is not None
+            and (
+                len(marks) != len(otel_message['parts'])
+                or any(mark and part['type'] != 'text' for mark, part in zip(marks, otel_message['parts']))
+            )
+            for marks, otel_message in zip(expected, otel_messages)
+        ):
+            return otel_messages
+        for marks, otel_message in zip(expected, otel_messages):
+            for mark, part in zip(marks or (), otel_message['parts']):
+                if mark and part['type'] == 'text':
+                    part['visible'] = False
+        return otel_messages
 
     def _input_messages_json(
         self,
@@ -296,7 +327,7 @@ class InstrumentationSettings:
         if message_json_cache is None:
             history_ids = mcp_telemetry_history_ids(input_messages, frozenset())
             return safe_to_json(
-                self.messages_to_otel_messages(
+                self._span_input_messages(
                     input_messages, mcp_url_ids=history_ids, current_request_start=current_request_start
                 )
             )
@@ -314,9 +345,7 @@ class InstrumentationSettings:
                 or (entry.request_scoped and entry.answered != answered)
             ):
                 history_ids = mcp_telemetry_history_ids([message], frozenset())
-                request_scoped = isinstance(message, ModelRequest) and any(
-                    _is_request_scoped(part) for part in message.parts
-                )
+                request_scoped = _holds_request_scoped_prompt(message)
                 answered = answered and request_scoped
                 entry = CachedMessageJson(
                     message,
@@ -490,6 +519,11 @@ class InstrumentedModel(WrapperModel):
                         response_stream.get(),
                         time_to_first_chunk=response_stream.time_to_first_chunk(request_start),
                     )
+
+
+def _holds_request_scoped_prompt(message: ModelMessage) -> bool:
+    """Whether `message` is a request holding a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt."""
+    return isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts)
 
 
 def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.Role:

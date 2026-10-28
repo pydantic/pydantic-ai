@@ -387,7 +387,7 @@ def message_json_fragment(
     system prompts are marked as no longer visible.
     """
     return safe_to_json(
-        settings.messages_to_otel_messages(
+        settings._span_input_messages(  # pyright: ignore[reportPrivateUsage]
             [message], mcp_url_ids=mcp_url_ids, current_request_start=1 if answered else 0
         )
     )[1:-1]

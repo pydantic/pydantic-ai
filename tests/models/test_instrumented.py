@@ -38,6 +38,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
+    _otel_messages,
 )
 from pydantic_ai._instrumentation import MessageJsonCache, has_stale_message_json
 from pydantic_ai._run_context import RunContext
@@ -2900,7 +2901,7 @@ async def test_wrapped_model_receives_unprepared_request():
     assert seen[-1] == baseline, 'instrumentation changed the instructions the wrapped model received'
 
 
-def _reminder_agent(profile: ModelProfile, *, include_content: bool = True) -> Agent[None, str]:
+def _reminder_agent(profile: ModelProfile, settings: InstrumentationSettings | None = None) -> Agent[None, str]:
     """An agent that adds a request-scoped reminder to each of its three requests: two tool calls, then an answer."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -2920,7 +2921,7 @@ def _reminder_agent(profile: ModelProfile, *, include_content: bool = True) -> A
 
     agent = Agent(
         FunctionModel(respond, profile=profile),
-        capabilities=[Reminder(), Instrumentation(settings=InstrumentationSettings(include_content=include_content))],
+        capabilities=[Reminder(), Instrumentation(settings=settings or InstrumentationSettings())],
     )
 
     @agent.tool_plain
@@ -3010,7 +3011,7 @@ async def test_answered_request_scoped_prompt_marker_without_content(capfire: Ca
     """The marker carries no content, so it's recorded with `include_content=False` too."""
     profile = ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True)
 
-    await _reminder_agent(profile, include_content=False).run('Weather in Paris, then Oslo?')
+    await _reminder_agent(profile, InstrumentationSettings(include_content=False)).run('Weather in Paris, then Oslo?')
 
     assert _chat_span_input_messages(capfire)[-1] == snapshot(
         [
@@ -3100,6 +3101,79 @@ async def test_instrumented_model_marks_answered_request_scoped_prompts(capfire:
                     ],
                 },
                 {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 2.'}]},
+            ]
+        ]
+    )
+
+
+class _UppercaseInstrumentationSettings(InstrumentationSettings):
+    """Upper-cases recorded text, the way an override can redact or rewrite what a trace records."""
+
+    def messages_to_otel_messages(
+        self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str] = frozenset()
+    ) -> list[_otel_messages.ChatMessage]:
+        otel_messages = super().messages_to_otel_messages(messages, mcp_url_ids=mcp_url_ids)
+        for otel_message in otel_messages:
+            for part in otel_message['parts']:
+                if part['type'] == 'text' and 'content' in part:
+                    part['content'] = part['content'].upper()
+        return otel_messages
+
+
+async def test_messages_to_otel_messages_override_applies_to_marked_spans(capfire: CaptureLogfire):
+    """An override of `messages_to_otel_messages` still shapes `gen_ai.input.messages`, and the marker is added to its result."""
+    profile = ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True)
+
+    await _reminder_agent(profile, _UppercaseInstrumentationSettings()).run('Weather in Paris, then Oslo?')
+
+    assert [
+        [part for message in messages if message['role'] == 'system' for part in message['parts']]
+        for messages in _chat_span_input_messages(capfire)
+    ] == snapshot(
+        [
+            [{'type': 'text', 'content': 'REMINDER 1.'}],
+            [{'type': 'text', 'content': 'REMINDER 1.', 'visible': False}, {'type': 'text', 'content': 'REMINDER 2.'}],
+            [
+                {'type': 'text', 'content': 'REMINDER 1.', 'visible': False},
+                {'type': 'text', 'content': 'REMINDER 2.', 'visible': False},
+                {'type': 'text', 'content': 'REMINDER 3.'},
+            ],
+        ]
+    )
+
+
+async def test_answered_request_scoped_prompt_left_unmarked_when_an_override_reshapes_messages(
+    capfire: CaptureLogfire,
+):
+    """Where an override returns a different shape than the default conversion, no part can be attributed to the prompt."""
+
+    class DropUserMessages(InstrumentationSettings):
+        def messages_to_otel_messages(
+            self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str] = frozenset()
+        ) -> list[_otel_messages.ChatMessage]:
+            otel_messages = super().messages_to_otel_messages(messages, mcp_url_ids=mcp_url_ids)
+            return [message for message in otel_messages if message['role'] != 'user']
+
+    model = InstrumentedModel(
+        FunctionModel(
+            lambda messages, info: ModelResponse(parts=[TextPart('done')]),
+            profile=ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True),
+        ),
+        DropUserMessages(),
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Weather in Paris?'), SystemPromptPart('Reminder 1.', scope='request')]),
+        ModelResponse(parts=[TextPart('Sunny.')]),
+        ModelRequest(parts=[UserPromptPart('And Oslo?')]),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    assert _chat_span_input_messages(capfire) == snapshot(
+        [
+            [
+                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Reminder 1.'}]},
+                {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Sunny.'}]},
             ]
         ]
     )
