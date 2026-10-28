@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock
 import httpx2
 import pytest
 from cassetter import Cassette
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
 from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput
 from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
@@ -2267,7 +2267,7 @@ def _azure_wire_response(request: httpx2.Request) -> httpx2.Response:
                 'choices': [{'index': 0, 'message': message, 'finish_reason': 'stop'}],
             },
         )
-    text = {'type': 'output_text', 'text': 'OK', 'annotations': []}
+    text: dict[str, JsonValue] = {'type': 'output_text', 'text': 'OK', 'annotations': []}
     return httpx2.Response(
         200,
         json={
