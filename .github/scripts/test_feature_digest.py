@@ -397,4 +397,8 @@ def test_feature_and_integration_requests_are_eligible(tmp_path: Path, label: st
     _, payload, surfaced = digest.apply_picks(client, picks, snapshot, now=NOW)
     assert surfaced == [7]
     assert payload is not None
-    assert '"integration-request"' in digest.eligible_query()
+
+
+def test_feature_query_includes_every_supported_category():
+    query = digest.eligible_query()
+    assert all(f'"{label}"' in query for label in digest.FEATURE_LABELS)

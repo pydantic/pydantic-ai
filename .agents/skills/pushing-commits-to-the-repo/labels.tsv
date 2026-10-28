@@ -127,10 +127,8 @@ provider-parity
 provider-parity-explore
 pydanty:bot	Bot classification managed by pydanty.
 pydanty:brief-generated	An issue_brief artifact version landed
-pydanty:bug	Bug classification managed by pydanty.
 pydanty:cancel	Kill switch: pydanty never starts a run on this issue or PR while present; nothing auto-removes it.
 pydanty:failed	Pydanty could not complete issue triage
-pydanty:feature	Feature classification managed by pydanty.
 pydanty:fix-attempted	issue-fix-tdd workflow ran
 pydanty:fix-cannot-reproduce	Fix workflow couldn't reproduce the bug
 pydanty:fix-ci	One-shot trigger: run a single mechanical CI-fix pass on this PR. Consumed on dispatch.
@@ -140,7 +138,6 @@ pydanty:meta	Meta classification managed by pydanty.
 pydanty:model-request	Model request classification managed by pydanty.
 pydanty:needs-human
 pydanty:pr	Pull request classification managed by pydanty.
-pydanty:processed	Sentinel applied after pydanty triage.
 pydanty:promotional	Promotional classification managed by pydanty.
 pydanty:rb-pending	Waiting for CI/mergeability. Pydanty auto-reviews once ready; may run CI-fix first.
 pydanty:retry-pr	Re-dispatch the pydanty PR opener from the stored handoff (skip triage)
