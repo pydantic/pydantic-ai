@@ -1422,7 +1422,7 @@ async def _prepare_request_parameters(
     instruction_parts: list[_messages.InstructionPart] | None,
     loaded_instruction_parts: Sequence[_messages.InstructionPart] = (),
     *,
-    native_tool_factories: list[_NativeToolFactoryResult[DepsT]] | None = None,
+    native_tool_factories: list[_NativeToolFactoryResult[DepsT]],
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model.
 
@@ -1459,8 +1459,7 @@ async def _prepare_request_parameters(
                 native_tools.append(tool)
             else:
                 t = await _resolve_native_tool_factory(tool, run_context)
-                if native_tool_factories is not None:
-                    native_tool_factories.append((tool, t))
+                native_tool_factories.append((tool, t))
                 if t is not None:
                     native_tools.append(t)
 
