@@ -227,7 +227,7 @@ async def test_anthropic_filters_unconfigured_native_tool_calls(
                 'extra_body': {'tools': [{'type': 'code_execution_20250825', 'name': 'code_execution'}]},
             },
             True,
-            id='extra-body-tools-keep-main-filter',
+            id='extra-body-tools-setting-not-applied',
         ),
     ],
 )

@@ -667,12 +667,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
     [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool], sent as their `allowed_callers`.
 
     By default the field is omitted and Anthropic picks the caller from the tool version. The
-    `web_search_20260209` and `web_fetch_20260209` versions default to calls from code execution
-    only, which gives the model a server-side code execution sandbox to filter results in
-    ("dynamic filtering") even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]
-    is not enabled. Results the model reads from code execution come back without citations.
+    `web_search_20260209` and `web_fetch_20260209` versions let the model call the tools from code
+    execution, which gives it a server-side code execution sandbox to filter results in ("dynamic
+    filtering") even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] is not
+    enabled. Results the model reads from code execution come back without citations.
 
-    Set `['direct']` to have the model call the web tools itself with no sandbox, which turns off
+    Set `['direct']` to have the model always call the web tools itself with no sandbox, which turns off
     dynamic filtering and makes the tools eligible for Zero Data Retention. A value set here is sent
     on whichever web tool version the model uses. A code execution caller gives the model the sandbox
     on any version. Anthropic rejects an empty list, `code_execution_20250825`, and a code execution

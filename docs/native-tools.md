@@ -205,7 +205,7 @@ left out on models that don't support them.
     For Anthropic, Pydantic AI selects the web search tool version from the model profile and
     Anthropic client: `web_search_20260209` for models and platforms that support Anthropic's
     dynamic-filtering web tools, and `web_search_20250305` otherwise.
-    By default the model calls `web_search_20260209` from a server-side code execution sandbox.
+    By default the model can call `web_search_20260209` from a server-side code execution sandbox.
     To turn that off, for example for Zero Data Retention, see
     [Web Tool Callers](models/anthropic.md#web-tool-callers).
     Amazon Bedrock does not support Anthropic web search, so Pydantic AI raises a `UserError` if you
@@ -711,7 +711,7 @@ in its place if one is provided, an `optional=True` tool is left out, and a
     For Anthropic, Pydantic AI selects the web fetch tool version from the model profile and
     Anthropic client: `web_fetch_20260209` for models and platforms that support Anthropic's
     dynamic-filtering web tools, and `web_fetch_20250910` otherwise.
-    By default the model calls `web_fetch_20260209` from a server-side code execution sandbox.
+    By default the model can call `web_fetch_20260209` from a server-side code execution sandbox.
     To turn that off, for example for Zero Data Retention, see
     [Web Tool Callers](models/anthropic.md#web-tool-callers).
     `WebFetchTool` is unavailable on the Amazon Bedrock and Vertex AI Anthropic clients, so
