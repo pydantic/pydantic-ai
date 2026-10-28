@@ -32,7 +32,8 @@ TIMED_OUT = (
 _ANSWER_NOTE_TAG = register_tag('answer_note')
 """Frames a user's note accompanying an answer, keyed by the question header."""
 
-_ANSWER_NOTE_ORIGIN = 'pydantic-ai-harness.ask_user.answer_note.v1'
+# Harness-prefixed origins mark generated data in compaction; these notes are the user's own words.
+_ANSWER_NOTE_ORIGIN = 'user.pydantic-ai-harness.ask_user.answer_note.v1'
 
 
 def ask_user_result(request: AskUserRequest, response: AskUserResponse) -> AskUserResult:
