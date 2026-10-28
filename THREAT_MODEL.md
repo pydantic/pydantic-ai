@@ -117,9 +117,9 @@ Canonical guidance: [function tools](docs/tools.md), [advanced tools](docs/tools
 
 MCP connections exchange tool arguments and content with a configured server. Local MCP is the default capability path; provider-native MCP is an explicit opt-in. The application chooses trusted server endpoints, credentials, and tools, and authorizes the operations it exposes. Transport authentication does not establish the identity of the application's own caller.
 
-Agent specs can select configured capabilities and providers. YAML/JSON parsing and Pydantic validation establish the configuration's shape. The application must decide who can supply configuration that grants those capabilities or selects endpoints and resources.
+Agent specs can select configured capabilities and providers. Capability arguments include endpoints, such as an `MCP` server URL, which the agent host connects to with its own network access; the library does not restrict them to public addresses. YAML/JSON parsing and Pydantic validation establish the configuration's shape. The application must decide who can supply configuration that grants those capabilities or selects endpoints and resources.
 
-Canonical guidance: [MCP capability](docs/capabilities/mcp.md), [MCP clients](docs/mcp/client.md), and [agent specs](docs/agent-spec.md).
+Canonical guidance: [MCP capability](docs/capabilities/mcp.md), [MCP clients](docs/mcp/client.md), and [agent specs](docs/agent-spec.md#where-specs-come-from).
 
 ### Persistent state and tenant identity
 
