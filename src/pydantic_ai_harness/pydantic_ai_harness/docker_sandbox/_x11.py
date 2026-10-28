@@ -5,7 +5,7 @@ from __future__ import annotations as _annotations
 import base64
 import itertools
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 
 import anyio
@@ -26,6 +26,7 @@ from pydantic_ai.workspaces import (
     SupportsCommands,
     TypeText,
     WorkspaceError,
+    WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
@@ -241,6 +242,23 @@ _ENV = {'DISPLAY': DISPLAY, 'LC_ALL': 'C.UTF-8'}
 POSIX locale, which is what an environment without one set, such as E2B's, has."""
 
 
+async def start_x11(
+    backend: SupportsCommands, size: tuple[int, int], script: str, where: Callable[[], str]
+) -> X11Computer:
+    """Run `script`, which starts an X display of the size `$1` names unless one answers, and control that display.
+
+    `where` names the environment in errors.
+    """
+    width, height = size
+    result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], env={'DISPLAY': DISPLAY}, timeout=30)
+    if result.exit_code != 0:
+        raise WorkspaceUnavailableError(
+            f'could not start the display in {where()}: it needs Xvfb, xdotool, xmodmap, scrot and setsid '
+            f'({(result.stderr or result.stdout).strip()})'
+        )
+    return X11Computer(backend)
+
+
 class X11Computer:
     """Controls an X display with `xdotool` and captures it with `scrot`, through a backend's commands.
 
@@ -253,6 +271,10 @@ class X11Computer:
 
     async def _run(self, command: list[str] | str) -> CommandResult:
         result = await self._backend.run(command, shell=isinstance(command, str), env=_ENV, timeout=_COMMAND_TIMEOUT)
+        if result.exit_code == 127:
+            raise WorkspaceUnavailableError(
+                f'A display command is missing on display {DISPLAY}: {(result.stderr or result.stdout).strip()}'
+            )
         if result.exit_code != 0:
             raise WorkspaceError(
                 f'Display command failed with exit code {result.exit_code} on display {DISPLAY}: '
