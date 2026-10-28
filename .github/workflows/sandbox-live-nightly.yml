@@ -37,6 +37,7 @@ jobs:
       E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
       SPRITE_TOKEN: ${{ secrets.SPRITE_TOKEN }}
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      BOXD_API_KEY: ${{ secrets.BOXD_API_KEY }}
 
   report:
     needs: [live]

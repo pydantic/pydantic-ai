@@ -12,7 +12,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -366,6 +366,8 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
         ),
+        # Converse compiles Claude's strict schemas with Anthropic's limits, verified live.
+        AnthropicModelProfile(anthropic_enforces_strict_schema_limits=True),
     )
 
 
@@ -652,6 +654,12 @@ class BedrockProvider(Provider[BaseClient]):
 
     @property
     def name(self) -> str:
+        return 'bedrock'
+
+    @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing signed reasoning. `BedrockConverseModel`
+        # reports `'anthropic'` for Claude models instead, whose thinking signatures the Anthropic API verifies.
         return 'bedrock'
 
     @property

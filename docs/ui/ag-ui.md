@@ -550,7 +550,7 @@ So when the frontend holds the message history through `@ag-ui/client`, these re
 
 The model then sees a different conversation than it did on the earlier run, and the request no longer starts with the same bytes, so the [prompt cache](../capabilities/caching.md) misses as well.
 
-To keep these records, keep the history on the server: persist the agent's messages keyed by the thread ID and pass them to the adapter as `message_history`, with the client's messages supplying only the latest turn, as described under [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages). The records then never depend on the client.
+To keep these records, [keep the history on the server](#keeping-the-history-on-the-server): persist the agent's messages keyed by the thread ID, pass them to the adapter as `message_history`, and set `manage_message_history='server'`, so that only the client's new turn is used. The records then never depend on the client.
 
 If the frontend must hold the history, it can send the records back itself. This middleware puts the `pydantic_ai_*` activity messages from `agent.messages` back into each request, in their original positions:
 
@@ -573,9 +573,23 @@ agent.use((input, next) => {
 
 The records the client sends back this way are under its control, like the rest of a client-held history; see [Trust model](#trust-model).
 
+### Keeping the history on the server
+
+With [`manage_message_history='server'`](./overview.md#keeping-the-history-on-the-server), the adapter uses only the new turn from the messages `@ag-ui/client` sends, so the client can keep sending its whole history. To send only the new turn instead, add a middleware that keeps the messages after the last assistant message: the user's new message, or the results of the frontend tools that message called. A run that [resumes after an interrupt](#tool-approval-interrupts) then sends no messages, which is all it needs.
+
+```ts
+import { HttpAgent } from '@ag-ui/client';
+
+const agent = new HttpAgent({ url: '/agent' });
+agent.use((input, next) => {
+  const lastAssistant = input.messages.findLastIndex((message) => message.role === 'assistant');
+  return next.run({ ...input, messages: input.messages.slice(lastAssistant + 1) });
+});
+```
+
 ### Compaction
 
-[`CompactionPart`][pydantic_ai.messages.CompactionPart]s are carried as `pydantic_ai_compaction` activity messages, so [compacted](../capabilities/compaction.md) conversations keep working when the frontend holds the message history and sends those activity messages back. `@ag-ui/client` doesn't send them back; see [Records carried as activity messages](#activity-records). A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (the [server-side persistence pattern](./overview.md#trust-model-for-client-submitted-messages)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
+[`CompactionPart`][pydantic_ai.messages.CompactionPart]s are carried as `pydantic_ai_compaction` activity messages, so [compacted](../capabilities/compaction.md) conversations keep working when the frontend holds the message history and sends those activity messages back. `@ag-ui/client` doesn't send them back; see [Records carried as activity messages](#activity-records). A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (see [Keeping the history on the server](#keeping-the-history-on-the-server)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
 
 ### Enqueued messages
 

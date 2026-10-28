@@ -37,6 +37,8 @@ from ..conftest import stream_bedrock_converse_mock
 from .conftest import Address, CityInfo, PersonQuery
 
 with try_import() as imports_successful:
+    from botocore.model import StructureShape
+
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.providers.bedrock import BedrockProvider
 
@@ -77,6 +79,7 @@ async def test_bedrock_native_output_supported_model(
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -120,6 +123,7 @@ async def test_bedrock_native_output_haiku_5_5(
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -528,6 +532,7 @@ async def test_bedrock_native_output_numerical_constraints(
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -571,6 +576,7 @@ async def test_bedrock_native_output_stream(
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -657,3 +663,74 @@ async def test_bedrock_native_output_profile_default(
     result = await agent.run('Should we ship the feature? Give a confidence (0-1) and a short title.')
 
     assert isinstance(result.output, Decision)
+
+
+def _without_output_config(provider: BedrockProvider, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the provider's `botocore` look like one that predates Converse's `outputConfig`.
+
+    `shape_for` builds a fresh `Shape` on each call, so `outputConfig` is dropped on every lookup (only
+    `ConverseRequest` has it). It's patched before a model is built, as the model's profile is resolved once.
+    """
+    service_model = provider.client.meta.service_model
+    real_shape_for = service_model.shape_for
+
+    def shape_for(name: str) -> StructureShape:
+        shape = real_shape_for(name)
+        assert isinstance(shape, StructureShape)
+        object.__setattr__(shape, 'members', {k: v for k, v in shape.members.items() if k != 'outputConfig'})
+        return shape
+
+    monkeypatch.setattr(service_model, 'shape_for', shape_for)
+
+
+def test_bedrock_default_output_is_prompted_when_botocore_lacks_output_config(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A `botocore` that predates `outputConfig` → a default output on a request that thinks uses Prompted Output.
+
+    Native Output is the default there, and such a `botocore` rejects `outputConfig` with a `ParamValidationError`
+    before anything is sent. See https://github.com/pydantic/pydantic-ai/issues/11690.
+    """
+    _without_output_config(bedrock_provider, monkeypatch)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    assert model.profile.get('supports_json_schema_output') is False
+
+    stream_bedrock_converse_mock(mocker, model.client)
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {
+            'message': {
+                'role': 'assistant',
+                'content': [{'text': '{"city": "Berlin", "country": "Germany", "population": 3700000}'}],
+            }
+        },
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 5, 'outputTokens': 10},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    agent = Agent(model, output_type=CityInfo, model_settings={'thinking': True})
+    result = agent.run_sync('Tell me about Berlin')
+
+    assert result.output == CityInfo(city='Berlin', country='Germany', population=3700000)
+    _, kwargs = mock_converse.call_args
+    assert 'outputConfig' not in kwargs
+    assert 'toolConfig' not in kwargs
+
+
+def test_bedrock_native_output_raises_when_botocore_lacks_output_config(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A `botocore` that predates `outputConfig` → an explicit `NativeOutput` raises a `UserError` naming it."""
+    _without_output_config(bedrock_provider, monkeypatch)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    with pytest.raises(UserError, match=r'The installed `botocore` \(\d+\.\d+\.\d+\) is too old to send Native Output'):
+        agent.run_sync('Tell me about Berlin')

@@ -199,7 +199,11 @@ async def test_native_realpath_rule_runs_without_commands() -> None:
 async def test_the_zoom_and_pointer_checks_skip_a_display_without_them() -> None:
     suite = WorkspaceBackendSuite()
     backend = DisplayOnlyBackend(InMemoryProvider().backend(None))
-    for check in (suite.test_zoom_is_a_png_of_the_region, suite.test_the_cursor_position_is_on_the_screen):
+    for check in (
+        suite.test_zoom_is_a_png_of_the_region,
+        suite.test_the_cursor_position_is_on_the_screen,
+        suite.test_moving_the_mouse_puts_the_pointer_there,
+    ):
         with pytest.raises(pytest.skip.Exception):
             await check(backend)
 

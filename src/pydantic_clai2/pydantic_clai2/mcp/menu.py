@@ -95,10 +95,13 @@ class ServersSource:
 
     def _server_row(self, entry: ServerEntry) -> FieldRow:
         state = self.state(entry)
+        loading = self._command.loading(entry) if state in ('running', 'ready') else None
         if state == 'running':
             summary = f'{len(self._servers.tools(entry))} tools'
         elif state == 'error':
             summary = self._servers.problem(entry) or 'Could not connect'
+        elif state == 'ready' and loading:
+            summary = None
         else:
             summary = _SUMMARIES[state]
         source = None if entry.source == 'user' else f'From {entry.path or "/plugins settings for mcp"}'
@@ -107,7 +110,7 @@ class ServersSource:
             label=entry.name,
             description=f'{entry.server.type} · {target(entry.server)}',
             default='',
-            note=' · '.join(part for part in (summary, source) if part),
+            note=' · '.join(part for part in (summary, loading, source) if part),
         )
 
     async def manage(self, name: str, dialogs: Dialogs) -> list[str]:
@@ -158,7 +161,11 @@ class ServersSource:
         reason = not_owned(entry)
         if reason is None:
             options += [
-                Option(value='edit', label='Edit…', description='Its name, type, JSON configuration, or OAuth.'),
+                Option(
+                    value='edit',
+                    label='Edit…',
+                    description='Its name, type, JSON configuration, OAuth, or on-demand loading.',
+                ),
                 Option(value='remove', label='Remove…', description='Stop it and forget it.'),
             ]
         details = self._command.details(entry)
