@@ -264,7 +264,7 @@ def validate_policy_checkout(root: Path, source: str, directory: Path) -> None:
     """Reject candidate instructions in the reviewer's stable checkout or bundle ancestors."""
     if git(root, 'rev-parse', 'HEAD').decode().strip() != source:
         raise ValueError('Reviewer workspace must remain at the immutable policy source')
-    git(root, 'diff', '--quiet', source, '--')
+    git(root, 'diff', '--no-ext-diff', '--no-textconv', '--quiet', source, '--')
     for parent in (directory, directory / 'review'):
         if any((parent / name).exists() for name in ('AGENTS.md', 'CLAUDE.md')):
             raise ValueError('Review bundle must not introduce instruction overlays')

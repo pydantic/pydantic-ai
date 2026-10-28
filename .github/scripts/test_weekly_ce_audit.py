@@ -164,6 +164,24 @@ def test_policy_validation_ignores_configured_clean_filter(repository: tuple[Pat
     assert not marker.exists()
 
 
+def test_policy_validation_ignores_external_diff(repository: tuple[Path, str]):
+    """An external diff cannot execute or hide changed reviewer policy."""
+    root, source = repository
+    hook = root / '.git/external-diff'
+    marker = root / 'external-diff-invoked'
+    hook.write_text('#!/bin/sh\n: > "$PWD/external-diff-invoked"\nexit 0\n')
+    hook.chmod(0o755)
+    git(root, 'config', 'diff.external', str(hook))
+    git(root, 'config', 'diff.trustExitCode', 'true')
+    (root / 'AGENTS.md').write_text('Changed policy\n')
+    git(root, 'diff', '--quiet', source, '--')
+    assert marker.exists()
+    marker.unlink()
+    with pytest.raises(subprocess.CalledProcessError):
+        validate_policy_checkout(root, source, root / '.ce-audit')
+    assert not marker.exists()
+
+
 def test_receipt_reconciles_canonical_report_only_and_paged_reads(repository: tuple[Path, str]):
     """Require complete paged canonical reads including report-only paths."""
     root, source = repository
