@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import sys
 import threading
+import warnings
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass, field
 from importlib.util import find_spec
@@ -2346,6 +2348,65 @@ async def test_sdk_api_errors_during_websocket_connection_are_mapped(
     assert sockets.connect_count == 1
 
 
+@pytest.mark.parametrize('setup', ['openai-key', 'azure-token'])
+@pytest.mark.parametrize('profile', [None, OpenAIModelProfile(openai_responses_supports_websocket=True)])
+async def test_credential_callbacks_keep_request_authentication(
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    http: HTTPResponses,
+    setup: str,
+    profile: OpenAIModelProfile | None,
+):
+    key: ContextVar[str] = ContextVar('request_key', default='first')
+    resolved: list[str] = []
+    sent_credentials: list[str] = []
+    sockets.pending[0].responses.append(text_events('second', 'resp_second'))
+
+    async def credential() -> str:
+        value = key.get()
+        resolved.append(value)
+        return value
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        authorization = request.headers['authorization']
+        sent_credentials.append(authorization)
+        if authorization == 'Bearer denied':
+            return httpx2.Response(401, json={'error': {'message': 'Invalid API key', 'type': 'invalid_api_key'}})
+        return http.handle(request)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as http_client:
+        if setup == 'openai-key':
+            client = AsyncOpenAI(api_key=credential, http_client=http_client, max_retries=0)
+        else:
+            assert setup == 'azure-token'
+            client = AsyncAzureOpenAI(
+                azure_ad_token_provider=credential,
+                api_version='2024-12-01-preview',
+                azure_endpoint='https://example.openai.azure.com/',
+                http_client=http_client,
+                max_retries=0,
+            )
+        model = websocket_model(OpenAIProvider(openai_client=client), profile=profile)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always', UnsupportedSettingWarning)
+            async with Agent(model) as agent:
+                await agent.run('first user')
+                token = key.set('denied')
+                try:
+                    with pytest.raises(ModelHTTPError) as rejected:
+                        await agent.run('second user')
+                    assert rejected.value.status_code == 401
+                finally:
+                    key.reset(token)
+
+    assert resolved == ['first', 'denied']
+    assert sent_credentials == ['Bearer first', 'Bearer denied']
+    assert sockets.connect_count == 0
+    assert len(caught) == 2
+    assert all(issubclass(w.category, UnsupportedSettingWarning) for w in caught)
+    assert model.profile.get('openai_responses_supports_websocket') is False
+
+
 OVERRIDABLE_NEVER_SOCKET_SETUPS = ['azure-provider', 'azure-client', 'gateway']
 # OAuth credentials reach HTTP requests only, and Codex session headers vary per conversation, so `profile=` can't
 # turn the socket on for these.
@@ -2868,6 +2929,58 @@ async def test_early_rejection_retry_budget(
     assert socket.close_count == 1
 
 
+async def test_rejected_request_preserves_its_error_when_retry_capacity_is_busy(
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr('pydantic_ai.models._openai_responses_websocket.ACTIVE_RESPONSE_LIMIT', 1)
+    socket = sockets.pending[0]
+    rejection: Frame = {
+        'type': 'error',
+        'status': 503,
+        'error': {'type': 'server_error', 'code': 'server_error', 'message': 'retry later'},
+    }
+    socket.responses = deque([[rejection], []])
+    backoff = anyio.Event()
+    retry_ready = anyio.Event()
+    rejected = anyio.Event()
+
+    async def sleep(delay: float) -> None:
+        assert delay == 0.5
+        backoff.set()
+        await retry_ready.wait()
+
+    monkeypatch.setattr(anyio, 'sleep', sleep)
+    agent = Agent(websocket_model(http.provider(), settings=OpenAIResponsesModelSettings(max_retries=1)))
+    outputs: list[str] = []
+
+    async def first() -> None:
+        with pytest.raises(ModelHTTPError) as error:
+            await agent.run('rejected')
+        assert error.value.status_code == 503
+        rejected.set()
+
+    async def second() -> None:
+        outputs.append((await agent.run('sibling')).output)
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with agent, anyio.create_task_group() as tasks:
+            tasks.start_soon(first)
+            await backoff.wait()
+            socket.sending = anyio.Event()
+            tasks.start_soon(second)
+            await socket.sending.wait()
+            retry_ready.set()
+            await rejected.wait()
+            events = text_events('sibling finished', 'resp_sibling')
+            stream_id = socket.sent[-1].get('stream_id')
+            socket.push(*(on_lane(events, stream_id) if isinstance(stream_id, str) else events))
+
+    assert outputs == ['sibling finished']
+    assert len(socket.sent) == 2
+    assert socket.close_count == 1
+    assert http.requests == []
+
+
 async def test_request_settings(allow_model_requests: None, sockets: SocketHarness):
     settings: OpenAIResponsesModelSettings = {
         'openai_transport': 'websocket',
@@ -2897,21 +3010,24 @@ async def test_request_settings(allow_model_requests: None, sockets: SocketHarne
     assert sent['metadata'] == {'test': 'websocket'}
 
 
-async def test_refreshed_client_credentials_keep_the_open_socket_usable(
-    allow_model_requests: None, sockets: SocketHarness
+async def test_credential_callbacks_refresh_over_http(
+    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses
 ):
-    """A shared client's credential refresh is not a header change, so requests keep using the open socket."""
+    """The SDK resolves a credential callback for every request, including successful token refreshes."""
     token = 'old-token'
 
     async def api_key() -> str:
         return token
 
-    socket = sockets.pending[0]
-    socket.responses.append(text_events())
-    agent = Agent(websocket_model(OpenAIProvider(openai_client=AsyncOpenAI(api_key=api_key))))
-    async with agent:
-        assert (await agent.run('hello')).output == 'ready'
-        token = 'refreshed-token'
-        assert (await agent.run('again')).output == 'ready'
-    assert sockets.authorization_headers == ['Bearer old-token']
-    assert len(socket.sent) == 2
+    client = AsyncOpenAI(api_key=api_key, http_client=http.client)
+    agent = Agent(websocket_model(OpenAIProvider(openai_client=client)))
+    with pytest.warns(UnsupportedSettingWarning, match='openai_responses_supports_websocket=False'):
+        async with agent:
+            assert (await agent.run('hello')).output == 'from HTTP'
+            token = 'refreshed-token'
+            assert (await agent.run('again')).output == 'from HTTP'
+    assert [request.headers['authorization'] for request in http.requests] == [
+        'Bearer old-token',
+        'Bearer refreshed-token',
+    ]
+    assert sockets.connect_count == 0

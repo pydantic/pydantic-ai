@@ -172,8 +172,7 @@ class ResponsesWebSocket:
 
     @staticmethod
     def effective_headers(client: AsyncOpenAI, extra_headers: Mapping[str, str]) -> dict[str, str]:
-        # The client's credentials stay out: a shared client can refresh them during any handshake, so they don't
-        # show what this socket sent.
+        # Compare configured headers; the model profile sends clients with per-request credential callbacks over HTTP.
         headers: dict[str, str | Omit] = {
             key.lower(): value
             for header_set in (client.default_headers, extra_headers)

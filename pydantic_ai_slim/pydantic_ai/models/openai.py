@@ -3090,9 +3090,7 @@ class _ResponsesWebSocketHolder:
         state.external_leases += external
         return state, external
 
-    async def release(self, lease: _ResponsesWebSocketLease | None) -> None:
-        if lease is None:
-            return
+    async def release(self, lease: _ResponsesWebSocketLease) -> None:
         state, external = lease
         state.leases -= 1
         state.external_leases -= external
@@ -3101,6 +3099,8 @@ class _ResponsesWebSocketHolder:
     @asynccontextmanager
     async def lease(self) -> AsyncGenerator[None]:
         acquired = self.acquire()
+        # Agent run scopes require asyncio; direct model contexts can run without it.
+        assert acquired is not None
         try:
             yield
         finally:
@@ -3338,7 +3338,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if not self.profile.get('openai_responses_supports_websocket', True):
             return (
                 'its profile sets `openai_responses_supports_websocket=False`, as its provider, SDK client or model '
-                "class can't open a Responses WebSocket. To try one on Azure OpenAI or the Pydantic AI Gateway, pass "
+                "class can't open a Responses WebSocket. To try one on Azure OpenAI or the Pydantic AI Gateway "
+                'with static credentials, pass '
                 '`profile=OpenAIModelProfile(openai_responses_supports_websocket=True)` to the model.'
             )
         try:
@@ -3496,9 +3497,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.
         if profile.get('openai_responses_supports_json_schema_output', False):
             profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
-        if isinstance(self._provider, OAuthCredentialsProvider):
-            # Its credentials are added by an HTTP auth hook, so a handshake would carry a placeholder key whatever
-            # `profile=` says.
+        client = self._provider.client
+        if (
+            isinstance(self._provider, OAuthCredentialsProvider)
+            or callable(getattr(client, '_api_key_provider', None))
+            or (isinstance(client, AsyncAzureOpenAI) and callable(getattr(client, '_azure_ad_token_provider', None)))
+        ):
+            # Per-request credentials must be resolved again for each request; a socket keeps its handshake's
+            # credentials, so `profile=` can't enable it for these clients.
             profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
         return cast(OpenAIModelProfile, profile)
 

@@ -147,18 +147,6 @@ def worker(client: Client, queue: str, agent: Agent[None, str]) -> Worker:
     )
 
 
-def frame_summary(socket: ObservedSocket) -> list[dict[str, object]]:
-    return [
-        {
-            'previous_response_id': frame.get('previous_response_id'),
-            'input': frame.get('input'),
-            'stream_id': frame.get('stream_id'),
-            'activity_attempt': attempt,
-        }
-        for frame, attempt in zip(socket.sent, socket.attempts, strict=True)
-    ]
-
-
 async def replay(client: Client, agent: Agent[None, str], history: WorkflowHistory, network: Network) -> None:
     before = (len(network.opened), sum(len(s.sent) for s in network.opened), len(network.http_frames))
     with ThreadPoolExecutor() as executor:
