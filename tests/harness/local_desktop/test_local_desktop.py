@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -131,6 +132,52 @@ def test_a_screen_that_stopped_starts_again_in_a_later_event_loop(fake_x: Path, 
     assert len(_lines(fake_x, 'Xvfb')) == 2
 
 
+def _processes(desktop: LocalDesktop[None]) -> list[subprocess.Popen[bytes]]:
+    return desktop._screen._processes  # pyright: ignore[reportOptionalMemberAccess,reportPrivateUsage]
+
+
+@linux_only
+async def test_a_window_manager_that_exited_is_started_again_on_the_same_screen(fake_x: Path, tmp_path: Path):
+    # A misclick on the window manager's Exit must not close every app on the screen.
+    desktop = LocalDesktop[None](tmp_path)
+    backend = _backend(desktop)
+    try:
+        await backend.display.display_size()
+        assert backend.display.take_fresh_start() is True
+        xvfb, window_manager = _processes(desktop)
+        window_manager.kill()
+        window_manager.wait()
+
+        assert (await backend.run('echo $DISPLAY', shell=True)).stdout == ':7\n'
+        assert xvfb.poll() is None
+        assert len(_lines(fake_x, 'Xvfb')) == 1
+        assert len(_lines(fake_x, 'fluxbox')) == 2
+        assert backend.display.take_fresh_start() is False
+
+        xvfb.kill()
+        xvfb.wait()
+        await backend.display.display_size()
+        assert backend.display.take_fresh_start() is True
+    finally:
+        await _stop(desktop)
+
+
+@linux_only
+def test_a_screen_outlives_the_thread_that_started_it(fake_x: Path, tmp_path: Path):
+    # The real `setpriv`, whose `--pdeathsig` fires when the starting thread exits, not only the process.
+    bin_dir = Path(os.environ['PATH'].split(':')[0])
+    (bin_dir / 'setpriv').unlink()
+    (bin_dir / 'setpriv').symlink_to(shutil.which('setpriv', path=os.defpath))  # pyright: ignore[reportArgumentType]
+    desktop = LocalDesktop[None](tmp_path)
+    try:
+        _in_new_event_loop(_backend(desktop).display.display_size)  # its thread has exited when this returns
+        xvfb = _processes(desktop)[0]
+        with pytest.raises(subprocess.TimeoutExpired):
+            xvfb.wait(timeout=0.5)
+    finally:
+        _in_new_event_loop(lambda: _stop(desktop))
+
+
 @linux_only
 @pytest.mark.parametrize(
     ('fakes', 'error'),
@@ -207,8 +254,11 @@ async def test_the_real_screen_is_refused_where_it_cannot_work(
 
 async def test_it_needs_linux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sys, 'platform', 'darwin')
+    backend = _backend(LocalDesktop[None](tmp_path))
     with pytest.raises(WorkspaceUnavailableError, match='A local desktop needs Linux'):
-        await _backend(LocalDesktop[None](tmp_path)).display.screenshot()
+        await backend.display.screenshot()
+    # Commands need no screen.
+    assert (await backend.run(['echo', 'hi'])).stdout == 'hi\n'
 
 
 def test_it_is_a_local_workspace_with_a_screen(tmp_path: Path):
