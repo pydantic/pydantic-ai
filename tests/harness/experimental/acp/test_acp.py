@@ -54,6 +54,7 @@ from pydantic_ai.toolsets import CombinedToolset, FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import FileSystem, Shell
+from pydantic_ai_harness.compaction import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.experimental import HarnessExperimentalWarning
 from pydantic_ai_harness.experimental.acp import (
     AcpSession,
@@ -683,6 +684,25 @@ class TestStreaming:
 
         [update] = [item for item in client.updates if isinstance(item, schema.UsageUpdate)]
         assert update.used == request_usage.total_tokens == 120
+
+    async def test_usage_update_is_skipped_without_a_connection(self) -> None:
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(Agent(TestModel()))
+
+        # Best-effort: no client is connected, so the notification is dropped rather than raising.
+        await adapter._send_usage_update('sid', RequestUsage(input_tokens=1, output_tokens=1), None)  # pyright: ignore[reportPrivateUsage]
+
+        assert adapter._conn is None  # pyright: ignore[reportPrivateUsage]
+
+    def test_max_context_tokens_falls_back_to_the_default(self) -> None:
+        # Neither the run nor the agent has a model, so the conservative default is the denominator.
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(Agent())
+        tokens = adapter._get_max_context_tokens(None)  # pyright: ignore[reportPrivateUsage]
+        assert tokens == DEFAULT_CONTEXT_WINDOW
+
+        # A model the pricing registry has no window for falls back too, rather than reporting zero.
+        unknown = 'a-model-no-registry-knows'
+        tokens = adapter._get_max_context_tokens(unknown)  # pyright: ignore[reportPrivateUsage]
+        assert tokens == DEFAULT_CONTEXT_WINDOW
 
     async def test_usage_sums_across_approval_passes(self) -> None:
         # An approval pause splits the turn into two model passes; the reported usage must cover
