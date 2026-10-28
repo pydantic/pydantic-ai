@@ -95,13 +95,19 @@ The user's overall goal.
 
 ## Requirements
 The rules, preferences and constraints the user stated, wherever in the conversation they \
-appeared: "never ..." and "always ..." rules, who owns what, what to use or avoid. Quote short \
-ones verbatim. Keep each one until the user lifts it.
+appeared: "never ..." and "always ..." rules, what to use or avoid. Quote short ones verbatim. \
+Keep each one until the user lifts it.
+
+## People and ownership
+Every person, team or role involved, by exact name, and who owns, is assigned to, or is doing \
+what. Keep each assignment as stated until the user reassigns it, including several people \
+sharing a topic.
 
 ## Key decisions
-The current decision on each topic and the reasoning, so it is not relitigated. When the user \
-overrode an earlier choice, write the current one followed by "(replaces: <earlier choice>)", \
-and don't list the earlier choice as an option.
+The current choice on each design, technical or product question and the reasoning, so it is \
+not relitigated. When the user overrode an earlier choice, write the current one followed by \
+"(replaces: <earlier choice>)", and don't list the earlier choice as an option. Owners and \
+assignments go under People and ownership, not here.
 
 ## Artifacts
 Files, paths, identifiers, commands, and APIs touched -- quote exact names.
@@ -109,8 +115,9 @@ Files, paths, identifiers, commands, and APIs touched -- quote exact names.
 ## Current state
 What is done and what is in progress right now.
 
-## Next steps
-The immediate actions still required to finish the task.
+## Plan and next steps
+The agreed plan with its remaining steps in order, including ones not started yet, and the \
+immediate actions still required to finish the task.
 
 ## Open questions
 Unresolved questions or blockers.
@@ -138,9 +145,11 @@ Summaries are now a `CompactionPart`; this only recognizes ones in histories sav
 # summary-of-summary decay.  Wording is minimal/neutral and flagged pending the eval-rig pass.
 _INCREMENTAL_UPDATE_INSTRUCTION = (
     'An anchored summary from earlier compaction is provided below in <previous-summary>. '
-    'Update it using the conversation above: preserve still-true details, remove stale '
-    'details, and merge in new facts.  The conversation above is newer than the previous summary, so '
-    'where they disagree it takes precedence.  Keep the same section structure.'
+    'Update it using the conversation above: preserve still-true details, remove details the '
+    'conversation shows are no longer true, and merge in new facts.  Keep what the previous summary established unless the '
+    'conversation above explicitly changes it: a requirement or decision is replaced only when the user '
+    'explicitly changes it, not by a passing remark or a later unrelated turn.  Keep the same section '
+    'structure.'
 )
 
 _HARNESS_DATA_INSTRUCTION = (
@@ -740,9 +749,10 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
     incremental: bool = True
     """When `True`, feed any existing summary from a prior compaction back as an anchored
-    `<previous-summary>` block with an update instruction (preserve still-true, remove stale,
-    merge new, and let the newer conversation win where they disagree) so it is updated in place
-    rather than re-summarized -- avoiding summary-of-summary decay.
+    `<previous-summary>` block with an update instruction (preserve still-true, remove what is
+    shown untrue, merge new, and replace an established requirement or decision only on an
+    explicit change) so it is updated in place rather than re-summarized -- avoiding
+    summary-of-summary decay.
     """
 
     bridge_prefix: bool = False

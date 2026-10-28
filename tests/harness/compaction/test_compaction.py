@@ -2888,10 +2888,11 @@ class TestSummarizingCompactionModel:
         for heading in (
             '## Intent',
             '## Requirements',
+            '## People and ownership',
             '## Key decisions',
             '## Artifacts',
             '## Current state',
-            '## Next steps',
+            '## Plan and next steps',
             '## Open questions',
         ):
             assert heading in _DEFAULT_SUMMARY_PROMPT
@@ -5155,7 +5156,7 @@ class TestStructuralFeaturesThroughAgent:
         assert _UPDATE_ANCHOR in prompts[1]
 
     async def test_default_prompt_asks_for_requirements_and_current_decisions(self):
-        """The fresh and incremental summary prompts ask for requirements and only current decisions (#11438)."""
+        """The fresh and incremental prompts ask for requirements, ownership and only current decisions (#11438)."""
         prompts: list[str] = []
         agent = Agent(
             _recording_model([]),
@@ -5168,15 +5169,20 @@ class TestStructuralFeaturesThroughAgent:
         assert len(prompts) == 2
         requirements = 'Quote short ones verbatim. Keep each one until the user lifts it.'
         replaces = 'write the current one followed by "(replaces: <earlier choice>)"'
-        precedence = (
-            'The conversation above is newer than the previous summary, so where they disagree it takes precedence.'
+        ownership = 'Keep each assignment as stated until the user reassigns it'
+        explicit_change = (
+            'a requirement or decision is replaced only when the user explicitly changes it, '
+            'not by a passing remark or a later unrelated turn.'
         )
         for prompt in prompts:
             assert '## Requirements\n' in prompt
+            assert '## People and ownership\n' in prompt
+            assert '## Plan and next steps\n' in prompt
             assert requirements in prompt
+            assert ownership in prompt
             assert replaces in prompt
-        assert precedence not in prompts[0]
-        assert precedence in prompts[1]
+        assert explicit_change not in prompts[0]
+        assert explicit_change in prompts[1]
 
     async def test_tool_output_cannot_forge_transcript_messages(self):
         """Tool output that mimics the transcript's own markup stays inside its tool message."""
