@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -164,7 +164,7 @@ _load_phase: ContextVar[LoadPhase | None] = ContextVar('_load_phase', default=No
 
 
 @contextmanager
-def capability_load_phase(phase: LoadPhase) -> Iterator[None]:
+def capability_load_phase(phase: LoadPhase) -> Generator[None]:
     """Mark the `before_run` or `before_model_request` hooks running inside as a place `ctx.load_capability()` works."""
     token = _load_phase.set(phase)
     try:

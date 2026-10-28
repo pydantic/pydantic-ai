@@ -3500,11 +3500,10 @@ async def test_load_capability_before_a_request_takes_effect_on_it(hook: str, mo
     That request carries the capability's tool and states its instructions, so loading before the first request
     of a run (#10089) needs no extra model turn.
     """
-    first_request: list[tuple[list[str], str]] = []
+    requests: list[tuple[list[str], str]] = []
 
     def record(messages: list[ModelMessage], info: AgentInfo) -> None:
-        if not first_request:
-            first_request.append(([tool.name for tool in info.function_tools], str(messages[-1])))
+        requests.append(([tool.name for tool in info.function_tools], str(messages[-1])))
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         record(messages, info)
@@ -3531,7 +3530,7 @@ async def test_load_capability_before_a_request_takes_effect_on_it(hook: str, mo
         assert agent_run.result is not None
         messages = agent_run.result.all_messages()
 
-    tools, sent = first_request[0]
+    tools, sent = requests[0]
     assert ('refund_status' in tools, 'Quote the refund policy.' in sent) == (True, True)
     assert [type(part).__name__ for part in messages[0].parts] == [
         'UserPromptPart',
