@@ -27,7 +27,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceUnsupportedActionError,
 )
-from pydantic_ai_harness._x11 import X11Computer
+from pydantic_ai_harness._x11 import X11Computer, _keysym  # pyright: ignore[reportPrivateUsage]
 
 from ..workspace_fakes import FAKE_SCREENSHOT
 
@@ -104,6 +104,10 @@ class BlockingCommands(ScriptedCommands):
         (PressKeys(keys=('ctrl', 's'), repeat=3), ['xdotool', 'key', '--repeat', '3', '--', 'ctrl+s']),
         (PressKeys(keys=('PageDown', 'F5', 'ArrowUp')), ['xdotool', 'key', '--repeat', '1', '--', 'Next+F5+Up']),
         (PressKeys(keys=('shift', 'XF86AudioMute')), ['xdotool', 'key', '--repeat', '1', '--', 'shift+XF86AudioMute']),
+        (
+            PressKeys(keys=('printscreen', 'capslock', 'numpad_enter')),
+            ['xdotool', 'key', '--repeat', '1', '--', 'Print+Caps_Lock+KP_Enter'],
+        ),
         (PressKeys(keys=('ctrl', '+')), ['xdotool', 'key', '--repeat', '1', '--', 'ctrl+plus']),
         (HoldKeys(keys=('shift',), seconds=0.5), ['xdotool', 'keydown', 'shift', 'sleep', '0.5', 'keyup', 'shift']),
     ],
@@ -149,21 +153,20 @@ async def test_x11_computer_maps_at_most_50_characters_a_command() -> None:
 
 
 @pytest.mark.parametrize(
-    'action',
+    'key',
     [
         # xdotool matches command names in any case.
-        HoldKeys(keys=('Exec',), seconds=1),
+        'Exec',
         # A command only newer xdotool releases have.
-        PressKeys(keys=('windowquit',)),
-        HoldKeys(keys=('--help',), seconds=1),
+        'windowquit',
+        '--help',
     ],
 )
-async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(action: ComputerAction) -> None:
-    # `xdotool key exec sh -c ...` runs the program: `exec` ends the key names and starts a command.
-    commands = ScriptedCommands()
+def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(key: str) -> None:
+    # `xdotool key exec sh -c ...` runs the program: `exec` ends the key names and starts a command. Validation
+    # already refuses these names; the display refuses them too, for an action built without it.
     with pytest.raises(WorkspaceUnsupportedActionError, match='cannot press the key'):
-        await X11Computer(commands).act(action)
-    assert commands.calls == []
+        _keysym(key)
 
 
 @pytest.mark.parametrize(

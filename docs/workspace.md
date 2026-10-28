@@ -232,8 +232,9 @@ working directories.
 
 A bad path raises the usual error, such as `FileNotFoundError` or `IsADirectoryError`. Catch it and
 raise `ModelRetry` so the model can try again; uncaught, it ends the run, except on Temporal, where it
-follows the activity retry policy (see [Durable execution](#durable-execution)). An environment that is gone,
-such as a sandbox deleted during a command, raises `WorkspaceUnavailableError` and ends the run.
+follows the activity retry policy (see [Durable execution](#durable-execution)). An environment the backend can't
+reach, such as a sandbox deleted or paused during a command, raises `WorkspaceUnavailableError` and ends the run,
+since retrying the call can't succeed.
 A command killed by a signal while its environment stays live returns its exit code instead.
 
 ## Read-only access
@@ -531,19 +532,23 @@ symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#res
 ### Controlling a display
 
 A backend whose environments can have a graphical display implements
-[`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: `has_display`, which says without I/O
-whether this environment has one, `display_size`, `screenshot` (PNG bytes), and `act`, which performs one [`ComputerAction`][pydantic_ai.workspaces.ComputerAction]
-such as a click or a key press. Tools reach them as `ctx.workspace.screenshot()` and
-`ctx.workspace.act(...)`.
+[`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]: a `display` property that returns a
+[`Display`][pydantic_ai.workspaces.Display], or `None` for an environment without one, decided without I/O.
+It returns the same object for the backend's lifetime. The display can come from elsewhere, such as this
+machine's screen beside a local workspace. A `Display` has `display_size`, `screenshot` (PNG bytes), and `act`,
+which performs one [`ComputerAction`][pydantic_ai.workspaces.ComputerAction] such as a click or a key press.
+Tools reach them as `ctx.workspace.screenshot()` and `ctx.workspace.act(...)`.
 
 New action kinds may be added to `ComputerAction`, so `act` must raise
 [`WorkspaceUnsupportedActionError`][pydantic_ai.workspaces.WorkspaceUnsupportedActionError] for a kind it
 doesn't know; [`WorkspaceBackendSuite`][pydantic_ai.workspaces.conformance.WorkspaceBackendSuite] checks this. Coordinates are pixels of the screenshot, so a backend
 whose screen is scaled, such as a high-density display, reports the screenshot's size and scales actions to
 match. Keep the screenshot at most 2,000 pixels on each side: Claude rejects larger images once a request
-carries more than 20 of them. A backend can also implement
+carries more than 20 of them. The display can also implement
 [`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom], to capture part of the display at full resolution, and
-[`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition]. `LocalWorkspace` has no display.
+[`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition]. Key names in actions are a fixed set,
+with X keysyms such as `KP_Enter` accepted as aliases; a character key presses whatever the layout needs to type
+it. `LocalWorkspace` has no display.
 
 ### Resolving symlinks
 

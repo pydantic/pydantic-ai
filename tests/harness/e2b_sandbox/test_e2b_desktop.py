@@ -46,8 +46,8 @@ class FakeDisplay:
             self.xdotool.append(command)
             if not self.up:
                 return '', "Error: Can't open display: :1", 1
-            if 'NoSuchKey' in command:
-                return '', '(symbol) No such key name NoSuchKey', 0
+            if 'XF86AudioMute' in command:
+                return '', '(symbol) No such key name XF86AudioMute', 0
             if command == 'xdotool getdisplaygeometry':
                 return '1280 800\n', '', 0
             if command == 'xdotool getmouselocation --shell':
@@ -157,8 +157,8 @@ async def test_a_refused_key_does_not_restart_the_display(fake_e2b: FakeE2B, dis
     workspace = Workspace(E2BSandboxBackend(desktop=True))
     await workspace.display_size()
 
-    with pytest.raises(WorkspaceUnsupportedActionError, match='NoSuchKey'):
-        await workspace.act(PressKeys(keys=('NoSuchKey',)))
+    with pytest.raises(WorkspaceUnsupportedActionError, match='XF86AudioMute'):
+        await workspace.act(PressKeys(keys=('volumemute',)))
     await workspace.act(Click(x=1, y=1))
 
     assert len(display.starts) == 1

@@ -1,4 +1,4 @@
-"""The actions a [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay] backend performs on a display.
+"""The actions a [`Display`][pydantic_ai.workspaces.Display] performs.
 
 Coordinates are pixels of the backend's screenshot, with the origin at the top left; a click or scroll without
 coordinates happens at the pointer.
@@ -6,13 +6,16 @@ coordinates happens at the pointer.
 The model writes these as the `computer` tool's arguments, so they follow the providers' computer tools: each is told
 apart by `type`, not the `kind` Pydantic AI's own message types use, and named as OpenAI's are (`click`, `keypress`).
 
-Common key names are normalized to one lowercase spelling, and a combination written as one name, such as `ctrl+s`,
-is split into its keys. Other names, such as the X keysym `KP_Enter`, are kept as written; a backend refuses names it
-can't press. The set of normalized names may grow.
+A key is a single character or one of a fixed set of names; other names are refused when the action is validated.
+Common spellings, including X keysyms such as `KP_Enter`, are normalized to one lowercase name, and a combination
+written as one name, such as `ctrl+s`, is split into its keys. A character presses whatever the keyboard layout needs
+to type it, shift or AltGr included; an upper-case letter is its lower-case key. Names may be added only for keys no
+existing name covers.
 
 How these actions change, so backends written today keep doing what the model asked:
 
 - New kinds of action are new types in [`ComputerAction`][pydantic_ai.workspaces.ComputerAction].
+- An action refuses fields it doesn't have, so a field added later is never silently dropped by an older version.
 - An existing action only gains fields whose default is today's behaviour. Anything a backend must honour, such as
   scrolling by pixels, is a new type instead.
 - The values a field accepts, such as the mouse buttons, don't grow.
@@ -57,7 +60,48 @@ def _require_type(schema: dict[str, Any]) -> None:
         schema['required'] = ['type', *schema.get('required', [])]
 
 
-_CONFIG = ConfigDict(use_attribute_docstrings=True, json_schema_extra=_require_type)
+_CONFIG = ConfigDict(extra='forbid', use_attribute_docstrings=True, json_schema_extra=_require_type)
+
+_MODIFIER_NAMES = ('ctrl', 'shift', 'alt', 'super')
+_MODIFIERS = frozenset(_MODIFIER_NAMES)
+
+_NAMED_KEYS = (
+    'enter',
+    'escape',
+    'tab',
+    'backspace',
+    'delete',
+    'insert',
+    'home',
+    'end',
+    'pageup',
+    'pagedown',
+    'up',
+    'down',
+    'left',
+    'right',
+    'space',
+    'printscreen',
+    'pause',
+    'menu',
+    'capslock',
+    'numlock',
+    'scrolllock',
+)
+_NUMPAD_OPERATORS = ('add', 'subtract', 'multiply', 'divide', 'decimal')
+_MEDIA_KEYS = ('volumemute', 'volumeup', 'volumedown', 'mediaplay', 'medianext', 'mediaprev')
+
+_KEY_NAMES = frozenset(
+    {
+        *_MODIFIER_NAMES,
+        *_NAMED_KEYS,
+        *(f'f{n}' for n in range(1, 25)),
+        *(f'numpad{n}' for n in range(10)),
+        'numpad_enter',
+        *(f'numpad_{operator}' for operator in _NUMPAD_OPERATORS),
+        *_MEDIA_KEYS,
+    }
+)
 
 _KEY_ALIASES = {
     'return': 'enter',
@@ -83,40 +127,52 @@ _KEY_ALIASES = {
     'back_space': 'backspace',
     'spacebar': 'space',
     ' ': 'space',
+    'prtsc': 'printscreen',
+    'apps': 'menu',
+    'contextmenu': 'menu',
+    # X keysyms, as Claude's computer tool writes keys, matched without case.
+    'control_l': 'ctrl',
+    'control_r': 'ctrl',
+    'shift_l': 'shift',
+    'shift_r': 'shift',
+    'alt_l': 'alt',
+    'alt_r': 'alt',
+    'super_l': 'super',
+    'super_r': 'super',
+    'print': 'printscreen',
+    'caps_lock': 'capslock',
+    'num_lock': 'numlock',
+    'scroll_lock': 'scrolllock',
+    **{f'kp_{n}': f'numpad{n}' for n in range(10)},
+    'kp_enter': 'numpad_enter',
+    **{f'kp_{operator}': f'numpad_{operator}' for operator in _NUMPAD_OPERATORS},
+    'xf86audiomute': 'volumemute',
+    'xf86audioraisevolume': 'volumeup',
+    'xf86audiolowervolume': 'volumedown',
+    'xf86audioplay': 'mediaplay',
+    'xf86audionext': 'medianext',
+    'xf86audioprev': 'mediaprev',
 }
 
-_MODIFIERS = frozenset({'ctrl', 'shift', 'alt', 'super'})
-
-_KEY_NAMES = _MODIFIERS | frozenset(
-    {
-        'enter',
-        'escape',
-        'tab',
-        'backspace',
-        'delete',
-        'insert',
-        'home',
-        'end',
-        'pageup',
-        'pagedown',
-        'up',
-        'down',
-        'left',
-        'right',
-        'space',
-        *(f'f{n}' for n in range(1, 25)),
-    }
+_UNKNOWN_KEY = 'is not a key: use a single character or one of ' + ', '.join(
+    (
+        *_MODIFIER_NAMES,
+        *_NAMED_KEYS,
+        'f1 to f24',
+        'numpad0 to numpad9',
+        'numpad_enter',
+        *(f'numpad_{operator}' for operator in _NUMPAD_OPERATORS),
+        *_MEDIA_KEYS,
+    )
 )
 
 
 def _normalize_key(key: str) -> str:
     lower = key.lower()
-    if lower in _KEY_ALIASES:
-        return _KEY_ALIASES[lower]
-    if lower in _KEY_NAMES or len(key) == 1:
-        return lower
-    # Anything else may be a case-sensitive keysym, such as `KP_Enter` or `XF86AudioMute`.
-    return key
+    name = _KEY_ALIASES.get(lower, lower)
+    if len(key) > 1 and name not in _KEY_NAMES:
+        raise ValueError(f'{key!r} {_UNKNOWN_KEY}')
+    return name
 
 
 _COMBINATION = re.compile(r'(?<=.)\+(?=.)')

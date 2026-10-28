@@ -21,6 +21,7 @@ from typing import Any
 import anyio
 import pytest
 from inline_snapshot import snapshot
+from pydantic import ValidationError
 
 from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace, WrapperCapability
@@ -727,7 +728,24 @@ def test_unexpected_errors_fail_the_unit() -> None:
     assert error_as_data(TimeoutError('flaky')) is None
     assert error_as_data(InterruptedError('flaky')) is None
     assert error_as_data(BlockingIOError('flaky')) is None
-    assert error_as_data(OSError('other')) == WorkspaceCallError(type='OSError', message='other')
+    assert error_as_data(OSError('other')) == WorkspaceCallError(type='OSError', message='other', bases=('Exception',))
+
+
+def test_an_error_type_this_version_lacks_raises_its_nearest_known_base() -> None:
+    # A newer version can journal an error type this one doesn't have.
+    paused = WorkspaceCallError(type='WorkspacePausedError', message='paused', bases=('WorkspaceUnavailableError',))
+    with pytest.raises(WorkspaceUnavailableError, match='paused'):
+        raise_error(paused)
+    with pytest.raises(WorkspaceError, match='new'):
+        raise_error(WorkspaceCallError(type='WorkspaceNewError', message='new'))
+
+
+def test_journal_records_refuse_fields_they_do_not_have() -> None:
+    # An older worker fails a newer call rather than running it with an option dropped.
+    with pytest.raises(ValidationError, match='format'):
+        JSON_CODEC.load(WorkspaceCall, {'method': 'screenshot', 'format': 'jpeg'})
+    with pytest.raises(ValidationError, match='media_type'):
+        JSON_CODEC.load(WorkspaceCallResult, {'data': '', 'media_type': 'image/jpeg'})
 
 
 async def test_known_workspace_ref_is_ensured_once() -> None:

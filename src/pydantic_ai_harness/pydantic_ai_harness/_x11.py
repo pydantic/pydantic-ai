@@ -51,6 +51,25 @@ _KEYSYMS = {
     'left': 'Left',
     'right': 'Right',
     **{f'f{n}': f'F{n}' for n in range(1, 25)},
+    'printscreen': 'Print',
+    'pause': 'Pause',
+    'menu': 'Menu',
+    'capslock': 'Caps_Lock',
+    'numlock': 'Num_Lock',
+    'scrolllock': 'Scroll_Lock',
+    **{f'numpad{n}': f'KP_{n}' for n in range(10)},
+    'numpad_enter': 'KP_Enter',
+    'numpad_add': 'KP_Add',
+    'numpad_subtract': 'KP_Subtract',
+    'numpad_multiply': 'KP_Multiply',
+    'numpad_divide': 'KP_Divide',
+    'numpad_decimal': 'KP_Decimal',
+    'volumemute': 'XF86AudioMute',
+    'volumeup': 'XF86AudioRaiseVolume',
+    'volumedown': 'XF86AudioLowerVolume',
+    'mediaplay': 'XF86AudioPlay',
+    'medianext': 'XF86AudioNext',
+    'mediaprev': 'XF86AudioPrev',
     '+': 'plus',
     '-': 'minus',
     '=': 'equal',
@@ -64,7 +83,7 @@ _KEYSYMS = {
     '[': 'bracketleft',
     ']': 'bracketright',
 }
-"""Key names whose X keysym is spelled differently; other names (`ctrl`, `a`, `KP_Enter`, ...) are keysyms already."""
+"""Key names whose X keysym is spelled differently; other names (`ctrl`, `space`, `a`, ...) are keysyms already."""
 
 _KEYSYM_PATTERN = re.compile(r'[A-Za-z0-9_]+')
 

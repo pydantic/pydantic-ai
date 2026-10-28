@@ -32,7 +32,7 @@ import shlex
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 import anyio
 import anyio.lowlevel
@@ -792,8 +792,9 @@ class E2BSandboxBackend(
                         logger.debug('Could not remove E2B stop claim %s', claim, exc_info=True)
 
     @property
-    def has_display(self) -> bool:
-        return self._desktop_size is not None
+    def display(self) -> Self | None:
+        """This backend, when created with `desktop=True`."""
+        return self if self._desktop_size is not None else None
 
     def _display(self) -> AbstractAsyncContextManager[X11Computer]:
         if self._x11 is None:
