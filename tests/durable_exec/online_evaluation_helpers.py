@@ -1,4 +1,4 @@
-"""Evaluators and sampling hooks shared by the DBOS and Prefect `OnlineEvaluation` tests."""
+"""Helpers shared by the durable-execution `OnlineEvaluation` tests (DBOS, Prefect and Temporal)."""
 
 from __future__ import annotations
 
