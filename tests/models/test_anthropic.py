@@ -5926,6 +5926,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'service_tier': 'default'},
                 provider_response_id='resp_0adf9326b12bfdc3006ade2a09836087d2999e7ed1bfb2c2f7',
                 finish_reason='stop',
@@ -10686,6 +10687,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': IsDatetime(),

@@ -250,10 +250,14 @@ When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs 
 
 ### Parallel Tool Execution
 
-Under DBOS, tools are executed in parallel by default to minimize latency. To guarantee deterministic replay and reliable recovery, DBOS waits for all parallel tool calls to complete before emitting events **in order**.
+Under DBOS, tools are executed in parallel by default to minimize latency. Tool result events are emitted in tool-call order after all parallel tool calls complete.
 It's equivalent to the behavior of [`with agent.parallel_tool_call_execution_mode('parallel_ordered_events')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode].
 
-If you prefer strict ordering, you can configure the agent to run tools sequentially by setting `parallel_execution_mode='sequential'` on [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability].
+!!! warning "Durable calls in parallel tools"
+
+    DBOS requires durable steps to start in a deterministic order. When tools run concurrently, a tool that awaits one durable operation before starting another can interleave differently with sibling tools or their emitted-event handlers during replay, causing recovery to fail.
+
+    For this pattern, set `parallel_execution_mode='sequential'` on [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability]. To run independent sequences concurrently, put each sequence in a separate [child workflow](https://docs.dbos.dev/python/tutorials/workflow-tutorial#running-async-steps-in-parallel).
 A run with a [workspace](../workspace.md) always runs its tool calls sequentially.
 
 ### Toolsets at Runtime

@@ -192,6 +192,15 @@ class AnthropicModelProfile(ModelProfile, total=False):
     guide](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
     """
 
+    anthropic_accepts_file_and_container_ids: bool
+    """Whether the API accepts Anthropic Files API file IDs and code execution container IDs. Default: `True`.
+
+    `AnthropicModel` sets it to `False` on the Bedrock, Vertex AI and Foundry clients. There, an
+    [`UploadedFile`][pydantic_ai.messages.UploadedFile] from Anthropic raises a `UserError`, a
+    [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]'s Anthropic files aren't uploaded to its
+    container, and no container from earlier in the history, including a paused turn's, is sent.
+    """
+
     anthropic_enforces_strict_schema_limits: bool
     """Whether the API rejects a request whose strict schemas exceed Anthropic's explicit complexity limits. Default: `False`.
 
