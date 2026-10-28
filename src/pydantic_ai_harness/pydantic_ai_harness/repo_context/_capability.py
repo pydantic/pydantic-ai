@@ -313,14 +313,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         The contents and the path are the repository's, not the operator's or the framework's, so they go on
         the user channel in a `<context-file>` tag. Only the pointer's own wording is in system voice.
         """
-        label = self._label(context_file.path)
+        assert self._cached_working_dir is not None, 'a note is only rendered once the directory is resolved'
+        label = context_file_label(context_file.path, self._cached_working_dir)
         if self.nested_inject == 'contents':
             return [render_context_file(context_file, label=label)]
         return [SystemPromptPart(_POINTER_NOTE), render_context_file_path(label)]
-
-    def _label(self, path: Path) -> str:
-        assert self._cached_working_dir is not None, 'a note is only rendered once the directory is resolved'
-        return context_file_label(path, self._cached_working_dir)
 
     async def _working_dir(self, workspace: Workspace) -> Path:
         if self._cached_working_dir is None:
