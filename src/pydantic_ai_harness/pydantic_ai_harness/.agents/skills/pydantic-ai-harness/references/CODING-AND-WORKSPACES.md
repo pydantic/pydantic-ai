@@ -17,7 +17,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | Isolation on this machine with Docker or Podman | `DockerSandbox(image='python:3.13-slim')`: a local container |
-| A desktop the agent sees and controls | `DockerSandbox(desktop=True)` + `ComputerUse()`: a local container with a display |
+| A desktop the agent sees and controls | `DockerSandbox(desktop=True)` + `ComputerUse()`: a local container with a display; `E2BSandbox(desktop=True)` or `DaytonaSandbox(desktop=True)` in the cloud, watchable through `live_view_url()` |
 | A desktop on this Linux machine, without Docker | `LocalDesktop('.')` + `ComputerUse()`: a private virtual screen; `real_screen=True` drives yours (X11 only) |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
@@ -442,7 +442,7 @@ Python up to 3.14.
   With Podman, `run()` returns when the command exits.
 - `desktop=True` gives the container a 1280x800 X display for `ComputerUse()`; commands and files stay available.
   Without `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, xterm, Firefox) and later runs reuse
-  it; a custom `image` needs Xvfb, `xdotool`, `scrot` and `setsid`. Under durable execution, build the image first and
+  it; a custom `image` needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`. Under durable execution, build the image first and
   pass it as `image`.
 
 ### LocalDesktop

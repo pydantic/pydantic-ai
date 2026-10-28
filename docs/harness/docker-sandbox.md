@@ -179,9 +179,11 @@ async def main():
     print(result.output)
 ```
 
-Without an `image`, the first run on a machine builds one from `DESKTOP_DOCKERFILE`: Debian with a window manager and a panel that opens Firefox and a terminal (`xterm`). Later runs reuse the image. The display is 1280x800; pass a size, such as `desktop=(1440, 900)`, for another. The agent keeps the container's shell and files too, so `Coder` and `ComputerUse` can work in the same container.
+Without an `image`, the first run on a machine builds one from `DESKTOP_DOCKERFILE`: Debian with a window manager and a panel that opens Firefox and a terminal (`xterm`). Later runs reuse the image. The display is 1280x800; pass a size, such as `desktop=(1440, 900)`, for another. An attached container whose X server already runs keeps its size. The agent keeps the container's shell and files too, so `Coder` and `ComputerUse` can work in the same container.
 
 A custom `image` needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`, plus whatever applications the agent should use; `DESKTOP_DOCKERFILE` is a starting point for one.
+
+The container has no live viewer: to watch a run, save each screenshot as it arrives, as [Watching a run](computer-use.md#watching-a-run) shows.
 
 Under [durable execution](../durable_execution/overview.md), build the image before the first run, so the build doesn't count against a workspace operation's timeout, and pass it as `image`:
 
