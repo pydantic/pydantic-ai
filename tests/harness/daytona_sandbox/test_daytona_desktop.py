@@ -169,7 +169,7 @@ async def test_a_failed_release_still_lets_go_of_the_other_keys(fake_daytona: Fa
     with pytest.raises(WorkspaceError, match='unexpected EOF'):
         await Workspace(backend).act(PressKeys(keys=('ctrl', 'a', 'b')))
 
-    # `b` failed to come up, so it is tried again along with the keys still down; then the desktop is started again.
+    # `b` failed to come up, so it is tried again along with the keys still down.
     assert sandbox.desktop_calls == [
         'keydown ctrl',
         'keydown a',
@@ -177,7 +177,6 @@ async def test_a_failed_release_still_lets_go_of_the_other_keys(fake_daytona: Fa
         'keyup b',
         'keyup a',
         'keyup ctrl',
-        'start',
     ]
 
 
@@ -198,7 +197,6 @@ async def test_a_failed_drag_releases_the_button_and_keys(fake_daytona: FakeDayt
         'mousedown 1 1 left',
         'mouseup None None left',
         'keyup shift',
-        'start',
     ]
 
 
@@ -269,17 +267,17 @@ async def test_an_action_after_the_sandbox_restarted_starts_the_desktop_before_a
 ) -> None:
     backend, sandbox = await _started(fake_daytona)
     assert backend.display is not None
-    backend.display.take_fresh_start()
     await Workspace(backend).screenshot()
+    starts = backend.display.starts
 
     sandbox.computer_use.stop_with_sandbox()
-    with pytest.raises(WorkspaceError, match=r'^The display had stopped, so the action did not run'):
+    with pytest.raises(WorkspaceError):
         await Workspace(backend).act(Click(x=1, y=1))
     await Workspace(backend).act(Click(x=1, y=1))
 
     assert not sandbox.computer_use.broken
     assert sandbox.desktop_calls[-2:] == ['start', 'click 1 1 left clicks=1 modifiers=[]']
-    assert backend.display.take_fresh_start() is True
+    assert backend.display.starts == starts + 1
 
 
 async def test_a_desktop_that_stopped_answering_ends_the_run(fake_daytona: FakeDaytona) -> None:

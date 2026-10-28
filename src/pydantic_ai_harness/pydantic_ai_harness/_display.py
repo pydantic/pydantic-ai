@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable
-from contextlib import AbstractAsyncContextManager, nullcontext, suppress
+from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Protocol, TypeVar
 
 import anyio
@@ -12,7 +12,6 @@ from pydantic_ai.workspaces import (
     ComputerAction,
     Point,
     Region,
-    WorkspaceError,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
@@ -41,10 +40,11 @@ class ManagedDisplay:
     call, start included, such as to map a provider's errors.
 
     A call that only looks, such as a screenshot, is retried once after a failure, which starts a display that was
-    lost; an action isn't, so nothing is done twice. The backend calls `started_fresh` when a new display started.
+    lost; an action isn't, so nothing is done twice. The backend calls `started_fresh` when a new display started, and
+    `starts` counts those starts.
 
-    `screen_key` names the screen it shows, so `ComputerUse` runs on one screen take turns at it, whichever
-    workspace they reach it through: a sandbox's ref, or a local X server's `DISPLAY`.
+    `screen_key` names the screen it shows, so `ComputerUse` runs in one process on one screen take turns at it,
+    whichever workspace they reach it through: a sandbox's ref, or a local X server's `DISPLAY`.
     """
 
     def __init__(
@@ -59,23 +59,21 @@ class ManagedDisplay:
         self._screen_key = screen_key
         self._driver: DisplayDriver | None = None
         self._lock = anyio.Lock()
-        self._fresh = False
-        self._fresh_starts = 0
+        self._starts = 0
 
     @property
     def screen_key(self) -> object | None:
         """A hashable name for the screen this display shows, or `None` until it's known."""
         return self._screen_key()
 
+    @property
+    def starts(self) -> int:
+        """How many new displays started, each without the windows that were open before."""
+        return self._starts
+
     def started_fresh(self) -> None:
         """Record that a new display started, without the windows that were open before."""
-        self._fresh = True
-        self._fresh_starts += 1
-
-    def take_fresh_start(self) -> bool:
-        """Whether a new display started since this was last asked."""
-        fresh, self._fresh = self._fresh, False
-        return fresh
+        self._starts += 1
 
     def reset(self) -> None:
         """Forget the running display, such as when the environment may have restarted: the next call starts it."""
@@ -106,20 +104,9 @@ class ManagedDisplay:
                 # Retrying can't help an unavailable environment, and would double a timeout.
                 if isinstance(error, WorkspaceUnavailableError | WorkspaceTimeoutError):
                     raise
-                if not observe and driver is not None:
-                    await self._explain_failed_action(error)
                 if not retry:
                     raise
                 retry = False
-
-    async def _explain_failed_action(self, error: Exception) -> None:
-        """Start the display again after an action failed; if it had stopped, say so instead of the raw failure."""
-        starts = self._fresh_starts
-        with suppress(Exception):  # the action's own failure says what went wrong
-            async with self._scope():
-                await self.driver()
-        if self._fresh_starts != starts:
-            raise WorkspaceError('The display had stopped, so the action did not run; it was started again.') from error
 
     async def display_size(self) -> tuple[int, int]:
         return await self._call(lambda driver: driver.display_size(), observe=True)
