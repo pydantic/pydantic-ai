@@ -251,7 +251,7 @@ dependencies. Supporting types such as stores and policies are only in the submo
 
 These mistakes cause confusing errors or wrong behavior at run time.
 
-- **Missing extra.** For most extras, importing the capability without it raises `ImportError` with the install line; install `pydantic-ai-harness[<extra>]`, not just the bare package. Some dependencies are executables or drivers that the import does not check: the `coder` extra installs `json-repair`, which the import checks, and also `ripgrep`, which it does not (without it, file search falls back to slower POSIX tools), and `PlaywrightBrowser` needs `playwright install chromium`. Those gaps show only when a tool runs.
+- **Missing extra.** For most extras, importing the capability without it raises `ImportError` with the install line; install `pydantic-ai-harness[<extra>]`, not just the bare package. Some dependencies are executables or drivers that the import does not check: the `coder` extra installs `ripgrep` (without it, file search falls back to slower POSIX tools), and `PlaywrightBrowser` needs `playwright install chromium`. Those gaps show only when a tool runs.
 - **`Coder(workspace=...)` is ignored.** The project directory comes from the workspace capability: use `LocalWorkspace('./repo')` next to `Coder()`.
 - **`FileSystem(root_dir=...)` limits only the file tools.** `Shell` commands can still reach any path the workspace can.
 - **`Coder` must be bound on the agent for delegation.** `delegate_task` re-runs the agent `Coder` is attached to; pass `Coder()` in `Agent(capabilities=[...])`, not to `agent.run(...)`.
