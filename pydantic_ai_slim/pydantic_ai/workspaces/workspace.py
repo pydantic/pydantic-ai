@@ -24,6 +24,7 @@ from .protocol import (
     SupportsDisplay,
     SupportsFilesystem,
     SupportsRealpath,
+    SupportsScaledScreenshot,
     SupportsZoom,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -585,6 +586,16 @@ class Workspace(WorkspaceBackend):
         if not isinstance(display, SupportsZoom):
             raise WorkspaceUnsupportedActionError('This display cannot zoom.')
         return await display.zoom(region)
+
+    async def scaled_screenshot(self, width: int, height: int) -> bytes:
+        """Capture the whole display as PNG bytes scaled to `width` by `height`; actions stay in display pixels.
+
+        Raises `WorkspaceUnsupportedActionError` if the backend can't scale screenshots.
+        """
+        display = self._display
+        if not isinstance(display, SupportsScaledScreenshot):
+            raise WorkspaceUnsupportedActionError('This display cannot scale screenshots.')
+        return await display.scaled_screenshot(width, height)
 
     async def cursor_position(self) -> Point:
         """The pointer's position in screenshot pixels.

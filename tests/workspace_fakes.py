@@ -22,6 +22,7 @@ from pydantic_ai.workspaces import (
     SupportsCursorPosition,
     SupportsDisplay,
     SupportsFilesystem,
+    SupportsScaledScreenshot,
     SupportsZoom,
     Workspace,
     WorkspaceBackend,
@@ -347,7 +348,7 @@ class DecliningWorkspaceCapability(AbstractCapability[Any]):
 
 
 class DisplayOnlyBackend(FilesystemOnlyWorkspaceBackend, SupportsDisplay):
-    """A provider backend's files and display, without zoom or the pointer position."""
+    """A provider backend's files and display, without zoom, scaling or the pointer position."""
 
     def __init__(self, inner: ProviderBackend) -> None:
         super().__init__(inner)
@@ -398,7 +399,13 @@ class InMemoryProvider:
 
 
 class ProviderBackend(
-    WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay, SupportsZoom, SupportsCursorPosition
+    WorkspaceBackend,
+    SupportsCommands,
+    SupportsFilesystem,
+    SupportsDisplay,
+    SupportsZoom,
+    SupportsScaledScreenshot,
+    SupportsCursorPosition,
 ):
     def __init__(self, provider: InMemoryProvider, ref: WorkspaceRef | None) -> None:
         self._provider = provider
@@ -510,6 +517,10 @@ class ProviderBackend(
     async def zoom(self, region: Region) -> bytes:
         await self._files()
         return _png(region.right - region.left, region.bottom - region.top)
+
+    async def scaled_screenshot(self, width: int, height: int) -> bytes:
+        await self._files()
+        return _png(width, height)
 
     async def cursor_position(self) -> Point:
         await self._files()
