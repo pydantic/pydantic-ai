@@ -1,67 +1,71 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages/count_tokens?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '581'
+      - "629"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      messages:
-      - content:
-        - text: What is the USD to EUR rate?
-          type: text
-        role: user
-      - content:
-        - id: search-1
-          input:
-            queries:
-            - exchange rate
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - tool_name: get_exchange_rate
-            type: tool_reference
-          is_error: false
-          tool_use_id: search-1
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          type: object
-        name: get_exchange_rate
-    uri: https://api.anthropic.com/v1/messages/count_tokens?beta=true
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: What is the USD to EUR rate?
+            type: text
+        - role: assistant
+          content:
+          - id: search-1
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - exchange rate
+        - role: user
+          content:
+          - tool_use_id: search-1
+            type: tool_result
+            content:
+            - tool_name: get_exchange_rate
+              type: tool_reference
+            is_error: false
+        model: claude-sonnet-5-5
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_exchange_rate
+          description: ""
+          input_schema:
+            type: object
+          defer_loading: true
+        - type: tool_search_tool_bm25_20251119
+          name: tool_search_tool_bm25
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
       content-length:
-      - '21'
+      - "21"
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=808
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-    parsed_body:
-      input_tokens: 641
-    status:
-      code: 200
-      message: OK
-version: 1
+      - x-originResponse;dur=70
+    body:
+      type: json
+      content:
+        input_tokens: 770
+  recorded_at: 2026-10-26T15:08:34.376866+00:00

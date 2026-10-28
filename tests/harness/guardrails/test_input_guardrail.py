@@ -2090,7 +2090,7 @@ def _request_prompts_model() -> tuple[list[list[str]], FunctionModel]:
 
 @dataclasses.dataclass
 class _AppendNote(AbstractCapability[Any]):
-    """Appends a `UserPromptPart` to this request only, as `SystemReminders` and `Planning` do."""
+    """Appends a `UserPromptPart` to this request only, a request-only change that never enters history."""
 
     async def wrap_model_request(
         self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
