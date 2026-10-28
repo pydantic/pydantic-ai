@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CapabilityOrdering,
@@ -141,7 +142,8 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
     id: str | None = field(default='compact_on_cache_expiry', kw_only=True)
     """One-off: an agent has one expiry policy, so the id is fixed by default.
 
-    Two of them resolve to one, merged field by field. The fallback runs as this capability's `compact` durable
+    Two of them resolve to one, merged field by field, except that a `fallback` or size floor one of them changed
+    from the default is kept as a whole, `None` included; see `combine`. The fallback runs as this capability's `compact` durable
     operation, which needs a stable id."""
 
     def __post_init__(self) -> None:
@@ -151,6 +153,32 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
         validate_token_trigger(self.max_tokens, self.max_fraction, self.fallback_context_window, self.context_window)
         if self.fallback_retention is not None and self.fallback_retention <= timedelta(0):
             raise ValueError('fallback_retention must be positive.')
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Merge the configuration, with the later stated `fallback` and size floor winning as a whole.
+
+        The field-by-field merge reads `None` as "not stated", but `fallback=None` and `max_fraction=None` are
+        opt-outs here, and `max_tokens` and `max_fraction` are one choice of floor. So each of those is taken from
+        the last capability that changed it from the default, and a default one beside it doesn't undo it.
+        """
+        expiries = [capability for capability in capabilities if isinstance(capability, CompactOnCacheExpiry)]
+        assert len(expiries) == len(capabilities)
+        merged = super().combine(capabilities)
+        assert isinstance(merged, cls)
+        default_fallback = _default_fallback()
+        fallback = next((c.fallback for c in reversed(expiries) if c.fallback != default_fallback), default_fallback)
+        max_tokens, max_fraction = next(
+            (
+                (c.max_tokens, c.max_fraction)
+                for c in reversed(expiries)
+                if (c.max_tokens, c.max_fraction) != (None, DEFAULT_MAX_FRACTION)
+            ),
+            (None, DEFAULT_MAX_FRACTION),
+        )
+        merged = replace_no_init(merged, fallback=fallback, max_tokens=max_tokens, max_fraction=max_fraction)
+        merged.__post_init__()
+        return merged
 
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost, so its `compact_history` is the last asked: the fallback only serves a request that no other

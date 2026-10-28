@@ -795,6 +795,28 @@ class TestDecision:
         with pytest.raises(ValueError, match=message):
             CompactOnCacheExpiry(**kwargs)
 
+    @pytest.mark.parametrize('stated_first', [True, False], ids=['stated-first', 'stated-last'])
+    def test_combining_keeps_a_stated_opt_out_and_floor(self, stated_first: bool) -> None:
+        """Beside a default instance, `fallback=None`, `max_fraction=None` and `max_tokens` survive a combine."""
+
+        def combine(stated: CompactOnCacheExpiry[None]) -> CompactOnCacheExpiry[None]:
+            default = CompactOnCacheExpiry[None]()
+            pair = [stated, default] if stated_first else [default, stated]
+            merged = CompactOnCacheExpiry[None].combine(pair)
+            assert isinstance(merged, CompactOnCacheExpiry)
+            return merged
+
+        assert combine(CompactOnCacheExpiry(None)).fallback is None
+        assert combine(CompactOnCacheExpiry(max_fraction=None)).max_fraction is None
+        merged = combine(CompactOnCacheExpiry(max_tokens=10_000))
+        assert (merged.max_tokens, merged.max_fraction) == (10_000, None)
+        # Two stated floors: the later one wins, whole.
+        merged = CompactOnCacheExpiry[None].combine(
+            [CompactOnCacheExpiry[None](max_tokens=10_000), CompactOnCacheExpiry[None](max_fraction=0.5)]
+        )
+        assert isinstance(merged, CompactOnCacheExpiry)
+        assert (merged.max_tokens, merged.max_fraction) == (None, 0.5)
+
     def test_the_default_fraction_gives_way_to_max_tokens(self) -> None:
         assert CompactOnCacheExpiry[None]().max_fraction == 0.2
         assert CompactOnCacheExpiry[None](max_tokens=10).max_fraction is None
