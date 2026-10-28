@@ -60,7 +60,7 @@ The model must accept images. Gemini 3 models point on a 0-999 grid, which `Comp
 
 | Setting | Default | What it does |
 |---|---|---|
-| `requires_approval` | `False` | `True` asks before any call that clicks or types. A set of action types asks only before those: `click`, `move`, `drag`, `mouse_down`, `mouse_up`, `scroll`, `type`, `keypress` and `hold_key`. Needs a [deferred tool handler](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval). Turn it on for anything you'd regret an agent clicking. |
+| `requires_approval` | `False` | `True` asks before any call that does more than look, zoom or wait. Needs a [deferred tool handler](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval). Turn it on for anything you'd regret an agent clicking. |
 | `keep_screenshots` | `None` | Send at least the most recent N screenshots, dropping older ones 25 at a time so prompt caching keeps working; the run's history keeps all of them. Use it to bound the cost of long runs, but not on Claude Fable 5.1 or the Claude 5.5 models: dropping a screenshot makes Claude lose its earlier reasoning. With `None`, the oldest are still dropped once a request would carry more than 100 screenshots or about 15 MB of them, which providers refuse. |
 | `settle_seconds` | `0.5` | Pause after acting before the screenshot, so animations and page loads can finish. |
 
