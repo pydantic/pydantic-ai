@@ -819,9 +819,9 @@ async def test_run_time_spec_openai_compatible_model(via: str) -> None:
             assert run.ctx.deps.model.system == 'my-gateway'
 
 
-@pytest.mark.parametrize('via', ['run', 'override'])
+@pytest.mark.parametrize('via', ['run', 'override', 'override-around-run'])
 async def test_run_time_model_skips_spec_openai_compatible_model(monkeypatch: pytest.MonkeyPatch, via: str) -> None:
-    """A `model` passed alongside a run-time spec replaces the spec's model without building it."""
+    """A `model` passed alongside a run-time spec, or overridden around it, replaces the spec's model without building it."""
     monkeypatch.delenv('MY_GATEWAY_BASE_URL', raising=False)
     agent = Agent('test')
     spec = {'model': _openai_compatible_model(base_url_env='MY_GATEWAY_BASE_URL')}
@@ -830,6 +830,9 @@ async def test_run_time_model_skips_spec_openai_compatible_model(monkeypatch: py
     if via == 'override':
         with agent.override(model=model, spec=spec):
             result = await agent.run('hello')
+    elif via == 'override-around-run':
+        with agent.override(model=model):
+            result = await agent.run('hello', spec=spec)
     else:
         result = await agent.run('hello', model=model, spec=spec)
 
