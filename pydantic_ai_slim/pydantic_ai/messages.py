@@ -254,8 +254,8 @@ class SystemPromptPart:
 
     Set by a dynamic system prompt registered with `on_change='append'`, as `'system_prompt:<name>'`. The model
     sees this id. The first part with an id in a conversation opens it, and each later part with that id is sent as
-    its replacement: an empty one withdraws the prompt. A sentence saying that a later element with the same id
-    replaces an earlier one is sent once per request, after the last element opened with the first ones. See [appending system prompt changes](../agent.md#appending-system-prompt-changes).
+    its replacement: an empty one withdraws the prompt. The model is also told once that a later element with the
+    same id replaces the earlier one. See [appending system prompt changes](../agent.md#appending-system-prompt-changes).
     """
 
     scope: Literal['conversation', 'request'] = 'conversation'

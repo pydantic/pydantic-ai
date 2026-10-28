@@ -1686,7 +1686,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         messages = _render_system_prompt_contexts(
             messages,
-            inline_system=self.profile.get('supports_inline_system_prompts', False),
+            inline_system=inline_system,
             # The appending instruction blocks the prefix opens are followed by the sentence already.
             prefix_states_rule=model_request_parameters is not None
             and bool(_tagged_append_parts(model_request_parameters.instruction_parts or [])),
@@ -4034,8 +4034,8 @@ def _render_system_prompt_contexts(
     after the last element opened where the first ones are. The standing system prompt is sent with the instruction
     prefix, which ends with the sentence itself when it opens an appending instruction block
     (`prefix_states_rule`), so the standing prompt's elements get it only when the prefix doesn't. When neither
-    opens one, the sentence follows the last element that the first later request opening any opens. History is
-    append-only, so each statement renders the same on every later request.
+    states it, the sentence follows the last element opened by the first later request that opens one, and isn't
+    repeated after that. History is append-only, so each statement renders the same on every later request.
 
     Returns `messages` itself when no part has an id.
     """
@@ -4058,6 +4058,7 @@ def _render_system_prompt_contexts(
         # The standing system prompt is sent with the instruction prefix, ahead of the rest of the first request.
         standing = _standing_system_prompt_count(message) if index == first_request else 0
         for group in (range(standing), range(standing, len(parts))):
+            statements: list[tuple[int, SystemPromptPart]] = []
             last_opening: int | None = None
             for part_index in group:
                 part = message.parts[part_index]
@@ -4069,15 +4070,14 @@ def _render_system_prompt_contexts(
                         continue
                     opened.add(part.context_id)
                     last_opening = part_index
-                parts[part_index] = replace(
-                    part, content=_render_system_prompt_context(part, inline_system=inline_system, states_rule=False)
+                statements.append((part_index, part))
+            states_rule_at = last_opening if not stated else None
+            for part_index, part in statements:
+                content = _render_system_prompt_context(
+                    part, inline_system=inline_system, states_rule=part_index == states_rule_at
                 )
-            if last_opening is not None and not stated:
-                part = cast(SystemPromptPart, message.parts[last_opening])
-                parts[last_opening] = replace(
-                    part, content=_render_system_prompt_context(part, inline_system=inline_system, states_rule=True)
-                )
-                stated = True
+                parts[part_index] = replace(part, content=content)
+            stated = stated or states_rule_at is not None
         rendered.append(replace(message, parts=[part for part in parts if part is not None]))
     return rendered
 
