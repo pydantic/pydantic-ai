@@ -48,6 +48,7 @@ from .._utils import (
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import (
     ModelConnectionError,
+    ModelQuotaExceededError,
     ModelRequestRejectedError,
     SuspendedResponseExpired,
     UserError,
@@ -300,6 +301,12 @@ def _status_error(
     headers: dict[str, str] | None = None,
 ) -> ModelHTTPError:
     """The error for an HTTP error status, which a batch also reports for each request that failed."""
+    if code is None and _utils.is_str_dict(body):
+        raw_code = body.get('code')
+        if raw_code is None and _utils.is_str_dict(nested := body.get('error')):
+            raw_code = nested.get('code')
+        if raw_code is not None and not isinstance(raw_code, bool):
+            code = str(raw_code)
     suggested_model_id = None
     if code == 'model_not_found':
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
@@ -307,6 +314,11 @@ def _status_error(
     if status_code == 403 and _flags_input(body.get('metadata') if _utils.is_str_dict(body) else None):
         # OpenRouter sends a 403 for flagged input too: a rejected request, not a credentials problem.
         category = ModelRequestRejectedError
+    elif (model_id_namespace == 'zai' or model_id_namespace.endswith('/zai')) and status_code == 429:
+        from .zai import ZaiModel
+
+        if code in ZaiModel._QUOTA_CODES:  # pyright: ignore[reportPrivateUsage]
+            category = ModelQuotaExceededError
     return ModelHTTPError.for_category(
         category,
         status_code=status_code,

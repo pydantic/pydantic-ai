@@ -14,7 +14,12 @@ from pydantic_ai import (
     ThinkingPart,
     UserPromptPart,
 )
-from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.exceptions import (
+    ContentFilterError,
+    ModelHTTPError,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
+)
 from pydantic_ai.messages import FinishReason, ModelResponsePart
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
@@ -606,3 +611,110 @@ async def test_zai_sensitive_without_content_raises_content_filter_error(allow_m
 
     with pytest.raises(ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'sensitive'")):
         await Agent(model).run('Tell me something.')
+
+
+@pytest.mark.parametrize(
+    'code',
+    [
+        '1113',
+        1113,
+        '1308',
+        '1309',
+        '1310',
+        '1311',
+        '1313',
+        '1314',
+        '1315',
+        '1316',
+        '1317',
+        '1318',
+        '1319',
+        '1320',
+        '1321',
+    ],
+)
+async def test_zai_quota_exceeded_error(allow_model_requests: None, code: str | int):
+    """Z.AI 429 responses with account/plan limit codes raise ModelQuotaExceededError."""
+    import httpx2
+    from openai import AsyncOpenAI
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            429,
+            json={'code': code, 'message': 'Insufficient balance or plan limit reached.'},
+        )
+
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    model = ZaiModel('glm-5.2', provider=ZaiProvider(openai_client=client))
+
+    with pytest.raises(ModelQuotaExceededError) as exc_info:
+        await Agent(model).run('Say ok.')
+
+    assert isinstance(exc_info.value, ModelHTTPError)
+    assert not isinstance(exc_info.value, ModelRateLimitError)
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.provider_error_code == str(code)
+
+
+@pytest.mark.parametrize('code', ['1302', '1305', '9999', None])
+async def test_zai_transient_rate_limit_error(allow_model_requests: None, code: str | None):
+    """Z.AI 429 responses with transient rate limits or unknown codes raise ModelRateLimitError."""
+    import httpx2
+    from openai import AsyncOpenAI
+
+    body: dict[str, object] = {'message': 'Rate limit exceeded'}
+    if code is not None:
+        body['code'] = code
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(429, json=body)
+
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    model = ZaiModel('glm-5.2', provider=ZaiProvider(openai_client=client))
+
+    with pytest.raises(ModelRateLimitError) as exc_info:
+        await Agent(model).run('Say ok.')
+
+    assert isinstance(exc_info.value, ModelHTTPError)
+    assert not isinstance(exc_info.value, ModelQuotaExceededError)
+    assert exc_info.value.status_code == 429
+    if code is not None:
+        assert exc_info.value.provider_error_code == code
+
+
+async def test_non_zai_provider_numeric_code_stays_rate_limit(allow_model_requests: None):
+    """Other OpenAI-compatible providers do not pick up Z.AI's numeric quota codes."""
+    import httpx2
+    from openai import AsyncOpenAI
+
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(429, json={'code': '1113', 'message': 'Too Many Requests'})
+
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
+
+    with pytest.raises(ModelRateLimitError) as exc_info:
+        await Agent(model).run('Say ok.')
+
+    assert isinstance(exc_info.value, ModelHTTPError)
+    assert not isinstance(exc_info.value, ModelQuotaExceededError)
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.provider_error_code == '1113'

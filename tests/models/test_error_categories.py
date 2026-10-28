@@ -63,6 +63,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.xai import XaiModel
+    from pydantic_ai.models.zai import ZaiModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.google import GoogleProvider
@@ -72,6 +73,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.xai import XaiProvider
+    from pydantic_ai.providers.zai import ZaiProvider
 
     from .mock_xai import MockXai, get_grok_text_chunk
     from .test_bedrock import _bedrock_model_with_error  # pyright: ignore[reportPrivateUsage]
@@ -170,6 +172,16 @@ def _cohere(handler: Handler) -> Model:
         httpx_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
     return CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=client))
+
+
+def _zai(handler: Handler) -> Model:
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return ZaiModel('glm-5.2', provider=ZaiProvider(openai_client=client))
 
 
 def _json(status_code: int, body: Any, headers: dict[str, str] | None = None) -> Handler:
@@ -749,6 +761,36 @@ CASES = [
         ),
         categories={ModelHTTPError, ModelRateLimitError},
         attrs={'status_code': 429, 'provider_error_code': 'no_capacity'},
+    ),
+    Case(
+        id='zai-insufficient-balance',
+        model=_zai,
+        handler=_json(
+            429,
+            {'code': '1113', 'message': 'Insufficient balance or no resource package. Please recharge.'},
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': '1113'},
+    ),
+    Case(
+        id='zai-plan-limit',
+        model=_zai,
+        handler=_json(
+            429,
+            {'code': '1310', 'message': 'Account plan limit exceeded.'},
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': '1310'},
+    ),
+    Case(
+        id='zai-rate-limit',
+        model=_zai,
+        handler=_json(
+            429,
+            {'code': '1302', 'message': 'Request rate limit exceeded.'},
+        ),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': '1302'},
     ),
     Case(
         id='openai-stream-credit-balance-exhausted',

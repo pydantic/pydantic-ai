@@ -651,8 +651,9 @@ class ModelQuotaExceededError(ModelAPIError):
     """Raised when the provider refused the request because the account's quota, credits, or billing is exhausted.
 
     Only raised when the provider says so explicitly, e.g. an HTTP 402, OpenAI's `insufficient_quota`,
-    Anthropic's `billing_error`, or Bedrock's `ServiceQuotaExceededException`. Unlike a
-    [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError], retrying after a wait won't help.
+    Anthropic's `billing_error`, Bedrock's `ServiceQuotaExceededException`, or Z.AI's account and plan limit
+    codes. Unlike a [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError], retrying after a
+    wait won't help.
     """
 
 

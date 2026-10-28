@@ -37,6 +37,15 @@ except ImportError as _import_error:  # pragma: no cover
 __all__ = ('ZaiModel', 'ZaiModelName', 'ZaiModelSettings')
 
 
+_ZAI_QUOTA_CODES: frozenset[str] = frozenset(
+    {'1113', '1308', '1309', '1310', '1311', '1313', '1314', '1315', '1316', '1317', '1318', '1319', '1320', '1321'}
+)
+"""Z.AI error codes for account and plan limits, which cannot clear by waiting.
+
+See https://docs.z.ai/api-reference/api-code.
+"""
+
+
 _ZaiFinishReason = Literal[
     'stop',
     'length',
@@ -142,6 +151,8 @@ class ZaiModel(OpenAIChatModel):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    _QUOTA_CODES: frozenset[str] = _ZAI_QUOTA_CODES
+
     def __init__(
         self,
         model_name: ZaiModelName,
@@ -159,6 +170,8 @@ class ZaiModel(OpenAIChatModel):
             settings: Model-specific settings that will be used as defaults for this model.
         """
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
+        if self._provider.model_id_namespace == 'openai':
+            self._provider._model_id_namespace = 'zai'  # pyright: ignore[reportPrivateUsage]
 
     @override
     def prepare_request(
