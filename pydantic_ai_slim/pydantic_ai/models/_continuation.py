@@ -527,7 +527,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
             raise
         self._primed_segment = (stack, sub)
         # The segment is in flight from here, so a `cancel()` before iteration starts reaches its server-side
-        # job, and `get()` sees what it has produced.
+        # job, and `get()` sees what it has produced, on top of the response it continues, as the segment loop
+        # has it.
+        self._merged_response = seed
         self._current_sub = sub
         first_events = sub._event_iterator
         if (
