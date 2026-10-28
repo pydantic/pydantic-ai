@@ -1285,17 +1285,6 @@ class TestReminder:
         history: list[ModelMessage] = [ModelRequest(parts=[cleared])]
         assert await self._enqueued(cap, history) == [_plan_record('1. [ ] Do X\n(0/1 completed)')]
 
-    async def test_plan_returned_before_a_compaction_boundary_is_recorded_again(self) -> None:
-        cap = await self._cap('Do X')
-        history: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart('hi')]),
-            ModelResponse(parts=[ToolCallPart('write_plan', {}, tool_call_id='c1')]),
-            ModelRequest(parts=[_plan_return('<plan_reminder>\n1. [ ] Do X\n(0/1 completed)\n</plan_reminder>')]),
-            ModelResponse(parts=[CompactionPart('summary', provider_name='anthropic')], provider_name='anthropic'),
-            ModelRequest(parts=[UserPromptPart('continue')]),
-        ]
-        assert await self._enqueued(cap, history) == [_plan_record('1. [ ] Do X\n(0/1 completed)')]
-
     async def test_plan_is_recognized_by_metadata_not_text(self) -> None:
         """The same text in a part `Planning` didn't write, such as the user's own prompt, isn't its record."""
         cap = await self._cap('Do X')
@@ -1327,15 +1316,36 @@ class TestReminder:
         ]
         assert await self._enqueued(await self._cap(), history) == []
 
-    async def test_plan_before_a_compaction_boundary_is_recorded_again(self) -> None:
+    @pytest.mark.parametrize(
+        'before_boundary',
+        [
+            pytest.param(
+                [ModelRequest(parts=[UserPromptPart('hi'), _plan_record('1. [ ] Do X\n(0/1 completed)')])],
+                id='recorded',
+            ),
+            pytest.param(
+                [
+                    ModelRequest(parts=[UserPromptPart('hi')]),
+                    ModelResponse(parts=[ToolCallPart('write_plan', {}, tool_call_id='c1')]),
+                    ModelRequest(
+                        parts=[_plan_return('<plan_reminder>\n1. [ ] Do X\n(0/1 completed)\n</plan_reminder>')]
+                    ),
+                ],
+                id='returned',
+            ),
+        ],
+    )
+    async def test_plan_before_a_compaction_boundary_is_recorded_again(
+        self, before_boundary: list[ModelMessage]
+    ) -> None:
         """The model no longer sees what came before native compaction, so the plan is recorded after it."""
         cap = await self._cap('Do X')
         history: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart('hi'), _plan_record('1. [ ] Do X\n(0/1 completed)')]),
+            *before_boundary,
             ModelResponse(parts=[CompactionPart('summary', provider_name='anthropic')], provider_name='anthropic'),
             ModelRequest(parts=[UserPromptPart('continue')]),
         ]
-        assert (await self._enqueued(cap, history))[0] == _plan_record('1. [ ] Do X\n(0/1 completed)')
+        assert await self._enqueued(cap, history) == [_plan_record('1. [ ] Do X\n(0/1 completed)')]
 
     def test_cache_ttl_is_deprecated_and_ignored(self) -> None:
         with pytest.warns(HarnessDeprecationWarning, match=r'`Planning\(cache_ttl=\.\.\.\)` is deprecated and ignored'):
