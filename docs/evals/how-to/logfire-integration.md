@@ -167,7 +167,7 @@ These environment variables control the provenance attributes:
 
 | Environment variable | Effect |
 |---|---|
-| `PYDANTIC_EVALS_CI_PROVENANCE=false` | Disables the provenance attributes, including the two overrides below |
+| `PYDANTIC_EVALS_CI_PROVENANCE=false` (or `0`, `no`, `off`) | Disables the provenance attributes, including the two overrides below |
 | `PYDANTIC_EVALS_GIT_COMMIT_SHA` | Sets `vcs.ref.head.revision`, overriding what was detected. It also works on other CI systems |
 | `PYDANTIC_EVALS_GIT_BRANCH` | Sets `vcs.ref.head.name`, overriding what was detected, and sets `vcs.ref.head.type` to `branch`. It also works on other CI systems |
 

@@ -382,10 +382,12 @@ async def test_overrides_outside_ci(capfire: CaptureLogfire, monkeypatch: pytest
 
 
 async def test_overrides_win_over_github(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch):
+    """The overrides replace a detected tag push's commit and ref, and the ref becomes a branch."""
     _set_env(
         monkeypatch,
         {
             **_GITHUB_ENV,
+            'GITHUB_EVENT_NAME': 'push',
             'GITHUB_SHA': 'abc123',
             'GITHUB_REF_NAME': 'v1.0.0',
             'GITHUB_REF_TYPE': 'tag',
