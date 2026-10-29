@@ -1681,6 +1681,7 @@ jobs:
       mongodb: ${{ steps.detect.outputs.mongodb }}
       postgres: ${{ steps.detect.outputs.postgres }}
       redis: ${{ steps.detect.outputs.redis }}
+      azure_durable_task: ${{ steps.detect.outputs.azure_durable_task }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -1716,6 +1717,8 @@ jobs:
             "$H/pydantic_ai_harness/spend" tests/harness/step_persistence tests/harness/media tests/harness/spend \
             tests/harness/_postgres_sqlite.py "$H/integration_tests/postgres"
           detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
+          detect azure_durable_task "$H/pydantic_ai_harness/azure_durable_task" tests/harness/azure_durable_task \
+            "$H/integration_tests/azure_durable_task"
 
   harness-localstack-integration:
     name: harness LocalStack integration tests
@@ -1870,6 +1873,37 @@ jobs:
 
       - run: make integration-redis
 
+  harness-azure-durable-task-integration:
+    name: harness Azure Durable Task integration tests
+    needs: [harness-integration-changes]
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.azure_durable_task == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      dts-emulator:
+        # Pinned by digest: newer emulator builds have changed name validation before.
+        image: mcr.microsoft.com/dts/dts-emulator:v0.0.9@sha256:e883ec67fa5adec9400f7389d44c851ad5353b686b69a66139770b1f908c0f35
+        ports:
+          - 8080:8080
+    env:
+      AZURE_DURABLE_TASK_REQUIRE_LIVE: "1"
+      AZURE_DURABLE_TASK_TEST_ENDPOINT: 127.0.0.1:8080
+      AZURE_DURABLE_TASK_TEST_TASKHUB: default
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-azure-durable-task
+
+      - run: make integration-azure-durable-task
+
   # Release gate: resolve the workspace at the top of the ranges this tag declares and run the
   # suite there, so we can't publish a version whose own dependency ranges already admit an SDK
   # we cannot drive (the `anthropic` 1.0.0 case). Tag refs only — on every other event the job
@@ -1951,6 +1985,7 @@ jobs:
       - harness-mongodb-integration
       - harness-postgres-integration
       - harness-redis-integration
+      - harness-azure-durable-task-integration
       - latest-versions-canary
       - coverage
     runs-on: ubuntu-latest
@@ -1974,20 +2009,20 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,test-clai2-web,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
+              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,test-clai2-web,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,harness-azure-durable-task-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 

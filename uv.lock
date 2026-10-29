@@ -589,6 +589,15 @@ wheels = [
 ]
 
 [[package]]
+name = "asyncio"
+version = "4.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/ea/26c489a11f7ca862d5705db67683a7361ce11c23a7b98fc6c2deaeccede2/asyncio-4.0.0.tar.gz", hash = "sha256:570cd9e50db83bc1629152d4d0b7558d6451bb1bfd5dfc2e935d96fc2f40329b", size = 5371, upload-time = "2025-08-05T02:51:46.605Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/64/eff2564783bd650ca25e15938d1c5b459cda997574a510f7de69688cb0b4/asyncio-4.0.0-py3-none-any.whl", hash = "sha256:c1eddb0659231837046809e68103969b2bef8b0400d59cfa6363f6b5ed8cc88b", size = 5555, upload-time = "2025-08-05T02:51:45.767Z" },
+]
+
+[[package]]
 name = "asyncpg"
 version = "0.32.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2154,6 +2163,34 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/10/ef/07791a05751e6cc9de1dd49fb12730259ee109b18e6d097e25e6c32d5617/duckduckgo_search-8.1.1.tar.gz", hash = "sha256:9da91c9eb26a17e016ea1da26235d40404b46b0565ea86d75a9f78cc9441f935", size = 22868, upload-time = "2025-07-06T15:30:59.73Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/db/72/c027b3b488b1010cf71670032fcf7e681d44b81829d484bb04e31a949a8d/duckduckgo_search-8.1.1-py3-none-any.whl", hash = "sha256:f48adbb06626ee05918f7e0cef3a45639e9939805c4fc179e68c48a12f1b5062", size = 18932, upload-time = "2025-07-06T15:30:58.339Z" },
+]
+
+[[package]]
+name = "durabletask"
+version = "1.12.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "asyncio" },
+    { name = "grpcio" },
+    { name = "packaging" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/38/00/410e2ff9016e9a3f838dc17824cd9d91656c4acf5618ea8732d42fa66b30/durabletask-1.12.0.tar.gz", hash = "sha256:8d5f04d90ab8020ee4a056fae9117bb92cf8e01c8e9dff6b7ac1b814923dde28", size = 190053, upload-time = "2026-10-12T23:18:49.595Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e4/09/14c5447c21c472a8a2039e5a74b53e1941c39cbc83d50b973eb752bd3977/durabletask-1.12.0-py3-none-any.whl", hash = "sha256:994d7dc554cadf3be36d1996b0499c2a451abb896fac28aa3e159b182c81c22f", size = 217390, upload-time = "2026-10-12T23:18:50.832Z" },
+]
+
+[[package]]
+name = "durabletask-azuremanaged"
+version = "1.12.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-identity" },
+    { name = "durabletask" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d1/7d/e51873d0ce1e34d06353036004022dfe204db7939485cfe0bfe0065d701c/durabletask_azuremanaged-1.12.0.tar.gz", hash = "sha256:713ede65e736e91b3b61bcdae8515aff37c7e810a5a23b7462560e3b487da99f", size = 22732, upload-time = "2026-10-13T17:24:53.857Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/78/75/ee8af47c08cc5ab5d6f47b04467f09e10f557e534d79f17b20f9077dbb84/durabletask_azuremanaged-1.12.0-py3-none-any.whl", hash = "sha256:2c1d70cf5d1106acf0cd5801182b44bcd2340b7cdede6065b7d18aca27b4b9a2", size = 30156, upload-time = "2026-10-13T17:24:54.903Z" },
 ]
 
 [[package]]
@@ -4620,7 +4657,7 @@ version = "1.38.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
-    { name = "pyjwt", extra = ["crypto"], marker = "extra == 'group-11-pydantic-ai-dev' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone')" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "requests" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b8/1f/10f9d47a63d3a2e61b2c43e15bee6b95682aab827018f9a1b97a80787e25/msal-1.38.0.tar.gz", hash = "sha256:4f10ff1257bacfd1781f22e85bd2b8d43ad1b490f3b6aafd7906671cadedd464", size = 203411, upload-time = "2026-08-24T10:22:46.053Z" }
@@ -6876,6 +6913,10 @@ anthropic = [
 aws-lambda = [
     { name = "aws-durable-execution-sdk-python" },
 ]
+azure-durable-task = [
+    { name = "durabletask" },
+    { name = "durabletask-azuremanaged" },
+]
 boxd = [
     { name = "boxd" },
 ]
@@ -7010,6 +7051,8 @@ requires-dist = [
     { name = "boxlite", marker = "(python_full_version < '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'boxlite')", specifier = ">=0.10.7,<0.11" },
     { name = "browser-use", marker = "python_full_version >= '3.11' and extra == 'browser-use'", specifier = ">=0.13.6,<0.14" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.223.1,<1" },
+    { name = "durabletask", marker = "extra == 'azure-durable-task'", specifier = ">=1.12.0,<2" },
+    { name = "durabletask-azuremanaged", marker = "extra == 'azure-durable-task'", specifier = ">=1.11.0,<2" },
     { name = "e2b", marker = "extra == 'e2b'", specifier = ">=2.48.0" },
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.16.0" },
     { name = "fastmcp", marker = "extra == 'stackone'", specifier = ">=3.4.5,<4" },
@@ -7059,7 +7102,7 @@ requires-dist = [
     { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "boxd", "boxlite", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "pgtask", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
+provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "azure-durable-task", "boxd", "boxlite", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "pgtask", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-slim"

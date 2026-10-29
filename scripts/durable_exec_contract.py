@@ -97,6 +97,7 @@ ENGINES: dict[str, str] = {
     'absurd': 'src/pydantic_ai_harness/pydantic_ai_harness/absurd/**/*.py',
     'pgtask': 'src/pydantic_ai_harness/pydantic_ai_harness/pgtask/**/*.py',
     'aws_lambda': 'src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/**/*.py',
+    'azure_durable_task': 'src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/**/*.py',
 }
 
 # Annotation constructors whose arguments, not themselves, are the annotated type.

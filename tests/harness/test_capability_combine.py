@@ -366,6 +366,9 @@ COMBINE_POLICY: dict[str, Policy] = {
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
         'itself up, before any id is consulted'
     ),
+    'AzureDurableTaskDurability': Rejected(
+        'an agent accepts only one durable execution engine; core rejects a second before binding'
+    ),
     'PGTaskDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
         'itself up, before any id is consulted'

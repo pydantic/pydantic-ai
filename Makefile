@@ -110,6 +110,10 @@ integration-postgres: ## Run the harness Postgres tests (`docker run -d -p 5432:
 integration-redis: ## Run the harness Redis tests (`docker run -d -p 6379:6379 redis:8`, or set REDIS_TEST_URL)
 	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/redis
 
+.PHONY: integration-azure-durable-task
+integration-azure-durable-task: ## Run the harness Azure Durable Task tests (`docker run -d -p 8080:8080 -p 8082:8082 mcr.microsoft.com/dts/dts-emulator:v0.0.9`, or set AZURE_DURABLE_TASK_TEST_ENDPOINT)
+	uv run --all-packages --all-extras --no-extra mcp-tasks python -m pytest src/pydantic_ai_harness/integration_tests/azure_durable_task
+
 .PHONY: update-examples
 update-examples: ## Update documentation examples
 	uv run -m pytest --update-examples tests/test_examples.py
