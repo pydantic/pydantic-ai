@@ -7,9 +7,9 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _no_ci_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep `Dataset.evaluate` span snapshots independent of the CI and `git` checkout the suite runs in.
+    """Keep `Dataset.evaluate` span snapshots independent of the CI the suite runs in.
 
-    Detection is turned off, so no test runs `git` or depends on GitHub Actions variables.
+    Detection is turned off, so no test depends on GitHub Actions variables.
     `test_experiment_provenance.py` turns it back on for the tests that exercise it.
     """
     monkeypatch.setenv('PYDANTIC_EVALS_CI_PROVENANCE', 'false')

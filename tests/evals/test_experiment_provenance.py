@@ -64,7 +64,7 @@ async def _provenance(capfire: CaptureLogfire) -> dict[str, Any]:
 
 
 async def test_not_in_ci(capfire: CaptureLogfire):
-    """Outside CI and outside a `git` checkout, nothing is detected."""
+    """Outside GitHub Actions and GitLab CI, nothing is detected."""
     assert await _provenance(capfire) == {}
 
 
@@ -404,7 +404,7 @@ async def test_overrides_win_over_github(capfire: CaptureLogfire, monkeypatch: p
 
 
 async def test_not_detected_when_span_is_not_recording(monkeypatch: pytest.MonkeyPatch):
-    """Without a recording span, detection doesn't run, so nothing reads files or runs `git`."""
+    """Without a recording span, detection doesn't run, so nothing reads the event payload file."""
     real_logfire_span = dataset_module.logfire_span
 
     @contextmanager
