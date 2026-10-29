@@ -397,7 +397,7 @@ class TestCompactOnCacheExpiry:
         assert isinstance(first, ModelRequest)
         assert first.parts == [
             CompactionPart(
-                content='Earlier tool results in this conversation were cleared to save context.',
+                content='Earlier parts of this conversation were compacted to save context.',
                 metadata={'pydantic_ai_harness.compact_on_cache_expiry': True},
             )
         ]
@@ -439,7 +439,7 @@ class TestCompactOnCacheExpiry:
         messages = result.all_messages()
         assert [part.content for part in _compaction_parts(messages)] == [
             'summarized',
-            'Earlier tool results in this conversation were cleared to save context.',
+            'Earlier parts of this conversation were compacted to save context.',
         ]
         assert [type(part).__name__ for part in messages[1].parts] == ['CompactionPart']
         assert len(_cleared(local.sent[0])) == TOOL_STEPS - 5
@@ -517,11 +517,15 @@ class TestCompactOnCacheExpiry:
             SlidingWindowCompaction(max_messages=1, keep_messages=2, preserve_first_user_message=False),
             max_fraction=None,
         )
-        await _agent(local, capability).run('next', message_history=history)
+        result = await _agent(local, capability).run('next', message_history=history)
 
         sent = local.sent[0]
         assert len(sent) < len(history)
         assert any(is_pinned(part) for message in sent if isinstance(message, ModelRequest) for part in message.parts)
+        # Messages were dropped, not tool results cleared, so the mark says only that the history was compacted.
+        assert [part.content for part in _compaction_parts(result.all_messages())] == [
+            'Earlier parts of this conversation were compacted to save context.'
+        ]
 
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_a_request_a_compaction_strategy_already_compacted_is_not_requested(self) -> None:

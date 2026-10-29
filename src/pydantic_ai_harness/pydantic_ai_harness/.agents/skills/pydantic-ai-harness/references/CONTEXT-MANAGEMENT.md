@@ -237,15 +237,15 @@ agent = Agent(
 
 ### `CompactOnCacheExpiry`
 
-`CompactOnCacheExpiry(fallback=<clear all but 5 tool results>, *, max_tokens=None, max_fraction=0.2, fallback_retention=None, id='compact_on_cache_expiry')`:
+`CompactOnCacheExpiry(fallback=<clear all but 5 tool results>, *, max_tokens=None, max_fraction=0.2, context_window=None, fallback_context_window=DEFAULT_CONTEXT_WINDOW, fallback_retention=None, tokenizer=None, id='compact_on_cache_expiry')`:
 on the first request after the provider's prompt cache has expired, when that request pays to
 cache the history anyway, it calls `ctx.request_compaction(reason='cache_expiry')` from
 `prepare_model_request`, for the model serving the attempt. The agent's `compact_history`
 handlers serve it, such as Pydantic AI's `NativeCompaction`; the harness strategies don't serve
 requests yet, and when one of them already compacted the request on its own trigger it doesn't
 ask. When no handler serves it, `fallback` does, as its own `compact_history` hook, ordered
-innermost so it's asked last (`None` disables it). It marks the cleared history with a
-`CompactionPart` saying tool results were cleared.
+innermost so it's asked last (`None` disables it). A fallback that writes no summary of its
+own gets a `CompactionPart` saying earlier parts of the conversation were compacted.
 
 The decision uses Pydantic AI's `prompt_cache_outlook` with the retention the request's settings
 ask for, else the provider's documented default. Does nothing when retention is unknown (Gemini

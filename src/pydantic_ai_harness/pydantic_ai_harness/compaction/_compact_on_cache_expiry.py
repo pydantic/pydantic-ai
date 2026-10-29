@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from pydantic_ai.settings import ModelSettings
 
 
-DEFAULT_MAX_FRACTION = 0.2
+_DEFAULT_MAX_FRACTION = 0.2
 """Default size, as a fraction of the context window, below which an expired history is left alone."""
 
 
@@ -46,17 +46,17 @@ class _DefaultFraction(float):
 # Type checkers see the plain default; at runtime the sentinel tells an omitted `max_fraction` from an explicit one,
 # so the public field type stays what callers can pass.
 if TYPE_CHECKING:
-    _DEFAULT_FRACTION: float = DEFAULT_MAX_FRACTION
+    _DEFAULT_FRACTION: float = _DEFAULT_MAX_FRACTION
 else:
-    _DEFAULT_FRACTION = _DefaultFraction(DEFAULT_MAX_FRACTION)
+    _DEFAULT_FRACTION = _DefaultFraction(_DEFAULT_MAX_FRACTION)
 
-CLEARED_TOOL_RESULT_HINT = '[Tool result cleared to save context. Call the tool again if you need it.]'
+_CLEARED_TOOL_RESULT_HINT = '[Tool result cleared to save context. Call the tool again if you need it.]'
 """Placeholder the default fallback leaves in place of a cleared tool result.
 
 It tells the model the result can be fetched again: with a bare placeholder, models answered from
 what they guessed the cleared result said rather than calling the tool again."""
 
-FALLBACK_NOTE = 'Earlier tool results in this conversation were cleared to save context.'
+_FALLBACK_NOTE = 'Earlier parts of this conversation were compacted to save context.'
 """The `CompactionPart` content the fallback leaves when its strategy didn't write a summary of its own."""
 
 _FALLBACK_METADATA_KEY = 'pydantic_ai_harness.compact_on_cache_expiry'
@@ -65,7 +65,7 @@ _FALLBACK_METADATA_KEY = 'pydantic_ai_harness.compact_on_cache_expiry'
 
 def _default_fallback() -> CompactionStrategy[Any]:
     # `max_tokens=1` only satisfies `ClearToolResults`' required trigger, which a fallback bypasses.
-    return ClearToolResults(max_tokens=1, keep_pairs=5, placeholder=CLEARED_TOOL_RESULT_HINT)
+    return ClearToolResults(max_tokens=1, keep_pairs=5, placeholder=_CLEARED_TOOL_RESULT_HINT)
 
 
 @dataclass
@@ -149,7 +149,7 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         if self.max_fraction is _DEFAULT_FRACTION:
             # Left at its default, it gives way to `max_tokens`; stated explicitly beside it, it's a conflict.
-            self.max_fraction = None if self.max_tokens is not None else DEFAULT_MAX_FRACTION
+            self.max_fraction = None if self.max_tokens is not None else _DEFAULT_MAX_FRACTION
         validate_token_trigger(self.max_tokens, self.max_fraction, self.fallback_context_window, self.context_window)
         if self.fallback_retention is not None and self.fallback_retention <= timedelta(0):
             raise ValueError('fallback_retention must be positive.')
@@ -172,9 +172,9 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
             (
                 (c.max_tokens, c.max_fraction)
                 for c in reversed(expiries)
-                if (c.max_tokens, c.max_fraction) != (None, DEFAULT_MAX_FRACTION)
+                if (c.max_tokens, c.max_fraction) != (None, _DEFAULT_MAX_FRACTION)
             ),
-            (None, DEFAULT_MAX_FRACTION),
+            (None, _DEFAULT_MAX_FRACTION),
         )
         merged = replace_no_init(merged, fallback=fallback, max_tokens=max_tokens, max_fraction=max_fraction)
         merged.__post_init__()
@@ -264,14 +264,14 @@ def _fallback_result(original: Sequence[ModelMessage], compacted: list[ModelMess
     """The fallback's compacted history as a `CompactionResult`, whose `part` marks where it starts.
 
     A strategy that summarizes leaves a `CompactionPart` of its own. One that only edits or drops messages, like
-    the default clearing, gets one saying what happened, at the start of the post-compaction window so the tools
+    the default clearing, gets one saying earlier parts of the conversation were compacted, at the start of the post-compaction window so the tools
     and capabilities that window shows stay as they were. The part a previous fallback left there is replaced.
     """
     latest = _latest_compaction_part(compacted)
     original_parts = [part for message in original for part in message.parts if isinstance(part, CompactionPart)]
     if latest is not None and latest[1] not in original_parts:
         return CompactionResult(messages=compacted, part=latest[1], handler='compact_on_cache_expiry')
-    part = CompactionPart(content=FALLBACK_NOTE, metadata={_FALLBACK_METADATA_KEY: True})
+    part = CompactionPart(content=_FALLBACK_NOTE, metadata={_FALLBACK_METADATA_KEY: True})
     if latest is None:
         messages = [ModelRequest(parts=[part]), *compacted]
     else:
