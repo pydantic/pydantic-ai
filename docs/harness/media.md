@@ -24,6 +24,8 @@ Why it exists: a conversation that carries images, audio, or other `BinaryConten
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![externalize_media walks the JSON form of a message history. Each binary or text payload at or above threshold_bytes is written to a MediaStore with put and replaced by a media+sha256:// URI derived from its hash, so the same image referenced twice is stored once. restore_media reads each URI back with get and puts the original payload in place. Disk, SQLite, S3, MongoDB and PostgreSQL stores are available.](../img/harness/media.svg)
+
 ## Consumers
 
 [`StepPersistence`](step-persistence.md) uses these stores to externalize large `BinaryContent` and text parts in run snapshots through its file, sqlite, mongo, and postgres backends (see [Persisting media](step-persistence.md#persisting-media)).
