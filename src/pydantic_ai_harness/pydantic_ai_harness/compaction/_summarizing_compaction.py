@@ -12,6 +12,9 @@ from datetime import UTC, datetime
 from string import Formatter
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
 
+# `EventStreamHandler` holds the forward reference `'AsyncIterable[_messages.AgentStreamEvent]'`, which the
+# `AgentSpec` schema resolves against this module's globals.
+from pydantic_ai import messages as _messages  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from pydantic_ai._framing import neutralize_tags
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import EventStreamHandler
