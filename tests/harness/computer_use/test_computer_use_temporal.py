@@ -53,9 +53,6 @@ def _faulty_model(messages: list[ModelMessage], info: object) -> ModelResponse:
         _provider.lose_next_action = True
         clicks = [{'type': 'click', 'x': x, 'y': 1} for x in range(3)]
         return ModelResponse(parts=[ToolCallPart('computer', {'actions': clicks})])
-    if calls == 1:
-        _provider.restart_display = True
-        return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'click', 'x': 9, 'y': 9}]})])
     return ModelResponse(parts=[TextPart('done')])
 
 
@@ -116,12 +113,8 @@ async def test_computer_use_runs_each_action_in_an_activity_and_replays_without_
     assert len(_provider.actions) == 2
 
 
-async def test_a_lost_action_is_reported_once_and_a_restart_holds_the_next_action() -> None:
-    """The action whose activity failed after it took effect isn't run again, and the model is told it may have run.
-
-    The display then restarts in the activity of the next call, on a backend rebuilt for it: workflow code learns of it
-    from the journal, so that call's action doesn't land on the new screen.
-    """
+async def test_a_lost_action_is_reported_once() -> None:
+    """The action whose activity failed after it took effect isn't run again, and the model is told it may have run."""
     _provider.reset()
     runner = SandboxedWorkflowRunner(
         restrictions=SandboxRestrictions.default.with_passthrough_modules(__name__, 'tests', 'annotated_types')
@@ -131,7 +124,7 @@ async def test_a_lost_action_is_reported_once_and_a_restart_holds_the_next_actio
         async with Worker(
             client, task_queue='computer-use', workflows=[ComputerUseFaultsWorkflow], workflow_runner=runner
         ):
-            lost, held = await client.execute_workflow(
+            (lost,) = await client.execute_workflow(
                 ComputerUseFaultsWorkflow.run,
                 'Click.',
                 id=uuid4().hex,
@@ -144,6 +137,3 @@ async def test_a_lost_action_is_reported_once_and_a_restart_holds_the_next_actio
         'Action 1 of 3 (click) failed: The act call did not finish, so it may or may not have taken effect'
     )
     assert 'The 2 actions after it did not run.' in lost
-    assert held.startswith(
-        'The display restarted since your last screenshot, so the windows that were open are gone. No action ran'
-    )

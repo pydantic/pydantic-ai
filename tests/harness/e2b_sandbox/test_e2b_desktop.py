@@ -30,9 +30,6 @@ class FakeDisplay:
     def __init__(self, *, up: bool = False, can_start: bool = True) -> None:
         self.up = up
         self.can_start = can_start
-        # The start's generation and whether a call completed on it, as the start script keeps them in the sandbox.
-        self.generation = 1 if up else 0
-        self.unshown: int | None = None
         self.starts: list[str] = []
         self.xdotool: list[str] = []
         self.captures: list[str] = []
@@ -43,13 +40,10 @@ class FakeDisplay:
             self.starts.append(command)
             if not self.up and not self.can_start:
                 return '', 'the X server did not start:\n(EE) Fatal server error', 1
-            if not self.up:
-                self.up, self.generation = True, self.generation + 1
-                self.unshown = self.generation
-            return (f'{STARTED} {self.unshown}' if self.unshown else ''), '', 0
-        elif 'pydantic-ai-display-unshown' in command:
-            if command.endswith(f' {self.unshown}'):
-                self.unshown = None
+            if self.up:
+                return '', '', 0
+            self.up = True
+            return STARTED, '', 0
         elif 'xwininfo -root' in command:
             self.xdotool.append('xwininfo -root')
             if not self.up:
@@ -156,19 +150,17 @@ async def test_a_display_that_went_away_is_started_again(fake_e2b: FakeE2B, disp
     backend = E2BSandboxBackend(desktop=True)
     workspace = Workspace(backend)
     await workspace.display_size()
-    assert backend.display is not None and backend.display.starts == 1
 
     display.up = False
     with pytest.raises(WorkspaceError):
         await workspace.act(Click(x=1, y=1))
     # The next action starts the display again, and doesn't run on the new screen.
-    with pytest.raises(WorkspaceError, match='The display restarted before this action'):
+    with pytest.raises(WorkspaceError, match='The display was not running and started for this action'):
         await workspace.act(Click(x=1, y=1))
     await workspace.act(Click(x=1, y=1))
 
     # The last action uses the display that started, without running the start script again.
     assert len(display.starts) == 2
-    assert backend.display.starts == 2
 
 
 async def test_a_template_without_a_working_x_server_says_why(fake_e2b: FakeE2B, display: FakeDisplay) -> None:

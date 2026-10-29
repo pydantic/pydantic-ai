@@ -137,46 +137,16 @@ async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, con
     workspace = Workspace(backend)
     await workspace.display_size()
     assert docker.xvfb_starts == 0  # the display was already up
-    assert backend.display is not None and backend.display.starts == 0
 
     docker.remove_display()
     with pytest.raises(WorkspaceError):
         await workspace.act(Click(x=1, y=1))
     # The next action starts the display again, and doesn't run on the new screen.
-    with pytest.raises(WorkspaceError, match='The display restarted before this action'):
+    with pytest.raises(WorkspaceError, match='The display was not running and started for this action'):
         await workspace.act(Click(x=1, y=1))
     await workspace.act(Click(x=1, y=1))
 
     assert docker.xvfb_starts == 1
-    # The windows that were open are gone.
-    assert backend.display.starts == 1
-
-
-async def test_a_start_whose_call_failed_is_reported_by_the_next_backend_on_the_container(
-    docker: FakeDocker, container_dir: Path
-) -> None:
-    """A durable engine retries a failed unit on a new backend, which finds the X server the failed one started."""
-    failed = _desktop(container_dir, image='my-desktop')
-    await failed.working_dir()
-    assert failed.ref is not None and failed.display is not None
-    await Workspace(failed).display_size()  # the screen the model saw
-    docker.remove_display()
-    xwininfo = docker.bin_dir / 'xwininfo'
-    working = xwininfo.read_text()
-    xwininfo.write_text('#!/bin/sh\necho "connection lost" >&2; exit 1\n')
-    with pytest.raises(WorkspaceError, match='connection lost'):
-        await Workspace(failed).display_size()
-    assert (docker.xvfb_starts, failed.display.starts) == (1, 1)
-    xwininfo.write_text(working)
-
-    retry = DockerSandboxBackend(ref=failed.ref, working_dir=str(container_dir), desktop=True)
-    assert retry.display is not None
-    assert await Workspace(retry).display_size() == (1280, 800)
-    assert retry.display.starts == 1
-    later = DockerSandboxBackend(ref=failed.ref, working_dir=str(container_dir), desktop=True)
-    assert later.display is not None
-    await Workspace(later).display_size()
-    assert later.display.starts == 0
 
 
 async def test_an_action_that_fails_on_a_running_display_says_why(docker: FakeDocker, container_dir: Path) -> None:

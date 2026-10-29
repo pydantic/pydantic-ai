@@ -43,7 +43,6 @@ from pydantic_ai.workspaces import (
     MoveMouse,
     Point,
     PressKeys,
-    Region,
     Scroll,
     TypeText,
     Workspace,
@@ -760,35 +759,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         if shared == 'screen-key':
             assert len(provider.environments) == 2
 
-    async def test_the_model_is_told_once_when_the_display_restarted_since_its_last_screenshot(self) -> None:
-        class Restarts(ProviderBackend):
-            starts = 1
-
-            async def act(self, action: ComputerAction) -> None:
-                Restarts.starts += 1  # the display restarted during the action
-                await super().act(action)
-
-        class Provider(InMemoryProvider):
-            def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
-                return Restarts(self, ref)
-
-        model = _scripted([{'type': 'screenshot'}], [{'type': 'keypress', 'keys': ['a']}], [{'type': 'screenshot'}])
-        computer_use = ComputerUse(settle_seconds=0)
-        agent = Agent(model, capabilities=[Provider().capability(), computer_use])
-        returns = _returns((await agent.run('Go.')).all_messages())
-        assert [part.metadata for part in returns] == [
-            {'performed': 1, 'screenshot_size': (1280, 800)},
-            {'performed': 1, 'restarted': True, 'screenshot_size': (1280, 800)},
-            {'performed': 1, 'screenshot_size': (1280, 800)},
-        ]
-        summaries = [part.content_items()[0] for part in returns]
-        assert summaries == [
-            'Ran 1 action. Screenshot attached (1280x800).',
-            'Ran 1 action. The display restarted since your last screenshot, so the windows that were open are gone. '
-            'Screenshot attached (1280x800).',
-            'Ran 1 action. Screenshot attached (1280x800).',
-        ]
-
     async def test_in_workflow_code_a_large_screen_is_scaled_through_the_workspace(self) -> None:
         """Durable workflow code can't reach the backend, so the scaled screenshot goes through the workspace."""
 
@@ -804,114 +774,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         result = await agent.run('Go.', workspace=WorkflowSide(Workspace(InMemoryProvider().backend(None))))
         (tool_return,) = _returns(result.all_messages())
         assert tool_return.metadata == {'performed': 1, 'screenshot_size': (1000, 625)}
-
-    async def test_a_batch_on_a_display_that_restarted_since_the_last_screenshot_does_not_act(self) -> None:
-        class Restarts(ProviderBackend):
-            screenshots = 0
-            starts = 1
-
-            async def screenshot(self) -> bytes:
-                Restarts.screenshots += 1
-                return await super().screenshot()
-
-            async def display_size(self) -> tuple[int, int]:
-                if Restarts.screenshots == 1:
-                    Restarts.starts, Restarts.screenshots = 2, 2  # reading the size started it again
-                return await super().display_size()
-
-        class Provider(InMemoryProvider):
-            def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
-                return Restarts(self, ref)
-
-        provider = Provider()
-        model = _scripted([{'type': 'screenshot'}], [{'type': 'click', 'x': 1, 'y': 1}, {'type': 'type', 'text': 'x'}])
-        agent = Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
-        _, second = _returns((await agent.run('Go.')).all_messages())
-
-        assert provider.actions == []
-        assert second.content_items()[0] == (
-            'The display restarted since your last screenshot, so the windows that were open are gone. No action ran, '
-            'so check this screenshot before acting. Screenshot attached (1280x800).'
-        )
-        assert second.metadata == {'performed': 0, 'restarted': True, 'screenshot_size': (1280, 800)}
-
-    async def test_a_batch_stops_before_acting_on_a_display_that_restarted_during_it(self) -> None:
-        class Restarts(ProviderBackend):
-            starts = 1
-
-            async def zoom(self, region: Region) -> bytes:
-                Restarts.starts += 1  # the display was gone, and retrying the zoom started it again
-                return await super().zoom(region)
-
-        class Provider(InMemoryProvider):
-            def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
-                return Restarts(self, ref)
-
-        provider = Provider()
-        zoom = {'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 10, 'bottom': 10}}
-        model = _scripted([{'type': 'click', 'x': 1, 'y': 1}, zoom, {'type': 'click', 'x': 2, 'y': 2}])
-        agent = Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
-        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
-
-        assert provider.actions == [Click(x=1, y=1)]
-        assert tool_return.content_items()[0] == (
-            'The display restarted since your last screenshot, so the windows that were open are gone. Only 2 of 3 '
-            'actions ran, so check this screenshot before acting. Screenshot attached (1280x800).'
-        )
-        assert tool_return.metadata == {'performed': 2, 'restarted': True, 'screenshot_size': (1280, 800)}
-
-    async def test_every_agent_on_a_restarted_display_is_told_of_it(self) -> None:
-        provider = InMemoryProvider()
-
-        class Screen(ProviderBackend):
-            starts = 1
-
-        screen = Screen(provider, None)
-
-        class OnTheScreen(ProviderBackend):
-            @property
-            def display(self) -> ProviderBackend:
-                return screen
-
-        looked, restarted = [anyio.Event(), anyio.Event()], anyio.Event()
-        summaries: list[object] = []
-
-        def model(seen: anyio.Event) -> FunctionModel:
-            async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-                if len(messages) == 1:
-                    return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
-                if len(messages) == 3:
-                    seen.set()
-                    await restarted.wait()
-                    return ModelResponse(
-                        parts=[ToolCallPart('computer', {'actions': [{'type': 'click', 'x': 1, 'y': 1}]})]
-                    )
-                return ModelResponse(parts=[TextPart('done')])
-
-            return FunctionModel(respond)
-
-        async def run(seen: anyio.Event) -> None:
-            agent = Agent(model(seen), capabilities=[ComputerUse(settle_seconds=0)])
-            result = await agent.run('Go.', workspace=OnTheScreen(provider, None))
-            summaries.append(_returns(result.all_messages())[-1].content_items()[0])
-
-        async with anyio.create_task_group() as tg:
-            for seen in looked:
-                tg.start_soon(run, seen)
-            for seen in looked:
-                await seen.wait()
-            screen.starts += 1
-            restarted.set()
-
-        assert provider.actions == []
-        assert (
-            summaries
-            == [
-                'The display restarted since your last screenshot, so the windows that were open are gone. No action ran, '
-                'so check this screenshot before acting. Screenshot attached (1280x800).'
-            ]
-            * 2
-        )
 
     def test_agents_on_one_screen_in_separate_event_loops_do_not_wait_on_each_other(self) -> None:
         """A lock can't wake a waiter on another event loop, as Temporal runs each workflow on a loop of its own."""
