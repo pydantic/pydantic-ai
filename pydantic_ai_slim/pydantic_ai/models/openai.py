@@ -4620,15 +4620,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 and response.provider_details
                 and response.provider_details.get('compaction')
             )
-            or any(
-                isinstance(part, CompactionPart)
-                and _compaction_part_is_wire_boundary(
-                    response,
-                    part,
-                    self.accepts_stateless_artifacts,
-                    requires_encrypted_content=self.compaction_requires_encrypted_content,
+            or (
+                response.provider_name != self.system
+                and any(
+                    isinstance(part, CompactionPart)
+                    and _compaction_part_is_wire_boundary(
+                        response,
+                        part,
+                        self.accepts_stateless_artifacts,
+                        requires_encrypted_content=self.compaction_requires_encrypted_content,
+                    )
+                    for part in response.parts
                 )
-                for part in response.parts
             )
         )
 

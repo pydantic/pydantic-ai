@@ -5255,7 +5255,7 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
 
 
 @pytest.mark.parametrize('previous_id', ['auto', 'resp_seed'])
-@pytest.mark.parametrize('compaction_provider', ['openai-codex', 'azure'])
+@pytest.mark.parametrize('compaction_provider', ['openai', 'openai-codex', 'azure'])
 @pytest.mark.parametrize('payload', ['encrypted', 'summary', 'empty'])
 @pytest.mark.parametrize('marked', [False, True])
 async def test_compatible_compaction_stops_previous_response_chaining(
@@ -5278,6 +5278,7 @@ async def test_compatible_compaction_stops_previous_response_chaining(
                 )
             ],
             provider_name=compaction_provider,
+            provider_response_id='resp_inline' if compaction_provider == 'openai' else None,
             provider_details={'compaction': True} if marked else None,
             canonical_system='azure' if compaction_provider == 'azure' else 'openai',
         ),
@@ -5293,16 +5294,20 @@ async def test_compatible_compaction_stops_previous_response_chaining(
     )
     await model.request(history, None, ModelRequestParameters())
     body = get_mock_responses_kwargs(client)[0]
-    if compaction_provider == 'openai-codex' and payload == 'encrypted':
+    if (compaction_provider == 'openai' and marked) or (
+        compaction_provider == 'openai-codex' and payload == 'encrypted'
+    ):
         assert 'previous_response_id' not in body
         assert 'prompt_cache_options' not in body
-        assert body['input'] == [
-            {'id': 'cmp_1', 'encrypted_content': 'encrypted', 'type': 'compaction'},
-            {'role': 'user', 'content': 'after compaction'},
-        ]
+        if payload == 'encrypted':
+            assert body['input'] == [
+                {'id': 'cmp_1', 'encrypted_content': 'encrypted', 'type': 'compaction'},
+                {'role': 'user', 'content': 'after compaction'},
+            ]
     else:
-        assert body['previous_response_id'] == 'resp_old'
-        assert body['prompt_cache_options'] == {'comparison_response_id': 'resp_old'}
+        response_id = 'resp_inline' if compaction_provider == 'openai' else 'resp_old'
+        assert body['previous_response_id'] == response_id
+        assert body['prompt_cache_options'] == {'comparison_response_id': response_id}
         assert body['input'] == [{'role': 'user', 'content': 'after compaction'}]
 
 
