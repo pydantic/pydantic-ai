@@ -397,12 +397,17 @@ class InMemoryProvider:
         self.directories: dict[str, set[str]] = {}
         self.log: list[str] = []
         self.actions: list[ComputerAction] = []
+        # Faults the next display calls meet, on whichever backend serves them.
+        self.restart_display = False
+        self.fail_next_screenshot = False
+        self.lose_next_action = False
 
     def reset(self) -> None:
         self.environments.clear()
         self.directories.clear()
         self.log.clear()
         self.actions.clear()
+        self.restart_display = self.fail_next_screenshot = self.lose_next_action = False
 
     def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
         return ProviderBackend(self, ref)
@@ -420,6 +425,9 @@ class ProviderBackend(
     SupportsScaledScreenshot,
     SupportsCursorPosition,
 ):
+    starts = 0
+    """How many times the display started, as a display that counts its starts reports it."""
+
     def __init__(self, provider: InMemoryProvider, ref: WorkspaceRef | None) -> None:
         self._provider = provider
         self._ref = ref
@@ -428,6 +436,12 @@ class ProviderBackend(
     @property
     def ref(self) -> WorkspaceRef | None:
         return self._ref
+
+    async def _display_call(self) -> None:
+        await self._files()
+        if self._provider.restart_display:
+            self._provider.restart_display = False
+            self.starts += 1
 
     async def _files(self) -> dict[str, bytes]:
         await anyio.sleep(0)
@@ -513,30 +527,37 @@ class ProviderBackend(
         return self
 
     async def display_size(self) -> tuple[int, int]:
-        await self._files()
+        await self._display_call()
         return FAKE_DISPLAY_SIZE
 
     async def screenshot(self) -> bytes:
-        await self._files()
+        if self._provider.fail_next_screenshot:
+            self._provider.fail_next_screenshot = False
+            raise RuntimeError('the screenshot failed')
+        await self._display_call()
         return FAKE_SCREENSHOT
 
     async def act(self, action: ComputerAction) -> None:
-        await self._files()
+        await self._display_call()
         # Everything but `hold_key`, so tests can see an action kind refused.
         if action.type not in {'click', 'move', 'drag', 'mouse_down', 'mouse_up', 'scroll', 'type', 'keypress'}:
             raise WorkspaceUnsupportedActionError(f'the fake display cannot perform {action.type!r}')
         self._provider.actions.append(action)
+        if self._provider.lose_next_action:
+            # The action took effect, and then its worker was lost.
+            self._provider.lose_next_action = False
+            raise RuntimeError('the worker was lost')
 
     async def zoom(self, region: Region) -> bytes:
-        await self._files()
+        await self._display_call()
         return _png(region.right - region.left, region.bottom - region.top)
 
     async def scaled_screenshot(self, width: int, height: int) -> bytes:
-        await self._files()
+        await self._display_call()
         return _png(width, height)
 
     async def cursor_position(self) -> Point:
-        await self._files()
+        await self._display_call()
         moves = [action for action in self._provider.actions if isinstance(action, MoveMouse)]
         return Point(x=moves[-1].x, y=moves[-1].y) if moves else Point(x=640, y=400)
 

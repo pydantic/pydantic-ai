@@ -138,6 +138,14 @@ class _CountsStarts(Protocol):
         ...
 
 
+@runtime_checkable
+class _CountsDisplayStarts(Protocol):
+    """A durable workspace in workflow code, which adds up the display starts its calls journaled."""
+
+    @property
+    def display_starts(self) -> int: ...
+
+
 def _models(model: Any) -> list[Model]:
     """The models that may answer a request to `model`.
 
@@ -383,6 +391,15 @@ def _display(ctx: RunContext[Any]) -> object | None:
     return backend.display if isinstance(backend, SupportsDisplay) else None
 
 
+def _starts(ctx: RunContext[Any]) -> int | None:
+    """How many times the display started: as the display counts, or in durable workflow code as its calls journaled."""
+    display = _display(ctx)
+    if isinstance(display, _CountsStarts):
+        return display.starts
+    workspace = ctx.workspace
+    return workspace.display_starts if display is None and isinstance(workspace, _CountsDisplayStarts) else None
+
+
 async def _display_size(ctx: RunContext[Any]) -> tuple[int, int]:
     try:
         return await ctx.workspace.display_size()
@@ -547,17 +564,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         *,
         limit: tuple[int, int] | None,
     ) -> ToolReturn:
-        display = _display(ctx)
-
-        def starts() -> int | None:
-            # Durable workflow code can't reach the display, so it can't tell; the screenshot still shows the screen.
-            return display.starts if isinstance(display, _CountsStarts) else None
-
         # The model planned this call on its last screenshot, or on the screen as it is now if it has seen none.
-        seen = self._shown_starts.get(ctx.run_id) if _last_screenshot_size(ctx.messages) is not None else starts()
+        seen = self._shown_starts.get(ctx.run_id) if _last_screenshot_size(ctx.messages) is not None else _starts(ctx)
 
         def restarted() -> bool:
-            return starts() != seen
+            return _starts(ctx) != seen
 
         performed, error, outputs = await _perform(ctx, actions, call, self.settle_seconds, restarted)
         held = error is None and performed < len(actions)
@@ -592,7 +603,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         result['screenshot_size'] = size
         if restarted() and not held:
             summary.append(_FRESH_SCREEN)
-        self._shown_starts[ctx.run_id] = starts()
+        self._shown_starts[ctx.run_id] = _starts(ctx)
         # A grid model points on its grid, so the size in pixels would only invite pixel coordinates.
         summary.append('Screenshot attached.' if call.grid else f'Screenshot attached ({size[0]}x{size[1]}).')
         content = [' '.join(summary), *outputs, BinaryImage(data=png, media_type='image/png')]
@@ -650,8 +661,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 'one, such as `DockerSandbox(desktop=True)`.'
             )
         # The model saw any screenshot in its history before this run, so only a start from now on is new to it.
-        display = _display(ctx)
-        self._shown_starts[ctx.run_id] = display.starts if isinstance(display, _CountsStarts) else None
+        self._shown_starts[ctx.run_id] = _starts(ctx)
 
     async def before_tool_execute(
         self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]

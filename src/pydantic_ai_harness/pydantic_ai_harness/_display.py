@@ -71,7 +71,7 @@ class ManagedDisplay:
 
     A call that only looks, such as a screenshot, is retried once after a failure, which starts a display that was
     lost; an action isn't, so nothing is done twice. The backend calls `started_fresh` when a new display started, and
-    `starts` counts those starts.
+    `starts` counts those starts. An action refuses to run on a display that started during its call.
 
     `screen_key` names the screen it shows, so `ComputerUse` runs in one process on one screen take turns at it,
     whichever workspace they reach it through: a sandbox's ref, or a local X server's `DISPLAY`.
@@ -152,7 +152,15 @@ class ManagedDisplay:
         return await self._call(lambda driver: driver.scaled_screenshot(width, height), observe=True)
 
     async def act(self, action: ComputerAction) -> None:
-        await self._call(lambda driver: driver.act(action), observe=False)
+        starts = self._starts
+
+        async def act(driver: DisplayDriver) -> None:
+            if self._starts != starts:
+                # The display was down and started for this action: the windows it was meant for are gone.
+                raise WorkspaceError('The display restarted before this action, so it did not run.')
+            await driver.act(action)
+
+        await self._call(act, observe=False)
 
     async def zoom(self, region: Region) -> bytes:
         return await self._call(lambda driver: driver.zoom(region), observe=True)
