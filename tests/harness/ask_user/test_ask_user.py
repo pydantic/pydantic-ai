@@ -1183,7 +1183,20 @@ class TestAnswerNotes:
         assert text.metadata == metadata
         assert response.answers[0].note == (text,)
 
-    async def test_deserialized_client_reference_is_rejected_in_the_tool_path(self) -> None:
+    @pytest.mark.parametrize(
+        ('url', 'force_download', 'message'),
+        [
+            ('http://127.0.0.1:8000/admin', 'allow-local', 'must use `force_download=False`'),
+            (
+                'https://generativelanguage.googleapis.com/v1beta/files/another-users-upload',
+                False,
+                'provider-uploaded file references',
+            ),
+        ],
+    )
+    async def test_deserialized_client_reference_is_rejected_in_the_tool_path(
+        self, url: str, force_download: Literal[False, 'allow-local'], message: str
+    ) -> None:
         response = TypeAdapter(AskUserResponse).validate_json(
             json.dumps(
                 {
@@ -1194,9 +1207,9 @@ class TestAnswerNotes:
                             'note': [
                                 {
                                     'kind': 'document-url',
-                                    'url': 'http://127.0.0.1:8000/admin',
+                                    'url': url,
                                     'media_type': 'text/plain',
-                                    'force_download': 'allow-local',
+                                    'force_download': force_download,
                                 }
                             ],
                         },
@@ -1211,7 +1224,7 @@ class TestAnswerNotes:
             deps_type=type(None),
             capabilities=[AskUser(answerer=ScriptedAnswerer(response)), observer],
         )
-        with pytest.raises(ValueError, match='must use `force_download=False`'):
+        with pytest.raises(ValueError, match=message):
             await agent.run('go')
         assert observer.answered[0].response is response
 
@@ -1269,6 +1282,13 @@ class TestAnswerNotes:
             ((DocumentUrl('file:///etc/passwd', media_type='text/plain'),), 'must use http or https'),
             ((DocumentUrl('data:text/plain,secret', media_type='text/plain'),), 'must use http or https'),
             ((UploadedFile(file_id='private-upload', provider_name='openai'),), 'provider-uploaded file references'),
+            *[
+                (
+                    (url_type('https://generativelanguage.googleapis.com/v1beta/files/private-upload'),),
+                    'provider-uploaded file references',
+                )
+                for url_type in (DocumentUrl, ImageUrl, AudioUrl, VideoUrl)
+            ],
         ],
     )
     def test_invalid_note_content(self, note: tuple[UserContent, ...], message: str) -> None:

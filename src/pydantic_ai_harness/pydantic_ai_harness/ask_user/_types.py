@@ -221,6 +221,9 @@ def _check_note(note: tuple[UserContent, ...]) -> None:
                 raise ValueError('file URLs must use http or https')
             if item.force_download is not False:
                 raise ValueError('file URLs must use `force_download=False`')
+            # Google treats these URLs as authenticated Files API references, not public downloads.
+            if item.url.startswith('https://generativelanguage.googleapis.com/v1beta/files'):
+                raise ValueError('must not contain provider-uploaded file references')
         elif isinstance(item, UploadedFile):
             raise ValueError('must not contain provider-uploaded file references')
         if isinstance(item, str | TextContent):

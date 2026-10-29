@@ -142,8 +142,8 @@ contain nonblank text or an attachment, not only whitespace or cache markers. Ru
 limit; the answerer should bound text and attachments from clients.
 
 File URLs must use HTTP(S) and `force_download=False`. Notes reject other URL schemes, forced
-download modes (including `True` and `'allow-local'`) and `UploadedFile` provider references,
-even when a server-side answerer constructed them. To attach a file instead, have the application
+download modes (including `True` and `'allow-local'`), Google Files API URLs and `UploadedFile`
+provider references, even when a server-side answerer constructed them. To attach a file instead, have the application
 authorize access and supply its bytes as `BinaryContent`.
 
 Only the rendered text of `TextContent` and `StructuredContent` is forwarded; user-supplied text
