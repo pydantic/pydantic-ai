@@ -323,10 +323,10 @@ class Decline(AbstractCapability[None]):
         return None
 
 
-@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
-class TestServedRequests:
-    """Who serves the request: the agent's own handlers first, then the fallback."""
+class TestCompactOnCacheExpiry:
+    # Who serves the request: the agent's own handlers first, then the fallback.
 
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     @pytest.mark.parametrize('stream', [False, True], ids=['run', 'stream'])
     async def test_an_agent_handler_serves_the_request_wherever_it_is_listed(self, stream: bool) -> None:
         """Listed after `CompactOnCacheExpiry`, the agent's own handler is still asked first, and the fallback stays out."""
@@ -351,6 +351,7 @@ class TestServedRequests:
         # The compacted history is the run's history from then on.
         assert _compaction_parts(messages) == [CompactionPart(content='summarized')]
 
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_native_compaction_serves_the_request(self) -> None:
         """With `NativeCompaction`, the serving model's own compaction API compacts the expired history."""
         model = _anthropic()
@@ -367,6 +368,7 @@ class TestServedRequests:
         assert first.parts == [CompactionPart(content='summary by the provider')]
         assert _cleared(local.sent[0]) == []
 
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_a_handler_that_declines_leaves_it_to_the_fallback(self) -> None:
         model = _anthropic()
         history = _idle(await _conversation(model), timedelta(minutes=6))
@@ -382,6 +384,7 @@ class TestServedRequests:
         ]
         assert len(_cleared(local.sent[0])) == TOOL_STEPS - 5
 
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_the_fallback_marks_where_the_compacted_history_starts(self) -> None:
         """Clearing writes no summary, so the fallback adds a `CompactionPart` saying what happened, first in the history."""
         model = _anthropic()
@@ -405,6 +408,7 @@ class TestServedRequests:
         assert record.messages_before == len(history) + 1
         assert record.messages_after == len(history) + 2
 
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_a_later_fallback_replaces_the_mark_an_earlier_one_left(self) -> None:
         model = _anthropic()
         history = _idle(await _conversation(model), timedelta(minutes=6))
@@ -419,6 +423,7 @@ class TestServedRequests:
         assert len(_compaction_parts(local.sent[0])) == 1
         assert len(_cleared(local.sent[0])) == 2 * TOOL_STEPS - 5
 
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_the_mark_follows_an_earlier_compaction(self) -> None:
         """After an earlier compaction, the mark goes right after its part, so it is the latest `CompactionPart`."""
         model = _anthropic()
@@ -439,6 +444,7 @@ class TestServedRequests:
         assert [type(part).__name__ for part in messages[1].parts] == ['CompactionPart']
         assert len(_cleared(local.sent[0])) == TOOL_STEPS - 5
 
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_a_summarizing_fallback_keeps_its_own_summary(self) -> None:
         model = _anthropic()
         history = _idle(await _conversation(model), timedelta(minutes=6))
@@ -456,6 +462,7 @@ class TestServedRequests:
         assert part.content is not None and '8 lookups ran.' in part.content
         assert result.compactions[0].part == part
 
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_without_a_fallback_an_unhandled_request_changes_nothing(self) -> None:
         model = _anthropic()
         history = _idle(await _conversation(model), timedelta(minutes=6))
@@ -464,6 +471,7 @@ class TestServedRequests:
         assert local.sent[0][:-1] == history
         assert result.compactions == []
 
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_a_fallback_that_changes_nothing_leaves_the_history_alone(self) -> None:
         model = _anthropic()
         history = _idle(await _conversation(model), timedelta(minutes=6))
@@ -476,6 +484,7 @@ class TestServedRequests:
         assert result.all_messages()[: len(history)] == history
         assert result.compactions == []
 
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_the_fallback_only_serves_cache_expiry(self) -> None:
         """A request for another reason is left to the agent's other handlers."""
         model = _anthropic()
@@ -487,6 +496,7 @@ class TestServedRequests:
         assert result.compactions == []
         assert _cleared(local.sent[0]) == []
 
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_a_cache_expiry_request_without_a_response_to_measure(self) -> None:
         """Anyone can request `'cache_expiry'`; on a history with no response there is nothing to clear."""
         local = _Local(_anthropic())
@@ -495,6 +505,7 @@ class TestServedRequests:
         )
         assert result.compactions == []
 
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_fallback_is_configurable_and_pins_survive(self) -> None:
         """Any compaction strategy can be the fallback; pinned content survives one that drops messages."""
         model = _anthropic()
@@ -512,6 +523,7 @@ class TestServedRequests:
         assert len(sent) < len(history)
         assert any(is_pinned(part) for message in sent if isinstance(message, ModelRequest) for part in message.parts)
 
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_a_request_a_compaction_strategy_already_compacted_is_not_requested(self) -> None:
         """A harness strategy whose own trigger fired for the request leaves nothing for the expiry to ask for."""
         model = _anthropic()
@@ -526,6 +538,7 @@ class TestServedRequests:
         assert result.compactions == []
         assert len(_cleared(local.sent[0], '[tool result cleared]')) == TOOL_STEPS - 2
 
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
     async def test_the_fallback_emits_a_compact_messages_span(self, capfire: CaptureLogfire) -> None:
         model = _anthropic()
@@ -547,9 +560,7 @@ class TestServedRequests:
             }
         )
 
-
-class TestDecision:
-    """When the request is made: a cold cache and a history above the size floor."""
+    # When the request is made: a cold cache and a history above the size floor.
 
     @pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in KNOWN_RETENTION])
     async def test_compacts_only_once_the_retention_window_has_passed(self, case: Case) -> None:

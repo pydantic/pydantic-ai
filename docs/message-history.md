@@ -1335,7 +1335,7 @@ agent = Agent(
 
 `CachePoint(ttl='1h')` markers in history extend the boundary in the same way, when the provider supports that retention (one of the profile's [`supported_cache_retentions`][pydantic_ai.profiles.ModelProfile.supported_cache_retentions]): OpenAI ignores `CachePoint.ttl`, so a `'1h'` marker doesn't extend GPT-5.6's 30 minutes. Azure and providers without a single documented default leave the field `None`, producing `'unknown'` unless the settings request a retention or you pass one explicitly.
 
-[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) packages this pattern as [`CompactOnCacheExpiry`](https://pydantic.dev/docs/ai/harness/compaction/#compactoncacheexpiry-compact-once-the-cache-has-expired), which [requests compaction](capabilities/compaction.md#requesting-compaction) on the first request after the cache has expired.
+[Pydantic AI Harness](harness/index.md) packages this pattern as [`CompactOnCacheExpiry`](harness/compaction.md#compactoncacheexpiry-compact-once-the-cache-has-expired), which [requests compaction](capabilities/compaction.md#requesting-compaction) on the first request after the cache has expired.
 
 ### Testing History Processors
 
