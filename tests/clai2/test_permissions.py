@@ -2,24 +2,33 @@
 
 import io
 from pathlib import Path
+from typing import get_args
 
 import anyio
 import pytest
 from rich.console import Console
 
-from pydantic_ai import Agent, DeferredToolRequests, Tool
+from pydantic_ai import Agent, DeferredToolRequests, RunContext, Tool
 from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse
-from pydantic_ai_harness.permissions import PermissionDecision, PermissionRequest
+from pydantic_ai_harness.permissions import (
+    PermissionDecision,
+    PermissionMode as HarnessPermissionMode,
+    PermissionRequest,
+)
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.subagents import SubAgents
 from pydantic_clai2.builtin_plugins.ask_user_menu import QuestionMenu, TerminalAnswerer, terminal_approver
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer
 from pydantic_clai2.builtin_plugins.web.protocol import QuestionAsked, QuestionClosed
-from pydantic_clai2.config import Settings
+from pydantic_clai2.config import PermissionMode, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, bare_screen
@@ -277,12 +286,12 @@ async def test_approval_handler_answers_held_calls_and_leaves_others(tmp_path: P
     assert result.output == f'Tool said: ran {COMMAND}'
 
     other = DeferredToolRequests(approvals=[ToolCallPart('other', {}, tool_call_id='x')])
-    [_, unanswered] = session_permissions(lambda: 'auto')
+    [_, unanswered, _] = session_permissions(lambda: 'auto')
     assert await unanswered.handle_deferred_tool_calls(None, requests=other) is None  # pyright: ignore[reportArgumentType]
 
 
 async def test_code_mode_holds_a_shell_call_from_run_code(tmp_path: Path) -> None:
-    """Code mode folds `shell` into `run_code` by dropping its `code_arg_name`; its commands are still held."""
+    """Code mode folds `shell` into `run_code` with `FOLD_INTO_CODE_MODE`, keeping `code_arg_name`, so its commands are held."""
     (tmp_path / 'doomed').mkdir()
     asked: list[PermissionRequest] = []
 
@@ -312,8 +321,11 @@ async def test_the_terminal_can_answer_the_browsers_approval_first() -> None:
     assert answerer.questions == []
 
 
-async def test_a_supplied_agents_self_delegation_is_held(tmp_path: Path) -> None:
-    """A supplied agent gets `/permissions` per run, which its delegate to `self` would not carry, so the delegation is held."""
+@pytest.mark.parametrize(('mode', 'refused'), [('full', False), ('auto', True)])
+async def test_a_supplied_agents_self_delegation_is_refused_outside_full(
+    tmp_path: Path, mode: str, refused: bool
+) -> None:
+    """A supplied agent gets `/permissions` per run, which its delegate to `self` would not carry."""
     ran: list[str] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -322,10 +334,9 @@ async def test_a_supplied_agents_self_delegation_is_held(tmp_path: Path) -> None
             return ModelResponse(parts=[TextPart(f'Tool said: {returned[0].content}')])
         if 'delegate_task' in [tool.name for tool in info.function_tools]:
             return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': 'clean up'})])
-        # The delegate, one level down, which only runs when the delegation is not held.
-        return ModelResponse(parts=[ToolCallPart('run_command', {'command': COMMAND})])  # pragma: no cover
+        return ModelResponse(parts=[ToolCallPart('run_command', {'command': COMMAND})])
 
-    def run_command(command: str) -> str:  # pragma: no cover - the delegation that would call it is held
+    def run_command(command: str) -> str:
         ran.append(command)
         return f'ran {command}'
 
@@ -337,9 +348,45 @@ async def test_a_supplied_agents_self_delegation_is_held(tmp_path: Path) -> None
         capabilities=[SubAgents[None](include_self=True, max_depth=2, agent_folders=None)],
     )
     shell, output = runtime(tmp_path, agent)
-    shell.send_input('/permissions auto')
+    shell.send_input(f'/permissions {mode}')
     shell.send_input('clean up')
     shell.send_input('/exit')
     assert await shell.run() == 'exit'
-    assert ran == []
-    assert f'The user denied this delegation, so it did not run. {UNANSWERED}' in output.getvalue()
+    assert ran == ([] if refused else [COMMAND])
+    assert ('Delegation is off while /permissions is auto' in output.getvalue()) is refused
+
+
+@pytest.mark.parametrize(
+    ('shared', 'agent_name', 'carried'), [(True, 'helper', True), (False, 'self', True), (False, 'helper', False)]
+)
+async def test_delegates_that_carry_the_sessions_permissions_are_not_refused(
+    shared: bool, agent_name: str, carried: bool
+) -> None:
+    """Shared with the delegates, or bound to an agent delegating to `self`, `Permissions` reaches the delegate."""
+    permissions, _, keep = session_permissions(lambda: 'read-only')
+    sub_agents = SubAgents[None](
+        include_self=True, agent_folders=None, shared_capabilities=[permissions] if shared else []
+    )
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[sub_agents, *([] if shared else [permissions])])
+    ctx = RunContext[None](
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        agent=agent,
+        capabilities={'subagents': sub_agents},
+    )
+    tool_def = ToolDefinition(name=sub_agents.tool_name, capability_id='subagents')
+    args = {'agent_name': agent_name, 'task': 'clean up'}
+    if carried:
+        assert (
+            await keep.before_tool_execute(ctx, call=ToolCallPart('delegate_task', args), tool_def=tool_def, args=args)
+            == args
+        )
+    else:
+        with pytest.raises(SkipToolExecution):
+            await keep.before_tool_execute(ctx, call=ToolCallPart('delegate_task', args), tool_def=tool_def, args=args)
+
+
+def test_settings_copy_the_harness_permission_mode() -> None:
+    """CLAI spells `PermissionMode` out so reading settings imports no harness code; the copy must match."""
+    assert get_args(PermissionMode) == get_args(HarnessPermissionMode)

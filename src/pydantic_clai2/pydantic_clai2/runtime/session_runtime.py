@@ -46,7 +46,7 @@ from pydantic_clai2.commands import (
     is_silent,
     set_completions,
 )
-from pydantic_clai2.config import PERMISSION_MODES, PluginSettings, Settings
+from pydantic_clai2.config import PERMISSION_MODES, PERMISSIONS_SETTING as PERMISSIONS, PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.errors import error_message
@@ -75,7 +75,7 @@ from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.git_actions import git_commands
 from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
-from pydantic_clai2.runtime.permissions import SETTING as PERMISSIONS, permissions_command, session_permissions
+from pydantic_clai2.runtime.permissions import permissions_command, session_permissions
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session import (
     Session,

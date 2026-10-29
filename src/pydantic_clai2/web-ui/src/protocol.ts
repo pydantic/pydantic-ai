@@ -83,7 +83,7 @@ export interface Dialog {
 /** A tool call `/permissions` holds until the user approves it. */
 export interface ApprovalInfo {
   tool: string
-  action: 'command' | 'write' | 'delegate'
+  action: 'command' | 'write'
   /** The command, or the path the call writes. */
   subject: string
   /** Why the session's permission mode asks. */

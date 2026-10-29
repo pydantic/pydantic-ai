@@ -53,15 +53,15 @@ agent = Agent(
 )
 ```
 
-`ask_permissions` asks about each held call in turn. A denied call does not run, and the model gets a tool result saying the user denied it, with the person's `reason` when they gave one. A `PermissionDecision` with `remember=True` also lets later calls of the same tool on the same command or path run without asking, for the rest of the conversation (by the run's `conversation_id`). That memory lives in the `Permissions` instance, in this process.
+`ask_permissions` asks about each held call in turn. A denied call does not run, and the model gets a tool result saying the user denied it, with the person's `reason` when they gave one. A `PermissionDecision` with `remember=True` also lets later calls of the same tool on the same command or path run without asking, for the rest of the conversation (by the run's `conversation_id`). That memory is the `remembered` set, which you can pass in to own: share it, clear it, or drop it with the conversation. It lives in this process, so inside a durable execution workflow it is neither read nor written, and every call asks.
 
 Approvals that other capabilities ask for, such as a tool registered with `requires_approval=True`, are left for the next handler.
 
 ## Which calls are checked
 
 - **File writes** are the `FileSystem` tools `write_file`, `edit_file`, and `create_directory`, recognized by their tool kind, so a renamed or prefixed tool is still recognized. They only reach files inside the file system's root, so `'auto'` lets them run.
-- **Commands** are the tools whose metadata declares `code_arg_language='shell'`, as the `Shell` tools that take a command (`run_command`, `start_command`, and `shell`) do. The command is the `code_arg_name` argument. When a wrapper removed `code_arg_name`, it is the `command` argument, or else every string argument joined, so the call is still checked, as a host folding the tool into [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) may.
-- **Delegations to `self`** through [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) ask in `'auto'` and `'read-only'` when `Permissions` was passed to the run rather than bound to the agent: the delegate runs only what is bound to the agent, so its writes and commands would not be checked. Bind `Permissions` to the agent to have delegates checked like the run.
+- **Commands** are the tools whose metadata declares `code_arg_language='shell'` and a `code_arg_name`, the argument holding the command, as the `Shell` tools that take a command (`run_command`, `start_command`, and `shell`) do.
+- **Sub-agents** run only the capabilities that reach them. A delegate does not see a `Permissions` passed to the parent's run, so pass it in [`SubAgents(shared_capabilities=[permissions, handler])`](https://pydantic.dev/docs/ai/harness/subagents/) to check delegates too.
 - Every other tool runs in every mode. Gate a tool of your own with `requires_approval=True`, a [`ToolGuardrail`](https://pydantic.dev/docs/ai/harness/guardrails/), or a [`ToolCallJudge`](https://pydantic.dev/docs/ai/harness/tool-call-judge/).
 
 `ask_commands` is a list of regular expressions, each searched for anywhere in the command. `DEFAULT_ASK_COMMANDS` asks about forced or recursive deletes (`rm -rf`), `git push`, `git reset --hard` and `git clean`, `sudo`, network clients (`curl`, `wget`, `ssh`, and others), package installs, `dd`, and `mkfs`. It is a convenience, not a sandbox: a command can do the same thing in a form no pattern matches, such as a script it writes first. Use a [sandbox](https://pydantic.dev/docs/ai/core-concepts/workspace/) when the agent must not reach something.

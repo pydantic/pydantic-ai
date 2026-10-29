@@ -3,20 +3,32 @@
 A held call is put to the user as an `ask_user` question with three choices, so the terminal picker and
 the browser's question card both answer it; a typed answer denies the call with that reason. Whichever
 plugin answers questions binds `approval_handler` with its answerer. A call no handler answered, as in a
-session no one can be asked in, is denied by `DenyUnanswered`.
+session no one can be asked in, is denied by `DenyUnanswered`. A `SubAgents` delegation that the session's
+`Permissions` would not reach is refused outside `full` by `KeepDelegatesChecked`.
 """
 
 import difflib
 import unicodedata
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, HandleDeferredToolCalls
-from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDenied
+from pydantic_ai.exceptions import SkipToolExecution
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.tools import (
+    AgentDepsT,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolDefinition,
+    ToolDenied,
+)
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse, Question, QuestionOption
 from pydantic_ai_harness.permissions import (
+    Approver,
     PermissionDecision,
     PermissionMode,
     PermissionRequest,
@@ -25,10 +37,12 @@ from pydantic_ai_harness.permissions import (
     denial_message,
     permission_requests,
 )
+from pydantic_ai_harness.subagents import SubAgents
+from pydantic_ai_harness.subagents._toolset import SELF_AGENT_NAME
 from pydantic_clai2.cli.command_context import CommandContext
-from pydantic_clai2.config import PERMISSION_MODES
+from pydantic_clai2.config import PERMISSION_MODES, PERMISSIONS_SETTING as SETTING
+from pydantic_clai2.runtime.task_prompts import is_delegate_tool
 
-SETTING = 'run.permissions'
 MODES: dict[PermissionMode, str] = {
     'full': 'Full access: everything runs without asking.',
     'auto': 'Auto: file edits and commands run; commands that delete, push, install, or reach the network ask first.',
@@ -42,8 +56,6 @@ DENY = 'Deny'
 UNANSWERED = 'No one could be asked to approve it here; /permissions full lets such calls run.'
 _QUESTION_LENGTH = 500
 """What an `ask_user` question may hold; a longer command is cut, so the terminal prints it in full first."""
-
-Approve = Callable[[PermissionRequest], Awaitable[PermissionDecision]]
 
 
 def permissions_command(context: CommandContext, args: list[str]) -> str:
@@ -59,9 +71,47 @@ def permissions_command(context: CommandContext, args: list[str]) -> str:
 
 def session_permissions(
     mode: Callable[[], PermissionMode],
-) -> 'tuple[Permissions[AgentDepsT], DenyUnanswered[AgentDepsT]]':
-    """What every run of a session binds: `Permissions` reading `mode` on each call, and the denial of last resort."""
-    return Permissions[AgentDepsT](lambda ctx: mode()), DenyUnanswered[AgentDepsT]()
+) -> 'tuple[Permissions[AgentDepsT], DenyUnanswered[AgentDepsT], KeepDelegatesChecked[AgentDepsT]]':
+    """What every run of a session binds: `Permissions` reading `mode` on each call, and its two backstops.
+
+    The runtime keeps them for the session, so approvals remembered for its conversations end with it.
+    """
+    permissions = Permissions[AgentDepsT](lambda ctx: mode())
+    return permissions, DenyUnanswered[AgentDepsT](), KeepDelegatesChecked[AgentDepsT](permissions=permissions)
+
+
+@dataclass
+class KeepDelegatesChecked(AbstractCapability[AgentDepsT]):
+    """Refuse a `SubAgents` delegation, outside `full`, whose delegate would run without the session's `Permissions`.
+
+    A delegate runs what is bound to its agent plus the `SubAgents` `shared_capabilities`. CLAI binds its
+    plugins, `Permissions` included, to its own agent, so a delegation to `self` carries it; an agent you
+    supply gets them per run, and a named sub-agent runs its own agent, so neither does.
+    """
+
+    permissions: Permissions[AgentDepsT]
+
+    async def before_tool_execute(
+        self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        mode = self.permissions.mode_for(ctx)
+        if mode == 'full' or not is_delegate_tool(ctx, tool_def) or self._carried(ctx, tool_def, args):
+            return args
+        raise SkipToolExecution(
+            f'Delegation is off while /permissions is {mode}: this delegate would run without the permission '
+            'checks. Do the work here instead; /permissions full lets delegates run.'
+        )
+
+    def _carried(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition, args: dict[str, Any]) -> bool:
+        owner = ctx.capabilities[tool_def.capability_id or '']
+        assert isinstance(owner, SubAgents)
+        if any(shared is self.permissions for shared in owner.shared_capabilities):
+            return True
+        if args.get('agent_name') != SELF_AGENT_NAME or ctx.agent is None:
+            return False
+        bound: list[AbstractCapability[Any]] = []
+        ctx.agent.root_capability.apply(bound.append)
+        return any(capability is self.permissions for capability in bound)
 
 
 @dataclass
@@ -85,7 +135,7 @@ class DenyUnanswered(AbstractCapability[AgentDepsT]):
         )
 
 
-def approval_handler(approve: Approve) -> HandleDeferredToolCalls[AgentDepsT]:
+def approval_handler(approve: Approver) -> HandleDeferredToolCalls[AgentDepsT]:
     """Answer the calls `Permissions` holds with `approve`, leaving other deferred calls to later handlers."""
 
     async def handle(ctx: RunContext[AgentDepsT], requests: DeferredToolRequests) -> DeferredToolResults | None:
@@ -99,7 +149,7 @@ def approval_question(request: PermissionRequest) -> AskUserRequest:
     text = _question_text(request)
     if len(text) > _QUESTION_LENGTH:
         text = text[: _QUESTION_LENGTH - 1] + '…'
-    noun = {'command': 'command', 'write': 'file', 'delegate': 'task'}[request.action]
+    noun = 'command' if request.action == 'command' else 'file'
     return AskUserRequest(
         id=request.call.tool_call_id,
         questions=(
@@ -126,8 +176,6 @@ def shown_in_full(request: PermissionRequest) -> bool:
 def _question_text(request: PermissionRequest) -> str:
     if request.action == 'command':
         return _printable(f'{request.reason} Run this command?\n{request.subject}')
-    if request.action == 'delegate':
-        return _printable(f'{request.reason} Start this delegate anyway?\n{request.subject}')
     return _printable(f'{request.reason} Write {request.subject}?')
 
 

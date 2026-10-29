@@ -26,10 +26,10 @@ from pydantic_ai_harness.ask_user import (
     AskUserResponse,
     Question,
 )
-from pydantic_ai_harness.permissions import PermissionDecision, PermissionRequest
+from pydantic_ai_harness.permissions import Approver, PermissionDecision, PermissionRequest
 from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.plugins import FullScreen, Plugin
-from pydantic_clai2.runtime.permissions import Approve, approval_handler, approval_question, decision, shown_in_full
+from pydantic_clai2.runtime.permissions import approval_handler, approval_question, decision, shown_in_full
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
@@ -318,7 +318,7 @@ def render_question(event: AgentStreamEvent) -> RenderableType | None:
     return render_answer(event) if isinstance(event, AskUserAnsweredEvent) else None
 
 
-def terminal_approver(answerer: TerminalAnswerer) -> Approve:
+def terminal_approver(answerer: TerminalAnswerer) -> Approver:
     """Ask about each call `Permissions` holds in the terminal's picker."""
 
     async def approve(request: PermissionRequest) -> PermissionDecision:

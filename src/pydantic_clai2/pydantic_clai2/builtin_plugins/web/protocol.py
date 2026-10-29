@@ -39,6 +39,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.permissions import PermissionAction
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
 from pydantic_ai_harness.subagents import DelegationOutcome
 from pydantic_clai2.config import PermissionMode
@@ -133,7 +134,7 @@ class ApprovalInfo:
     """A tool call `/permissions` holds until the user approves it, which the browser shows as an approval card."""
 
     tool: str
-    action: Literal['command', 'write', 'delegate']
+    action: PermissionAction
     subject: str
     """The command, or the path the call writes."""
     reason: str

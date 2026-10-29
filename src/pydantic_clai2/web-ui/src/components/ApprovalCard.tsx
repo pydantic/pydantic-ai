@@ -3,11 +3,6 @@ import type { AnswerBody, ApprovalInfo, Questions } from '../protocol'
 import { DiffView } from './DiffView'
 import { ShieldIcon } from './icons'
 
-/** The labels the server's approval question offers, in `runtime/permissions.py`. */
-const APPROVE = 'Approve'
-const APPROVE_SESSION = 'Approve for this session'
-const DENY = 'Deny'
-
 interface Props {
   request: Questions
   approval: ApprovalInfo
@@ -20,11 +15,14 @@ interface Props {
 export function ApprovalCard({ request, approval, asker, answer, onError }: Props) {
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
-  const header = request.questions[0]?.header ?? ''
+  const question = request.questions[0]
+  const header = question?.header ?? ''
+  // The server's question offers approve, approve for this session, and deny, in that order.
+  const [approve = '', approveSession = '', deny = ''] = (question?.options ?? []).map((option) => option.label)
 
   const decide = async (label: string) => {
     setBusy(true)
-    const typed = label === DENY ? reason.trim() : ''
+    const typed = label === deny ? reason.trim() : ''
     const body: AnswerBody = { header, selected: typed ? [] : [label], custom: typed || null }
     try {
       await answer(request.id, [body])
@@ -34,7 +32,7 @@ export function ApprovalCard({ request, approval, asker, answer, onError }: Prop
     }
   }
 
-  const what = { command: 'run a command', write: 'write a file', delegate: 'start a delegate' }[approval.action]
+  const what = approval.action === 'command' ? 'run a command' : 'write a file'
   return (
     <div className="question-card approval-card" role="group" aria-label="Approval">
       <div className="question-title">
@@ -53,18 +51,18 @@ export function ApprovalCard({ request, approval, asker, answer, onError }: Prop
         disabled={busy}
         onChange={(event) => setReason(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && reason.trim()) void decide(DENY)
+          if (event.key === 'Enter' && reason.trim()) void decide(deny)
         }}
       />
       <div className="question-actions">
-        <button className="ghost" onClick={() => void decide(DENY)} disabled={busy}>
-          {DENY}
+        <button className="ghost" onClick={() => void decide(deny)} disabled={busy}>
+          {deny}
         </button>
-        <button className="ghost" onClick={() => void decide(APPROVE_SESSION)} disabled={busy}>
-          {APPROVE_SESSION}
+        <button className="ghost" onClick={() => void decide(approveSession)} disabled={busy}>
+          {approveSession}
         </button>
-        <button className="primary" onClick={() => void decide(APPROVE)} disabled={busy}>
-          {APPROVE}
+        <button className="primary" onClick={() => void decide(approve)} disabled={busy}>
+          {approve}
         </button>
       </div>
     </div>

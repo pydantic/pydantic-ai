@@ -15,6 +15,8 @@ TOOL_CALL_DISPLAYS: tuple[ToolCallDisplay, ...] = get_args(ToolCallDisplay)
 PermissionMode = Literal['full', 'auto', 'read-only']
 """harness `PermissionMode`, spelled out so reading settings imports no harness code."""
 PERMISSION_MODES: tuple[PermissionMode, ...] = get_args(PermissionMode)
+PERMISSIONS_SETTING = 'run.permissions'
+"""The setting `/permissions` changes, defined once for every reader."""
 
 
 class Settings(BaseModel):

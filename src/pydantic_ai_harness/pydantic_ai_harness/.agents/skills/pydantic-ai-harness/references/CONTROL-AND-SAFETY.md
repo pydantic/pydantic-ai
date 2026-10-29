@@ -425,7 +425,9 @@ Gotchas:
 
 - Without a handler a held call ends the run as `DeferredToolRequests` output, like `requires_approval=True`.
 - `mode` may be a function of the run context, read on every call. `PermissionDecision(remember=True)`
-  skips asking about the same tool and command or path for the rest of the conversation, in this process.
+  skips asking about the same tool and command or path for the rest of the conversation, via the caller-ownable
+  `remembered` set; inside durable execution nothing is remembered.
+- Delegates are only checked when `Permissions` reaches them: pass it in `SubAgents(shared_capabilities=[...])`.
 - `ask_commands` patterns are a convenience, not a sandbox: use a sandbox workspace when the agent must not
   reach something.
 

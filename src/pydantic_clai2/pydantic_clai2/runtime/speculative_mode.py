@@ -7,8 +7,9 @@ Every tool the run has, plugin and MCP tools included, becomes a function inside
 `CodeMode`'s `run_code` except `write_file` and `edit_file`, which stay native so their diffs
 render as usual, and, in a run that prompts a task for the user (`task_prompts`), the delegate tool its
 scripted model calls. `shell` folds in too, as Code Puppy's shell tool does: harness `CodeMode` keeps
-tools marked with `code_arg_name` metadata native by default, so `SpeculativeExecution` clears
-that marker on `shell` only (`FOLDED_CODE_TOOLS`). Without it, a coding turn is all native `shell` calls
+tools marked with `code_arg_name` metadata native by default, so `SpeculativeExecution` sets
+`FOLD_INTO_CODE_MODE` on `shell` only (`FOLDED_CODE_TOOLS`), which keeps `code_arg_name` for
+`/permissions` and instrumentation. Without it, a coding turn is all native `shell` calls
 and eager execution never starts a build or test while the model is still writing.
 
 Only the read-only tools in `SPECULATIVE_TOOLS`, provided by the capability listed there, may
@@ -45,6 +46,7 @@ from pydantic_ai.tools import AgentDepsT, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.code_mode import (
+    FOLD_INTO_CODE_MODE,
     CodeMode,
     CodeModeToolset,
     SpeculativeCallClaimedEvent,
@@ -364,7 +366,7 @@ def _declarations(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> dict
     """
     metadata: dict[str, object] = dict(tool_def.metadata or {})
     if tool_def.name in FOLDED_CODE_TOOLS:
-        metadata.pop('code_arg_name', None)
+        metadata[FOLD_INTO_CODE_MODE] = True
     owner = SPECULATIVE_TOOLS.get(tool_def.name)
     trusted = owner is not None and isinstance(ctx.capabilities.get(tool_def.capability_id or ''), owner)
     metadata['read_only'] = trusted

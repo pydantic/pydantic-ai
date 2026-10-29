@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, MutableSet, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, Literal
 
@@ -22,9 +22,8 @@ from pydantic_ai.tools import (
     ToolDefinition,
     ToolDenied,
 )
+from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness.filesystem._tool_kinds import CREATE_DIRECTORY_KIND, EDIT_FILE_KIND, WRITE_FILE_KIND
-from pydantic_ai_harness.subagents import SubAgents
-from pydantic_ai_harness.subagents._toolset import SELF_AGENT_NAME
 
 PermissionMode = Literal['full', 'auto', 'read-only']
 """How much the agent may do without asking.
@@ -34,8 +33,8 @@ PermissionMode = Literal['full', 'auto', 'read-only']
 - `'read-only'`: every file write and every command asks first.
 """
 
-PermissionAction = Literal['command', 'write', 'delegate']
-"""What a call that asks would do: run a shell command, write a file, or start a delegate these checks do not reach."""
+PermissionAction = Literal['command', 'write']
+"""What a call that asks would do: run a shell command, or write a file."""
 
 DEFAULT_ASK_COMMANDS: tuple[str, ...] = (
     r'\brm\s+(-\S*[rRf]|--recursive\b|--force\b)',
@@ -86,7 +85,7 @@ class PermissionRequest:
     """Whether the call runs a command or writes a file."""
 
     subject: str
-    """The command, the path written, or the delegate's task."""
+    """The command, or the path written."""
 
     reason: str
     """Why the current mode asks about this call, for the person deciding."""
@@ -121,11 +120,10 @@ class Permissions(AbstractCapability[AgentDepsT]):
     [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output.
 
     File writes are the `FileSystem` tools `write_file`, `edit_file`, and `create_directory`, recognized by
-    their tool kind whatever they are named. A delegation to `self` through `SubAgents` asks too when this
-    capability is passed to the run rather than bound to the agent, since the delegate would run without it. Commands are the tools whose metadata declares
-    `code_arg_language='shell'`, as the `Shell` tools that take a command do; the command is the
-    `code_arg_name` argument; when a wrapper removed that name, it is the `command` argument, or else every string
-    argument joined. Other tools are not checked.
+    their tool kind whatever they are named. Commands are the tools whose metadata declares
+    `code_arg_language='shell'` and a `code_arg_name`, as the `Shell` tools that take a command do. Other
+    tools are not checked, and neither are sub-agents' runs this capability does not reach: pass it in
+    `SubAgents(shared_capabilities=[...])` to check them too.
 
     `mode` can be a function of the run context. It is read on every call, so a mode changed during a run
     applies from the run's next call.
@@ -139,10 +137,16 @@ class Permissions(AbstractCapability[AgentDepsT]):
     ask_commands: Sequence[str] = DEFAULT_ASK_COMMANDS
     """Regular expressions for the commands `'auto'` asks about, searched for anywhere in the command."""
 
-    _patterns: tuple[re.Pattern[str], ...] = field(init=False, repr=False, compare=False)
-    _remembered: dict[str | None, set[tuple[str, str]]] = field(
-        default_factory=dict[str | None, set[tuple[str, str]]], init=False, repr=False, compare=False
+    remembered: MutableSet[tuple[str | None, str, str]] = field(
+        default_factory=set[tuple[str | None, str, str]], repr=False, compare=False
     )
+    """Calls approved with `remember=True`, as `(conversation_id, tool_name, subject)`, which run without asking.
+
+    The caller owns it: pass one to share it, bound it, or drop it with the conversation it is for. It is
+    in-process memory, so inside a durable workflow or flow it is neither read nor written: every call asks.
+    """
+
+    _patterns: tuple[re.Pattern[str], ...] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Compile `ask_commands`, so a bad pattern fails when the capability is built."""
@@ -172,12 +176,13 @@ class Permissions(AbstractCapability[AgentDepsT]):
         asked = self._asks(ctx, tool_def=tool_def, args=args)
         if asked is None:
             return args
-        key = (call.tool_name, asked.subject)
+        # In-process memory would not survive a replay or a move to another worker.
+        key = None if in_durable_context(ctx) else (ctx.conversation_id, call.tool_name, asked.subject)
         if ctx.tool_call_approved:
-            if _remember(ctx.tool_call_metadata):
-                self._remembered.setdefault(ctx.conversation_id, set()).add(key)
+            if key is not None and _remember(ctx.tool_call_metadata):
+                self.remembered.add(key)
             return args
-        if key in self._remembered.get(ctx.conversation_id, ()):
+        if key is not None and key in self.remembered:
             return args
         raise ApprovalRequired(metadata=_AskedMetadata(permissions=asked).model_dump())
 
@@ -186,15 +191,6 @@ class Permissions(AbstractCapability[AgentDepsT]):
         mode = self.mode_for(ctx)
         if mode == 'full':
             return None
-        if (task := self._unchecked_delegation(ctx, tool_def=tool_def, args=args)) is not None:
-            return _Asked(
-                action='delegate',
-                subject=task,
-                reason=(
-                    f'A delegate of this agent runs without the {mode} permission checks, '
-                    'so its file writes and commands would not ask.'
-                ),
-            )
         if tool_def.tool_kind in _WRITE_KINDS:
             # The file tools only reach files inside their root, so `'auto'` lets them write.
             path = args.get('path')
@@ -214,42 +210,15 @@ class Permissions(AbstractCapability[AgentDepsT]):
             )
         return None
 
-    def _unchecked_delegation(
-        self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]
-    ) -> str | None:
-        """The task of a `SubAgents` delegation to `self` that this `Permissions` would not check, else `None`.
-
-        Such a delegate runs only what is bound to the agent, so this capability, passed to the run instead,
-        does not reach it.
-        """
-        owner = ctx.capabilities.get(tool_def.capability_id or '')
-        if not isinstance(owner, SubAgents) or args.get('agent_name') != SELF_AGENT_NAME or ctx.agent is None:
-            return None
-        bound: list[AbstractCapability[Any]] = []
-        ctx.agent.root_capability.apply(bound.append)
-        # Only this `Permissions` bound to the agent checks the delegate as it checks this run; another bound
-        # one may be in a laxer mode.
-        if any(capability is self for capability in bound):
-            return None
-        task = args.get('task')
-        return task if isinstance(task, str) else ''
-
 
 def _command(tool_def: ToolDefinition, args: dict[str, Any]) -> str | None:
     """The shell command a call runs, when its tool declares one."""
     metadata = tool_def.metadata or {}
-    if metadata.get('code_arg_language') != 'shell':
-        return None
     name = metadata.get('code_arg_name')
-    if isinstance(name, str):
-        command = args.get(name)
-        return command if isinstance(command, str) else None
-    # A host that folds the tool into code mode drops `code_arg_name` and keeps the language. Not knowing which
-    # argument is the command, check them all, so a tool whose command argument has another name is still held.
-    command = args.get('command')
-    if isinstance(command, str):
-        return command
-    return ' '.join(value for value in args.values() if isinstance(value, str)) or None
+    if metadata.get('code_arg_language') != 'shell' or not isinstance(name, str):
+        return None
+    command = args.get(name)
+    return command if isinstance(command, str) else None
 
 
 def _remember(metadata: object) -> bool:
@@ -296,6 +265,6 @@ async def ask_permissions(requests: DeferredToolRequests, approver: Approver) ->
 
 def denial_message(request: PermissionRequest, *, reason: str | None = None) -> str:
     """What the model is told when `request` is denied, with the person's `reason` when they gave one."""
-    what = {'command': 'command', 'write': 'file write', 'delegate': 'delegation'}[request.action]
+    what = 'command' if request.action == 'command' else 'file write'
     message = f'The user denied this {what}, so it did not run.'
     return f'{message} Their reason: {reason}' if reason else message

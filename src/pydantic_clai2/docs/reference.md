@@ -1806,8 +1806,9 @@ and Settings, General edits it. It is harness [`Permissions`](../../../docs/harn
 the coding tools' file writes and commands only; other tools, such as MCP servers', run as before. File tools
 only reach files inside the session's folder, so `auto` lets them write. In `read-only`, code mode's sandbox
 gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
-can be asked in, such as `clai2 -p`, denies held calls. With an agent you supply (`clai2 --agent`), `/permissions` is passed to
-each run rather than bound to the agent, so a delegation to `self` would run unchecked: outside `full` it asks first.
+can be asked in, such as `clai2 -p`, denies held calls. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
+sub-agent, or a delegation to `self` from an agent you supply (`clai2 --agent`), which gets `/permissions`
+per run rather than bound to the agent. The model is told to do the work itself instead.
 
 ### Compacting the conversation
 

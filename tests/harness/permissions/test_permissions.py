@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, Tool
-from pydantic_ai.capabilities import HandleDeferredToolCalls, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -18,7 +18,6 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolResults, RunContext, ToolApproved
@@ -183,40 +182,22 @@ class TestPermissions:
 
         assert len(person.asked) == 1
 
-    @pytest.mark.parametrize('argument', ['command', 'cmd'])
-    async def test_a_shell_tool_without_code_arg_name_is_still_held(self, argument: str) -> None:
-        """A host folding the tool into code mode drops `code_arg_name` and keeps the language."""
+    async def test_a_shell_tool_without_code_arg_name_is_not_checked(self) -> None:
+        """Commands are read from the `code_arg_name` argument; a tool that declares none is not a command."""
 
-        def run(**kwargs: str) -> str:
-            return ''  # pragma: no cover
+        def shell(command: str) -> str:
+            return command
 
-        def other(script: str) -> str:
-            return script
-
-        folded = Tool.from_schema(
-            run,
-            name='shell',
-            description='Run a command.',
-            json_schema={
-                'type': 'object',
-                'properties': {argument: {'type': 'string'}, 'timeout': {'type': 'integer'}},
-            },
-            takes_ctx=False,
-        )
-        folded.metadata = {'code_arg_language': 'shell'}
-        python = Tool(other, metadata={'code_arg_language': 'python', 'code_arg_name': 'script'})
+        tool = Tool(shell, metadata={'code_arg_language': 'shell'})
         agent = Agent[None, 'str | DeferredToolRequests'](
-            _calls(('other', {'script': 'rm -rf x'}), ('shell', {argument: 'rm -rf x', 'timeout': 5})),
+            _calls(('shell', {'command': 'rm -rf x'})),
             deps_type=type(None),
             output_type=[str, DeferredToolRequests],
-            tools=[folded, python],
-            capabilities=[Permissions('auto')],
+            tools=[tool],
+            capabilities=[Permissions('read-only')],
         )
 
-        result = await agent.run('go')
-
-        assert isinstance(result.output, DeferredToolRequests)
-        assert [request.subject for request in permission_requests(result.output)] == ['rm -rf x']
+        assert (await agent.run('go')).output == 'rm -rf x'
 
     async def test_without_a_handler_the_call_is_deferred(self, tmp_path: Path) -> None:
         agent = _agent(tmp_path, _calls(('run_command', {'command': 'git push'})), 'auto')
@@ -253,54 +234,89 @@ class TestPermissions:
 
         assert not (tmp_path / 'doomed').exists()
 
-    @pytest.mark.parametrize('bound', ['none', 'this', 'laxer'])
-    async def test_a_self_delegation_carries_the_check(self, tmp_path: Path, bound: str) -> None:
-        """A delegate to `self` runs only what is bound to the agent, so a run-level `Permissions` holds the delegation."""
+    @pytest.mark.parametrize('shared', [False, True])
+    async def test_sub_agents_are_checked_when_permissions_reaches_them(self, tmp_path: Path, shared: bool) -> None:
+        """A delegate runs only what reaches it: `SubAgents(shared_capabilities=[...])` brings `Permissions` along."""
         (tmp_path / 'doomed').mkdir()
         person = _Person(PermissionDecision(approved=False))
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            prompt = next(
-                part.content
-                for message in messages
-                if isinstance(message, ModelRequest)
-                for part in message.parts
-                if isinstance(part, UserPromptPart)
-            )
             last = messages[-1]
             if isinstance(last, ModelRequest) and any(isinstance(part, ToolReturnPart) for part in last.parts):
                 return ModelResponse(parts=[TextPart('done')])
-            if prompt == 'go':
+            if 'delegate_task' in [tool.name for tool in info.function_tools]:
                 return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': 'clean up'})])
             return ModelResponse(parts=[ToolCallPart('run_command', {'command': 'rm -rf doomed'})])
 
-        gate = [
-            Permissions[None]('read-only'),
-            HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person)),
-        ]
+        permissions = Permissions[None]('read-only')
+        handler = HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person))
         agent = Agent[None, str](
             FunctionModel(respond),
             deps_type=type(None),
             capabilities=[
                 LocalWorkspace(tmp_path),
                 Shell(denied_commands=[]),
-                SubAgents(include_self=True, agent_folders=None),
-                *(gate if bound == 'this' else [Permissions[None]('full')] if bound == 'laxer' else []),
+                SubAgents(
+                    include_self=True,
+                    max_depth=2,
+                    agent_folders=None,
+                    shared_capabilities=[permissions, handler] if shared else [],
+                ),
             ],
         )
 
-        await agent.run('go', capabilities=[] if bound == 'this' else gate)
+        await agent.run('go', capabilities=[permissions, handler])
 
-        assert (tmp_path / 'doomed').is_dir()
-        if bound == 'this':
-            assert [(request.action, request.subject) for request in person.asked] == [('command', 'rm -rf doomed')]
-        else:
-            [request] = person.asked
-            assert (request.action, request.subject, request.call.tool_name) == (
-                'delegate',
-                'clean up',
-                'delegate_task',
-            )
+        assert (tmp_path / 'doomed').is_dir() is shared
+        assert [request.subject for request in person.asked] == (['rm -rf doomed'] if shared else [])
+
+    async def test_a_caller_owned_memory(self, tmp_path: Path) -> None:
+        """`remembered` belongs to the caller, who can read, share, or clear it."""
+        remembered: set[tuple[str | None, str, str]] = set()
+        person = _Person(PermissionDecision(approved=True, remember=True))
+        command = ('run_command', {'command': 'echo hi'})
+        agent = Agent[None, str](
+            _calls(command, command),
+            deps_type=type(None),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Shell(denied_commands=[]),
+                Permissions('read-only', remembered=remembered),
+                HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person)),
+            ],
+        )
+
+        await agent.run('go', conversation_id='c')
+
+        assert remembered == {('c', 'run_command', 'echo hi')}
+        assert len(person.asked) == 1
+
+    async def test_remember_has_no_effect_inside_durable_execution(self, tmp_path: Path) -> None:
+        """In-process memory would not survive a replay, so inside a durable workflow every call asks."""
+
+        class DBOSDurability(AbstractCapability[None]):
+            in_durable_context = True
+
+        DBOSDurability.__module__ = 'pydantic_ai.durable_exec.dbos'
+        remembered: set[tuple[str | None, str, str]] = set()
+        person = _Person(PermissionDecision(approved=True, remember=True), PermissionDecision(approved=True))
+        command = ('run_command', {'command': 'echo hi'})
+        agent = Agent[None, str](
+            _calls(command, command),
+            deps_type=type(None),
+            capabilities=[
+                DBOSDurability(),
+                LocalWorkspace(tmp_path),
+                Shell(denied_commands=[]),
+                Permissions('read-only', remembered=remembered),
+                HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person)),
+            ],
+        )
+
+        await agent.run('go')
+
+        assert remembered == set()
+        assert len(person.asked) == 2
 
     def test_serialization_name(self) -> None:
         assert Permissions.get_serialization_name() == 'Permissions'
