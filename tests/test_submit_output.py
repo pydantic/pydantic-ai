@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+from collections.abc import AsyncIterable, AsyncIterator
 from datetime import datetime
 from typing import Any
 
@@ -28,11 +29,24 @@ from pydantic_ai import (
     ToolOutput,
     ToolReturnPart,
 )
-from pydantic_ai.capabilities import HandleDeferredToolCalls, PrepareOutputTools
+from pydantic_ai._agent_graph import CallToolsNode
+from pydantic_ai.agent import EndStrategy
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    AgentNode,
+    HandleDeferredToolCalls,
+    NodeResult,
+    PrepareOutputTools,
+    ValidatedToolArgs,
+    WrapToolExecuteHandler,
+)
 from pydantic_ai.durable_exec import durable_unit_scope
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.messages import AgentStreamEvent
+from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import ToolDefinition
+from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
 
@@ -359,7 +373,7 @@ async def test_submit_output_misuse():
 
     ctx = RunContext(deps=None, model=FunctionModel(lambda m, i: ModelResponse(parts=[])), usage=None)  # type: ignore[arg-type]
     assert ctx.output_tool_defs == []
-    with pytest.raises(UserError, match='can only be called from a tool call during an agent run'):
+    with pytest.raises(UserError, match='can only be called during an agent run'):
         await ctx.submit_output('final_result', {})
 
 
@@ -689,3 +703,355 @@ async def test_retry_from_a_sibling_suppresses_an_inline_approved_submission():
     result = await agent.run('go')
 
     assert result.output == Invoice(order_id='from_model', total=2)
+
+
+@pytest.mark.parametrize('hook', ['before_tool_execute', 'after_tool_execute', 'wrap_tool_execute'])
+async def test_submission_from_a_tool_execution_hook(hook: str):
+    """A tool's hooks run with its call's context, so their submission counts as the tool call's, like the tool's own."""
+
+    class SubmitForTheTool(AbstractCapability[None]):
+        async def before_tool_execute(
+            self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+        ) -> ValidatedToolArgs:
+            if hook == 'before_tool_execute':
+                await ctx.submit_output('final_result', {'order_id': 'before', 'total': 1})
+            return args
+
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[None],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: Any,
+        ) -> Any:
+            if hook == 'after_tool_execute':
+                await ctx.submit_output('final_result', {'order_id': 'after', 'total': 2})
+            return result
+
+        async def wrap_tool_execute(
+            self,
+            ctx: RunContext[None],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            handler: WrapToolExecuteHandler,
+        ) -> Any:
+            result = await handler(args)
+            if hook == 'wrap_tool_execute':
+                await ctx.submit_output('final_result', {'order_id': 'wrap', 'total': 3})
+            return result
+
+    agent = Agent(call_tool_then_reply('assemble'), output_type=Invoice, capabilities=[SubmitForTheTool()])
+
+    @agent.tool_plain
+    def assemble() -> str:
+        return 'assembled'
+
+    result = await agent.run('go')
+
+    assert result.output.order_id == hook.removesuffix('_tool_execute')
+    assert result.usage.requests == 1
+    [tool_return] = tool_returns(result.all_messages())
+    assert (tool_return.content, tool_return.outcome) == ('assembled', 'success')
+
+
+class SubmitBeforeModelRequest(AbstractCapability[None]):
+    """Submits an output once the step it's set for starts, before its request is sent."""
+
+    def __init__(self, step: int, *, in_prepare: bool = False):
+        super().__init__()
+        self.step = step
+        self.in_prepare = in_prepare
+
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if not self.in_prepare and ctx.run_step == self.step:
+            await ctx.submit_output('final_result', {'order_id': 'from_hook', 'total': 1})
+        return request_context
+
+    async def prepare_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if self.in_prepare and ctx.run_step == self.step:
+            await ctx.submit_output('final_result', {'order_id': 'from_hook', 'total': 1})
+        return request_context
+
+
+@pytest.mark.parametrize('in_prepare', [False, True], ids=['before_model_request', 'prepare_model_request'])
+@pytest.mark.parametrize('mode', ['run', 'event_stream_handler', 'run_stream'])
+async def test_submission_before_a_model_request_ends_the_run_without_sending_it(in_prepare: bool, mode: str):
+    """The request goes unsent, but stays in history, so the tool return it carries still answers its call."""
+    requests: list[int] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        requests.append(len(messages))
+        return ModelResponse(parts=[ToolCallPart('look_up', {}, tool_call_id='call-1')])
+
+    async def stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        requests.append(len(messages))
+        yield {0: DeltaToolCall(name='look_up', json_args='{}', tool_call_id='call-1')}
+
+    agent = Agent(
+        FunctionModel(model, stream_function=stream_model),
+        output_type=Invoice,
+        capabilities=[SubmitBeforeModelRequest(2, in_prepare=in_prepare)],
+    )
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return 'found'
+
+    async def handle_events(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
+    if mode == 'run_stream':
+        async with agent.run_stream('go') as stream:
+            output = await stream.get_output()
+            messages = stream.all_messages()
+            usage = stream.usage
+    else:
+        result = await agent.run('go', event_stream_handler=handle_events if mode == 'event_stream_handler' else None)
+        output, messages, usage = result.output, result.all_messages(), result.usage
+
+    assert output == Invoice(order_id='from_hook', total=1)
+    assert requests == [1]
+    assert usage.requests == 1
+    assert [m.kind for m in messages] == ['request', 'response', 'request']
+    [tool_return] = tool_returns(messages)
+    assert (tool_return.tool_name, tool_return.content) == ('look_up', 'found')
+
+
+async def test_submission_before_the_first_request_ends_the_run_without_one():
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('no request should be sent')  # pragma: no cover
+
+    agent = Agent(FunctionModel(model), output_type=Invoice, capabilities=[SubmitBeforeModelRequest(1)])
+
+    result = await agent.run('go')
+
+    assert result.output == Invoice(order_id='from_hook', total=1)
+    assert result.usage.requests == 0
+    assert [m.kind for m in result.all_messages()] == ['request']
+
+
+@pytest.mark.parametrize(
+    ('end_strategy', 'executed'), [('early', []), ('exhaustive', ['look_up'])], ids=['early', 'exhaustive']
+)
+async def test_submission_after_a_model_request_is_the_responses_first_output(
+    end_strategy: EndStrategy, executed: list[str]
+):
+    """The response's tool calls are handled as they'd be after an output tool call at its start."""
+    ran: list[str] = []
+
+    class SubmitAfterResponse(AbstractCapability[None]):
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            await ctx.submit_output('final_result', {'order_id': 'from_hook', 'total': 1})
+            return response
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('look_up', {}, tool_call_id='call-1'),
+                ToolCallPart('final_result', {'order_id': 'from_model', 'total': 2}, tool_call_id='call-2'),
+            ]
+        )
+
+    agent = Agent(
+        FunctionModel(model), output_type=Invoice, end_strategy=end_strategy, capabilities=[SubmitAfterResponse()]
+    )
+
+    @agent.tool_plain
+    def look_up() -> str:
+        ran.append('look_up')
+        return 'found'
+
+    result = await agent.run('go')
+
+    assert result.output == Invoice(order_id='from_hook', total=1)
+    assert ran == executed
+    assert result.usage.requests == 1
+    # Every tool call in the response is answered.
+    assert {part.tool_call_id for part in tool_returns(result.all_messages())} == {'call-1', 'call-2'}
+
+
+async def test_submission_after_a_text_response_replaces_its_output():
+    class SubmitAfterResponse(AbstractCapability[None]):
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            await ctx.submit_output('final_result', {'order_id': 'from_hook', 'total': 1})
+            return response
+
+    agent = Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('not json')])),
+        output_type=NativeOutput(Invoice),
+        capabilities=[SubmitAfterResponse()],
+    )
+
+    result = await agent.run('go')
+
+    assert result.output == Invoice(order_id='from_hook', total=1)
+    assert [m.kind for m in result.all_messages()] == ['request', 'response']
+
+
+async def test_submission_from_a_node_hook_ends_the_run_before_the_next_request():
+    class SubmitAfterTools(AbstractCapability[None]):
+        async def after_node_run(
+            self, ctx: RunContext[None], *, node: AgentNode[None], result: NodeResult[None]
+        ) -> NodeResult[None]:
+            if isinstance(node, CallToolsNode):
+                await ctx.submit_output('final_result', {'order_id': 'from_hook', 'total': 1})
+            return result
+
+    agent = Agent(call_tool_then_reply('look_up'), output_type=Invoice, capabilities=[SubmitAfterTools()])
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return 'found'
+
+    result = await agent.run('go')
+
+    assert result.output == Invoice(order_id='from_hook', total=1)
+    assert result.usage.requests == 1
+    assert [m.kind for m in result.all_messages()] == ['request', 'response', 'request']
+
+
+@pytest.mark.parametrize(
+    ('output_type', 'args', 'feedback'),
+    [
+        pytest.param(
+            Invoice,
+            {'order_id': 'ord_1'},
+            snapshot('[{"type":"missing","loc":["total"],"msg":"Field required","input":{"order_id":"ord_1"}}]'),
+            id='tool',
+        ),
+        pytest.param(
+            NativeOutput(Invoice),
+            {'order_id': 'ord_1'},
+            snapshot('[{"type":"missing","loc":["total"],"msg":"Field required","input":{"order_id":"ord_1"}}]'),
+            id='native',
+        ),
+        pytest.param(Invoice, None, "Unknown output tool 'nope'.", id='unknown'),
+    ],
+)
+async def test_rejected_submission_outside_a_tool_call_raises_model_retry(
+    output_type: Any, args: dict[str, Any] | None, feedback: str
+):
+    """There's no tool call to answer, so the caller gets the feedback, and no output retry is used up."""
+    raised: list[str] = []
+    retries: list[int] = []
+
+    class SubmitFirst(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            try:
+                await ctx.submit_output('nope' if args is None else 'final_result', args or {})
+            except ModelRetry as e:
+                raised.append(e.message)
+            retries.append(ctx.retry)
+            # A rejected submission can be followed by another.
+            await ctx.submit_output('final_result', {'order_id': 'fixed', 'total': 1})
+            return request_context
+
+    agent = Agent(
+        FunctionModel(lambda m, i: ModelResponse(parts=[])), output_type=output_type, capabilities=[SubmitFirst()]
+    )
+
+    result = await agent.run('go')
+
+    assert result.output == Invoice(order_id='fixed', total=1)
+    assert raised == [feedback]
+    assert retries == [0]
+
+
+async def test_run_level_submission_misuse():
+    class SubmitTwice(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            await ctx.submit_output('final_result', {'order_id': 'one', 'total': 1})
+            await ctx.submit_output('final_result', {'order_id': 'two', 'total': 2})
+            return request_context  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(lambda m, i: ModelResponse(parts=[])), output_type=Invoice, capabilities=[SubmitTwice()]
+    )
+    with pytest.raises(UserError, match='already submitted an output with `submit_output` outside a tool call'):
+        await agent.run('go')
+
+    class SubmitAfterEnd(AbstractCapability[None]):
+        async def after_node_run(
+            self, ctx: RunContext[None], *, node: AgentNode[None], result: NodeResult[None]
+        ) -> NodeResult[None]:
+            if isinstance(result, End):
+                await ctx.submit_output('final_result', {'order_id': 'late', 'total': 1})
+            return result
+
+    agent = Agent(
+        FunctionModel(lambda m, i: ModelResponse(parts=[ToolCallPart('final_result', {'order_id': 'a', 'total': 1})])),
+        output_type=Invoice,
+        capabilities=[SubmitAfterEnd()],
+    )
+    with pytest.raises(UserError, match='after the run already had its final result'):
+        await agent.run('go')
+
+
+async def test_submission_is_refused_while_output_is_processed():
+    async def finish(ctx: RunContext[None], invoice: Invoice) -> Invoice:
+        await ctx.submit_output('final_result', {'order_id': 'nested', 'total': 1})
+        return invoice  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(lambda m, i: ModelResponse(parts=[ToolCallPart('final_result', {'order_id': 'a', 'total': 1})])),
+        output_type=ToolOutput(finish),
+    )
+    with pytest.raises(UserError, match='while output is being validated or processed'):
+        await agent.run('go')
+
+    agent = Agent(
+        FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('{"order_id": "a", "total": 1}')])),
+        output_type=NativeOutput(Invoice),
+    )
+
+    @agent.output_validator
+    async def validate(ctx: RunContext[None], output: Invoice) -> Invoice:
+        await ctx.submit_output('final_result', {'order_id': 'nested', 'total': 1})
+        return output  # pragma: no cover
+
+    with pytest.raises(UserError, match='while output is being validated or processed'):
+        await agent.run('go')
+
+
+async def test_run_level_submission_to_a_hidden_output_tool_is_rejected():
+    raised: list[str] = []
+
+    class SubmitReceipt(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            try:
+                await ctx.submit_output('submit_receipt', {'payment_id': 'pay_1'})
+            except ModelRetry as e:
+                raised.append(e.message)
+            return request_context
+
+    agent = Agent(
+        FunctionModel(
+            lambda m, i: ModelResponse(parts=[ToolCallPart('submit_invoice', {'order_id': 'ord_1', 'total': 1})])
+        ),
+        output_type=[ToolOutput(Invoice, name='submit_invoice'), ToolOutput(Receipt, name='submit_receipt')],
+        capabilities=[PrepareOutputTools(hide_receipts), SubmitReceipt()],
+    )
+
+    result = await agent.run('go')
+
+    assert result.output == Invoice(order_id='ord_1', total=1)
+    assert raised == ["Output tool 'submit_receipt' is not available right now."]
