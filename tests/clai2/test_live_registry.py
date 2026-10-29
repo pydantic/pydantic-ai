@@ -186,16 +186,17 @@ def test_darwin_peer_uid(monkeypatch: pytest.MonkeyPatch, result: int) -> None:
         assert peer_uid(connection) == (os.getuid() if result == 0 else None)
 
 
-def test_linux_peer_uid(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('uid', [501, 4_294_967_294])
+def test_linux_peer_uid(monkeypatch: pytest.MonkeyPatch, uid: int) -> None:
     def credentials(connection: socket.socket, level: int, option: int, size: int) -> bytes:
         assert (level, option, size) == (socket.SOL_SOCKET, 12345, 12)
-        return struct.pack('3i', os.getpid(), os.getuid(), os.getgid())
+        return struct.pack('iII', os.getpid(), uid, os.getgid())
 
     monkeypatch.setattr(live_registry.sys, 'platform', 'linux')
     monkeypatch.setattr(socket, 'SO_PEERCRED', 12345, raising=False)
     monkeypatch.setattr(socket.socket, 'getsockopt', credentials)
     with socket.socket() as connection:
-        assert peer_uid(connection) == os.getuid()
+        assert peer_uid(connection) == uid
 
 
 def test_missing_peer_credentials_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:

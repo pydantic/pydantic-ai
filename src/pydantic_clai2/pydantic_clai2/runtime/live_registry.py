@@ -149,7 +149,8 @@ def peer_uid(connection: socket.socket) -> int | None:
     peercred = getattr(socket, 'SO_PEERCRED', None)
     if peercred is None:
         return None
-    _, uid, _ = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, peercred, 12))
+    # Linux `ucred` uses signed `pid_t` and unsigned `uid_t`/`gid_t`.
+    _, uid, _ = struct.unpack('iII', connection.getsockopt(socket.SOL_SOCKET, peercred, 12))
     return uid
 
 
