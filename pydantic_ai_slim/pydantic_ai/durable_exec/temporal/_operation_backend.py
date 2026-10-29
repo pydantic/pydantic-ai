@@ -128,6 +128,42 @@ class TemporalOperationConfig(DurableOperationConfig[TemporalOperationConfigValu
         return self._resolve_tool(operation_id, tool, tool_name)
 
 
+def _activity_summary(operation_id: DurableOperationId, params: object, default: str) -> tuple[str, str]:
+    """The activity's summary in the Temporal UI, and the model it requests, if any."""
+    model_name = ''
+    if isinstance(operation_id, ModelRequestId):
+        model_name = cast(_ModelParams, params).model_id or operation_id.model_name
+        suffix = ' (stream)' if operation_id.streaming else ''
+        summary = f'request model: {model_name}{suffix}'
+    elif isinstance(operation_id, ModelCancelSuspendedResponseId):
+        model_name = cast(_ModelParams, params).model_id or operation_id.model_name
+        summary = f'cancel suspended response: {model_name}'
+    elif isinstance(operation_id, ModelCompactMessagesId):
+        model_name = cast(_ModelParams, params).model_id or operation_id.model_name
+        summary = f'compact messages: {model_name}'
+    elif isinstance(operation_id, ToolsetCallToolId):
+        tool_name = cast(Any, params).name
+        summary = f'call tool: {operation_id.toolset_id}:{tool_name}'
+    elif isinstance(operation_id, ToolsetValidateToolArgumentsId):
+        tool_name = cast(Any, params).name
+        summary = f'validate tool args: {operation_id.toolset_id}:{tool_name}'
+    elif isinstance(operation_id, ToolsetGetToolsId):
+        summary = f'get tools: {operation_id.toolset_id}'
+    elif isinstance(operation_id, ToolsetGetInstructionsId):
+        summary = f'get instructions: {operation_id.toolset_id}'
+    elif isinstance(operation_id, CapabilityOperationId):
+        summary = f'capability: {operation_id.capability_id}.{operation_id.operation}'
+    elif isinstance(operation_id, EventStreamHandlerId):
+        event = cast(_EventParams, params).event
+        summary = f'handle event: {event.event_kind}'
+    else:
+        # New operation ids use their stable activity name as the default summary. Their
+        # parameter transport must implement `TemporalParameterTransport`, including
+        # `wire_type` and `result_type`, so the payload converter can inspect the activity.
+        summary = default
+    return summary, model_name
+
+
 class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[ParamsT, WireT, ResultT]):
     def __init__(
         self,
@@ -146,7 +182,7 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
     def operation(self) -> DurableOperation[ParamsT, WireT, ResultT]:
         return self._operation
 
-    async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:  # noqa: C901
+    async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
         payload = self._operation.parameter_transport.dump(params)
         resolved_config = cast(TemporalOperationConfigValue, config or self._config)
         if 'child_workflow' in resolved_config:
@@ -174,37 +210,7 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
             )
         activity_config = resolved_config.copy()
         operation_id = self._operation.operation_id
-        model_name = ''
-        if isinstance(operation_id, ModelRequestId):
-            model_name = cast(_ModelParams, params).model_id or operation_id.model_name
-            suffix = ' (stream)' if operation_id.streaming else ''
-            activity_config['summary'] = f'request model: {model_name}{suffix}'
-        elif isinstance(operation_id, ModelCancelSuspendedResponseId):
-            model_name = cast(_ModelParams, params).model_id or operation_id.model_name
-            activity_config['summary'] = f'cancel suspended response: {model_name}'
-        elif isinstance(operation_id, ModelCompactMessagesId):
-            model_name = cast(_ModelParams, params).model_id or operation_id.model_name
-            activity_config['summary'] = f'compact messages: {model_name}'
-        elif isinstance(operation_id, ToolsetCallToolId):
-            tool_name = cast(Any, params).name
-            activity_config['summary'] = f'call tool: {operation_id.toolset_id}:{tool_name}'
-        elif isinstance(operation_id, ToolsetValidateToolArgumentsId):
-            tool_name = cast(Any, params).name
-            activity_config['summary'] = f'validate tool args: {operation_id.toolset_id}:{tool_name}'
-        elif isinstance(operation_id, ToolsetGetToolsId):
-            activity_config['summary'] = f'get tools: {operation_id.toolset_id}'
-        elif isinstance(operation_id, ToolsetGetInstructionsId):
-            activity_config['summary'] = f'get instructions: {operation_id.toolset_id}'
-        elif isinstance(operation_id, CapabilityOperationId):
-            activity_config['summary'] = f'capability: {operation_id.capability_id}.{operation_id.operation}'
-        elif isinstance(operation_id, EventStreamHandlerId):
-            event = cast(_EventParams, params).event
-            activity_config['summary'] = f'handle event: {event.event_kind}'
-        else:
-            # New operation ids use their stable activity name as the default summary. Their
-            # parameter transport must implement `TemporalParameterTransport`, including
-            # `wire_type` and `result_type`, so the payload converter can inspect the activity.
-            activity_config['summary'] = self.registration.__name__
+        activity_config['summary'], model_name = _activity_summary(operation_id, params, self.registration.__name__)
 
         if isinstance(operation_id, ModelRequestId | ModelCompactMessagesId):
             with rebuilt_model_errors(), model_response_payload_errors(model_name):

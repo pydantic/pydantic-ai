@@ -275,30 +275,39 @@ default_config_agent = Agent(
 )
 
 
+async def _seeded_workspace() -> Any:
+    return (
+        await default_config_agent.run('Hi.', workspace=WorkspaceRef(provider=provider.name, id='seeded'))
+    ).workspace
+
+
 @workflow.defn
-class WorkspaceCallsWorkflow:
+class CommandWorkflow:
     @workflow.run
-    async def run(self, read: str) -> None:
-        workspace = (
-            await default_config_agent.run('Hi.', workspace=WorkspaceRef(provider=provider.name, id='seeded'))
-        ).workspace
-        if read:
-            await workspace.read_bytes(read)
-        else:
-            await workspace.exists('a.txt')
-            await workspace.run(['sleep', '900'], timeout=900)
+    async def run(self) -> None:
+        workspace = await _seeded_workspace()
+        await workspace.exists('a.txt')
+        await workspace.run(['sleep', '900'], timeout=900)
 
 
-async def _execute_workspace_calls(client: Client, read: str = '') -> WorkflowHistory:
+@workflow.defn
+class ReadWorkflow:
+    @workflow.run
+    async def run(self) -> None:
+        await (await _seeded_workspace()).read_bytes('big.bin')
+
+
+async def _execute_workspace_calls(
+    client: Client, workflow_class: type[CommandWorkflow | ReadWorkflow]
+) -> WorkflowHistory:
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[WorkspaceCallsWorkflow],
+        workflows=[workflow_class],
         plugins=[AgentPlugin(default_config_agent)],
     ):
         handle = await client.start_workflow(
-            WorkspaceCallsWorkflow.run,
-            read,
+            workflow_class.run,
             id=f'workspace-calls-{uuid.uuid4()}',
             task_queue=TASK_QUEUE,
         )
@@ -312,7 +321,7 @@ async def test_a_command_activity_outlasts_the_command_timeout(client: Client) -
     """Under the 60-second tool timeout, a command with a longer `timeout=` was retried while still running."""
     provider.reset()
     provider.environments['seeded'] = {}
-    history = await _execute_workspace_calls(client)
+    history = await _execute_workspace_calls(client, CommandWorkflow)
     scheduled = [
         event.activity_task_scheduled_event_attributes
         for event in history.events
@@ -338,7 +347,7 @@ async def test_an_oversized_workspace_result_explains_the_payload_limit(client: 
     provider.reset()
     provider.environments['seeded'] = {'/remote/big.bin': os.urandom(1_600_000)}
     with pytest.raises(WorkflowFailureError) as exc_info:
-        await _execute_workspace_calls(client, 'big.bin')
+        await _execute_workspace_calls(client, ReadWorkflow)
     cause = _workflow_failure_cause(exc_info.value)
     assert cause.type == 'UserError'
     assert cause.message.startswith("A workspace 'read_bytes' call returned a result too large for Temporal.")
