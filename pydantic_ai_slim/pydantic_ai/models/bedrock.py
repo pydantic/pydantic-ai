@@ -355,6 +355,10 @@ async def _call_bedrock(
     abandoned = threading.Event()
     results: list[_BedrockCallResult] = []
 
+    def close_abandoned_result(result: Mapping[str, object]) -> None:
+        if (stream := result.get('stream')) is not None:
+            cast('EventStream[Any]', stream).close()
+
     def call() -> _BedrockCallResult:
         context_token = _extra_headers_var.set(_ExtraHeadersState(id(client), headers))
         try:
@@ -363,7 +367,7 @@ async def _call_bedrock(
             _extra_headers_var.reset(context_token)
         results.append(result)
         if abandoned.is_set():
-            _close_abandoned_result(result)
+            close_abandoned_result(result)
         return result
 
     try:
@@ -373,28 +377,8 @@ async def _call_bedrock(
         # Only when the thread finished just as the request was cancelled, which a test can't arrange reliably.
         for result in results:  # pragma: lax no cover
             with anyio.CancelScope(shield=True):
-                await anyio.to_thread.run_sync(_close_abandoned_result, result)
+                await anyio.to_thread.run_sync(close_abandoned_result, result)
         raise
-
-
-def _interrupt_reads(event_stream: EventStream[Any]) -> None:
-    """Shut down the connection an event stream reads from, so a read still blocked on it returns.
-
-    A read a cancellation gave up on keeps its thread blocked until botocore's `read_timeout` passes, and holds the
-    response's lock meanwhile, so closing the stream would wait for it too. Shutting down the socket wakes it.
-    Best effort, and a no-op for a stream that isn't botocore's (`TypeError`, `KeyError`), one whose connection was
-    already released once it was read through (`AttributeError`), or one whose socket is already closed (`OSError`).
-    """
-    with suppress(TypeError, KeyError, AttributeError, OSError):
-        # botocore's `urllib3` response, whose connection is `None` once the stream was read through and released.
-        raw_stream: Any = vars(event_stream)['_raw_stream']
-        raw_stream.connection.sock.shutdown(socket.SHUT_RDWR)
-
-
-def _close_abandoned_result(result: Mapping[str, object]) -> None:
-    """Close the event stream of a response nothing will read, which keeps its connection open otherwise."""
-    if (stream := result.get('stream')) is not None:
-        cast('EventStream[Any]', stream).close()
 
 
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
@@ -2435,7 +2419,14 @@ class BedrockStreamedResponse(StreamedResponse):
         return (BotoCoreError, ClientError, Urllib3HTTPError)
 
     async def close_stream(self) -> None:
-        _interrupt_reads(self._event_stream)
+        # A read a cancellation gave up on keeps its thread blocked until botocore's `read_timeout` passes, and holds
+        # the response's lock meanwhile, so closing the stream would wait for it too. Shutting down the socket first
+        # wakes it. Best effort, and a no-op for a stream that isn't botocore's (`TypeError`, `KeyError`), one whose
+        # connection was already released once it was read through (`AttributeError`), or one whose socket is already
+        # closed (`OSError`).
+        with suppress(TypeError, KeyError, AttributeError, OSError):
+            raw_stream: Any = vars(self._event_stream)['_raw_stream']
+            raw_stream.connection.sock.shutdown(socket.SHUT_RDWR)
         await anyio.to_thread.run_sync(self._event_stream.close)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901

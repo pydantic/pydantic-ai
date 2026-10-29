@@ -19,7 +19,7 @@ import anyio.from_thread
 import anyio.to_thread
 import pytest
 
-from pydantic_ai import ModelRequest
+from pydantic_ai import ModelMessage, ModelRequest
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import ModelRequestTimeout
 from pydantic_ai.models import ModelRequestParameters
@@ -112,7 +112,7 @@ def _model(client: _BlockingBedrockClient) -> BedrockConverseModel:
 
 
 async def _request(model: BedrockConverseModel, blocks: Blocks, *, request_timeout: float | None = None) -> None:
-    messages = [ModelRequest.user_text_prompt('hi')]
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('hi')]
     settings = ModelSettings(request_timeout=request_timeout) if request_timeout is not None else None
     if blocks == 'converse':
         await model_request(model, messages, model_settings=settings)
