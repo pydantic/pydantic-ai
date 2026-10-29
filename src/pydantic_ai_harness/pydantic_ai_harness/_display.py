@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import base64
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Protocol, TypeVar
@@ -12,6 +13,7 @@ from pydantic_ai.workspaces import (
     ComputerAction,
     Point,
     Region,
+    WorkspaceError,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
@@ -21,7 +23,15 @@ __all__ = ('DisplayDriver', 'ManagedDisplay')
 
 T = TypeVar('T')
 
+DEFAULT_DESKTOP_SIZE = (1280, 800)
+"""The display size `desktop=True` starts."""
+
 PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
+
+
+def desktop_size(desktop: bool | tuple[int, int]) -> tuple[int, int] | None:
+    """The display size `desktop=` asks for, or `None` for no display."""
+    return DEFAULT_DESKTOP_SIZE if desktop is True else desktop or None
 
 
 def png_size(png: bytes) -> tuple[int, int] | None:
@@ -30,6 +40,16 @@ def png_size(png: bytes) -> tuple[int, int] | None:
         return None
     return int.from_bytes(png[16:20], 'big'), int.from_bytes(png[20:24], 'big')
 
+
+def png_from_base64(encoded: str | None, source: str) -> bytes:
+    """The PNG a display sent as base64, or a `WorkspaceError` naming `source` when it isn't one."""
+    try:
+        data = base64.b64decode(''.join((encoded or '').split()), validate=True)
+    except ValueError:
+        data = b''
+    if not data.startswith(PNG_SIGNATURE):
+        raise WorkspaceError(f'{source} did not return a PNG screenshot.')
+    return data
 
 
 class DisplayDriver(Protocol):

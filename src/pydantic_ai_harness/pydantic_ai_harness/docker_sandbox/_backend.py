@@ -48,10 +48,10 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import ManagedDisplay
+from pydantic_ai_harness._display import ManagedDisplay, desktop_size
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
 
-from ._x11 import DISPLAY, STARTED, X11Computer, start_x11
+from ._x11 import DISPLAY, STARTED, x11_display
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerSandboxBackend', 'remove_container')
 
@@ -240,7 +240,6 @@ windows fill the screen."""
 
 _DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
 
-_DEFAULT_DESKTOP_SIZE = (1280, 800)
 
 _X_LOCK = f'/tmp/.X{DISPLAY[1:]}-lock'
 _X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY[1:]}'
@@ -346,9 +345,17 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
             raise TypeError('docker_args must be a sequence of arguments, not a string')
         self._image = image
         self._ref = ref
-        self._desktop_size = _DEFAULT_DESKTOP_SIZE if desktop is True else desktop or None
+        self._desktop_size = desktop_size(desktop)
         self._display = (
-            None if self._desktop_size is None else ManagedDisplay(self._start_display, screen_key=lambda: self.ref)
+            None
+            if self._desktop_size is None
+            else x11_display(
+                self,
+                self._desktop_size,
+                _START_DESKTOP,
+                lambda: f'Docker workspace {self._name}',
+                screen_key=lambda: self.ref,
+            )
         )
         self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
         # Commands see the desktop too, so a program the agent starts from the shell opens on it.
@@ -536,12 +543,3 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     def display(self) -> ManagedDisplay | None:
         """The container's display, when created with `desktop=True`."""
         return self._display
-
-    async def _start_display(self) -> X11Computer:
-        assert self._desktop_size is not None and self._display is not None
-        computer, started = await start_x11(
-            self, self._desktop_size, _START_DESKTOP, lambda: f'Docker workspace {self._name}'
-        )
-        if started:
-            self._display.started_fresh()
-        return computer
