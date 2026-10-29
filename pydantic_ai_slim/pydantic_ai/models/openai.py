@@ -163,7 +163,6 @@ from . import (
     get_user_agent,
 )
 from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
-from ._openai_auth import non_static_auth_source
 from ._prompt_cache import split_cache_setting
 from ._sdk_retries import with_max_retries
 from ._tool_choice import (
@@ -3352,7 +3351,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 '`profile=OpenAIModelProfile(openai_responses_supports_websocket=True)` to the model.'
             )
         # Profiles are cached, but the HTTP client's authentication can change after the socket opened.
-        if non_static_auth_source(self._provider.client) is not None:
+        # Azure clients and lightweight SDK wrappers do not initialize every optional attribute.
+        client = self._provider.client
+        if (
+            getattr(client, '_api_key_provider', None) is not None
+            or getattr(client, 'workload_identity', None) is not None
+            or callable(getattr(client, '_azure_ad_token_provider', None))
+            or getattr(getattr(client, '_client', None), 'auth', None) is not None
+        ):
             return 'the SDK client resolves authentication per request; use HTTP to apply its current credentials.'
         try:
             importlib.import_module('pydantic_ai.models._openai_responses_websocket')
