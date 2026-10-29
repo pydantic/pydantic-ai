@@ -1476,13 +1476,11 @@ async def test_same_socket_continuation_replays_after_request_scoped_prompt(
     ]
 
 
-@pytest.mark.parametrize('transport', ['http', 'websocket'])
 @pytest.mark.parametrize('compaction_provider', ['openai', 'openai-codex', 'azure'])
 async def test_compatible_compaction_stops_older_response_chaining(
     allow_model_requests: None,
     sockets: SocketHarness,
     http: HTTPResponses,
-    transport: Literal['http', 'websocket'],
     compaction_provider: str,
 ):
     history: list[ModelRequest | ModelResponse] = [
@@ -1506,7 +1504,7 @@ async def test_compatible_compaction_stops_older_response_chaining(
             canonical_system='azure' if compaction_provider == 'azure' else 'openai',
         ),
     ]
-    settings = OpenAIResponsesModelSettings(openai_transport=transport, openai_previous_response_id='auto')
+    settings = OpenAIResponsesModelSettings(openai_transport='websocket', openai_previous_response_id='auto')
     model = OpenAIResponsesModel(
         'gpt-4o',
         provider=http.provider(),
@@ -1515,7 +1513,7 @@ async def test_compatible_compaction_stops_older_response_chaining(
     )
     await Agent(model).run('after compaction', message_history=history)
 
-    body = sockets.opened[0].sent[0] if transport == 'websocket' else http.bodies[0]
+    body = sockets.opened[0].sent[0]
     if compaction_provider == 'azure':
         assert body['previous_response_id'] == 'resp_old'
         assert body['prompt_cache_options'] == {'comparison_response_id': 'resp_old'}

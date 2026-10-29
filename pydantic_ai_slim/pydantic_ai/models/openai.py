@@ -108,6 +108,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
+    _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
 from ..native_tools import (
@@ -5061,9 +5062,21 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     def _is_compaction_boundary(self, response: ModelResponse) -> bool:
         return bool(
-            response.provider_details
-            and response.provider_details.get('compaction')
-            and (response.provider_name == self.system or self.accepts_stateless_artifacts(response))
+            (
+                response.provider_name == self.system
+                and response.provider_details
+                and response.provider_details.get('compaction')
+            )
+            or any(
+                isinstance(part, CompactionPart)
+                and _compaction_part_is_wire_boundary(
+                    response,
+                    part,
+                    self.accepts_stateless_artifacts,
+                    requires_encrypted_content=self.compaction_requires_encrypted_content,
+                )
+                for part in response.parts
+            )
         )
 
     def _is_response_id_reachable(
@@ -5105,10 +5118,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         for index in range(len(messages) - 1, -1, -1):
             m = messages[index]
             if isinstance(m, ModelResponse) and self._is_compaction_boundary(m):
-                # Responses from the stateless `/compact` endpoint can't be used as
-                # `previous_response_id`, so the compaction acts as a hard chain boundary:
-                # the next request must pass the `CompactionPart` via the `input` array
-                # (handled by `_map_messages`) without a `previous_response_id`.
+                # Continue from the compaction item instead of restoring the older server-side context.
                 return None, messages, True
             if isinstance(m, ModelResponse) and m.provider_name == self.system:
                 # The server continues from this response and the history it was created with, so if
