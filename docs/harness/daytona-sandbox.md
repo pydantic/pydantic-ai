@@ -219,7 +219,7 @@ A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed w
 | `allow_internet_access` | Whether a new sandbox can reach the internet. When `False`, what is blocked depends on your Daytona organization's tier: on Tier 3 and 4 everything, while lower tiers keep package registries, GitHub, and AI APIs reachable, so there it is not an exfiltration boundary. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/). Default: `True`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/daytona`, where commands run as non-root `daytona`); set a project directory, or use relative paths for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
-| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. The size applies to a new sandbox. Default: `False`. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`, at least 1024x768. The size applies to a new sandbox. Default: `False`. |
 
 Daytona runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
 

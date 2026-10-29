@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import base64
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Protocol, TypeVar
 
 import anyio
@@ -65,7 +66,8 @@ class DisplayDriver(Protocol):
 class ManagedDisplay:
     """The display a backend hands out for its lifetime: started on first use, and again after a failure.
 
-    `start` brings the display up, doing nothing to one that's running, and returns its driver.
+    `start` brings the display up, doing nothing to one that's running, and returns its driver. `scope` wraps every
+    call, start included, such as to map a provider's errors.
 
     A call that only looks, such as a screenshot, is retried once after a failure, which starts a display that was
     lost; an action isn't, so nothing is done twice. The backend calls `started_fresh` when a new display started, and
@@ -79,10 +81,12 @@ class ManagedDisplay:
         self,
         start: Callable[[], Awaitable[DisplayDriver]],
         *,
+        scope: Callable[[], AbstractAsyncContextManager[object]] = nullcontext,
         screen_key: Callable[[], object | None] = lambda: None,
         shown: Callable[[int], Awaitable[None]] | None = None,
     ):
         self._start = start
+        self._scope = scope
         self._screen_key = screen_key
         self._shown = shown
         self._driver: DisplayDriver | None = None
@@ -124,7 +128,11 @@ class ManagedDisplay:
         if self._seen or (generation or 0) > 1:
             self._restarts += 1
 
-    async def _driver_or_start(self) -> DisplayDriver:
+    def reset(self) -> None:
+        """Forget the running display, such as when the environment may have restarted: the next call starts it."""
+        self._driver = None
+
+    async def driver(self) -> DisplayDriver:
         """The running display's driver, starting the display unless it's running."""
         # One start at a time: two would both find no display and start two.
         async with self._lock:
@@ -149,8 +157,9 @@ class ManagedDisplay:
         while True:
             driver = None
             try:
-                driver = await self._driver_or_start()
-                result = await call(driver)
+                async with self._scope():
+                    driver = await self.driver()
+                    result = await call(driver)
             except WorkspaceUnsupportedActionError:
                 raise  # a refused action, such as an unknown key: the display is fine
             except Exception as error:
