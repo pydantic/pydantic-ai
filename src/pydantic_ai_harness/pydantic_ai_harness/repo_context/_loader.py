@@ -109,6 +109,29 @@ async def discover_instruction_files(
     return found
 
 
+async def find_instruction_paths(
+    workspace: Workspace,
+    workspace_dir: Path,
+    home_dir: Path | None,
+    filenames: Sequence[str],
+) -> list[Path]:
+    """The instruction files found in the walk-up, as configured paths, without reading them.
+
+    Each path is a scanned directory joined with a name from `filenames`, never a symlink target's name, so
+    the result is built from configuration alone. Two names for one file, such as `CLAUDE.md -> AGENTS.md`,
+    count once, under the first; files are not read, so identical copies are not deduplicated.
+    """
+    seen: set[Path] = set()
+    found: list[Path] = []
+    for directory in _walk_dirs(workspace_dir, home_dir):
+        for filename in filenames:
+            real = await _real_file(workspace, directory / filename)
+            if real is not None and real not in seen:
+                seen.add(real)
+                found.append(directory / filename)
+    return found
+
+
 async def find_dir_context_file(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> ContextFile | None:
     """Return the first existing instruction file in `directory`, or `None`."""
     for filename in filenames:

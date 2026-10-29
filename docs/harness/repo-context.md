@@ -103,6 +103,8 @@ the same note twice.
 
 Walk-up files become part of the agent's instructions, so the model gives them the same weight as the instructions you write yourself. That is what the strategy is for, and it means the working directory and `home_dir` should hold only instruction files you would put in your own instructions.
 
+In an [untrusted workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/#untrusted-workspaces) (`trusted=False`), walk-up files are not loaded. The instructions name the ones that exist, by their configured names, and the model reads them with its file tools, so their contents reach it as tool output. Files above the working directory, found by walking up to `home_dir`, can be read only if `FileSystem(root_dir=...)` contains them.
+
 Nested files are different: the model chooses which directories to read, and those can include vendored code or a checkout someone else wrote. Their contents and paths reach the model as a user message, not as instructions. The `'pointer'` note's own wording is the framework's, so it is a `SystemPromptPart` (a system message where the model supports one mid-conversation, and `<system>`-tagged user text otherwise), followed by the file's path as a user-message `<context-file path="..." />` tag.
 
 Each file is wrapped in `<context-file path="...">` tags. The `<` of every opening or closing `<context-file>` tag inside a file, and of every framing tag Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest), is escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own block.

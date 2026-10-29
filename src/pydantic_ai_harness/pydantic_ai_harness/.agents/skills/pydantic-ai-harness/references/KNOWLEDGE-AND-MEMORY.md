@@ -24,7 +24,8 @@ relative `directory`), `FileSystem` on the agent and `inject_memory=True` (the d
 counts against `max_tokens`) gives the scope's directory, e.g. `.agent-memory/main/`. The guidance names no reader, so it stays static. By default a bounded excerpt of `MEMORY.md` plus the list
 of other files is recorded in message history as a delimited user-role `<memory>` part, with the
 user's prompt on a run's first request, and only when memory changed since the latest snapshot in
-history (after the latest compaction boundary). History stays append-only: earlier snapshots are kept,
+history (after the latest compaction boundary). A `FileStore` in an untrusted workspace (`trusted=False`), the
+run's or its own `workspace=`, is never injected. History stays append-only: earlier snapshots are kept,
 a later one for the same memory supersedes them, and a
 change made during a run (including `write_memory`) reaches the model with the next user prompt,
 not after tool results (the exception: re-enqueuing the run's own snapshot when compaction drops
