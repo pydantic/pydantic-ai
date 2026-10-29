@@ -93,11 +93,12 @@ class TestSummarizingCompaction:
         assert len(observed) == 2
         assert '<previous-summary>' not in observed[0][0]
         assert '<previous-summary>' in observed[1][0]
-        for prompt, applied_settings in observed:
+        for index, (prompt, applied_settings) in enumerate(observed):
             assert applied_settings == expected_settings
             if budget is not None:
                 assert f'within {budget} tokens' in prompt
-                assert 'rewrite it within this budget rather than appending to it' in prompt
+                # Only an update has a previous summary to rewrite.
+                assert ('rewrite it within this budget rather than appending to it' in prompt) == (index == 1)
             else:
                 assert 'Write the complete summary within' not in prompt
             if not custom_prompt:

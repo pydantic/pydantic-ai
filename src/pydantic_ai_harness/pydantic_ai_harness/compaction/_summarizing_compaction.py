@@ -1129,6 +1129,20 @@ async def write_summary(
             f'<previous-summary>\n{_neutralize_transcript_tags(previous_summary)}\n</previous-summary>'
         )
 
+    budget = summarizer.max_summary_tokens
+    run_settings: Callable[[RunContext[None]], ModelSettings] | None = None
+    if budget is not None:
+        prompt = f'{prompt}\n\nWrite the complete summary within {budget} tokens.'
+        if previous_summary is not None:
+            prompt = (
+                f'{prompt} When updating a previous summary, rewrite it within this budget rather than appending to it.'
+            )
+
+        def limit_summary(ctx: RunContext[None]) -> ModelSettings:
+            return {'max_tokens': min(budget, (ctx.model_settings or {}).get('max_tokens', budget))}
+
+        run_settings = limit_summary
+
     model = summarizer.model if summarizer.model is not None else ctx.model
     # `ctx.model` is an `AbstractModel`; summarization needs a request-response model. A
     # realtime run reaches here only when no summarizer `model=` was configured, so ask for
@@ -1148,22 +1162,6 @@ async def write_summary(
             f'{ctx.model.model_name!r}, which cannot produce text. Set `model=` on SummarizingCompaction '
             'to a language model to summarize with.'
         )
-    budget = summarizer.max_summary_tokens
-    if budget is not None:
-        prompt = (
-            f'{prompt}\n\nWrite the complete summary within {budget} tokens. '
-            'When updating a previous summary, rewrite it within this budget rather than appending to it.'
-        )
-
-    run_settings: Callable[[RunContext[None]], ModelSettings] | None = None
-    if budget is not None:
-        limit = budget
-
-        def limit_summary(ctx: RunContext[None]) -> ModelSettings:
-            return {'max_tokens': min(limit, (ctx.model_settings or {}).get('max_tokens', limit))}
-
-        run_settings = limit_summary
-
     # `isinstance` narrows the generic `Model` to `Model[Unknown]`; `cast` recovers
     # `Model[Any]`, mirroring core's own `reinject_system_prompt` idiom.
     agent: Agent[None, str] = Agent(
