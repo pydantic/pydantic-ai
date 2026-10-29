@@ -301,7 +301,7 @@ _EXTRA_HEADERS_REGISTRATION_LOCK = Lock()
 _EXTRA_HEADERS_CONTEXT_KEY = 'pydantic_ai_extra_headers'
 _EXTRA_HEADERS_OPERATIONS = ('Converse', 'ConverseStream', 'CountTokens')
 _extra_headers_var: ContextVar[_ExtraHeadersState | None] = ContextVar('_extra_headers_var', default=None)
-_BedrockCallResult = TypeVar('_BedrockCallResult')
+_BedrockCallResult = TypeVar('_BedrockCallResult', bound=Mapping[str, object])
 
 
 def _claim_extra_headers(client_id: int, context: dict[str, Any], **_: Any) -> None:
@@ -363,17 +363,17 @@ async def _call_bedrock(
             _extra_headers_var.reset(context_token)
         results.append(result)
         if abandoned.is_set():
-            _close_abandoned_result(cast(Mapping[str, Any], result))
+            _close_abandoned_result(result)
         return result
 
     try:
         return await anyio.to_thread.run_sync(call, abandon_on_cancel=True)
-    except BaseException:
+    except anyio.get_cancelled_exc_class():
         abandoned.set()
         # Only when the thread finished just as the request was cancelled, which a test can't arrange reliably.
         for result in results:  # pragma: lax no cover
             with anyio.CancelScope(shield=True):
-                await anyio.to_thread.run_sync(_close_abandoned_result, cast(Mapping[str, Any], result))
+                await anyio.to_thread.run_sync(_close_abandoned_result, result)
         raise
 
 
@@ -382,15 +382,16 @@ def _interrupt_reads(event_stream: EventStream[Any]) -> None:
 
     A read a cancellation gave up on keeps its thread blocked until botocore's `read_timeout` passes, and holds the
     response's lock meanwhile, so closing the stream would wait for it too. Shutting down the socket wakes it.
-    Best effort: a stream whose connection is already released, or closed, has nothing to interrupt.
+    Best effort, and a no-op for a stream that isn't botocore's (`TypeError`, `KeyError`), one whose connection was
+    already released once it was read through (`AttributeError`), or one whose socket is already closed (`OSError`).
     """
-    with suppress(Exception):
+    with suppress(TypeError, KeyError, AttributeError, OSError):
         # botocore's `urllib3` response, whose connection is `None` once the stream was read through and released.
         raw_stream: Any = vars(event_stream)['_raw_stream']
         raw_stream.connection.sock.shutdown(socket.SHUT_RDWR)
 
 
-def _close_abandoned_result(result: Mapping[str, Any]) -> None:
+def _close_abandoned_result(result: Mapping[str, object]) -> None:
     """Close the event stream of a response nothing will read, which keeps its connection open otherwise."""
     if (stream := result.get('stream')) is not None:
         cast('EventStream[Any]', stream).close()
