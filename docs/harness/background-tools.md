@@ -35,6 +35,8 @@ By default, any tool with `metadata={'background': True}` runs in the background
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls slow_research, a tool marked to run in the background. BackgroundTools answers at once with a started message and a task ID, so the model keeps working on other calls while the tool runs. When the tool finishes, its result arrives as a follow-up user message wrapped in a tool_result tag that names the tool and the call, and the next model request uses it. A normal run waits for its background tools before it ends.](../img/harness/background-tools.svg)
+
 ## Selecting which tools run in the background
 
 `BackgroundTools(tools=...)` accepts the standard [`ToolSelector`][pydantic_ai.tools.ToolSelector]:
@@ -133,9 +135,10 @@ the other background tools.
 
 A normal run waits for its background tools to finish. A pending call counts toward
 `tool_calls_limit`. If the run pauses for deferred tools or stops early, unfinished tools are
-cancelled, and results that have not been delivered yet are dropped, even from tools that finished.
-Resuming the run does not deliver them. Async tools must allow cancellation; ignoring it can prevent
-the run from stopping.
+cancelled. Results of tools that finished before a deferred-tool pause are kept in the message
+history, so a resumed run sees them, unless every call in the paused step was deferred. Results
+that have not been delivered when a run stops early are dropped. Async tools must allow
+cancellation; ignoring it can prevent the run from stopping.
 
 !!! warning
     Python cannot stop a synchronous tool before it returns. Cancelling the run will still wait for

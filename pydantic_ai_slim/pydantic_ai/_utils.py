@@ -41,7 +41,7 @@ from typing import (
 
 import anyio
 from anyio.to_thread import run_sync
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, JsonValue, TypeAdapter
 from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import ParamSpec, TypeIs, TypeVar, is_typeddict
@@ -229,7 +229,7 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
             ref.startswith(prefix)
             and (resolved := schema.get('$defs', {}).get(ref[len(prefix) :]))
             and resolved.get('type') == 'object'
-            and not _contains_ref(resolved)
+            and not contains_ref(resolved)
         ):
             return resolved
         return schema
@@ -237,16 +237,13 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
         raise UserError('Schema must be an object')
 
 
-def _contains_ref(obj: JsonSchemaValue | list[JsonSchemaValue]) -> bool:
-    """Recursively check if an object contains any $ref keys."""
-    items: Iterable[JsonSchemaValue]
-    if isinstance(obj, dict):
-        if '$ref' in obj:
-            return True
-        items = obj.values()
-    else:
-        items = obj
-    return any(isinstance(item, dict | list) and _contains_ref(item) for item in items)  # pyright: ignore[reportUnknownArgumentType]
+def contains_ref(node: JsonValue) -> bool:
+    """Whether a `$ref` appears anywhere in `node`."""
+    if isinstance(node, dict):
+        return '$ref' in node or any(contains_ref(value) for value in node.values())
+    if isinstance(node, list):
+        return any(contains_ref(value) for value in node)
+    return False
 
 
 T = TypeVar('T')

@@ -291,6 +291,8 @@ async def test_single_line_breaks_survive_like_the_tui(page: Page, web_ui: WebUI
     assert (await sent.value).ok
     markdown = page.locator('.markdown').filter(has_text='One per line').last
     await expect(markdown).to_be_visible()
+    # The answer streams in: wait for its last chunk (this match ignores line breaks), then read it exactly.
+    await expect(markdown.locator('pre code')).to_have_text('code a code b')
     assert await markdown.locator('p').inner_text() == 'One per line\n2\n3'
     assert await markdown.locator('pre code').inner_text() == 'code a\ncode b'
     assert await markdown.locator('pre br').count() == 0

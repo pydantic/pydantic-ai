@@ -536,12 +536,18 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
         return super()._walk_def(key, siblings)
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
-        # `transform` drops `additionalProperties` and `Schema` has no `patternProperties`, so neither
-        # subschema reaches Gemini. Walking them anyway would refuse a recursive `dict[str, Node]` over a
-        # `$ref` the declaration doesn't contain.
+        # `transform` drops `additionalProperties` and `Schema` has no `patternProperties` or `propertyNames`,
+        # so none of these subschemas reaches Gemini. Walking them anyway would refuse a recursive
+        # `dict[str, Node]` over a `$ref` the declaration doesn't contain.
         schema.pop('additionalProperties', None)
         schema.pop('patternProperties', None)
+        schema.pop('propertyNames', None)
         return super()._handle_object(schema)
+
+    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
+        # `Schema` has no `contains` either: same reason as `_handle_object`.
+        schema.pop('contains', None)
+        return super()._handle_array(schema)
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # `additionalProperties` is mishandled by Gemini, so a `dict[str, MyType]` field always arrives

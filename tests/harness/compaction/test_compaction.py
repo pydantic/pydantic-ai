@@ -21,6 +21,7 @@ import pydantic_ai_harness
 import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent, Tool, ToolReturn
 from pydantic_ai._context_size import mark_context_input_tokens
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
@@ -2807,6 +2808,13 @@ class TestTieredCompaction:
 
 
 class TestSummarizingCompactionModel:
+    def test_agent_spec_schema_publishes_its_fields(self):
+        """`EventStreamHandler` carries a forward reference that resolves against the capability's module."""
+        definitions = AgentSpec.model_json_schema_with_capabilities([SummarizingCompaction])['$defs']
+
+        properties = set(definitions['spec_params_SummarizingCompaction']['properties'])
+        assert {'model', 'max_messages', 'max_tokens', 'keep_messages', 'summary_prompt', 'id'} <= properties
+
     async def test_model_inherits_from_the_request_when_none(self):
         comp = SummarizingCompaction(
             max_messages=3, keep_messages=1, preserve_first_user_message=False, incremental=False
