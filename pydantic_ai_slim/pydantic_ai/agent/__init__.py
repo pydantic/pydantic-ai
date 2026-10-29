@@ -143,7 +143,7 @@ from ..tools import (
     ToolsPrepareFunc,
 )
 from ..toolsets import AbstractToolset, AgentToolset
-from ..toolsets._deferred_capability_loader import capability_load_phase, resolve_loaded_capability_instructions
+from ..toolsets._deferred_capability_loader import capability_load_window, resolve_loaded_capability_instructions
 from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
@@ -279,7 +279,8 @@ async def _run_lifecycle_hooks(  # noqa: C901
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
         with set_current_run_context(run_ctx):
-            with capability_load_phase('before_run', run_ctx.pending_messages):
+            # A load from code in `before_run` takes effect on the run's first request.
+            with capability_load_window(run_ctx.pending_messages):
                 await run_capability.before_run(run_ctx)
             current_ctx = contextvars.copy_context()
         # Capture context vars set by wrap_run/before_run so they can be propagated to the

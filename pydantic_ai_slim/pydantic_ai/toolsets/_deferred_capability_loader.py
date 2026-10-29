@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 
@@ -124,7 +124,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             parts = await resolve_loaded_capability_instructions(capability_id, self, ctx)
             if (text := InstructionPart.join([part for part in parts if part.content])) is not None:
                 result['instructions'] = text
-        tools = _capability_tool_names(ctx, capability_id)
+        tools = capability_tool_names(ctx.tools, capability_id)
         return ToolReturn(return_value=result, tools=tools or None)
 
 
@@ -157,16 +157,14 @@ async def resolve_loaded_capability_instructions(
     return [replace(part, id=InstructionId(source, name=part.name)) for part in parts]
 
 
-LoadPhase = Literal['before_run', 'before_model_request', 'after_model_request']
-"""A capability hook that a model request follows, so a load from code there takes effect on that request.
-
-`after_model_request` only counts for a response the run makes another request after: see `capability_load_phase`.
-"""
-
-
 @dataclass(frozen=True)
 class _LoadWindow:
-    phase: LoadPhase
+    """A capability hook a model request follows, where a load from code takes effect on that request.
+
+    That's `before_run`, `before_model_request`, and `after_model_request` on a response the run makes another
+    request after: see `capability_load_window`.
+    """
+
     queue: list[PendingMessage] | None
     """The `RunContext.pending_messages` of the run the hook runs for: a run nested in the hook has its own."""
     response: ModelResponse | None
@@ -177,8 +175,8 @@ _load_window: ContextVar[_LoadWindow | None] = ContextVar('_load_window', defaul
 
 
 @contextmanager
-def capability_load_phase(
-    phase: LoadPhase, queue: list[PendingMessage] | None, *, response: ModelResponse | None = None
+def capability_load_window(
+    queue: list[PendingMessage] | None, *, response: ModelResponse | None = None
 ) -> Generator[None]:
     """Mark the hooks of the run with `queue` running inside as a place `ctx.load_capability()` works.
 
@@ -186,7 +184,7 @@ def capability_load_phase(
     own rules; a realtime session's isn't a `PendingMessageQueue`, and loading there raises its own error. For
     `after_model_request`, the agent graph only opens the window when another request follows `response`.
     """
-    token = _load_window.set(_LoadWindow(phase, queue, response))
+    token = _load_window.set(_LoadWindow(queue, response))
     try:
         yield
     finally:
@@ -262,7 +260,7 @@ def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx: RunCo
     records: list[CapabilityLoadRecord] = [
         CapabilityLoadDeltaPart(loaded=[capability_id], tool_call_id=ctx.tool_call_id)
     ]
-    if tools := _capability_tool_names(ctx, capability_id):
+    if tools := capability_tool_names(ctx.tools, capability_id):
         records.append(ToolAvailabilityDeltaPart(tools_added=tools, tool_call_id=ctx.tool_call_id))
     # Delivered with the request being prepared (from `before_model_request`) or the next one; if a tool call's step
     # ends the run instead (a tool call needs approval or is deferred, or output is produced), the load is dropped
@@ -317,9 +315,9 @@ def _load_calls_in(response: ModelResponse, capability_id: str) -> list[LoadCapa
     ]
 
 
-def _capability_tool_names(ctx: RunContext[Any], capability_id: str) -> list[str]:
+def capability_tool_names(tool_defs: Mapping[str, ToolDefinition], capability_id: str) -> list[str]:
     """The tools a load of `capability_id` reveals, the same for a model's load and a load from code."""
-    return sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)
+    return sorted(name for name, tool_def in tool_defs.items() if tool_def.capability_id == capability_id)
 
 
 def _beneath(capability: AbstractCapability[Any]) -> list[AbstractCapability[Any]]:

@@ -152,7 +152,11 @@ from .tools import (
     RunContext,
     ToolDefinition,
 )
-from .toolsets._deferred_capability_loader import capability_load_phase, resolve_loaded_capability_instructions
+from .toolsets._deferred_capability_loader import (
+    capability_load_window,
+    capability_tool_names,
+    resolve_loaded_capability_instructions,
+)
 from .toolsets._instruction_collection import collect_toolset_instructions
 
 if TYPE_CHECKING:
@@ -2126,7 +2130,7 @@ def _after_model_request_load_window(
     )
     if not continues:
         return nullcontext()
-    return capability_load_phase('after_model_request', run_context.pending_messages, response=response)
+    return capability_load_window(run_context.pending_messages, response=response)
 
 
 def _record_carried_attempts(
@@ -2969,7 +2973,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         mirrored_messages = HistoryMirroringMessages(request_context.messages, ctx.state.message_history)
         request_context.messages = mirrored_messages
         try:
-            with capability_load_phase('before_model_request', run_context.pending_messages):
+            # A load from code in `before_model_request` is recorded on the request being prepared, below.
+            with capability_load_window(run_context.pending_messages):
                 processed_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
         finally:
             # Only the before-chain keeps the old write-back; wrap and after hooks get a request-only list.
@@ -4376,14 +4381,16 @@ def _reveal_tools_of_loads_before_run(
     step has, each one's `ToolAvailabilityDeltaPart` goes right after its `CapabilityLoadDeltaPart`, as for any other
     load from code.
     """
-    tools = ctx.deps.tool_manager.tools or {}
+    tool_defs = {name: tool.tool_def for name, tool in (ctx.deps.tool_manager.tools or {}).items()}
     reveals: dict[int, _messages.ToolAvailabilityDeltaPart] = {}
     for index, record in enumerate(records):
         if not isinstance(record, _messages.CapabilityLoadDeltaPart) or (
             index + 1 < len(records) and isinstance(records[index + 1], _messages.ToolAvailabilityDeltaPart)
         ):
             continue
-        names = sorted(name for name, tool in tools.items() if tool.tool_def.capability_id in record.loaded)
+        names = sorted(
+            {name for capability_id in record.loaded for name in capability_tool_names(tool_defs, capability_id)}
+        )
         if names:
             reveals[id(record)] = _messages.ToolAvailabilityDeltaPart(
                 tools_added=names, tool_call_id=record.tool_call_id

@@ -1037,8 +1037,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
         Call it whenever a model request follows: from a tool function, sync or async, a tool hook such as
         `after_tool_execute`, or `after_model_request` on a response with tool calls the run executes, for the next
-        request; from a `before_model_request` hook, for the request being prepared; or from a `before_run` hook,
-        for the run's first request. The load rides along with that request and never causes one: if a step with
+        request; from a `before_model_request` hook, for the request being prepared, which gets the capability's tools
+        and instructions (its model settings, native tools and hooks apply from the next request); or from a
+        `before_run` hook, for the run's first request. The load rides along with that request and never causes one: if a step with
         tool calls ends the run instead (because a tool call needs approval or is deferred, or the run produces its
         output), the load is discarded, and resuming the run doesn't run that tool again.
         Durable execution engines run some tools in an

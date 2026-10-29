@@ -4016,6 +4016,56 @@ async def test_first_request_after_load_applies_capability_settings_and_hooks(lo
     assert (temperatures, hotfix.hook_fired_at) == ([None, 0.123], [2])
 
 
+@pytest.mark.parametrize(
+    'hook, expected',
+    [
+        # Loaded before the first step resolves anything, so the first request has the capability in full.
+        ('before_run', ([0.123, 0.123], [1, 2])),
+        # The request being prepared already resolved its settings and ran its hooks: it gets the capability's
+        # tools and instructions, and its settings and hooks from the next request.
+        ('before_model_request', ([None, 0.123], [2])),
+    ],
+)
+async def test_hook_load_applies_capability_settings_and_hooks(
+    hook: str, expected: tuple[list[float | None], list[int]]
+) -> None:
+    """When a capability loaded from `before_run` or `before_model_request` gets its model settings and hooks."""
+    hotfix = _HotfixWorkflow()
+    temperatures: list[float | None] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        temperatures.append((info.model_settings or {}).get('temperature'))
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('open_case', {})])
+        return make_text_response('done')
+
+    hooks = Hooks[object]()
+    if hook == 'before_run':
+
+        @hooks.on.before_run
+        async def load_before_run(ctx: RunContext[object]) -> None:
+            ctx.load_capability('hotfix')
+
+    else:
+
+        @hooks.on.before_model_request
+        async def load_before_request(
+            ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.load_capability('hotfix')
+            return request_context
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[hotfix, hooks])
+
+    @agent.tool_plain
+    def open_case() -> str:
+        return 'Case opened.'
+
+    await agent.run('Ship the hotfix.')
+
+    assert (temperatures, hotfix.hook_fired_at) == expected
+
+
 async def test_load_capability_records_the_loading_tool_call() -> None:
     """The load's record names the tool call that loaded it, which a replay of the same run (as Temporal does with a
     tool hook) gets from the same model response, so it records the same part.
