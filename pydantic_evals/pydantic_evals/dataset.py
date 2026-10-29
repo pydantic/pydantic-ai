@@ -35,6 +35,7 @@ from pydantic_ai._utils import await_maybe, is_async_callable
 from pydantic_evals._utils import run_until_complete
 
 from . import _task_run
+from ._ci_provenance import ci_provenance_attributes
 from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._base import BaseEvaluator
@@ -359,6 +360,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             ) as eval_span,
             progress_bar or nullcontext(),
         ):
+            if eval_span.is_recording():
+                # Only when the span is recording, since detection may read the GitHub Actions event payload file.
+                # It runs in a worker thread so it doesn't block the event loop.
+                eval_span.set_attributes(await to_thread.run_sync(ci_provenance_attributes))
             task_id = progress_bar.add_task(f'Evaluating {task_name}', total=total_tasks) if progress_bar else None
 
             async def _handle_case(
