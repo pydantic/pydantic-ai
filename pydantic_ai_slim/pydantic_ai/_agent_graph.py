@@ -898,8 +898,11 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
 
-    display_banner: _display.BannerDisplay
-    """Shows the first-run banner, once this run has resolved the model and tools it will use."""
+    display_banner: _display.BannerDisplay | None
+    """Shows the first-run banner, once this run has resolved the model and tools it will use.
+
+    `None` when an installed package started the run, which never gets a banner.
+    """
 
     agent: Agent[DepsT, Any] | None = None
 
@@ -2141,14 +2144,23 @@ def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDe
     isn't getting one counts nothing: this is on a path every run takes, and past the first one it
     comes down to reading a flag.
 
+    A run an installed package started has no `display_banner` at all: see
+    `_display.started_by_installed_package`.
+
     An instrumented run has what the banner would point it to, so it stays out of the way — without
     spending the claim, since another agent in this process may not be instrumented. `clai` differs:
     its banner is also its session header, so it shows one either way.
     """
-    if ctx.state.run_step != 1 or ctx.deps.instrumentation_settings is not None or not _display.banner_pending():
+    display_banner = ctx.deps.display_banner
+    if (
+        ctx.state.run_step != 1
+        or display_banner is None
+        or ctx.deps.instrumentation_settings is not None
+        or not _display.banner_pending()
+    ):
         return
 
-    ctx.deps.display_banner(
+    display_banner(
         model=ctx.deps.model_id or ctx.deps.model.model_id,
         tools=sum(tool_def.kind != 'output' for tool_def in ctx.deps.tool_manager.tool_defs),
     )

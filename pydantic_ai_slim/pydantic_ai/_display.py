@@ -8,11 +8,15 @@ import platform
 import re
 import shutil
 import sys
+import sysconfig
 from collections.abc import Sequence
+from functools import cache
 from importlib import metadata
 from itertools import zip_longest
+from pathlib import PurePath
 from textwrap import wrap
 from threading import Lock
+from types import FrameType
 from typing import IO, Protocol, cast, get_args
 
 _banner_displayed = False
@@ -207,6 +211,45 @@ def _agent_signal_matches(signal: str) -> bool:
         return any(name.startswith(prefix) for name in os.environ)
     name, _, value = signal.partition('=')
     return os.environ.get(name) == value if value else name in os.environ
+
+
+_OWN_PACKAGES = frozenset({'pydantic_ai', 'pydantic_graph'})
+"""Packages whose frames sit between whoever started a run and the code deciding about a banner."""
+
+_INSTALLED_PACKAGE_DIRS = frozenset({'site-packages', 'dist-packages'})
+
+
+def started_by_installed_package(frame: FrameType | None) -> bool:
+    """Whether the code that started an agent run is an installed package, rather than the user's own.
+
+    A library or platform built on Pydantic AI (an Airflow provider, a CLI installed with `uv tool`)
+    runs agents on its users' behalf, and its users didn't ask for our banner: it would land in their
+    logs or inside the tool's own UI. The user's own script, notebook or app runs from a source tree,
+    while an installed package runs from `site-packages`, so the first frame outside Pydantic AI and
+    the standard library says which of the two started the run.
+
+    Args:
+        frame: The frame to start looking outwards from, inside Pydantic AI.
+    """
+    stdlib_dirs = _stdlib_dirs()
+    while frame is not None:
+        filename = frame.f_code.co_filename
+        module = frame.f_globals.get('__name__')
+        if not (isinstance(module, str) and module.partition('.')[0] in _OWN_PACKAGES):
+            # Checked before the standard library, which a system Python's `site-packages` sits inside.
+            if not _INSTALLED_PACKAGE_DIRS.isdisjoint(PurePath(filename).parts):
+                return True
+            if not filename.startswith(stdlib_dirs):
+                return False
+        frame = frame.f_back
+    return False
+
+
+@cache
+def _stdlib_dirs() -> tuple[str, ...]:
+    """Where the standard library lives, whose frames (`asyncio`, `contextlib`) are passed over like ours."""
+    paths = sysconfig.get_paths()
+    return tuple(os.path.join(paths[key], '') for key in ('stdlib', 'platstdlib'))
 
 
 def _banner_suppressed() -> bool:

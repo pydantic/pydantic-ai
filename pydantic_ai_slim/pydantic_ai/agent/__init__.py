@@ -2211,7 +2211,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
             )
 
-        def display_banner(*, model: str, tools: int) -> None:
+        def display_agent_banner(*, model: str, tools: int) -> None:
             # Called by the graph once the run's first step has resolved the model it will actually
             # use and the tools it will actually offer, and only when there is a banner to show;
             # everything else is settled here and now.
@@ -2223,6 +2223,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 tools=tools,
                 capabilities=_registered_capability_count(bootstrap_capability),
             )
+
+        # A run a library or platform started on its users' behalf gets no banner, and leaves the claim
+        # for the user's own agents. Decided here, while the frames of whoever called `run()` are still
+        # on the stack.
+        display_banner = (
+            None
+            if _display.banner_pending() and _display.started_by_installed_package(inspect.currentframe())
+            else display_agent_banner
+        )
 
         model_resources = _RunModelResources(
             self._entered_model_ids.copy(),

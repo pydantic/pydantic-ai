@@ -5,6 +5,7 @@ import importlib.util
 import os
 import signal
 import sys
+import sysconfig
 import threading
 from collections.abc import Callable
 from importlib import metadata
@@ -852,6 +853,58 @@ def test_banner_is_shown_by_agent_run(monkeypatch: pytest.MonkeyPatch, stderr: T
     agent.run_sync('hello')
 
     assert 'agent: support_agent • model: test:test • tools: 0 • capabilities: 0' in stderr.getvalue()
+
+
+def _package_runner(filename: str, *, run_async: bool = False) -> Callable[..., Any]:
+    """A function that runs an agent, compiled as if it lived at `filename`, like an installed library's code."""
+    source = (
+        'async def run(agent):\n    return await agent.run("hello")\n'
+        if run_async
+        else 'def run(agent):\n    return agent.run_sync("hello")\n'
+    )
+    namespace: dict[str, Any] = {'__name__': 'some_library.runner'}
+    exec(compile(source, filename, 'exec'), namespace)
+    return namespace['run']
+
+
+@pytest.mark.parametrize(
+    'filename',
+    [
+        '/venv/lib/python3.13/site-packages/some_library/runner.py',
+        '/usr/lib/python3/dist-packages/some_library/runner.py',
+        # A system Python keeps `site-packages` inside its standard library directory.
+        os.path.join(sysconfig.get_paths()['stdlib'], 'site-packages', 'some_library', 'runner.py'),
+    ],
+)
+def test_banner_is_not_shown_for_a_run_an_installed_package_started(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream, filename: str
+):
+    """A library or platform runs agents for its own users, who didn't ask for the banner."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    agent = Agent(TestModel(), name='support_agent')
+
+    _package_runner(filename)(agent)
+    assert stderr.getvalue() == ''
+
+    # The claim is left for the user's own agent.
+    agent.run_sync('hello')
+    assert 'agent: support_agent' in stderr.getvalue()
+
+
+async def test_banner_is_not_shown_for_an_async_run_an_installed_package_started(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
+):
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    runner = _package_runner('/venv/lib/python3.13/site-packages/some_library/runner.py', run_async=True)
+
+    await runner(Agent(TestModel()))
+
+    assert stderr.getvalue() == ''
+    assert _display.banner_pending() is True
+
+
+def test_no_frame_is_not_an_installed_package():
+    assert _display.started_by_installed_package(None) is False
 
 
 def test_banner_counts_every_tool_the_model_is_offered(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
