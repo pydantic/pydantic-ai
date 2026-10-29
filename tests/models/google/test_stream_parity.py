@@ -31,7 +31,7 @@ from pydantic_ai.messages import BaseToolCallPart, ModelResponse, ModelResponseP
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, FileSearchTool, WebFetchTool, WebSearchTool
 
-from ...cassette_utils import recorded_interactions
+from ...cassette_utils import recorded_interactions, recorded_request_body
 from ...conftest import try_import
 
 with try_import() as imports_successful:
@@ -146,7 +146,9 @@ def _comparable_tool_fields(part: ModelResponsePart) -> dict[str, Any]:
 async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     model_name = _MODEL_NAME_PATTERN.search(interaction['request']['uri'])
     assert model_name is not None
-    body = interaction['response']['body']['string'].encode()
+    # vcrpy recorded the raw text as `string`; cassetter writes a typed `{type, content}` mapping.
+    recorded_body = interaction['response']['body']
+    body = (recorded_body['string'] if 'string' in recorded_body else recorded_body['content']).encode()
     headers = {key: values[0] for key, values in interaction['response']['headers'].items()}
     headers.pop('content-encoding', None)
     headers.pop('content-length', None)
@@ -157,10 +159,15 @@ async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str,
         ),
     )
     model = GoogleModel(model_name.group(1), provider=provider)
-    model_request_parameters = ModelRequestParameters(native_tools=_native_tools(interaction['request']['parsed_body']))
+    model_request_parameters = ModelRequestParameters(
+        native_tools=_native_tools(recorded_request_body(interaction['request']))
+    )
 
     async def open_stream() -> AsyncIterator[GenerateContentResponse]:
-        return await provider.client.aio.models.generate_content_stream(model=model.model_name, contents='')
+        # One recorded response is compared, so a long decode's continuation token must not send another request.
+        return await provider.client.aio.models.generate_content_stream(
+            model=model.model_name, contents='', config={'automatic_continuation': False}
+        )
 
     chunks = [chunk async for chunk in await open_stream()]
     complete = model._process_response(_merge_chunks(chunks), model_request_parameters)  # pyright: ignore[reportPrivateUsage]

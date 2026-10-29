@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_capability_loads
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -88,13 +89,15 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     keep_messages: int = 40
     """Number of tail messages to retain after trimming (message-count trigger).
 
-    With `receipts=True`, the receipt counts as one of these, but never displaces the newest message.
+    The newest message is always kept, so `0` keeps one. With `receipts=True`, the receipt
+    counts as one of these, but never displaces the newest message.
     """
 
     keep_tokens: int | None = None
-    """Target token budget after trimming (token-count trigger).
+    """Minimum original message-content tokens to retain in an unchanged recent suffix.
 
-    When `None`, falls back to `keep_messages`.
+    Whole messages and tool dependencies can exceed this floor. Attached instructions do
+    not count. When `None`, falls back to `keep_messages`; zero keeps legacy edge behavior.
     """
 
     tokenizer: Callable[[str], int] | None = None
@@ -107,6 +110,16 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     preserve_first_user_message: bool = True
     """When `True`, the first `ModelRequest` containing a `UserPromptPart`
     is always kept after trimming, in addition to system prompts.
+    """
+
+    preserve_loaded_capabilities: bool = field(default=True, kw_only=True)
+    """When `True`, a deferred capability loaded in the dropped messages stays loaded.
+
+    Core counts a capability as loaded while its `load_capability` exchange is in the history, so
+    dropping the exchange would unload it. Each such load is recorded again ahead of the kept
+    messages instead, and the capability's tools and current instructions are sent again. When
+    `False`, those capabilities are unloaded, and a note names them so the model can load the ones
+    it still needs.
     """
 
     receipts: bool = False
@@ -135,8 +148,7 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     ) -> list[ModelMessage]:
         """Drop the oldest messages down to the configured tail."""
         if self.keep_tokens is not None:
-            reservation = self._receipt_token_reservation(messages, ctx) if self.receipts else 0
-            cutoff = find_token_cutoff(messages, max(0, self.keep_tokens - reservation), self.tokenizer)
+            cutoff = find_token_cutoff(messages, self.keep_tokens, self.tokenizer)
         else:
             # The receipt takes one of the kept slots, but never the last one: keeping zero
             # messages would drop the newest message, which in a run is the request being answered.
@@ -149,23 +161,26 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
         trimmed = messages[cutoff:]
         if self.preserve_first_user_message:
             trimmed = prepend_first_user_message(messages, cutoff, trimmed)
-        trimmed = reinject_pinned(messages, trimmed)
+        protected_tail = len(messages) - cutoff if self.keep_tokens else 0
+        trimmed = reinject_pinned(messages, trimmed, protected_tail=protected_tail)
         if self.receipts:
-            trimmed = self._without_receipts(trimmed)
+            if protected_tail:
+                trimmed = [*self._without_receipts(trimmed[:-protected_tail]), *trimmed[-protected_tail:]]
+            else:
+                trimmed = self._without_receipts(trimmed)
             dropped = self._dropped_messages(messages, trimmed)
             trimmed = [self._receipt_message(dropped, ctx), *trimmed]
-        return trimmed
-
-    def _receipt_token_reservation(self, messages: list[ModelMessage], ctx: RunContext[AgentDepsT]) -> int:
-        """Reserve enough tokens for any receipt this compaction can emit."""
-        text = format_receipt(
-            dropped_messages=len(messages),
-            dropped_tokens=estimate_token_count(messages, self.tokenizer),
-            by='the harness',
-            handle=discover_transcript_handle(ctx),
-            has_summary=False,
+        kept = messages[cutoff:]
+        kept_from = next(
+            (index for index, message in enumerate(trimmed) if any(message is k for k in kept)), len(trimmed) - 1
         )
-        return estimate_token_count([ModelRequest(parts=[make_receipt_part(text)])], self.tokenizer)
+        return keep_capability_loads(
+            messages,
+            trimmed,
+            kept_from=kept_from,
+            deferred_ids=deferred_capability_ids(ctx),
+            preserve=self.preserve_loaded_capabilities,
+        )
 
     @staticmethod
     def _without_receipts(messages: list[ModelMessage]) -> list[ModelMessage]:

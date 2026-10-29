@@ -17,7 +17,6 @@ from pydantic_ai import (
     PartStartEvent,
 )
 from pydantic_ai.messages import (
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -54,13 +53,15 @@ async def test_render_edge_events(show_tool_output: bool) -> None:
         await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart(tool, '{', tool_call_id=tool)))
     await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart('read_file', {})))
     for content in (
-        RetryPromptPart('retry', tool_name='grep', tool_call_id='g'),
+        ToolReturnPart('grep', 'retry', tool_call_id='g', outcome='retried'),
         ToolReturnPart('grep', {}, tool_call_id='g'),
     ):
         await renderer.on_stream_event(
             FunctionToolCallEvent(part=ToolCallPart('grep', {'pattern': 'x'}, tool_call_id='g'))
         )
         await renderer.on_stream_event(FunctionToolResultEvent(part=content))
+    # A retried call carries the error, not matches, so it is not rendered as search results.
+    assert output.getvalue().count('tool did not return text results') == (2 if show_tool_output else 0)
     for operation in ('write', 'create_directory'):
         await renderer.on_stream_event(
             FileChangeRequestEvent(
@@ -118,6 +119,19 @@ async def test_thinking_deltas_and_abort() -> None:
     await renderer.on_stream_event(PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' more')))
     await renderer.on_stream_event(PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='{}')))
     await renderer.abort()
+
+
+async def test_a_part_follows_its_console_to_another_file() -> None:
+    """The terminal showing another session hands its console a new file mid-part: the rest of the part goes there."""
+    before, after = io.StringIO(), io.StringIO()
+    console = Console(file=before, force_terminal=False)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart('shown before\nhalf a ')))
+    console.file = after
+    await renderer.on_stream_event(PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='line\n')))
+    await renderer.finish()
+    assert 'shown before' in before.getvalue() and 'half a' not in before.getvalue()
+    assert 'half a line' in after.getvalue() and 'shown before' not in after.getvalue()
 
 
 @pytest.mark.parametrize('terminal', [False, True])

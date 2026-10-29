@@ -1,11 +1,13 @@
+# description: Runs the requested pydantic-ai-harness sandbox providers' live tests against their real services.
 name: Sandbox live tests
 
 # Runs each `pydantic-ai-harness` sandbox provider's live tier against the provider's real
-# service. Every test starts a billed sandbox, so `sandbox-live-nightly.yml` calls this only
-# on its daily schedule or when a maintainer explicitly dispatches it.
+# service. Most tests start a billed cloud sandbox, so `sandbox-live-nightly.yml` calls this
+# only on its daily schedule or when a maintainer explicitly dispatches it.
 #
-# This file has no per-provider step. Adding a provider adds its name to `PRESENT` and its
-# secret below.
+# Adding a provider adds its name to `PRESENT` and its secret below. Docker is the exception:
+# it has no extra or secret, and its live tier runs a second time against Podman in a step of
+# its own.
 #
 # There is deliberately no `ref` input: a scheduled or manual caller runs with the cache of
 # the branch it started from (usually `main`), and checking out another ref there would run
@@ -27,6 +29,10 @@ on:
         required: false
       SPRITE_TOKEN:
         required: false
+      DAYTONA_API_KEY:
+        required: false
+      BOXD_API_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -43,7 +49,7 @@ jobs:
       # the workflow, so the matrix below starts each known provider once.
       - id: plan
         env:
-          PRESENT: '["modal", "e2b", "sprites"]'
+          PRESENT: '["modal", "e2b", "sprites", "daytona", "boxd", "docker"]'
           REQUESTED: ${{ inputs.providers }}
         run: |
           providers="$(python3 -c '
@@ -82,11 +88,14 @@ jobs:
 
       # The provider SDK is an extra of the `pydantic-ai-harness` workspace member, so
       # `--package` selects that member and `--group dev` adds the root test tooling. Each
-      # provider's guide has a Temporal worker example, which the docs-example test runs;
+      # cloud provider's guide has a Temporal worker example, which the docs-example test runs;
       # `code-mode` and `coder` are what the provider test modules import at collection.
-      - run: >-
-          uv sync --locked --package pydantic-ai-harness --group dev
-          --extra "$PROVIDER" --extra temporal --extra code-mode --extra coder
+      # Docker has no extra: it drives the `docker` CLI that GitHub's Ubuntu runners ship with.
+      - run: |
+          provider_extra=(--extra "$PROVIDER")
+          [ "$PROVIDER" != docker ] || provider_extra=()
+          uv sync --locked --package pydantic-ai-harness --group dev \
+            "${provider_extra[@]}" --extra temporal --extra code-mode --extra coder
         env:
           PROVIDER: ${{ matrix.provider }}
 
@@ -103,3 +112,13 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
           SPRITE_TOKEN: ${{ secrets.SPRITE_TOKEN }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          BOXD_API_KEY: ${{ secrets.BOXD_API_KEY }}
+
+      # The runners ship Podman too, which `DockerSandbox` supports through `executable='podman'`.
+      - if: matrix.provider == 'docker'
+        run: uv run --no-sync pytest -p no:cacheprovider -m docker_live tests/harness/docker_sandbox -q
+        env:
+          PYDANTIC_AI_HARNESS_DOCKER_LIVE: "1"
+          DOCKER_REQUIRE_LIVE: "1"
+          PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE: podman

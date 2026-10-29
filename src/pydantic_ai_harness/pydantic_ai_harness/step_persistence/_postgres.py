@@ -18,7 +18,12 @@ lifecycle.
   unique partial index on `(run_id, idempotency_key)` drops keyed replays.
 - `{table}_snapshots` -- one row per snapshot; latest-per-run is the highest
   `seq`, matching `SqliteStepStore`'s `AUTOINCREMENT seq` so a reused `run_id`
-  whose `step_index` reset to 0 cannot clobber an earlier snapshot.
+  whose `step_index` reset to 0 cannot clobber an earlier snapshot. `messages`
+  holds `{"message_refs": [sha256, ...]}`; rows written before messages were
+  stored once hold the history's JSON list, and still read.
+- `{table}_messages` -- each message's JSON once, keyed by its SHA-256. Like
+  externalized media, a message stays when the snapshots referencing it are
+  pruned.
 - `{table}_snapshot_keys` -- `(run_id, idempotency_key)` primary key; replay
   suppression retained after pruning.
 - `{table}_tool_effects` -- upsert per `(run_id, tool_call_id)`.
@@ -47,8 +52,15 @@ from pydantic_ai_harness.media import (
     externalize_media,
     restore_media,
 )
+from pydantic_ai_harness.step_persistence._messages import (
+    MessageRefs,
+    keyed_messages,
+    message_refs,
+    referenced_history_json,
+)
 from pydantic_ai_harness.step_persistence._store import (
     _DEFAULT_MEDIA_THRESHOLD_BYTES,  # pyright: ignore[reportPrivateUsage]
+    _OBJECT_LIST_ADAPTER,  # pyright: ignore[reportPrivateUsage]
     _AutoMedia,  # pyright: ignore[reportPrivateUsage]
     _event_from_row,  # pyright: ignore[reportPrivateUsage]
     _opt_str,  # pyright: ignore[reportPrivateUsage]
@@ -87,6 +99,10 @@ _SNAPSHOT_COLUMNS = (
     'run_id, step_index, conversation_id, parent_run_id, agent_name, timestamp, state, messages, idempotency_key'
 )
 _TOOL_EFFECT_COLUMNS = 'run_id, tool_call_id, tool_name, status, started_at, ended_at, idempotency_key, effect_summary'
+# Where `_select_snapshots_sql` puts the `messages` column, which `_snapshot_from_row` unpacks by name.
+_MESSAGES_COLUMN = 6
+# Rows per message `INSERT`, well under both Postgres's 65535 and SQLite's 32766 bound parameters.
+_MESSAGES_PER_INSERT = 1000
 
 
 class PostgresStepStore:
@@ -133,6 +149,7 @@ class PostgresStepStore:
         self._snapshots_table = f'{table}_snapshots'
         self._snapshot_keys_table = f'{table}_snapshot_keys'
         self._tool_effects_table = f'{table}_tool_effects'
+        self._messages_table = f'{table}_messages'
         resolved: MediaStore | None
         if media_store == 'auto':
             resolved = PostgresMediaStore(pool, table=f'{table}_media')
@@ -208,6 +225,9 @@ class PostgresStepStore:
                 await connection.execute(
                     f'CREATE INDEX IF NOT EXISTS {self._snapshots_table}_run_idx '
                     f'ON {self._snapshots_table} (run_id, seq)'
+                )
+                await connection.execute(
+                    f'CREATE TABLE IF NOT EXISTS {self._messages_table} (sha256 TEXT PRIMARY KEY, message TEXT NOT NULL)'
                 )
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._snapshot_keys_table} ('
@@ -339,6 +359,8 @@ class PostgresStepStore:
                 )
                 if claimed is None:
                     return
+            keyed = keyed_messages(_OBJECT_LIST_ADAPTER.validate_python(messages_json))
+            await self._store_messages(connection, dict(keyed))
             await connection.execute(
                 f'INSERT INTO {self._snapshots_table} ({_SNAPSHOT_COLUMNS}) '
                 'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
@@ -349,10 +371,40 @@ class PostgresStepStore:
                 snapshot.agent_name,
                 snapshot.timestamp.isoformat(),
                 snapshot.state,
-                json.dumps(messages_json),
+                json.dumps(MessageRefs(message_refs=[sha256 for sha256, _ in keyed])),
                 snapshot.idempotency_key,
             )
             await self._prune_snapshots(connection, snapshot.run_id)
+
+    async def _store_messages(self, connection: PostgresConnection, messages: dict[str, str]) -> None:
+        """Insert the messages `{table}_messages` lacks.
+
+        In key order, so two saves sharing messages wait on each other's rows
+        in the same order instead of deadlocking.
+        """
+        rows = sorted(messages.items())
+        for start in range(0, len(rows), _MESSAGES_PER_INSERT):
+            chunk = rows[start : start + _MESSAGES_PER_INSERT]
+            values = ', '.join(f'(${2 * i + 1}, ${2 * i + 2})' for i in range(len(chunk)))
+            await connection.execute(
+                f'INSERT INTO {self._messages_table} (sha256, message) VALUES {values} ON CONFLICT DO NOTHING',
+                *(value for row in chunk for value in row),
+            )
+
+    async def _load_messages(self, connection: PostgresConnection, rows: Sequence[Sequence[object]]) -> dict[str, str]:
+        """The stored messages the snapshot rows reference, by key."""
+        refs = {
+            ref
+            for row in rows
+            if isinstance(messages_text := row[_MESSAGES_COLUMN], str)
+            for ref in (message_refs(messages_text) or ())
+        }
+        if not refs:
+            return {}
+        found = await connection.fetch(
+            f'SELECT sha256, message FROM {self._messages_table} WHERE sha256 = ANY($1::text[])', sorted(refs)
+        )
+        return {str(sha256): str(message) for sha256, message in found}
 
     async def _prune_snapshots(self, connection: PostgresConnection, run_id: str) -> None:
         """Delete this run's snapshot rows outside the retain set when bounded.
@@ -390,10 +442,15 @@ class PostgresStepStore:
             sorted(seq for seq, _ in entries),
         )
 
-    async def _snapshot_from_row(self, run_id: str, row: Sequence[object]) -> ContinuableSnapshot:
+    async def _snapshot_from_row(
+        self, run_id: str, row: Sequence[object], stored: dict[str, str]
+    ) -> ContinuableSnapshot:
         step_index, conv_id, parent_id, agent_name, timestamp_iso, state_raw, messages_text, key = row
         if not (isinstance(step_index, int) and isinstance(timestamp_iso, str) and isinstance(messages_text, str)):
             raise ValueError('snapshot row has wrong types')
+        refs = message_refs(messages_text)
+        if refs is not None:
+            messages_text = referenced_history_json(refs, stored)
         messages_json: object = json.loads(messages_text)
         if self._media_store is not None:
             messages_json = await restore_media(messages_json, media_store=self._media_store)
@@ -424,11 +481,12 @@ class PostgresStepStore:
         sql = self._select_snapshots_sql(include_interrupted) + ' ORDER BY seq DESC LIMIT 1'
         async with self._pool.acquire() as connection:
             row = await connection.fetchrow(sql, run_id)
-        if row is None:
-            return None
+            if row is None:
+                return None
+            stored = await self._load_messages(connection, [row])
         # The connection is released before media is restored, for the same
         # reason `save_snapshot` externalizes before its transaction.
-        return await self._snapshot_from_row(run_id, row)
+        return await self._snapshot_from_row(run_id, row, stored)
 
     async def list_snapshots(self, *, run_id: str, include_interrupted: bool = False) -> list[ContinuableSnapshot]:
         """Return retained snapshots for `run_id` in write order.
@@ -443,10 +501,11 @@ class PostgresStepStore:
         sql = self._select_snapshots_sql(include_interrupted) + ' ORDER BY seq ASC'
         async with self._pool.acquire() as connection:
             rows = await connection.fetch(sql, run_id)
+            stored = await self._load_messages(connection, rows)
         snapshots: list[ContinuableSnapshot] = []
         for row in rows:
             try:
-                snapshots.append(await self._snapshot_from_row(run_id, row))
+                snapshots.append(await self._snapshot_from_row(run_id, row, stored))
             except Exception:
                 _logger.warning('Skipping unparsable snapshot row for run %s', run_id, exc_info=True)
         return snapshots

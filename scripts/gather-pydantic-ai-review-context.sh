@@ -24,6 +24,63 @@
 
 set -euo pipefail
 
+# The partition mode is also used by local regression tests. It accepts the same
+# GitHub files JSON consumed by the full context gatherer and makes no API calls.
+if [ "${1:-}" = "--partition-files" ]; then
+  FILES_JSON="${2:?Usage: $0 --partition-files <files.json> <output-dir>}"
+  ORDERINGS_DIR="${3:?Usage: $0 --partition-files <files.json> <output-dir>}"
+  mkdir -p "$ORDERINGS_DIR"
+
+  # Keep the historical ordering files for consumers that use them. Resolve
+  # equal-size ties by path so assignments do not depend on GitHub API order.
+  jq -r '
+    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    | sort_by(.filename) | .[].filename
+  ' "$FILES_JSON" > "$ORDERINGS_DIR/az.txt"
+  jq -r '
+    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    | sort_by(.filename) | reverse | .[].filename
+  ' "$FILES_JSON" > "$ORDERINGS_DIR/za.txt"
+
+  PARTITIONS=$(jq '
+    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    | sort_by([-( (.additions // 0) + (.deletions // 0) ), .filename]) as $files
+    | ($files | length) as $file_count
+    | ([$files[] | (.additions // 0) + (.deletions // 0)] | add // 0) as $diff_lines
+    | (if $file_count <= 3 and $diff_lines <= 200 then 0
+       elif $file_count > 10 or $diff_lines > 1000 then 3
+       else 2 end) as $requested
+    | ([ $requested, $file_count ] | min) as $delegate_count
+    | (reduce range(0; $delegate_count) as $i
+         ({bins: [], loads: []}; .bins += [[]] | .loads += [0])) as $empty
+    | reduce $files[] as $file ($empty;
+        . as $state
+        | (reduce range(1; $delegate_count) as $i
+             (0; . as $best
+              | if $state.loads[$i] < $state.loads[$best]
+                   or ($state.loads[$i] == $state.loads[$best]
+                       and ($state.bins[$i] | length) < ($state.bins[$best] | length))
+                then $i else $best end)) as $best
+        | .bins[$best] += [$file.filename]
+        | .loads[$best] += (($file.additions // 0) + ($file.deletions // 0)))
+    | {delegate_count: $delegate_count, bins: .bins}
+  ' "$FILES_JSON")
+
+  printf '%s\n' "$PARTITIONS" | jq -r '.delegate_count' > "$ORDERINGS_DIR/delegate-count.txt"
+  DELEGATE_COUNT=$(printf '%s\n' "$PARTITIONS" | jq -r '.delegate_count')
+  for ((index = 0; index < DELEGATE_COUNT; index++)); do
+    jq -r ".bins[$index][]" <<<"$PARTITIONS" > "$ORDERINGS_DIR/delegate-$((index + 1)).txt"
+  done
+  # Existing largest.txt remains the ordered source used for first-pass
+  # assignments. Assign each next-largest file to the least-loaded delegate.
+  jq -r '
+    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    | sort_by([-( (.additions // 0) + (.deletions // 0) ), .filename])
+    | .[].filename
+  ' "$FILES_JSON" > "$ORDERINGS_DIR/largest.txt"
+  exit 0
+fi
+
 PR_NUMBER="${1:?Usage: $0 <pr-number> [repo]}"
 REPO="${2:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
 CTX="${GITHUB_WORKSPACE:-$PWD}/.review-context"
@@ -36,7 +93,7 @@ _TMP_FILES=()
 track_tmp() { _TMP_FILES+=("$1"); }
 cleanup_tmp() {
   for f in "${_TMP_FILES[@]:-}"; do
-    [ -n "$f" ] && rm -f "$f"
+    [ -n "$f" ] && rm -rf "$f"
   done
 }
 trap cleanup_tmp EXIT
@@ -197,9 +254,11 @@ done > "$CTX/related-issues.txt"
 echo "  - Fetching base branch for function-context diffs"
 BASE_REF=$(jq -r '.baseRefName' "$CTX/pr-details.json")
 MERGE_BASE=""
+BASE_SHA=""
 if [ -n "$BASE_REF" ]; then
   if git fetch "https://github.com/${REPO}.git" "$BASE_REF" --quiet 2>/dev/null; then
     MERGE_BASE=$(git merge-base HEAD FETCH_HEAD 2>/dev/null || echo "")
+    BASE_SHA=$(git rev-parse FETCH_HEAD 2>/dev/null || echo "")
   fi
 fi
 if [ -n "$MERGE_BASE" ]; then
@@ -341,24 +400,12 @@ jq -r '.[] | [.filename, "+\(.additions) -\(.deletions)", (.filename | gsub("/";
     fi
   done > "$CTX/changed-files.txt"
 
-# File orderings for sub-agent fan-out. Each ordering primes one sub-agent to
-# spend its early attention on a different slice of the PR; the parent merges
-# findings. Generated files (uv.lock, cassettes) are excluded — they don't
-# get reviewed. Each file contains one path per line.
-echo "  - File orderings (az / za / largest)"
+# File orderings and disjoint first-pass assignments. The historical ordering
+# files remain available to other consumers; assignments use largest-first
+# greedy balancing and exclude generated files.
+echo "  - File orderings and delegate assignments"
 mkdir -p "$CTX/file-orderings"
-jq -r '
-  [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
-  | sort_by(.filename) | .[].filename
-' "$FILES_JSON" > "$CTX/file-orderings/az.txt"
-jq -r '
-  [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
-  | sort_by(.filename) | reverse | .[].filename
-' "$FILES_JSON" > "$CTX/file-orderings/za.txt"
-jq -r '
-  [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
-  | sort_by(-((.additions // 0) + (.deletions // 0))) | .[].filename
-' "$FILES_JSON" > "$CTX/file-orderings/largest.txt"
+"$0" --partition-files "$FILES_JSON" "$CTX/file-orderings"
 
 # PR size summary — file count and total diff lines. The prompt uses this to
 # pick a single-pass vs fan-out review strategy.
@@ -367,10 +414,49 @@ DIFF_LINES=$(jq '[.[] | select(.filename | test("uv\\.lock|/cassettes/") | not) 
 printf '%s files, %s diff lines (excluding generated files)\n' "$FILE_COUNT" "$DIFF_LINES" > "$CTX/pr-size.txt"
 rm -f "$FILES_JSON"
 
+# Core definitions the durable engines depend on that this PR changes, found as the
+# `durable-exec-label` job in `.github/workflows/bots.yml` finds them: with the base branch's
+# classifier and manifest, never this checkout's copies, so a PR's edits to either take effect
+# only once merged.
+# Written only when there are any. Non-fatal: without it the reviewer has less context.
+echo "  - Durable-exec contract entries"
+DURABLE_EXEC_AGENTS_MD=pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md
+DURABLE_EXEC_GATE=$(mktemp -d)
+track_tmp "$DURABLE_EXEC_GATE"
+durable_exec_touched() {
+  local path
+  mkdir -p "$DURABLE_EXEC_GATE/scripts" || return 1
+  for path in scripts/durable_exec_contract.py scripts/durable_exec_contract.json; do
+    gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/${path}?ref=${BASE_SHA}" \
+      > "$DURABLE_EXEC_GATE/$path" || return 1
+  done
+  python3 -I "$DURABLE_EXEC_GATE/scripts/durable_exec_contract.py" \
+    --touched "$REPO" "$PR_NUMBER" "$BASE_SHA" "$(git rev-parse HEAD)"
+}
+if [ -n "$BASE_SHA" ] && TOUCHED=$(durable_exec_touched); then
+  if [ "$(jq '[.[] | length] | add // 0' <<<"$TOUCHED")" -gt 0 ]; then
+    {
+      echo "# Durable-exec contract entries this PR touches"
+      echo ""
+      echo "The base branch's \`scripts/durable_exec_contract.py --touched\` placed this PR's changed lines in"
+      echo "these entries of \`scripts/durable_exec_contract.json\`: core definitions a durable engine"
+      echo "depends on, each with its kinds, its engines and the engine sites that depend on it."
+      echo "\`agents-md.txt\` carries \`${DURABLE_EXEC_AGENTS_MD}\`, whose section \"Core changes that"
+      echo "engines depend on\" says what to check."
+      echo ""
+      jq -r 'to_entries[] | .key as $file | .value | to_entries[]
+        | "- `\($file)::\(.key)`: \(.value.kinds | join(", ")); engines: \(.value.engines | join(", "))",
+          (.value.sites[] | "  - `\(.)`")' <<<"$TOUCHED"
+    } > "$CTX/durable-exec-contract.md"
+  fi
+else
+  echo "    Could not classify the PR against the durable-exec contract (skipping)"
+fi
+
 # Gather AGENTS.md files relevant to the PR — the repo-root file (always,
-# when present) plus any per-directory AGENTS.md whose directory has changed
-# files in this PR.
-echo "  - AGENTS.md files (repo-root + changed directories)"
+# when present), any per-directory AGENTS.md whose directory has changed
+# files in this PR, and the durable_exec one when the PR touches a contract entry.
+echo "  - AGENTS.md files (repo-root + changed directories + touched durable-exec contract)"
 > "$CTX/agents-md.txt"
 {
   if [ -f ./AGENTS.md ]; then
@@ -380,7 +466,9 @@ echo "  - AGENTS.md files (repo-root + changed directories)"
   fi
   for agents_file in $(find . -name AGENTS.md -not -path './.venv/*' -not -path ./AGENTS.md | sed 's|^\./||' | sort); do
     dir=$(dirname "$agents_file")
-    if grep -q "^${dir}/" "$CTX/changed-files.txt" 2>/dev/null && [ -f "$agents_file" ]; then
+    if { grep -q "^${dir}/" "$CTX/changed-files.txt" 2>/dev/null \
+         || { [ "$agents_file" = "$DURABLE_EXEC_AGENTS_MD" ] && [ -f "$CTX/durable-exec-contract.md" ]; }; } \
+      && [ -f "$agents_file" ]; then
       echo "=== ${agents_file} ==="
       cat "$agents_file"
       echo ""
@@ -423,8 +511,12 @@ Determine severity AFTER investigating the finding, not before.
   on small helpers, narrow refactor opportunities.
 - 💬 **NITPICK** — truly optional. Naming preferences, comment polish.
 
-**Verdict mapping:** any HIGH or CRITICAL → `REQUEST_CHANGES`. MEDIUM-only
-or below → `APPROVE` (post the comments anyway). No findings → `APPROVE`.
+**Verdict mapping:** any verified HIGH or CRITICAL finding requires
+`REQUEST_CHANGES`, even when review coverage is incomplete. Otherwise, incomplete
+coverage requires `COMMENT`; complete coverage with MEDIUM-only or lower findings
+requires `APPROVE` (post comments anyway). Name every unreviewed file in the
+review body for either verdict.
+Complete coverage with no findings → `APPROVE`.
 
 **Cap inline comments at 30 per run.** If more findings survive, keep the
 highest-severity 30 inline and list the rest briefly in the review body.
@@ -610,6 +702,139 @@ def test_import_is_light():
 interpreter; the reason names the process-boundary property under test. Also
 don't flag a launch in a `session`- or `module`-scoped fixture (shared cost,
 the recommended pattern) or a short real wait whose duration is the claim.
+
+### Example 6 — message history and prompt cache
+
+Trigger: the diff enqueues or edits messages, contributes instructions or
+tools, renders history in a model adapter, wraps content in tags, or converts
+history to or from a UI protocol. The rules, each with its reason, are in
+`agent_docs/message-history-and-caching.md`. A violation with a concrete
+trigger is HIGH: a moved prefix makes every later request re-process it uncached, with no error,
+and content in the wrong channel is a prompt injection.
+
+**Flag this (HIGH):**
+```python
+async def before_model_request(self, ctx, request_context):
+    report = await self._sub_agent_report()
+    ctx.enqueue(SystemPromptPart(f'Sub-agent finished:\n{report}'))
+```
+*Why:* The report is another agent's output, which can repeat anything it
+read, and here it is sent in operator voice. It belongs in the tool result
+channel, or in a framed and escaped data wrapper on a user turn. The same goes
+for a framework or harness hook that rewrites or strips earlier messages by
+default or on every request, for
+framework guidance enqueued as a plain `str` (it becomes a user message), for
+code that finds its own earlier parts by matching their text, and for a new
+wrapper with a hand-rolled escaper instead of `_framing.wrap()`, or one that escapes only the closing
+`</name>` spelling (`</NAME >`, `< / name>` or an opening `<name>` still gets
+through) or escapes only its own tag (a `</context>` or `<system>` in its
+body still gets through), uses a `kebab-case` tag name, or puts an
+untagged "Tool X completed." line in front of the frame. Likewise a summarizer or judge
+that renders a framework data part (a task report, a reminder) as a `user:` turn.
+
+**Don't flag this:**
+```python
+async def before_model_request(self, ctx, request_context):
+    ctx.enqueue(SystemPromptPart('Keep the answer under 100 words.', scope='request'))
+```
+*Why:* Fixed framework text in system voice, request-scoped, and added to
+history. On Anthropic it's sent natively with `clear_at`, so later requests
+send it unchanged; elsewhere it's sent at the tail of its own request, behind
+the cache breakpoint, and left out of later ones, a deliberate tail move that
+keeps the cached prefix. Also don't flag compaction
+moving the prefix once when it crosses its threshold, a history processor the
+user configures explicitly (`ProcessHistory`) whose docs say it costs the
+cached prefix, a request-only change
+to `request_context.messages` that every later request applies the same way
+(redacting a part from the first request that sends it), or code using today's
+mechanism where a rule is marked *(pending #N)*.
+
+### Example 7 — provider adapters
+
+Trigger: the diff changes a model adapter's request mapping, its response or
+stream parsing, a capability check in an adapter, or a profile flag an adapter
+reads. Read `agent_docs/provider-adapters.md` and apply the rules that govern
+what the diff changes; each rule carries its precedent and reason. In
+`pydantic_ai_slim/pydantic_ai/models/AGENTS.md`, "Adapter structure"
+summarizes the structure rules, and the "Narrow a capability by client class"
+bullet holds the gating rule's gateway reasoning. The rules govern the code a
+diff adds. A PR that aligns existing code must also meet the guide's scope
+rules: flag as MEDIUM a structural alignment whose PR doesn't show the request
+bodies captured on `main` and on the branch to be byte-identical, and a
+behavioral one that doesn't name each change it makes. A violation is HIGH
+when it has a concrete trigger that changes a request or a replayed history,
+or that the user's `profile=` can't override. A violation of code shape alone
+is MEDIUM.
+
+**Flag this (HIGH):**
+```python
+# PR adds a beta the adapter needs for a new block type; Vertex doesn't accept it yet
+if not isinstance(self.client, AsyncAnthropicVertex):
+    betas.add('context-hints-2026-09-01')
+```
+*Why:* The adapter checks the client class where it decides to send the
+feature, so a user can't turn the feature on with `profile=` once Vertex
+accepts it, and every other use site needs its own copy of the check. Ask for a
+profile flag set in `_instance_profile_defaults()`, which the user's `profile=`
+overrides, and read only the flag here. The same goes for a
+gate on the model name, the provider name or the `base_url`, a tool return with
+files sent as `model_response_str()` alone, `thinking_tags` joined by hand, and
+an own native tool part with an unknown `kind` sent in a guessed shape. Flag as
+MEDIUM a new part type mapped in a branch nested inside the mapping loop, and a
+per-kind branch that only swaps a native tool's wire name.
+
+**Don't flag this:**
+```python
+# PR adds a service tier to GoogleModel
+if self._is_google_cloud:
+    headers.update(_google_cloud_service_tier_headers(_resolve_google_cloud_service_tier(model_settings)))
+else:
+    gla_service_tier = _resolve_gla_service_tier(model_settings)
+```
+*Why:* Both branches send the feature, each in its transport's own wire form:
+Vertex takes headers, the Gemini API a request field. That is mapping, not a
+gate, so it may branch on the transport. Also don't flag existing code that the
+diff only touches and that already diverges, such as a one-line fix inside a
+deeply nested mapper or next to an inline gate on `main`: aligning it is its
+own PR.
+
+### Example 8 — durable-exec contract
+
+Trigger: `.review-context/durable-exec-contract.md` exists. Each entry in it is
+a core definition a durable engine imports, overrides, reads or projects, with
+the engine sites that depend on it. Durable engines run the agent across
+activity, step or task boundaries and replay workflow code, so a broken site
+fails only inside a durable run, never in a plain `Agent` test. A broken site
+with a concrete trigger is HIGH.
+
+**Flag this (HIGH):**
+```python
+# Entry `models/__init__.py::Model.request`, override sites in TemporalModel,
+# DBOSModel, PrefectModel and DurableModel
+async def request(self, messages, model_settings, model_request_parameters, *, run_context=None):
+```
+*Why:* Each listed site overrides `Model.request` with the old signature, so
+once core passes `run_context=`, a durable run raises `TypeError` in the
+engine's model. Ask for every override to take the new parameter, and for a
+workflow-level test that runs a request through an engine. The same goes for a
+renamed or retyped field that an engine serializes or reads, a field that a
+`projected_field` site copies across a boundary, and a projected field that
+becomes a read-only property, which `ModelRequestContextProjection.build_context`
+assigns.
+
+**Don't flag this:**
+```python
+# Entry `models/__init__.py::infer_model`, import sites in durable_exec/_base.py
+# and TemporalModel._infer_model
+if provider == 'acme':
+    return AcmeModel(model_name)
+```
+*Why:* The sites call `infer_model(name)` and use the `Model` it returns. Its
+signature and return contract are unchanged and nothing new crosses a durable
+boundary, so the sites still hold and no workflow-level test is needed. Also
+don't flag an entry whose sites the diff already updates and tests, or a
+missing entry: the manifest is the contract this check reads, not something to
+second-guess.
 
 ## Sub-agent finding format
 

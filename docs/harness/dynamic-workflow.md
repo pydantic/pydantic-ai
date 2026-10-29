@@ -9,6 +9,8 @@ description: "Let a Pydantic AI orchestrator agent coordinate subagents by writi
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The orchestrator agent has one tool, run_workflow. Its model writes a Python script that runs in the Monty sandbox, where each sub-agent is an async function: the script runs reviewer twice in parallel with asyncio.gather, then passes both reports to summarizer. Each call is a separate sub-agent run with its own model loop. Only the script's final value, the summary, goes back to the orchestrator's next model request.](../img/harness/dynamic-workflow.svg)
+
 ## The idea
 
 The usual way to coordinate sub-agents is one tool call per step. The agent calls the reviewer and waits, reads the result, calls the reviewer again, waits again, and so on. Every intermediate result travels back into the agent's context, and every step that depends on the previous one is a separate model turn.
@@ -22,7 +24,7 @@ If you have met [Code Mode](code-mode.md), this will feel familiar -- the same [
 The harness has two delegation capabilities. They trade in the same currency -- named, isolated sub-agent runs -- but at different altitudes:
 
 - [`SubAgents`](subagents.md) exposes one `delegate_task(agent_name, task)` tool. Each delegation is its own tool call and its own model turn. It is the right fit when delegations are occasional, or when each result needs the parent's judgment before the next one.
-- `DynamicWorkflow` moves the choreography into a script. Fan-out, chaining, voting, and retry loops all run inside one tool call, and intermediate results never enter the parent's context.
+- `DynamicWorkflow` moves the choreography into a script. Fan-out, chaining, voting, and retry loops all run inside one tool call, and only what the script returns or prints (plus bounded previews of completed results on failure or budget exhaustion) reaches the parent.
 
 Start with `SubAgents` if you are not sure. A `delegate_task` orchestrator converts to a workflow catalog without changing the sub-agents themselves.
 
@@ -42,11 +44,11 @@ Two sub-agents, one orchestrator:
 from pydantic_ai import Agent
 from pydantic_ai_harness import DynamicWorkflow
 
-reviewer = Agent('openai:gpt-5', name='reviewer', description='Reviews code for bugs.')
-summarizer = Agent('openai:gpt-5', name='summarizer', description='Summarizes findings.')
+reviewer = Agent('{{ openai:medium }}', name='reviewer', description='Reviews code for bugs.')
+summarizer = Agent('{{ openai:medium }}', name='summarizer', description='Summarizes findings.')
 
 orchestrator = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[DynamicWorkflow(agents=[reviewer, summarizer])],
 )
 ```
@@ -87,7 +89,7 @@ class Score(BaseModel):
     value: int
     reason: str
 
-critic = Agent('openai:gpt-5', name='critic', description='Scores an answer 0-10.', output_type=Score)
+critic = Agent('{{ openai:medium }}', name='critic', description='Scores an answer 0-10.', output_type=Score)
 ```
 
 Inside the script the model reads the fields by subscript, the way it would read a JSON object:
@@ -98,6 +100,8 @@ result["value"]   # not result.value
 ```
 
 The catalog the model sees renders each output type as a `TypedDict`, so it knows the fields and reads them by subscript on its own.
+
+An `output_type` can include [`DeferredToolRequests`](../deferred-tools.md) so a top-level caller can approve tools and resume the run, or [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits) so it can check on a model request the provider is still processing later. A workflow script cannot do either, so the catalog leaves both out of the sub-agent's return type, and a sub-agent run that ends with one raises a `RuntimeError` in the script, like any other sub-agent failure. A model request it left pending is cancelled, best effort: a [batch](../batch.md) is only cancelled once no other request in it is still waiting.
 
 ## How results come back
 
@@ -151,7 +155,7 @@ DynamicWorkflow(agents=[...], resource_limits={'max_duration_secs': 30})
 
 ### Workflows do not nest
 
-A sub-agent cannot start its own workflow; a nested `run_workflow` call returns a terminal error instead of running. The practical rule: do not give the sub-agents in your catalog the `DynamicWorkflow` capability. They are the leaves of the orchestration, not orchestrators.
+A sub-agent cannot start its own workflow: a sub-agent that has the `DynamicWorkflow` capability is not offered `run_workflow` while it runs inside a workflow. The practical rule: do not give the sub-agents in your catalog the `DynamicWorkflow` capability. They are the leaves of the orchestration, not orchestrators.
 
 ## Renaming a sub-agent: `WorkflowAgent`
 
@@ -179,7 +183,7 @@ The catalog is fixed when a run starts, which keeps it in the prompt-cache prefi
 
 ```python
 workflow = DynamicWorkflow(agents=[reviewer])
-orchestrator = Agent('openai:gpt-5', deps_type=MyDeps, capabilities=[workflow])
+orchestrator = Agent('{{ openai:medium }}', deps_type=MyDeps, capabilities=[workflow])
 
 # later, from the host or from another tool:
 workflow.reveal(fixer)
@@ -206,7 +210,7 @@ DynamicWorkflow(
 The script runs in Monty, a subset of Python. Knowing the edges matters:
 
 - No third-party libraries.
-- Importable standard-library modules include `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, and `pathlib`. Import what you use. Filesystem, environment, and clock operations are not configured for workflow scripts.
+- Importable standard-library modules include `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, and `random`. Import what you use. There is no filesystem or environment access.
 - No clock or randomness: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and
   unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_secs` set,
   a script may sleep for at most that long in total.
@@ -254,7 +258,7 @@ workflow.reveal(agent)            # AbstractAgent | WorkflowAgent; validates bef
 WorkflowAgent(
     agent,                        # AbstractAgent, required, positional
     name=None,                    # sandbox function name; falls back to agent.name
-    description=None,             # function docstring; falls back to agent.description
+    description=None,             # function docstring; None falls back to agent.description, '' hides it
 )
 ```
 

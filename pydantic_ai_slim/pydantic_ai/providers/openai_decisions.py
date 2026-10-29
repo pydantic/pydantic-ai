@@ -1,6 +1,9 @@
 from __future__ import annotations as _annotations
 
+from typing_extensions import deprecated
+
 from pydantic_ai import ModelProfile
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.profiles.decision import decision_model_profile
 
 try:
@@ -12,14 +15,18 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
+@deprecated(
+    '`OpenAIDecisionsProvider` is deprecated and will be removed in v3. '
+    'Use `OpenAIProvider` with `OpenAIDecisionsModel` instead; it takes the same arguments.',
+    category=PydanticAIDeprecationWarning,
+)
 class OpenAIDecisionsProvider(OpenAIProvider):
-    """Provider for OpenAI's Decisions API.
+    """Deprecated provider for OpenAI's Decisions API, to be removed in v3.
 
-    Takes the same arguments as [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] and reads the same
-    `OPENAI_API_KEY`, but profiles a model ID such as `gpt-6-luna` as a decision model for
-    [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel], rather than as the Responses
-    API model `OpenAIProvider` takes it for. Its own name keeps the decision model's responses apart from the
-    Responses API's in a message history, and makes `openai-decisions:<model>` the model ID.
+    Use [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] with
+    [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] instead: it takes the same
+    arguments, and the model profiles itself and names its responses `'openai-decisions'`, as `OpenAIChatModel` and
+    `OpenAIResponsesModel` share `OpenAIProvider`.
     """
 
     @property

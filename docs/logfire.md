@@ -4,6 +4,8 @@ description: "Debug and monitor Pydantic AI agents with Pydantic Logfire or any 
 
 # Pydantic Logfire Debugging and Monitoring
 
+While you build an agent, and once it is in production, its traces are how you find out why a run gave a wrong answer, took too long or cost too much. Pydantic AI emits OpenTelemetry traces of every run, model request and tool call; this page sets up [Pydantic Logfire](#pydantic-logfire) to view them, and covers [any other OpenTelemetry backend](#otel-without-logfire) too.
+
 Applications that use LLMs have some challenges that are well known and understood: LLMs are **slow**, **unreliable** and **expensive**.
 
 These applications also have some challenges that most developers have encountered much less often: LLMs are **fickle** and **non-deterministic**. Subtle changes in a prompt can completely change a model's performance, and there's no `EXPLAIN` query you can run to understand why.
@@ -19,7 +21,7 @@ LLM Observability tools that just let you understand how your model is performin
 
 ## Pydantic Logfire
 
-[Pydantic Logfire](https://pydantic.dev/logfire) is an observability platform developed by the team who created and maintain Pydantic Validation and Pydantic AI. Logfire aims to let you understand your entire application: Gen AI, classic predictive AI, HTTP traffic, database queries and everything else a modern application needs, all using OpenTelemetry.
+[Pydantic Logfire](https://pydantic.dev/logfire) is an AI engineering platform developed by the team who created and maintain Pydantic Validation and Pydantic AI. Logfire aims to let you understand your entire application: Gen AI, classic predictive AI, HTTP traffic, database queries and everything else a modern application needs, all using OpenTelemetry.
 
 !!! tip "Pydantic Logfire is a commercial product"
     Logfire is a commercially supported, hosted platform with an extremely generous and perpetual [free tier](https://pydantic.dev/pricing/).
@@ -73,7 +75,7 @@ from pydantic_ai import Agent
 logfire.configure()  # (1)!
 logfire.instrument_pydantic_ai()  # (2)!
 
-agent = Agent('openai:gpt-5.2', name='hello_world_agent', instructions='Be concise, reply with one sentence.')  # (4)!
+agent = Agent('{{ openai:medium }}', name='hello_world_agent', instructions='Be concise, reply with one sentence.')  # (4)!
 result = agent.run_sync('Where does "hello world" come from?')  # (3)!
 print(result.output)
 """
@@ -96,6 +98,21 @@ The [Logfire documentation](https://logfire.pydantic.dev/docs/) has more details
 including how to instrument other libraries like [HTTPX](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) and [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/).
 
 Since Logfire is built on [OpenTelemetry](https://opentelemetry.io/), you can use the Logfire Python SDK to send data to any OpenTelemetry collector, see [below](#using-opentelemetry).
+
+### Use Logfire for local development, even if production uses something else {#local-development}
+
+You can use Logfire while you develop, whatever your company runs in production. Logfire's [free tier](https://pydantic.dev/pricing/) needs only a GitHub login, and setup is the two commands and two lines of code above.
+
+Pydantic AI's instrumentation is plain OpenTelemetry, so the same spans can go to your company's backend in production and to Logfire on your laptop. Tell Logfire to send only when it has a token:
+
+```python {test="skip"}
+import logfire
+
+logfire.configure(send_to_logfire='if-token-present')
+logfire.instrument_pydantic_ai()
+```
+
+On your machine, `logfire.configure()` reads the token from the `.logfire` directory that `logfire projects new` wrote, which is gitignored. A deployment without that directory or a `LOGFIRE_TOKEN` sends nothing to Logfire (`.gitignore` does not keep it out of a Docker build context, so exclude it there too), and the Logfire SDK still exports to the backend set in the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable, as shown [below](#otel). If your application sets up its own OpenTelemetry SDK in production instead, call `logfire.configure()` and `logfire.instrument_pydantic_ai()` only when developing locally, and use [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all] in production: it uses the global OpenTelemetry providers your SDK set up.
 
 ### Debugging
 
@@ -130,7 +147,7 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 logfire.instrument_httpx(capture_all=True)  # (1)!
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
@@ -176,7 +193,7 @@ logfire.configure(send_to_logfire=False)  # (2)!
 logfire.instrument_pydantic_ai()
 logfire.instrument_httpx(capture_all=True)
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> Paris
@@ -229,7 +246,7 @@ tracer_provider.add_span_processor(span_processor)
 set_tracer_provider(tracer_provider)
 
 Agent.instrument_all()
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> Paris
@@ -237,7 +254,7 @@ print(result.output)
 
 ### Alternative Observability backends
 
-Because Pydantic AI uses OpenTelemetry for observability, you can easily configure it to send data to any OpenTelemetry-compatible backend, not just our observability platform [Pydantic Logfire](#pydantic-logfire).
+Because Pydantic AI uses OpenTelemetry for observability, you can easily configure it to send data to any OpenTelemetry-compatible backend, not just [Pydantic Logfire](#pydantic-logfire).
 
 ## Advanced usage
 
@@ -262,7 +279,7 @@ Only an `unexpected` collapse — one that happens while the provider's document
 |-------------------|---------|-----------------|
 | `unexpected` | The retention window should still have been active, so the cached prefix most likely changed. Check for prefix changes and the provider's cache diagnostics. | Yes |
 | `ttl_expired` | The gap since the last request exceeded the provider's retention window. | No |
-| `compacted` | Provider-native compaction replaced the history before a [`CompactionPart`][pydantic_ai.messages.CompactionPart] with its summary, which shrinks the prefix by design. | No |
+| `compacted` | A [`CompactionPart`][pydantic_ai.messages.CompactionPart] (from provider-native compaction, or a summary the application or `SummarizingCompaction` wrote) replaced the history before it, which shrinks the prefix by design. A summary that replaces one with the same text and `metadata` can't be told apart from it, so give each summary you write distinct `metadata`, as `SummarizingCompaction` does. | No |
 | `unknown` | The provider publishes no retention window, so the collapse can't be attributed. | No |
 | `unreported` | The response reported no cache usage at all (see below). | No |
 
@@ -378,7 +395,14 @@ Builds on version 5 by giving tool results the message role the [GenAI semantic 
 - Old (v2-5): a tool result is a `tool_call_response` part inside a `{"role": "user"}` message
 - New (v6): it moves to a `{"role": "tool"}` message
 
-This applies to tool returns and to retries that answer a tool call. A retry that answers nothing — output validation, a `ModelRetry` from a validator — stays on `user`, which is the role it reaches the model as. A request whose parts span both roles is emitted as consecutive messages in part order rather than one merged message.
+This applies to tool returns and to retries that answer a tool call. A request whose parts span both roles is emitted as consecutive messages in part order rather than one merged message.
+
+Pydantic AI's own [retry feedback](retries.md#feedback-that-belongs-to-no-tool-call) — a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], the retry that answers no tool call — moves on the same version, for the same reason:
+
+- Old (v2-5): a text part inside a `{"role": "user"}` message, whatever its `retry.cause`
+- New (v6): it takes the voice the part reaches the model in — a `{"role": "system"}` message for a `'no_output'` cause, and the `{"role": "user"}` message it was already on for a `'validation_error'` or `'model_retry'`
+
+That move shows up on `pydantic_ai.all_messages`, which records the stored message history. A model request span's `gen_ai.input.messages` records the history as sent, and by then the part has been translated into the prompt part its `retry.cause` calls for, so that attribute reads the same at every version. A history recorded before this part existed carries these parts too — a stored [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] is [translated as it loads](retries.md#feedback-that-belongs-to-no-tool-call) — so only an instance your own code still holds records itself, and a tool-less one stays on `user`.
 
 ---
 
@@ -398,7 +422,7 @@ instrumentation_settings = InstrumentationSettings(
     tracer_provider=TracerProvider(),
 )
 
-agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+agent = Agent('{{ openai:medium }}', capabilities=[Instrumentation(settings=instrumentation_settings)])
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -415,7 +439,7 @@ from pydantic_ai.capabilities import Instrumentation
 
 instrumentation_settings = InstrumentationSettings(include_binary_content=False)
 
-agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+agent = Agent('{{ openai:medium }}', capabilities=[Instrumentation(settings=instrumentation_settings)])
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -424,7 +448,7 @@ Agent.instrument_all(instrumentation_settings)
 
 For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. Pydantic AI allows you to exclude the actual content from telemetry while preserving the structural information needed for debugging and monitoring.
 
-When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content. Exceptions recorded on agent run, model request, model request attempt and tool spans keep only their type, since their message and stack trace can quote that content.
+When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content. Exceptions recorded on agent run, model request, model request attempt and tool spans keep only their type, since their message and stack trace can quote that content. It doesn't apply to [run metadata](agent.md#run-metadata), spans of your own, or request and response bodies captured by [`instrument_httpx(capture_all=True)`](#monitoring-http-requests).
 
 ```python {title="excluding_sensitive_content.py"}
 from pydantic_ai import Agent
@@ -433,7 +457,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_content=False)
 
-agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+agent = Agent('{{ openai:medium }}', capabilities=[Instrumentation(settings=instrumentation_settings)])
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -451,7 +475,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_model_request_parameters=False)
 
-agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+agent = Agent('{{ openai:medium }}', capabilities=[Instrumentation(settings=instrumentation_settings)])
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -473,7 +497,7 @@ A `decide` span is only emitted inside an instrumented model request, and only f
 | `pydantic_ai.decision.thresholds` | The thresholds applied: `{"boolean": ...}` for `decision_boolean_threshold`, plus `"route"` for `decision_route_threshold` when it's set |
 | `pydantic_ai.decision.usage.input_tokens`, `pydantic_ai.decision.usage.output_tokens` | This request's usage |
 | `pydantic_ai.decision.questions` | The questions as sent: `{name: {"type": ..., "instructions": ..., "criteria": ...}}`, where `type` is `noul` (yes/no), `choice` or `score` |
-| `pydantic_ai.decision.state` | The state as sent: the text being judged, or a JSON object that adds the conversation's `history` |
+| `pydantic_ai.decision.state` | The state built for the backend: the text being judged, or a JSON object that adds the conversation's `history`. A backend that takes the conversation natively, such as [OpenAI Decisions](models/openai.md#decisions-api), is sent the messages instead, which the model request span records |
 | `pydantic_ai.decision.answers` | The answers as received: `{"type": "noul", "noul": ...}` for a yes/no, whose `noul` is the probability of yes, `{"type": "choice", "choice": ..., "confidence": ..., "probabilities": {...}}` for a pick, and `{"type": "score", "score": ..., "confidence": ..., "probabilities": {...}, "legend": {...}}` for a rubric |
 | `pydantic_ai.decision.route` | When the request fills a route picked by an earlier request, or the one route left, that route's label |
 | `pydantic_ai.decision.confidence` | When the request asks field questions and their answers are used, each question's confidence as Pydantic AI derived it after applying `decision_boolean_threshold`, keyed like the questions and answers. Each option of a `list` or mapping gets its own entry under `field.option`, where `provider_details['confidence']` on the response gives the field the least sure of its options. A `float` field that asks for a probability has no entry, since the probability is the answer |

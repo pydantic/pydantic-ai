@@ -12,11 +12,12 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import LocalWorkspace, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, WrapperCapability, durable_operation
 from pydantic_ai.durable_exec._workspace import WorkspaceCall
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceTimeoutError
@@ -25,7 +26,7 @@ from ..workspace_fakes import InMemoryProvider
 from .workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents, tool_runs
 
 try:
-    from prefect import flow
+    from prefect import flow, task
     from prefect.context import FlowRunContext, TaskRunContext
 
     from pydantic_ai.durable_exec.prefect import PrefectDurability, TaskConfig
@@ -150,6 +151,99 @@ async def test_prefect_default_ids_without_a_workspace_survive_a_flow_retry() ->
     assert [uuid.UUID(outside.run_id).version, uuid.UUID(outside.conversation_id).version] == [7, 7]
 
 
+@pytest.mark.parametrize(
+    'operation_name',
+    [
+        pytest.param(None, id='without-custom-operation'),
+        pytest.param('record', id='custom-operation'),
+        pytest.param('call:run:8:left-run', id='custom-operation-counter-name'),
+    ],
+)
+async def test_prefect_concurrent_workspace_runs_keep_their_environments_on_retry(operation_name: str | None) -> None:
+    """A cached preparation task can reverse arrival order; workspace keys follow explicit run IDs."""
+    readiness_wait_timeout = 30
+    provider = InMemoryProvider(in_unit=lambda: TaskRunContext.get() is not None)
+    right_finished = anyio.Event()
+    left_replayed = anyio.Event()
+    arrivals: list[str] = []
+    attempts: list[list[tuple[str, str, str]]] = []
+    tool_runs: list[str] = []
+    operation_runs: list[str] = []
+
+    class SideEffectCapability(AbstractCapability[None]):
+        id = 'workspace'
+
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            if ctx.prompt == 'right':
+                await self.record(ctx)
+
+        @durable_operation(operation_name or 'record')
+        async def record(self, ctx: RunContext[None]) -> None:
+            assert ctx.run_id is not None
+            operation_runs.append(ctx.run_id)
+
+    async def mark(ctx: RunContext[None]) -> str:
+        assert isinstance(ctx.prompt, str)
+        tool_runs.append(ctx.prompt)
+        await ctx.workspace.write_text('owner.txt', ctx.prompt)
+        return 'ok'
+
+    capabilities: list[AbstractCapability[None]] = [provider.capability()]
+    if operation_name is not None:
+        capabilities.append(SideEffectCapability())
+    capabilities.append(PrefectDurability())
+    agent = Agent(
+        TestModel(call_tools=['mark']),
+        deps_type=type(None),
+        name='concurrent_workspaces',
+        tools=[mark],
+        capabilities=capabilities,
+    )
+
+    @task(persist_result=True)
+    async def prepare(label: str) -> str:
+        if label == 'left':
+            with anyio.fail_after(readiness_wait_timeout):
+                await right_finished.wait()
+        return label
+
+    async def branch(label: str, results: dict[str, tuple[str, str, str]]) -> None:
+        if attempts and label == 'right':
+            with anyio.fail_after(readiness_wait_timeout):
+                await left_replayed.wait()
+        await prepare(label)
+        arrivals.append(label)
+        result = await agent.run(label, run_id=f'{label}-run')
+        workspace = result.workspace
+        assert workspace.ref is not None
+        # These calls run after the agent has left its ambient run context.
+        owner = await workspace.read_text('owner.txt')
+        if label == 'right':
+            right_finished.set()
+        elif attempts:
+            left_replayed.set()
+        results[label] = result.run_id, workspace.ref.id, owner
+
+    @flow(retries=1)
+    async def retry() -> None:
+        results: dict[str, tuple[str, str, str]] = {}
+        async with anyio.create_task_group() as group:
+            group.start_soon(branch, 'left', results)
+            group.start_soon(branch, 'right', results)
+        attempts.append([results['left'], results['right']])
+        if len(attempts) == 1:
+            raise RuntimeError('retry')
+
+    await retry()
+
+    assert arrivals == ['right', 'left', 'left', 'right']
+    assert attempts == [[('left-run', 'env-2', 'left'), ('right-run', 'env-1', 'right')]] * 2
+    assert tool_runs == ['right', 'left']
+    assert operation_runs == (['right-run'] if operation_name is not None else [])
+    assert provider.environments == {'env-1': {'/remote/owner.txt': b'right'}, 'env-2': {'/remote/owner.txt': b'left'}}
+    assert provider.log == ['create:env-1', 'create:env-2']
+
+
 async def test_prefect_default_ids_reach_through_a_wrapped_durability_capability() -> None:
     agent = Agent(TestModel(), name='prefect_wrapped_run_id', capabilities=[WrapperCapability(PrefectDurability())])
 
@@ -165,18 +259,24 @@ async def test_prefect_default_ids_reach_through_a_wrapped_durability_capability
 
 async def test_prefect_repeated_identical_reads_are_not_served_from_cache() -> None:
     provider.reset()
+    attempts: list[tuple[str, str]] = []
 
-    @flow
+    @flow(retries=1)
     async def read_twice() -> tuple[str, str]:
         result = await agents.plain.run('Nothing to do.')
         await result.workspace.write_text('counter.txt', 'one')
         first = await result.workspace.read_text('counter.txt')
         await result.workspace.write_text('counter.txt', 'two')
         second = await result.workspace.read_text('counter.txt')
+        attempts.append((first, second))
+        if len(attempts) == 1:
+            raise RuntimeError('retry')
         return first, second
 
     assert await read_twice() == ('one', 'two')
-    assert _workspace_tasks() == ['ensure', 'write_bytes', 'read_bytes', 'write_bytes', 'read_bytes']
+    assert attempts == [('one', 'two')] * 2
+    assert provider.log == ['create:env-1']
+    assert _workspace_tasks() == ['ensure', 'write_bytes', 'read_bytes', 'write_bytes', 'read_bytes'] * 2
 
 
 async def test_prefect_tool_workspace_timeout_is_not_retried_by_task_engine(tmp_path: Path) -> None:

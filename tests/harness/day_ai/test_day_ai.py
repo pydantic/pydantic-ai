@@ -20,6 +20,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.day_ai import DayAI
+from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
 # The MCP SDK leaves a settings annotation unresolved in some supported dependency
 # combinations. Rebuild it before warnings are escalated by the test suite.
@@ -29,7 +30,7 @@ DepsT = TypeVar('DepsT')
 
 
 def _http_transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
-    assert isinstance(toolset, MCPToolset)
+    toolset = mcp_connection(toolset)
     transport = toolset.client.transport
     assert isinstance(transport, StreamableHttpTransport)
     return transport
@@ -70,7 +71,7 @@ class TestDayAI:
             """Search Day AI CRM records."""
             return {'name': 'Acme Corp'}
 
-        agent = Agent(TestModel(call_tools=['search_objects']), capabilities=[DayAI(client=server)])
+        agent = Agent(TestModel(call_tools=['day_ai_search_objects']), capabilities=[DayAI(client=server)])
         result = await agent.run('Find Acme in my CRM')
         assert 'Acme Corp' in result.output
 
@@ -97,8 +98,7 @@ class TestDayAI:
     )
     def test_hosted_connection_forwards_include_instructions(self, capability: DayAI[None], include: bool) -> None:
         # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
-        toolset = capability.get_toolset()
-        assert isinstance(toolset, MCPToolset)
+        toolset = mcp_connection(capability.get_toolset())
         assert toolset.include_instructions is include
 
     def test_environment_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,6 +124,11 @@ class TestDayAI:
         with pytest.raises(UserError, match='`client` owns the connection'):
             DayAI[str | None](client='https://example.com/mcp', auth=auth)
 
+    def test_empty_auth_with_client_uses_the_client(self) -> None:
+        # `''` means unset, as it does without a client.
+        toolset = DayAI[None](client='https://example.com/mcp', auth='').get_toolset()
+        assert _http_transport(toolset).url == 'https://example.com/mcp'
+
     @pytest.mark.parametrize(
         'capability',
         [
@@ -134,7 +139,7 @@ class TestDayAI:
         ids=['token', 'function', 'client'],
     )
     def test_custom_id_is_forwarded(self, capability: DayAI[str | None]) -> None:
-        assert capability.get_toolset().id == 'tenant-day-ai'
+        assert only_leaf(capability.get_toolset()).id == 'tenant-day-ai'
 
     def test_defer_loading_needs_no_id(self) -> None:
         Agent(TestModel(), capabilities=[DayAI(auth='day-ai-token', defer_loading=True)])
@@ -162,5 +167,5 @@ class TestPerRunAuth:
 
     async def test_function_returning_oauth_raises(self) -> None:
         capability = DayAI[str | None](auth=per_user_token)
-        with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):
+        with pytest.raises(UserError, match="must return an access token, not 'oauth'"):
             await connections_for(capability, 'oauth')

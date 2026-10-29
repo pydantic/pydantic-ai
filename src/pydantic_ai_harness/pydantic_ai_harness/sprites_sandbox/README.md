@@ -6,21 +6,23 @@ Run your agent's commands and file edits in a persistent [Fly.io Sprite](https:/
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. SpritesSandbox's get_workspace hook gives the run a persistent Fly.io Sprite as ctx.workspace, so each command and file operation goes over the Sprites API, authenticated with SPRITE_TOKEN, and runs in the Sprite as the sprite user; output comes back to the tool. The first use creates the Sprite, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. A Sprite has no lifetime limit: it sleeps when idle, keeps its files and installed packages, and wakes on the next command.](https://pydantic.dev/docs/ai/img/harness/sprites-sandbox.svg)
+
 ## Install
 
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[sprites,anthropic]"
+uv add "pydantic-ai-harness[coder,sprites,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[sprites,anthropic]"
+pip install "pydantic-ai-harness[coder,sprites,anthropic]"
 ```
 
-The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `SPRITE_TOKEN` to your Sprites API token, and `ANTHROPIC_API_KEY` for the examples.
+The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `SPRITE_TOKEN` to your Sprites API token, and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -55,7 +57,7 @@ followup = agent.run_sync(
 )
 ```
 
-The follow-up run finds the Sprite in the message history and works in it, so the clone is still there. Without the history, a run starts a new Sprite. If the Sprite has been deleted, the run raises `WorkspaceUnavailableError` instead of starting over in an empty one. A command exiting 137 after confirmed Sprite deletion also raises this error; a SIGKILLed command in a live Sprite returns exit 137.
+The follow-up run finds the Sprite in the message history and works in it, so the clone is still there. Without the history, a run starts a new Sprite. If the Sprite has been deleted, the run raises `WorkspaceUnavailableError` instead of starting over in an empty one. If the Sprite is deleted while a command runs, the command raises this error too, whatever exit code it reported: after each command, the backend asks the Sprites control plane whether the Sprite still exists. That lookup counts against the command's `timeout`, and a lookup that fails or runs out of time returns the command's result, so a SIGKILLed command in a live Sprite still returns exit 137.
 
 ## Choose the tools
 
@@ -77,7 +79,7 @@ async def run_python(ctx: RunContext, code: str) -> str:
     return result.stdout + result.stderr
 ```
 
-A Sprite pauses processes between commands unless you run them as a [Sprites service](https://docs.sprites.dev/working-with-sprites/services/).
+A Sprite pauses processes between commands unless you run them as a [Sprites service](https://docs.fly.io/sprites/concepts/services/).
 
 Commands run as the non-root `sprite` user, but Unix permissions do not restrict it: a file with mode `000` is still readable. Do not rely on them to keep tools out of a path.
 

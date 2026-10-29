@@ -1,32 +1,51 @@
+# description: Sets a pull request's size, category and durable-exec review labels, and runs douwebot when the douwebot or douwebot:review-agent-config label is applied.
 name: PR Bots
 
 on:
   # zizmor: ignore[dangerous-triggers] -- pull_request_target is needed for fork PRs; inputs are validated before use
   pull_request_target:
-    types: [opened, synchronize, labeled]
+    types: [opened, synchronize, labeled, unlabeled]
 
 permissions: {}
 
 concurrency:
-  group: pr-bots-${{ github.event.pull_request.number }}
-  cancel-in-progress: ${{ github.event.action == 'synchronize' }}
+  # No-op label events must not replace a pending review in the shared PR slot.
+  group: pr-bots-${{ github.event.pull_request.number }}${{ ((github.event.action == 'labeled' && github.event.label.name != 'douwebot' && github.event.label.name != 'douwebot:review-agent-config') || (github.event.action == 'unlabeled' && github.event.label.name != 'douwebot:review-agent-config')) && format('-noop-{0}', github.run_id) || '' }}
+  cancel-in-progress: ${{ github.event.action == 'synchronize' || (github.event.action == 'unlabeled' && github.event.label.name == 'douwebot:review-agent-config') }}
 
 jobs:
   size-label:
     name: Size Label
-    if: github.event.action != 'labeled'
+    if: github.event.action == 'opened' || github.event.action == 'synchronize'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: write
       pull-requests: write
     steps:
+      # pull_request_target must only read generated-file declarations from trusted base code.
+      - name: Checkout base attributes
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
       - name: Calculate PR size and set label
         run: |
+          set -euo pipefail
+
           # Fetch file changes for this PR
           FILES=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --paginate | jq -s 'add')
 
-          # Calculate lines by category (excluding uv.lock and cassettes)
+          # Use Git's attribute matching, including nested rules and overrides.
+          GENERATED=$(echo "$FILES" | jq -j '.[] | .filename, "\u0000"' |
+            git check-attr -z --stdin linguist-generated |
+            jq -Rs 'split("\u0000") | [range(0; length; 3) as $i |
+              select(.[$i + 2] == "true" or .[$i + 2] == "set") | .[$i]]')
+          FILES=$(echo "$FILES" | jq --argjson generated "$GENERATED" '
+            map(select(.filename as $path | $generated | index($path) | not))')
+
+          # Calculate lines by category (excluding generated files, uv.lock and cassettes)
           CODE=$(echo "$FILES" | jq '[.[] | select(
             (.filename | (startswith("tests/") or startswith("docs/") or endswith(".md")) | not) and
             (.filename != "uv.lock") and
@@ -64,26 +83,84 @@ jobs:
 
           echo "Size: $SIZE"
 
-          # Remove any existing size labels (except the one we're setting) via API
+          # Read live labels so queued events cannot overwrite newer label state.
+          LABELS=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }} --jq '
+            .labels | if type == "array" and all(.[]; .name | type == "string")
+            then map(.name) else error("Invalid PR labels") end')
+
+          # Remove only size labels that are present and no longer apply.
           for label in "size: S" "size: M" "size: L" "size: XL"; do
-            if [ "$label" != "$SIZE" ]; then
-              gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/${label}" --method DELETE 2>/dev/null || true
+            if [ "$label" != "$SIZE" ] && jq -e --arg label "$label" 'index($label) != null' <<<"$LABELS" >/dev/null; then
+              gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/${label}" --method DELETE
             fi
           done
 
-          # Add the new size label via API
-          gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" --method POST -f "labels[]=$SIZE"
+          if ! jq -e --arg label "$SIZE" 'index($label) != null' <<<"$LABELS" >/dev/null; then
+            gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" --method POST -f "labels[]=$SIZE"
+          fi
 
           echo "Set label: $SIZE (score: $SCORE)"
         env:
           GH_TOKEN: ${{ github.token }}
+
+  # Labels a pull request that changes a core definition the durable engines depend on
+  # (`scripts/durable_exec_contract.json`), and unlabels it once a later push no longer does.
+  # Nothing here checks out or runs the pull request's files: the classifier and the manifest are
+  # fetched at `github.sha`, the base branch commit this workflow runs from, and the classifier
+  # reads the pull request's files through the API and only parses them.
+  durable-exec-label:
+    name: Durable-Exec Review Label
+    if: github.event.action == 'opened' || github.event.action == 'synchronize'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Classify the change and set the label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          LABEL: needs-durable-exec-review
+        run: |
+          set -euo pipefail
+
+          GATE="$RUNNER_TEMP/durable-exec-gate"
+          mkdir -p "$GATE/scripts"
+          for path in scripts/durable_exec_contract.py scripts/durable_exec_contract.json; do
+            gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/${path}?ref=${BASE_SHA}" > "$GATE/$path"
+          done
+          # `-I` keeps the fetched directory off `sys.path`; the classifier validates its arguments.
+          TOUCHED=$(python3 -I "$GATE/scripts/durable_exec_contract.py" --touched "$REPO" "$PR_NUMBER" "$BASE_SHA" "$HEAD_SHA")
+          COUNT=$(jq '[.[] | length] | add // 0' <<<"$TOUCHED")
+          {
+            echo "## Durable-exec contract entries touched: $COUNT"
+            jq -r 'to_entries[] | .key as $file | .value | to_entries[]
+              | "- `\($file)::\(.key)` (\(.value.engines | join(", ")))"' <<<"$TOUCHED"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Read live labels so queued events cannot overwrite newer label state.
+          LABELS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '
+            .labels | if type == "array" and all(.[]; .name | type == "string")
+            then map(.name) else error("Invalid PR labels") end')
+          HAS_LABEL=$(jq --arg label "$LABEL" 'index($label) != null' <<<"$LABELS")
+
+          if [ "$COUNT" -gt 0 ] && [ "$HAS_LABEL" = false ]; then
+            gh api "repos/${REPO}/issues/${PR_NUMBER}/labels" --method POST -f "labels[]=$LABEL"
+          elif [ "$COUNT" -eq 0 ] && [ "$HAS_LABEL" = true ]; then
+            gh api "repos/${REPO}/issues/${PR_NUMBER}/labels/${LABEL}" --method DELETE
+          fi
 
   # Security: The classify job runs the LLM with READ-ONLY permissions and no label API access.
   # The LLM's output is validated against an allowlist before the apply job takes any write action.
   # This prevents prompt injection from adding arbitrary labels (e.g. 'douwebot' to trigger the review job).
   category-classify:
     name: Category Classify
-    if: github.event.action != 'labeled'
+    if: github.event.action == 'opened' || github.event.action == 'synchronize'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -125,10 +202,8 @@ jobs:
         if: steps.check-label.outputs.has_label == 'false'
         id: classify
         uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
-        # Category labels feed the changelog, so keep this small required job independent
-        # of the custom gateway used by the optional reviewer below.
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
           allowed_non_write_users: "*"
           allowed_bots: "pydanty,dependabot"
@@ -196,11 +271,11 @@ jobs:
 
   review:
     name: douwebot
-    # No `needs:`. The labelling jobs above are gated on `action != 'labeled'`, so on
-    # the only event that starts this job they never run — depending on them bought
-    # nothing but a way for an unrelated labeller failure to suppress a requested
-    # review. The `douwebot` label is the sole trigger.
-    if: github.event.action == 'labeled' && github.event.label.name == 'douwebot'
+    # No `needs:`. The labelling jobs above run only on opened/synchronize events,
+    # so on label events they never run — depending on them bought nothing but a way
+    # for an unrelated labeller failure to suppress a requested review. The two
+    # review labels are the only triggers.
+    if: github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -259,6 +334,7 @@ jobs:
           allow-unsafe-pr-checkout: true
 
       - name: Check for modified config files
+        if: github.event.action == 'labeled' && github.event.label.name == 'douwebot'
         # Backstop to the checkout split above, which is the primary defence: the
         # base ref owns the workspace root, so the fork's config is no longer the
         # project config. This still runs because `--add-dir pr-head` may let some
@@ -333,20 +409,82 @@ jobs:
       - name: Install bubblewrap
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
 
+      - name: Validate one-head maintainer request
+        if: github.event.action == 'labeled' && github.event.label.name == 'douwebot:review-agent-config'
+        run: |
+          if [[ "$EVENT_ACTION" != 'labeled' || "$EVENT_LABEL" != "$APPROVAL_LABEL" ]]; then
+            echo '::error::The approval check only accepts its original labeled event.'
+            exit 1
+          fi
+          if [[ "$RUN_ATTEMPT" != '1' ]]; then
+            echo '::error::An approval event cannot be rerun; remove and reapply the label.'
+            exit 1
+          fi
+          if [[ "$EVENT_SENDER_TYPE" != 'User' || ! "$EVENT_SENDER" =~ ^[A-Za-z0-9-]{1,39}$ ]]; then
+            echo '::error::Only a GitHub User can request an agent-config review.'
+            exit 1
+          fi
+
+          if ! PERMISSION=$(gh api "repos/${REPOSITORY}/collaborators/${EVENT_SENDER}/permission" --jq '.permission' 2>/dev/null); then
+            echo '::error::Could not verify the request sender permission.'
+            exit 1
+          fi
+          case "$PERMISSION" in
+            write | admin) ;;
+            *)
+              echo '::error::The request sender must have current write or admin permission.'
+              exit 1
+              ;;
+          esac
+
+          if ! LIVE_PR=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" 2>/dev/null); then
+            echo '::error::Could not verify the live pull request.'
+            exit 1
+          fi
+          LIVE_HEAD=$(jq -r '.head.sha // empty' <<< "$LIVE_PR")
+          if [[ "$LIVE_HEAD" != "$EVENT_HEAD_SHA" ]]; then
+            echo '::error::The pull request head changed after the approval event.'
+            exit 1
+          fi
+          if ! jq -e --arg label "$APPROVAL_LABEL" '[.labels[].name] | index($label) != null' <<< "$LIVE_PR" >/dev/null; then
+            echo '::error::The approval label is no longer present.'
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPROVAL_LABEL: douwebot:review-agent-config
+          EVENT_ACTION: ${{ github.event.action }}
+          EVENT_LABEL: ${{ github.event.label.name }}
+          EVENT_SENDER_TYPE: ${{ github.event.sender.type }}
+          EVENT_SENDER: ${{ github.event.sender.login }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
       - uses: anthropics/claude-code-action@97c53473391bff1901034d4b454b5bac7ab7a029 # v1.0.239
         env:
-          ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
+          # Native tracing exports from Claude itself, retaining subprocess credential scrubbing.
+          # https://code.claude.com/docs/en/monitoring-usage#traces-beta
+          # https://pydantic.dev/docs/logfire/guides/alternative-clients/
+          CLAUDE_CODE_ENABLE_TELEMETRY: '1'
+          CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: '1'
+          OTEL_TRACES_EXPORTER: otlp
+          OTEL_METRICS_EXPORTER: none
+          OTEL_LOGS_EXPORTER: none
+          OTEL_SERVICE_NAME: douwebot
+          OTEL_EXPORTER_OTLP_PROTOCOL: http/json
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.LOGFIRE_URL || 'https://logfire-eu.pydantic.dev' }}
+          OTEL_EXPORTER_OTLP_HEADERS: Authorization=${{ secrets.LOGFIRE_TOKEN }}
         with:
-          anthropic_api_key: ${{ secrets.CLAUDE_CODE_API_KEY || secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           allowed_non_write_users: "*"
           display_report: 'true'
           additional_permissions: |
             actions: read
           # `[1m]` is Claude Code CLI syntax, not part of the model id — the CLI strips it
-          # and sends the canonical `claude-opus-5-5`. It is required here because
-          # ANTHROPIC_BASE_URL points at a gateway, and Claude Code cannot detect 1M-context
-          # support through a gateway, so without the suffix it budgets for 200K.
+          # and sends the canonical `claude-opus-5-5` with the 1M context window enabled.
           # https://code.claude.com/docs/en/model-config.md
           # This job reviews untrusted fork code and must be assumed steerable by
           # prompt injection, so no entry here may reach arbitrary execution.
@@ -466,7 +604,7 @@ jobs:
             It bears repeating that you are the first line of defense against low-quality contributions and maintainer headaches, and you have a big role in ensuring that every contribution to this project meets or exceeds the high standards that the Pydantic brand is known and loved for.
 
       - name: Remove douwebot label
-        if: always()
+        if: always() && github.event.action == 'labeled' && github.event.label.name == 'douwebot'
         run: gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/douwebot" --method DELETE 2>/dev/null || true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -475,10 +613,19 @@ jobs:
       # identical from the PR: the label is gone either way and no comment lands.
       # A silent breakage went unnoticed for three weeks that way.
       - name: Report review failure
-        if: failure()
+        if: failure() && github.event.action == 'labeled' && github.event.label.name == 'douwebot'
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
             "The \`douwebot\` run failed — see [the run](${RUN_URL}) for why. This is not a verdict on this PR. If the cause was transient, re-apply the \`douwebot\` label to retry."
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Report approval request failure
+        if: failure() && github.event.action == 'labeled' && github.event.label.name == 'douwebot:review-agent-config'
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
+            "The \`douwebot:review-agent-config\` run failed — see [the run](${RUN_URL}) for why. This is not a verdict on this PR. To retry, remove and reapply the label; the original event cannot be rerun."
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

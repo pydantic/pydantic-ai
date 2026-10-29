@@ -9,6 +9,8 @@ Warn when a conversation's prompt cache hit collapses between model requests, wi
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![WarnOnCacheBusts runs in the after_model_request hook and only observes. For each response it compares cache_read_tokens with the cacheable prefix the conversation has established. Requests 2 to 4 read back the whole prefix; request 5 reads back 4K of an established 40K, so it emits a CacheBustWarning with reason unexpected. Collapses explained by an expired cache, compaction or unreported usage do not warn.](../img/harness/warn-on-cache-busts.svg)
+
 ## What it watches
 
 Prompt caching pays off only while the cacheable prefix (tools, then system instructions, then message history) stays byte-stable across a run's consecutive requests. When something moves that prefix -- reordered tools, a timestamp injected into instructions, a serialization-level block hop -- the provider re-charges tokens it could have served from cache.
@@ -23,7 +25,7 @@ from pydantic_ai.capabilities import Caching
 from pydantic_ai_harness import WarnOnCacheBusts
 
 # `Caching()` enables caching; `WarnOnCacheBusts()` only observes it.
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[Caching(), WarnOnCacheBusts()])
+agent = Agent('{{ anthropic:large }}', capabilities=[Caching(), WarnOnCacheBusts()])
 result = await agent.run('...')  # a CacheBustWarning fires if a cached prefix collapses mid-run
 # ...and on the next turn, if the prefix the first turn cached no longer reads back:
 await agent.run('...', message_history=result.all_messages())

@@ -10,6 +10,7 @@ from typing import Any, ParamSpec, TypeVar
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 from render.workflows import TaskContext, TaskDefinition, TaskRunMetadata, Workflows
 
@@ -33,6 +34,8 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import DynamicToolset
 from pydantic_ai_harness import RenderWorkflows, ToolOutputLimits
 from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
+from tests.wrapped_retry_toolsets import call_probe_once, call_while_listed, failing_toolset, snapshot_probe_toolset
 
 from .conftest import RecordingTaskContext, RecordingWorkflows, ToolTaskConcurrency, mcp_toolset, run_agent_in_task
 
@@ -214,6 +217,69 @@ async def test_dynamic_tool_discovery_and_call_run_as_render_child_tasks() -> No
     assert calls == ['a']
     assert 'dynamic-support__dynamic_toolset__dynamic-tools.get_tools' in context.task_names
     assert 'dynamic-support__dynamic_toolset__dynamic-tools.call_tool' in context.task_names
+
+
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
+async def test_prefixed_dynamic_tool_child_tasks_see_its_retry_count() -> None:
+    """A dynamic toolset's child tasks list it under the prefix the run listed it under.
+
+    `ctx.retries` is keyed by the name the model calls the tool by, so a `prepare` that runs in a child task only
+    sees `demo_fail`'s failure if the prefix crossed the task boundary with it.
+
+    See https://github.com/pydantic/pydantic-ai/issues/9741.
+    """
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(call_while_listed),
+        name='prefixed-dynamic-retries',
+        deps_type=type(None),
+        toolsets=[DynamicToolset[None](lambda ctx: failing_toolset('inner'), id='dynamic').prefixed('demo')],
+        capabilities=[runtime],
+    )
+
+    assert await run_agent_in_task(agent, runtime, RecordingTaskContext()) == 'No tools left.'
+
+
+async def test_prefixed_dynamic_tool_child_tasks_keep_context_snapshots() -> None:
+    """Under `.prefixed()`, a dynamic toolset's child tasks still answer from the snapshots serialized at dispatch.
+
+    `available_tool_names` and `active_capability_ids` are not `RunContext` fields, so every context copy made inside
+    a child task has to keep them: the ones that carry or strip the tool name path, the enqueue guard, the one a tool's
+    `prepare` gets, and the ones the inner prefix and rename make before the tool runs.
+    """
+    reads: list[tuple[str, list[str], int]] = []
+
+    def record(site: str, ctx: RunContext[None]) -> None:
+        reads.append((site, sorted(ctx.available_tool_names), len(ctx.active_capability_ids)))
+
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(call_probe_once),
+        name='prefixed-dynamic-snapshots',
+        deps_type=type(None),
+        toolsets=[DynamicToolset(snapshot_probe_toolset(record), id='dynamic').prefixed('demo')],
+        capabilities=[runtime],
+    )
+
+    assert (await run_agent_in_task(agent, runtime, RecordingTaskContext()), reads) == snapshot(
+        (
+            'Done.',
+            [
+                ('factory', [], 3),
+                ('prepare', [], 3),
+                ('instructions', [], 3),
+                ('factory', ['demo_probe'], 3),
+                ('prepare', ['demo_probe'], 3),
+                ('validator', ['demo_probe'], 3),
+                ('factory', ['demo_probe'], 3),
+                ('prepare', ['demo_probe'], 3),
+                ('body', ['demo_probe'], 3),
+                ('factory', ['demo_probe'], 3),
+                ('prepare', ['demo_probe'], 3),
+                ('instructions', ['demo_probe'], 3),
+            ],
+        )
+    )
 
 
 async def test_dynamic_tool_cannot_opt_out_of_render_child_task() -> None:

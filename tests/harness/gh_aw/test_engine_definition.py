@@ -154,8 +154,8 @@ class _Behaviors(BaseModel):
 class _Engine(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
-    version: str
     behaviors: _Behaviors
+    detection_engine: str = Field(alias='detection-engine')
 
 
 class _PreAgentStep(BaseModel):
@@ -257,24 +257,29 @@ def test_install_pins_clai2_and_installs_spec_extra_for_yaml_agents() -> None:
         for line in step.run.splitlines()
         if line.strip().startswith('python3 -P -m pip install ')
         for argument in shlex.split(line)
-        if argument.startswith(('pydantic-ai-harness==', 'pydantic-clai2=='))
+        if argument.startswith(('pydantic-ai-harness[coder]==', 'pydantic-clai2=='))
     ]
     assert harness_requirements == [
-        'pydantic-ai-harness==${GH_AW_ENGINE_VERSION}',
+        'pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}',
         'pydantic-clai2==${GH_AW_ENGINE_VERSION}',
     ]
-    assert definition().engine.version == '0.55.0'
-    assert requirement == 'pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0'
+    assert requirement == 'pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0'
 
 
-def launch(
+def test_threat_detection_runs_on_a_built_in_engine() -> None:
+    # gh-aw's `threat-detect` only knows its built-in engines; naming one here keeps
+    # detection working without a compile-time fallback warning on every workflow.
+    assert definition().engine.detection_engine == 'copilot'
+
+
+def run_harness(
     tmp_path: Path,
     env: dict[str, str],
     *,
     extra_python_path: Path | None = None,
     prompt_text: str = PROMPT,
-) -> _Invocation:
-    """Run the harness script against an interpreter that records instead of running."""
+) -> subprocess.CompletedProcess[str]:
+    """Run the harness script against an interpreter that records to `record.json` instead of running."""
     actions = tmp_path / 'actions'
     actions.mkdir(parents=True, exist_ok=True)
     (actions / 'harness.cjs').write_text(behaviors().harness_script, encoding='utf-8')
@@ -303,10 +308,9 @@ def launch(
     sandbox_tmp.mkdir(parents=True, exist_ok=True)
     prompt = tmp_path / 'prompt.md'
     prompt.write_text(prompt_text, encoding='utf-8')
-    record = tmp_path / 'record.json'
 
     pythonpath_env: dict[str, str] = {'PYTHONPATH': str(extra_python_path)} if extra_python_path is not None else {}
-    completed = subprocess.run(
+    return subprocess.run(
         ['node', str(actions / 'harness.cjs'), 'pai'],
         env={
             'PATH': os.environ['PATH'],
@@ -315,7 +319,7 @@ def launch(
             'RUNNER_TEMP': str(runner_temp),
             'GITHUB_WORKSPACE': str(workspace),
             'GH_AW_PROMPT': str(prompt),
-            'GH_AW_TEST_RECORD': str(record),
+            'GH_AW_TEST_RECORD': str(tmp_path / 'record.json'),
             'pythonLocation': str(python_location),
             **pythonpath_env,
             **env,
@@ -325,8 +329,19 @@ def launch(
         input='',
         check=False,
     )
+
+
+def launch(
+    tmp_path: Path,
+    env: dict[str, str],
+    *,
+    extra_python_path: Path | None = None,
+    prompt_text: str = PROMPT,
+) -> _Invocation:
+    """Run the harness script and return what it handed the interpreter."""
+    completed = run_harness(tmp_path, env, extra_python_path=extra_python_path, prompt_text=prompt_text)
     assert completed.returncode == 0, completed.stderr
-    recorded: object = json.loads(record.read_text(encoding='utf-8'))
+    recorded: object = json.loads((tmp_path / 'record.json').read_text(encoding='utf-8'))
     assert isinstance(recorded, dict)
     recorded['stdout'] = completed.stdout
     return _Invocation.model_validate(recorded)
@@ -469,12 +484,16 @@ def proxy_env(provider: str, model: str) -> dict[str, str]:
 def test_the_default_target_is_the_generated_module(tmp_path: Path) -> None:
     invocation = launch(
         tmp_path,
-        {**proxy_env('github', 'copilot/claude-sonnet-4-5'), 'COPILOT_GITHUB_TOKEN': 'a-token'},
+        {
+            **proxy_env('github', 'copilot/claude-sonnet-4-5'),
+            'COPILOT_GITHUB_TOKEN': 'a-token',
+            'OPENAI_API_KEY': 'inherited-openai-key',
+        },
     )
 
     assert invocation.argv[:2] == ['-P', '-c']
     assert invocation.target == 'gh_aw_agent:agent'
-    assert invocation.cli_args == ['-a', 'gh_aw_agent:agent', '-m', 'openai-chat:claude-sonnet-4.5']
+    assert invocation.cli_args == ['-a', 'gh_aw_agent:agent', '-m', 'github-copilot:claude-sonnet-4.5']
     assert invocation.prompt_file.read_text(encoding='utf-8') == PROMPT
     frame_key = invocation.frame_key
     assert re.fullmatch(r'[0-9a-f]{32}', frame_key)
@@ -489,6 +508,31 @@ def test_the_default_target_is_the_generated_module(tmp_path: Path) -> None:
     # gh-aw sets this for the copilot backend; the proxy holds the real credential,
     # so the agent has no use for it.
     assert 'COPILOT_GITHUB_TOKEN' not in invocation.env
+    assert invocation.env['GITHUB_COPILOT_BASE_URL'] == 'http://host.docker.internal:10002/v1'
+    assert invocation.env['GITHUB_COPILOT_API_KEY'] == 'awf-copilot-proxy'
+    # Copilot rejects a personal access token under the provider's default
+    # `vscode-chat` id, and the api-proxy keeps whichever id the request carries.
+    assert invocation.env['GITHUB_COPILOT_INTEGRATION_ID'] == 'agentic-workflows'
+    # gh-aw sets the OpenAI-compatible pair for the copilot backend too, so an agent
+    # that builds its own OpenAI-compatible client keeps reaching the proxy.
+    assert invocation.env['OPENAI_BASE_URL'] == 'http://host.docker.internal:10002/v1'
+    assert invocation.env['OPENAI_API_KEY'] == 'awf-copilot-proxy'
+
+
+def test_copilot_falls_back_to_the_proxy_url_gh_aw_sets_without_reflect(tmp_path: Path) -> None:
+    invocation = launch(
+        tmp_path,
+        {
+            'GH_AW_LLM_PROVIDER': 'github',
+            'PAI_MODEL': 'copilot/gpt-5',
+            'OPENAI_BASE_URL': 'http://host.docker.internal:12345',
+            'GITHUB_COPILOT_API_KEY': 'inherited-key',
+        },
+    )
+
+    assert invocation.cli_args[3] == 'github-copilot:gpt-5'
+    assert invocation.env['GITHUB_COPILOT_BASE_URL'] == 'http://host.docker.internal:12345'
+    assert invocation.env['GITHUB_COPILOT_API_KEY'] == 'awf-copilot-proxy'
 
 
 def test_a_large_prompt_is_not_passed_as_an_oversized_process_argument(tmp_path: Path) -> None:
@@ -504,6 +548,57 @@ def test_the_frame_key_is_sent_out_of_band_and_removed_from_the_child_environmen
 
     assert invocation.env.get('GH_AW_SESSION_FRAME_KEY') is None
     assert invocation.stdin == f'{invocation.frame_key}\n'
+
+
+@pytest.mark.parametrize(
+    'safe_outputs',
+    [
+        pytest.param('{"type":"noop","message":"The PR moved to a new head"}\n', id='noop'),
+        pytest.param('{"type":"add_comment"}\nnot json\n  {"type": "noop"}  \n', id='noop-after-malformed-line'),
+    ],
+)
+def test_a_noop_written_by_an_earlier_step_skips_the_engine(tmp_path: Path, safe_outputs: str) -> None:
+    """gh-aw's documented way for a step to skip the agent, which its built-in harnesses honor."""
+    path = tmp_path / 'outputs.jsonl'
+    path.write_text(safe_outputs, encoding='utf-8')
+
+    completed = run_harness(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'GH_AW_SAFE_OUTPUTS': str(path)})
+
+    assert completed.returncode == 0, completed.stderr
+    assert f'skipping the engine: an earlier step wrote a noop to {path}' in completed.stderr
+    assert completed.stdout == ''
+    assert not (tmp_path / 'record.json').exists()
+
+
+@pytest.mark.parametrize(
+    'safe_outputs',
+    [
+        pytest.param('{"type":"add_comment","body":"noop"}\n', id='no-noop'),
+        pytest.param('{"type":"noop"\nnoop\n"noop"\n[{"type":"noop"}]\nnull\n', id='malformed-lines'),
+    ],
+)
+def test_safe_outputs_without_a_noop_run_the_engine(tmp_path: Path, safe_outputs: str) -> None:
+    path = tmp_path / 'outputs.jsonl'
+    path.write_text(safe_outputs, encoding='utf-8')
+
+    invocation = launch(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'GH_AW_SAFE_OUTPUTS': str(path)})
+
+    assert invocation.target == 'gh_aw_agent:agent'
+
+
+@pytest.mark.parametrize('state', ['missing', 'unreadable'])
+def test_missing_or_unreadable_safe_outputs_run_the_engine(
+    tmp_path: Path, state: Literal['missing', 'unreadable']
+) -> None:
+    path = tmp_path / 'outputs.jsonl'
+    if state == 'unreadable':
+        # Reading a directory fails the way reading an unreadable file does, and
+        # unlike a permission bit it also fails for root.
+        path.mkdir()
+
+    invocation = launch(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'GH_AW_SAFE_OUTPUTS': str(path)})
+
+    assert invocation.target == 'gh_aw_agent:agent'
 
 
 @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
@@ -619,28 +714,26 @@ def test_the_anthropic_backend_is_addressed_with_the_messages_api(tmp_path: Path
     assert 'OPENAI_BASE_URL' not in invocation.env
 
 
-@pytest.mark.parametrize(
-    ('provider', 'model', 'port'),
-    [('github', 'copilot/gpt-5', 10002), ('openai', 'openai/gpt-5', 10000)],
-)
-def test_openai_shaped_backends_stay_on_chat_completions(tmp_path: Path, provider: str, model: str, port: int) -> None:
-    invocation = launch(tmp_path, proxy_env(provider, model))
+@pytest.mark.parametrize('model', ['openai/gpt-5', 'codex/gpt-5'])
+def test_openai_shaped_backends_stay_on_chat_completions(tmp_path: Path, model: str) -> None:
+    invocation = launch(tmp_path, proxy_env('openai', model))
 
     assert invocation.cli_args[3] == 'openai-chat:gpt-5'
-    assert invocation.env['OPENAI_BASE_URL'] == f'http://host.docker.internal:{port}/v1'
+    assert invocation.env['OPENAI_BASE_URL'] == 'http://host.docker.internal:10000/v1'
     assert 'ANTHROPIC_BASE_URL' not in invocation.env
 
 
-@pytest.mark.parametrize('model', ['anthropic/claude-sonnet-4-5', 'copilot/gpt-5', 'openai/gpt-5'])
+@pytest.mark.parametrize('model', ['anthropic/claude-sonnet-4-5', 'copilot/claude-sonnet-4-5', 'openai/gpt-5'])
 def test_pai_base_url_keeps_every_provider_on_chat_completions(tmp_path: Path, model: str) -> None:
     invocation = launch(
         tmp_path,
         {'GH_AW_LLM_PROVIDER': 'openai', 'PAI_MODEL': model, 'PAI_BASE_URL': 'https://endpoint.example.com/v1'},
     )
 
-    assert invocation.cli_args[3].startswith('openai-chat:')
+    assert invocation.cli_args[3] == f'openai-chat:{model.split("/", 1)[1]}'
     assert invocation.env['OPENAI_BASE_URL'] == 'https://endpoint.example.com/v1'
     assert 'ANTHROPIC_BASE_URL' not in invocation.env
+    assert 'GITHUB_COPILOT_INTEGRATION_ID' not in invocation.env
 
 
 async def test_the_default_agent_runs_commands_in_the_checkout_with_the_step_environment(

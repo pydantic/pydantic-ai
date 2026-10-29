@@ -33,8 +33,9 @@ import pytest
 
 try:
     from temporalio import workflow
-    from temporalio.client import Client
+    from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
+    from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Replayer, Worker
     from temporalio.worker.workflow_sandbox import (
@@ -53,9 +54,11 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
 from pydantic_ai import Agent, ToolDefinition
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
 from tests.harness._temporal import ignore_source_reads_left_open
 from tests.harness.code_mode.conftest import websocket_relay_server
@@ -132,12 +135,14 @@ def add(a: int, b: int) -> int:
 
 
 _captured_tool_defs: list[list[ToolDefinition]] = []
+_captured_instructions: list[str | None] = []
 
 
 # FunctionModel that emits a run_code tool call for the given code snippet.
 def _code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
     """Model that uses two REPL feeds, then returns the second result as text."""
     _captured_tool_defs.append(info.function_tools)
+    _captured_instructions.append(info.instructions)
 
     returns = [
         part
@@ -153,12 +158,19 @@ def _code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentIn
     if len(returns) == 2:
         return ModelResponse(parts=[TextPart(content=f'done: {returns[-1].content}')])
 
+    code = 'result = await add(a=3, b=4)\nresult'
+    if any(
+        isinstance(part, UserPromptPart) and part.content == 'Gather two additions'
+        for message in messages
+        for part in message.parts
+    ):
+        code = 'import asyncio\nawait asyncio.gather(add(a=3, b=4), add(a=5, b=6))'
     # First call -- emit run_code.
     return ModelResponse(
         parts=[
             ToolCallPart(
                 tool_name='run_code',
-                args={'code': 'result = await add(a=3, b=4)\nresult'},
+                args={'code': code},
                 tool_call_id='test_tc_1',
             )
         ]
@@ -215,7 +227,7 @@ remote_code_mode_agent = Agent(
     name='code_mode_temporal_remote_agent',
     toolsets=[FunctionToolset(tools=[add], id='math')],
     capabilities=[
-        CodeMode(monty_sandbox_url=f'ws://127.0.0.1:{MONTY_RELAY_PORT}', os_access=_workflow_os),
+        CodeMode(monty_sandbox=f'ws://127.0.0.1:{MONTY_RELAY_PORT}', os_access=_workflow_os),
         TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
     ],
 )
@@ -224,8 +236,8 @@ remote_code_mode_agent = Agent(
 @workflow.defn
 class CodeModeWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> dict[str, Any]:
-        result = await code_mode_agent.run(prompt)
+    async def run(self, prompt: str, tool_calls_limit: int | None = None) -> dict[str, Any]:
+        result = await code_mode_agent.run(prompt, usage_limits=UsageLimits(tool_calls_limit=tool_calls_limit))
         return {
             'output': str(result.output),
             'messages': result.all_messages_json().decode(),
@@ -247,7 +259,7 @@ class SandboxRestrictionWorkflow:
 
 @workflow.defn
 class RemoteCodeModeWorkflow:
-    """`CodeModeWorkflow` against remote workers reached over `monty_sandbox_url`."""
+    """`CodeModeWorkflow` against remote workers reached over a `monty_sandbox` URL."""
 
     @workflow.run
     async def run(self, prompt: str) -> str:
@@ -264,6 +276,7 @@ class RemoteCodeModeWorkflow:
 async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
     """CodeMode runs workflow-side, nested tools use activities, and the history replays."""
     _captured_tool_defs.clear()
+    _captured_instructions.clear()
     workflow_id = 'test_code_mode_temporal_1'
     async with Worker(
         client,
@@ -346,16 +359,53 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
 
     # 5. Verify tool definitions sent to the model
     assert len(_captured_tool_defs) == 3
-    for tool_defs in _captured_tool_defs:
+    for tool_defs, instructions in zip(_captured_tool_defs, _captured_instructions, strict=True):
         tool_names = [td.name for td in tool_defs]
         # CodeMode wraps `add` into `run_code` -- the model should only see `run_code`
         assert 'run_code' in tool_names
         assert 'add' not in tool_names
 
+        # The catalog crosses the model request in the instructions, not in `run_code`'s description.
+        assert instructions is not None
+        assert 'async def add' in instructions
         run_code_td = next(td for td in tool_defs if td.name == 'run_code')
         assert run_code_td.description is not None
-        assert 'async def add' in run_code_td.description
+        assert 'async def add' not in run_code_td.description
         assert run_code_td.parameters_json_schema['properties']['code']['type'] == 'string'
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    replay_result = await Replayer(
+        workflows=[CodeModeWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=_workflow_runner(),
+    ).replay_workflow(history)
+    assert replay_result.replay_failure is None
+
+
+@pytest.mark.parametrize(
+    'prompt,limit', [('Calculate 3 + 4', 1), ('Gather two additions', 2)], ids=['sequential', 'gather']
+)
+async def test_tool_calls_limit_fails_and_replays(client: Client, prompt: str, limit: int) -> None:
+    workflow_id = f'test_code_mode_temporal_tool_calls_limit_{limit}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CodeModeWorkflow],
+        plugins=[AgentPlugin(code_mode_agent)],
+        workflow_runner=_workflow_runner(),
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                CodeModeWorkflow.run,
+                args=[prompt, limit],
+                id=workflow_id,
+                task_queue=TASK_QUEUE,
+            )
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, ApplicationError)
+    assert cause.type == UsageLimitExceeded.__name__
+    assert f'tool_calls_limit of {limit} (tool_calls={limit + 1})' in cause.message
 
     history = await client.get_workflow_handle(workflow_id).fetch_history()
     replay_result = await Replayer(

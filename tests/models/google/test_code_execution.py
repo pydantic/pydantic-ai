@@ -134,6 +134,7 @@ print(result)\
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -313,6 +314,7 @@ print(datetime.datetime.now())
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -413,6 +415,7 @@ print(f"Time in Utrecht: {now}")
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -427,21 +430,21 @@ print(f"Time in Utrecht: {now}")
 async def test_receive_history_from_another_provider(
     allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
 ):
-    anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    anthropic_model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     google_model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key=gemini_api_key))
     agent = Agent(capabilities=[NativeTool(CodeExecutionTool())])
 
-    result = await agent.run('How much is 3 * 12390?', model=anthropic_model)
+    result = await agent.run('Use code execution to calculate 3 * 12390.', model=anthropic_model)
     assert part_types_from_messages(result.all_messages()) == snapshot(
-        [[UserPromptPart], [TextPart, NativeToolCallPart, NativeToolReturnPart, TextPart]]
+        [[UserPromptPart], [NativeToolCallPart, NativeToolReturnPart, TextPart]]
     )
 
     result = await agent.run('Multiplied by 12390', model=google_model, message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
-            [TextPart, NativeToolCallPart, NativeToolReturnPart, TextPart],
+            [NativeToolCallPart, NativeToolReturnPart, TextPart],
             [UserPromptPart],
-            [NativeToolCallPart, NativeToolReturnPart, NativeToolCallPart, NativeToolReturnPart, TextPart],
+            [NativeToolCallPart, NativeToolReturnPart, TextPart],
         ]
     )

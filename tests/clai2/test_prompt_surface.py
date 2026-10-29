@@ -8,10 +8,11 @@ import pytest
 from rich.console import Console
 from rich.text import Text
 from termflow.ansi import make_clipboard_copy
-from termflow.live import ScreenBuffer
+from termflow.live import Region, ScreenBuffer
 from termflow.live.buffer import REVERSE
 from termflow.themes import PALETTES, reset_palette
 
+from pydantic_clai2.ui.prompt import prompt_surface
 from pydantic_clai2.ui.prompt.prompt_selection import MouseReport, Selection, mouse_report
 from pydantic_clai2.ui.prompt.prompt_surface import (
     ENTER,
@@ -107,6 +108,33 @@ def test_typing_sends_only_the_changed_cells_without_showing_the_cursor() -> Non
     assert screen.terminal.getvalue()[start:] == ''
 
 
+def test_an_unchanged_frame_is_not_redrawn(monkeypatch: pytest.MonkeyPatch) -> None:
+    screen = Screen()
+    draws: list[Region] = []
+    draw = screen.surface.view.draw
+
+    def counted(region: Region, focused: bool) -> None:
+        draws.append(region)
+        draw(region, focused)
+
+    monkeypatch.setattr(screen.surface.view, 'draw', counted)
+    screen.surface.paint(ROWS)
+    for _ in range(10):
+        screen.surface.paint(ROWS)
+    assert len(draws) == 1
+    for change in (
+        lambda: screen.surface.paint(('TOP', 'DRAFT!', 'BOTTOM', 'FOOTER')),
+        lambda: screen.write('output\n'),
+        lambda: screen.terminal.resize(width=60, height=24),
+        screen.surface.resize_notice,
+    ):
+        change()
+        screen.surface.paint(('TOP', 'DRAFT!', 'BOTTOM', 'FOOTER'))
+        screen.surface.paint(('TOP', 'DRAFT!', 'BOTTOM', 'FOOTER'))
+    assert len(draws) == 5
+    assert screen.lines()[0] == 'output'
+
+
 def test_editor_growth_takes_rows_from_the_transcript_and_gives_them_back() -> None:
     screen = Screen(height=8)
     screen.surface.paint(ROWS)
@@ -129,6 +157,20 @@ def test_writes_inside_a_frame_interval_wait_for_refresh() -> None:
     start = len(screen.terminal.getvalue())
     screen.surface.refresh()
     assert screen.terminal.getvalue()[start:] == ''
+
+
+async def test_writes_inside_a_frame_interval_paint_once_it_ends(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A short interval stands in for a frame, so waiting it out costs a millisecond.
+    monkeypatch.setattr(prompt_surface, 'FRAME_INTERVAL', 0.001)
+    screen = Screen()
+    screen.surface.paint(ROWS)
+    frames = screen.terminal.getvalue().count('\x1b[?2026h')
+    screen.surface.write('first\n')
+    screen.surface.write('second\n')
+    assert 'first' not in screen.lines(), 'within a frame of the last one'
+    await asyncio.sleep(0.01)
+    assert 'second' in screen.lines(), 'without waiting for the editor to repaint'
+    assert screen.terminal.getvalue().count('\x1b[?2026h') == frames + 1, 'one frame shows both writes'
 
 
 def test_resize_rewraps_the_transcript_from_the_retained_output() -> None:
@@ -554,6 +596,21 @@ def test_dragging_highlights_cells_and_releasing_copies_them() -> None:
     assert screen.terminal.getvalue()[start:] == make_clipboard_copy('line here\nsecond line\nthi')
     assert highlighted(screen.surface), 'the copied cells stay highlighted'
     assert screen.lines()[:3] == ['first line here', 'second line', 'third'], 'selection never changes text'
+
+
+def test_question_selection_opt_in_does_not_leak_into_editor_rows() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS, select_pinned=True)
+    for report in (press(1, 8), drag(5, 8)):
+        screen.surface.transcript_key('mouse', report)
+    assert highlighted(screen.surface) == ['DRAFT']
+    screen.surface.paint(ROWS)
+    assert highlighted(screen.surface) == []
+    assert screen.surface.transcript_key('mouse', release(5, 8)) is None
+    for row in (8, 10):
+        for report in (press(1, row), drag(5, row), release(5, row)):
+            assert screen.surface.transcript_key('mouse', report) is None
+        assert not any(text.strip() for text in highlighted(screen.surface))
 
 
 def test_dragging_backwards_selects_the_same_cells_in_reading_order() -> None:

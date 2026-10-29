@@ -5,15 +5,16 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
-import time
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+import re
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 
 import pytest
+from pydantic_monty import AsyncSnapshot, MontyComplete
 
 from pydantic_ai import Agent, RunContext, Tool, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -31,7 +32,8 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 
 from .._recording_durability import RecordingDurability
@@ -84,11 +86,13 @@ def run_code_return_content(messages: list[ModelMessage]) -> object:
 async def prepared_eager_toolset(
     tools: Sequence[Tool[None]],
     capability: CodeMode[None] | None = None,
+    *,
+    usage_limits: UsageLimits | None = None,
 ) -> AsyncGenerator[tuple[CodeMode[None], CodeModeToolset[None], RunContext[None], ToolsetTool[None]]]:
     capability = capability or CodeMode[None](eager=True)
     root = capability.get_wrapper_toolset(FunctionToolset[None](tools=tools))
     assert isinstance(root, CodeModeToolset)
-    ctx = build_run_context()
+    ctx = dataclasses.replace(build_run_context(), usage_limits=usage_limits)
     async with root:
         manager = await ToolManager(toolset=root).for_run_step(ctx)
         ctx.tool_manager = manager
@@ -105,7 +109,9 @@ async def observe(capability: CodeMode[None], ctx: RunContext[None], events: Seq
 
 
 class TestEagerCodeMode:
-    async def test_executes_before_model_stream_finishes(self):
+    @pytest.mark.parametrize('chunk_size', [4, 1])
+    async def test_executes_before_model_stream_finishes(self, chunk_size: int):
+        """Statements run while the call streams, including when every delta splits the `\\n` escape."""
         first_call = asyncio.Event()
         calls: list[str] = []
 
@@ -120,7 +126,7 @@ class TestEagerCodeMode:
             if prior_run_code_calls(messages):
                 yield 'done'
                 return
-            chunks = stream_json_args(code, chunk_size=4)
+            chunks = stream_json_args(code, chunk_size=chunk_size)
             yield {1: DeltaToolCall(name='run_code')}
             for chunk in chunks[:-1]:
                 yield {1: DeltaToolCall(json_args=chunk)}
@@ -270,6 +276,97 @@ class TestEagerCodeMode:
 
         assert result.output == 'done'
         assert calls == ['alpha']
+
+    async def test_tool_calls_limit_applies_to_streamed_fragments(self):
+        """A fragment's nested call that would exceed `tool_calls_limit` ends the run once `run_code` is dispatched."""
+        calls: list[str] = []
+
+        def search(query: str) -> str:
+            calls.append(query)
+            return query
+
+        code = (
+            'a = await search(query="alpha")\nb = await search(query="beta")\nc = await search(query="gamma")\n"unused"'
+        )
+
+        async def stream_code(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            yield {1: DeltaToolCall(name='run_code')}
+            for chunk in stream_json_args(code):
+                yield {1: DeltaToolCall(json_args=chunk)}
+                await asyncio.sleep(0)
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(stream_function=stream_code), deps_type=type(None), capabilities=[CodeMode(eager=True)]
+        )
+        agent.tool_plain(search)
+
+        with pytest.raises(UsageLimitExceeded, match=re.escape('tool_calls_limit of 3 (tool_calls=4)')):
+            await agent.run('go', usage_limits=UsageLimits(tool_calls_limit=3))
+
+        assert calls == ['alpha', 'beta']
+
+    @pytest.mark.parametrize('restart', [False, True], ids=['prefix-mismatch', 'restart'])
+    async def test_tool_calls_limit_survives_replaced_eager_code(
+        self, monkeypatch: pytest.MonkeyPatch, restart: bool
+    ) -> None:
+        """A final dict update cannot replace a fragment's terminal refusal with a retry or success."""
+        refused_feed = asyncio.Event()
+        calls: list[str] = []
+        original_run = MontyExecutor.run
+
+        async def observe_refusal(
+            self: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]
+        ) -> MontyComplete:
+            try:
+                return await original_run(self, feed_start)
+            finally:
+                refused_feed.set()
+
+        monkeypatch.setattr(MontyExecutor, 'run', observe_refusal)
+
+        def search(query: str) -> str:
+            calls.append(query)
+            return query
+
+        async with prepared_eager_toolset([Tool(search)], usage_limits=UsageLimits(tool_calls_limit=3)) as (
+            capability,
+            toolset,
+            ctx,
+            run_code,
+        ):
+            # A complete following line seals the compound statement for eager feeding.
+            code = (
+                'try:\n'
+                '    await search(query="alpha")\n'
+                '    await search(query="beta")\n'
+                '    await search(query="gamma")\n'
+                'except Exception:\n'
+                '    pass\n'
+                '"unused"\n'
+            )
+            await observe(
+                capability,
+                ctx,
+                [PartStartEvent(index=0, part=ToolCallPart('run_code', {'code': code}, tool_call_id='c1'))],
+            )
+            await asyncio.wait_for(refused_feed.wait(), timeout=5)
+            assert calls == ['alpha', 'beta']
+            await observe(
+                capability,
+                ctx,
+                [
+                    PartDeltaEvent(
+                        index=0,
+                        delta=ToolCallPartDelta(args_delta={'code': '42', 'restart': restart}, tool_call_id='c1'),
+                    )
+                ],
+            )
+            exec_ctx = dataclasses.replace(ctx, tool_call_id='c1', tool_name='run_code')
+
+            with pytest.raises(UsageLimitExceeded, match=r'tool_calls_limit of 3 \(tool_calls=4\)'):
+                await toolset.call_tool('run_code', {'code': '42', 'restart': restart}, exec_ctx, run_code)
+
+        assert calls == ['alpha', 'beta']
 
     async def test_monty_limits_apply_to_eager_fragments(self):
         capability = CodeMode[None](eager=True, resource_limits={'max_duration_secs': 0.3})
@@ -862,6 +959,7 @@ class TestEagerCodeMode:
         behind it never run, and the tool is allowed to finish in the background."""
         monkeypatch.setattr('pydantic_ai_harness.code_mode._eager.CANCEL_TIMEOUT_SECONDS', 0.25)
         started = asyncio.Event()
+        release = asyncio.Event()
         done = asyncio.Event()
         calls: list[str] = []
 
@@ -871,8 +969,8 @@ class TestEagerCodeMode:
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
-                # Swallow the cancellation and keep working past the cleanup budget.
-                await asyncio.sleep(1.2)
+                # Swallow the cancellation and keep working until the test releases the tool.
+                await release.wait()
             calls.append('done')
             done.set()
             return 'late'
@@ -889,17 +987,21 @@ class TestEagerCodeMode:
                 ],
             )
             await asyncio.wait_for(started.wait(), timeout=5)
-            # Without the budget, the restart would wait out the 1.2 second non-cooperative linger.
-            discard_start = time.monotonic()
-            await observe(
-                capability,
-                ctx,
-                [PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'restart': True}, tool_call_id='c1'))],
+            # The tool holds the pump until it is released, so the restart can only return by
+            # abandoning the pump after the budget. Checking that, rather than a wall-clock bound on
+            # a tool that lingers for a fixed time, keeps a slow event loop from failing the test.
+            await asyncio.wait_for(
+                observe(
+                    capability,
+                    ctx,
+                    [PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'restart': True}, tool_call_id='c1'))],
+                ),
+                timeout=5,
             )
 
-            assert time.monotonic() - discard_start < 0.75
             assert calls == ['stubborn']
             # The abandoned tool is allowed to finish in the background.
+            release.set()
             await asyncio.wait_for(done.wait(), timeout=5)
             assert calls == ['stubborn', 'done']
 

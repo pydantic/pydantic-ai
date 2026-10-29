@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import warnings
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import replace
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
@@ -16,13 +17,16 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import NoOpTracer, Tracer
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, UsageLimitUnavailableWarning, capture_run_messages
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CapabilityOrdering,
+    Hooks,
+    ModelFallback,
     WrapModelRequestHandler,
 )
+from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.durable_exec import (
     JSON_CODEC,
     BaseDurabilityCapability,
@@ -34,11 +38,13 @@ from pydantic_ai.exceptions import (
     FallbackExceptionGroup,
     ModelHTTPError,
     ModelRetry,
+    RetryModelRequest,
     SkipModelRequest,
     UsageLimitExceeded,
     UserError,
 )
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     ModelMessage,
     ModelRequest,
     ModelRequestAttempt,
@@ -47,11 +53,14 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import CompletedStreamedResponse, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import RunContext
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness import HarnessDeprecationWarning, spend
 from pydantic_ai_harness.spend import (
@@ -68,6 +77,7 @@ from pydantic_ai_harness.spend import (
     UnpricedModelWarning,
 )
 from pydantic_ai_harness.spend._exceptions import SpendCompositionWarning
+from pydantic_graph import End
 from tests.continuation_utils import ScriptedContinuationModel, StreamSegment
 
 pytestmark = [
@@ -139,6 +149,7 @@ class _UsageRequestContext:
 
     _usage_responses: tuple[ModelResponse, ...] = ()
     _usage_attempts: tuple[ModelRequestAttempt, ...] = ()
+    _rejected_usage_responses: tuple[ModelResponse, ...] = ()
 
 
 def _response(
@@ -216,14 +227,50 @@ def _scripted_usage() -> FunctionModel:
     return FunctionModel(respond)
 
 
-def _agent(guard: SpendLimits[None], *, usage: RequestUsage | None = None) -> Agent[None, str]:
+def _agent(
+    guard: SpendLimits[None],
+    *,
+    usage: RequestUsage | None = None,
+    model_name: str | None = None,
+    provider_name: str | None = None,
+    spend_events: list[SpendRecordedEvent] | None = None,
+) -> Agent[None, str]:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(
             parts=[TextPart(content='ok')],
             usage=usage if usage is not None else RequestUsage(input_tokens=1000, output_tokens=100),
+            provider_name=provider_name,
         )
 
-    return Agent(FunctionModel(respond), deps_type=type(None), capabilities=[guard])
+    function_model: FunctionModel = FunctionModel(respond, model_name=model_name)
+    capabilities: list[AbstractCapability[None]] = [guard]
+    if spend_events is not None:
+        hooks = Hooks[None]()
+
+        @hooks.on.event(SpendRecordedEvent)
+        async def record_spend(ctx: RunContext[None], event: SpendRecordedEvent) -> None:
+            spend_events.append(event)
+
+        class EventFunctionModel(FunctionModel):
+            @asynccontextmanager
+            async def request_stream(
+                self,
+                messages: list[ModelMessage],
+                model_settings: ModelSettings | None,
+                model_request_parameters: ModelRequestParameters,
+                run_context: RunContext[Any] | None = None,
+            ) -> AsyncGenerator[StreamedResponse, None]:
+                response = await self.request(messages, model_settings, model_request_parameters)
+                yield CompletedStreamedResponse(
+                    response,
+                    model_request_parameters=model_request_parameters,
+                    replay_events=True,
+                )
+
+        function_model = EventFunctionModel(respond, model_name=model_name)
+        capabilities.append(hooks)
+
+    return Agent(function_model, deps_type=type(None), capabilities=capabilities)
 
 
 def _no_price(response: ModelResponse) -> Decimal | None:
@@ -900,6 +947,125 @@ class TestOrdering:
 
 class TestPricing:
     """What a response cost, and whether that number is real."""
+
+    @pytest.mark.parametrize('custom_price', [False, True])
+    async def test_omitted_usage_warns_for_token_budget_even_with_complete_price(self, custom_price: bool):
+        guard = SpendLimits(
+            budgets=[Budget(tokens=1000, window='total')],
+            price=(lambda response: Decimal('0.02')) if custom_price else None,
+        )
+        agent = _agent(guard, usage=RequestUsage(unmeasured_requests=1))
+
+        with pytest.warns(UsageLimitUnavailableWarning, match='token ceilings cannot be fully enforced'):
+            result = await agent.run('hi')
+
+        assert result.usage.unmeasured_requests == 1
+        spent = (await guard.status())[0].spent
+        assert spent.tokens == 0
+        assert spent.requests == 1
+        assert spent.usd == (Decimal('0.02') if custom_price else Decimal('0'))
+
+    async def test_omitted_usage_warning_can_stop_run_after_accrual(self):
+        guard = SpendLimits(budgets=[Budget(tokens=1000, window='total')])
+        agent = _agent(guard, usage=RequestUsage(unmeasured_requests=1))
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', UsageLimitUnavailableWarning)
+            with pytest.raises(UsageLimitUnavailableWarning, match='token ceilings cannot be fully enforced'):
+                await agent.run('hi')
+
+        assert (await guard.status())[0].spent.requests == 1
+
+    async def test_known_cost_subtotal_is_accrued_and_exhausts_the_next_run(self):
+        usage = RequestUsage(web_searches=1, unmeasured_requests=1, details={'web_search_requests': 1})
+        guard = SpendLimits(budgets=[Budget(usd=Decimal('0.005'), window='total')])
+        events: list[SpendRecordedEvent] = []
+        agent = _agent(guard, usage=usage, model_name='gpt-4o', provider_name='openai', spend_events=events)
+
+        with pytest.warns(UnpricedModelWarning, match='known subtotal') as caught:
+            result = await agent.run('first')
+
+        assert len(caught) == 1
+        assert result.usage.cost == Decimal('0.01')
+        spent = (await guard.status())[0].spent
+        assert spent.usd == Decimal('0.01')
+        assert spent.unpriced_requests == 1
+        assert len(events) == 1
+        assert events[0].usd == Decimal('0.01')
+        assert events[0].priced is False
+
+        with pytest.raises(SpendLimitExceeded):
+            await agent.run('next')
+
+    async def test_known_cost_subtotal_is_accrued_before_unpriced_policy_raises(self):
+        usage = RequestUsage(web_searches=1, unmeasured_requests=1, details={'web_search_requests': 1})
+        guard = SpendLimits(budgets=[Budget(window='total')], on_unpriced='raise')
+        agent = _agent(guard, usage=usage, model_name='gpt-4o', provider_name='openai')
+
+        with pytest.raises(UnpricedModelError):
+            await agent.run('hi')
+
+        spent = (await guard.status())[0].spent
+        assert spent.usd == Decimal('0.01')
+        assert spent.unpriced_requests == 1
+
+    async def test_pure_omission_remains_unpriced(self):
+        guard = SpendLimits(budgets=[Budget(usd=Decimal('0.005'), window='total')])
+        events: list[SpendRecordedEvent] = []
+        agent = _agent(
+            guard,
+            usage=RequestUsage(unmeasured_requests=1),
+            model_name='gpt-4o',
+            provider_name='openai',
+            spend_events=events,
+        )
+
+        with pytest.warns(UnpricedModelWarning):
+            result = await agent.run('hi')
+
+        assert result.usage.cost is None
+        spent = (await guard.status())[0].spent
+        assert spent.usd == Decimal('0')
+        assert spent.unpriced_requests == 1
+        assert len(events) == 1
+        assert events[0].usd == Decimal('0')
+        assert events[0].priced is False
+
+    @pytest.mark.parametrize('amount', ['-1', 'NaN', 'Infinity', '-Infinity'])
+    async def test_invalid_stored_partial_cost_is_not_accrued(self, amount: str):
+        usage = RequestUsage(input_tokens=1000, unmeasured_requests=1, cost=Decimal(amount))
+        guard = SpendLimits(budgets=[Budget(usd=Decimal('1'), window='total')])
+        events: list[SpendRecordedEvent] = []
+        agent = _agent(guard, usage=usage, model_name='gpt-4o', provider_name='openai', spend_events=events)
+
+        with pytest.warns(UnpricedModelWarning, match='known subtotal'):
+            await agent.run('hi')
+
+        spent = (await guard.status())[0].spent
+        assert spent.usd == Decimal('0')
+        assert spent.requests == 1
+        assert spent.unpriced_requests == 1
+        assert len(events) == 1
+        assert events[0].usd == Decimal('0')
+        assert events[0].priced is False
+
+    async def test_explicit_price_override_wins_over_partial_registry_cost(self):
+        usage = RequestUsage(web_searches=1, unmeasured_requests=1, details={'web_search_requests': 1})
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda response: Decimal('0.02'))
+        events: list[SpendRecordedEvent] = []
+        agent = _agent(guard, usage=usage, model_name='gpt-4o', provider_name='openai', spend_events=events)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always', UnpricedModelWarning)
+            await agent.run('hi')
+
+        spent = (await guard.status())[0].spent
+        assert spent.usd == Decimal('0.02')
+        assert spent.unpriced_requests == 0
+        assert len(events) == 1
+        assert events[0].usd == Decimal('0.02')
+        assert events[0].priced is True
+        assert [warning for warning in caught if issubclass(warning.category, UnpricedModelWarning)] == []
 
     async def test_the_registry_prices_a_known_model(self):
         guard = SpendLimits(budgets=[Budget(window='total')])
@@ -2083,6 +2249,25 @@ def _attempt(
     )
 
 
+@dataclass
+class _RecordingSpendLimits(SpendLimits[AgentDepsT]):
+    """Records the model of each response it accrues, and whether it was accrued as a failed attempt."""
+
+    accrued: list[tuple[str | None, bool]] = field(default_factory=list[tuple[str | None, bool]])
+
+    async def _accrue_safely(
+        self,
+        ctx: RunContext[AgentDepsT],
+        response: ModelResponse,
+        token: Callable[[], str],
+        boundaries: Sequence[tuple[ModelResponse, Callable[[], str]]] = (),
+        *,
+        failed_attempt: bool = False,
+    ) -> Exception | None:
+        self.accrued.append((response.model_name, failed_attempt))
+        return await super()._accrue_safely(ctx, response, token, boundaries, failed_attempt=failed_attempt)
+
+
 class TestFallbackAttempts:
     """A response a `FallbackModel` rejected was billed, though the agent never acted on it."""
 
@@ -2159,6 +2344,88 @@ class TestFallbackAttempts:
             await Agent(model, deps_type=type(None), capabilities=[guard]).run('hi')
 
         assert (await guard.status())[0].spent == Spent(usd=Decimal('120'), tokens=132, requests=2)
+
+    @pytest.mark.parametrize('reject_all', [False, True])
+    async def test_model_fallback_is_charged_like_fallback_model(self, reject_all: bool):
+        """The `ModelFallback` capability bills the same chain to the same budget as `FallbackModel` does."""
+
+        def reject(response: ModelResponse) -> bool:
+            return reject_all or response.model_name == 'gpt-4o-mini'
+
+        def chain() -> list[FunctionModel]:
+            return [
+                FunctionModel(lambda messages, info: _usage_response(100, 10), model_name='gpt-4o-mini'),
+                FunctionModel(lambda messages, info: _usage_response(20, 2), model_name='gpt-4o'),
+            ]
+
+        spent: list[Spent] = []
+        recorded: list[list[tuple[str | None, bool]]] = []
+        for use_capability in (False, True):
+            accrued: list[tuple[str | None, bool]] = []
+            recorded.append(accrued)
+            # An event listener would make the request streamed, where response handlers don't apply, so the
+            # accruals are recorded where `SpendRecordedEvent.failed_attempt` comes from.
+            guard = _RecordingSpendLimits[None](
+                budgets=[Budget(window='total')], price=lambda r: Decimal(r.usage.input_tokens), accrued=accrued
+            )
+            first, second = chain()
+            if use_capability:
+                agent = Agent(
+                    first, deps_type=type(None), capabilities=[guard, ModelFallback(second, fallback_on=reject)]
+                )
+            else:
+                agent = Agent(
+                    FallbackModel(first, second, fallback_on=reject), deps_type=type(None), capabilities=[guard]
+                )
+            if reject_all:
+                with pytest.raises(FallbackExceptionGroup):
+                    await agent.run('hi')
+            else:
+                await agent.run('hi')
+            spent.append((await guard.status())[0].spent)
+
+        assert spent[0] == spent[1] == Spent(usd=Decimal('120'), tokens=132, requests=2)
+        # A response either one rejected is reported as a failed attempt, not as the answer.
+        assert recorded[0] == recorded[1] == [('gpt-4o-mini', True), ('gpt-4o', reject_all)]
+
+    async def test_a_capability_rejection_is_charged_once_when_a_later_attempt_is_recovered(self):
+        """The response a recovery returns carries the rejected attempt, which was already charged as billed."""
+        calls: list[int] = []
+
+        def billed_then_failing(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append(1)
+            if len(calls) == 1:
+                return _usage_response(100, 10)
+            raise ModelHTTPError(status_code=503, model_name='down')
+
+        class RejectThenRecover(AbstractCapability[None]):
+            async def after_model_request(
+                self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+            ) -> ModelResponse:
+                if response.text == 'ok':
+                    raise RetryModelRequest()
+                return response
+
+            async def on_model_request_error(
+                self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+            ) -> ModelResponse:
+                return ModelResponse(parts=[TextPart('recovered')])
+
+        accrued: list[tuple[str | None, bool]] = []
+        guard = _RecordingSpendLimits[None](
+            budgets=[Budget(window='total')], price=lambda r: Decimal(r.usage.input_tokens), accrued=accrued
+        )
+        agent = Agent(
+            FunctionModel(billed_then_failing, model_name='gpt-4o-mini'),
+            deps_type=type(None),
+            capabilities=[guard, RejectThenRecover()],
+        )
+        result = await agent.run('hi')
+
+        assert result.output == 'recovered'
+        assert accrued == [('gpt-4o-mini', True)]
+        assert (await guard.status())[0].spent == Spent(usd=Decimal('100'), tokens=110, requests=1)
+        assert (result.usage.input_tokens, result.usage.output_tokens, result.usage.requests) == (100, 10, 1)
 
     async def test_rejected_responses_are_charged_when_an_outer_hook_recovers(self):
         """Recovery by a capability outside `SpendLimits` hides the group from the wrapper, not the charge."""
@@ -2593,7 +2860,10 @@ class TestContinuationAccrual:
         ]
 
     async def test_a_resumed_chain_is_folded_from_the_response_it_resumes(self):
-        """The suspended response a history ends in seeds the fold, so the boundaries match core's merge."""
+        """The suspended response a history ends in seeds the fold, so the boundaries match core's merge.
+
+        That response was charged by the run that produced it, so only what was billed beyond it is accrued.
+        """
         seed = _segment('A', tokens=(7, 3), cost='0.010', suspended=True, response_id='a')
         store = _CountingStore()
         model = ScriptedContinuationModel(
@@ -2608,11 +2878,49 @@ class TestContinuationAccrual:
             message_history=[ModelRequest.user_text_prompt('go'), seed]
         )
 
-        assert (await limits.status())[0].spent.tokens == result.usage.total_tokens
+        assert (await limits.status())[0].spent.tokens == result.usage.total_tokens == 16
         assert [[(entry.tokens, entry.usd) for entry in batch] for batch in store.batches] == [
-            [(21, Decimal('0.021'))],
+            [(11, Decimal('0.011'))],
             [(5, Decimal('0.005'))],
         ]
+
+    @pytest.mark.parametrize(
+        ('resumed', 'billed'),
+        [
+            pytest.param([StreamSegment(['B'], 'complete', 'b', 8, 6)], 7 + 14, id='pause-turn'),
+            # A background job's final poll reports its cumulative usage.
+            pytest.param([StreamSegment(['B'], 'complete', 'a', 8, 6)], 14, id='background-poll'),
+            pytest.param(
+                [StreamSegment(['B'], 'suspended', 'b', 4, 1), StreamSegment(['C'], 'complete', 'c', 3, 1)],
+                7 + 5 + 4,
+                id='three-segment',
+            ),
+        ],
+    )
+    async def test_a_walk_away_and_the_run_resuming_it_charge_what_the_provider_billed(
+        self, resumed: list[StreamSegment], billed: int
+    ):
+        """The run that walked away from a suspended response charged it, so the run that resumes it charges the rest."""
+        limits = SpendLimits[None](
+            budgets=[Budget(window='conversation'), Budget(window='total')],
+            price=lambda response: Decimal(response.usage.total_tokens),
+        )
+        model = ScriptedContinuationModel(segments=[StreamSegment(['A'], 'suspended', 'a', 5, 2)])
+        with capture_run_messages() as messages:
+            async with Agent(model, deps_type=type(None), capabilities=[limits]).run_stream('go') as stream:
+                async for _ in stream.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+                    break
+        walked_away = messages[-1]
+        assert isinstance(walked_away, ModelResponse) and walked_away.state == 'suspended'
+
+        model = ScriptedContinuationModel(segments=resumed)
+        async with Agent(model, deps_type=type(None), capabilities=[limits]).run_stream(
+            message_history=messages
+        ) as stream:
+            await stream.get_output()
+
+        conversation, total = await limits.status(_run_ctx(conversation_id=walked_away.conversation_id))
+        assert conversation.spent == total.spent == Spent(usd=Decimal(billed), tokens=billed, requests=2)
 
     @pytest.mark.parametrize('failure', ['unpriced', 'raises'])
     async def test_a_boundary_that_cannot_be_priced_defers_to_the_merged_response(self, failure: str):
@@ -2650,6 +2958,206 @@ class TestContinuationAccrual:
         await Agent(model, deps_type=type(None), capabilities=[limits]).run('go')
 
         assert (await limits.status())[0].spent == Spent(usd=Decimal('5'), tokens=21, requests=1)
+
+
+class _AttemptsBeforeStream(WrapperModel):
+    """Streams the wrapped model's response as one a `FallbackModel` fell back to, after a billed rejected attempt."""
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as stream:
+            stream.failed_attempts = [_attempt()]
+            yield stream
+
+
+async def _stop_streaming(agent: Agent[None, str], *, at: str) -> RunUsage:
+    """Stream the agent's first model response and raise once its text reaches `at`, returning the run's usage."""
+    async with agent.iter('go') as run:
+        with pytest.raises(RuntimeError, match='consumer stopped'):
+            async for node in run:  # pragma: no branch
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        async for text in stream.stream_text(debounce_by=None):  # pragma: no branch
+                            if at in text:
+                                raise RuntimeError('consumer stopped')
+    return run.usage
+
+
+async def _walk_away(agent: Agent[None, str]) -> tuple[list[ModelMessage], RunUsage]:
+    """Close an event generator mid-stream, as a server does when its client disconnects, returning the run's messages and usage.
+
+    Closing the generator sends `GeneratorExit` into the model request stream: a walk-away rather than a failure.
+    """
+    with capture_run_messages() as messages:
+        async with agent.iter('go') as run:
+            first = run.next_node
+            assert not isinstance(first, End)
+            node = await run.next(first)
+            assert Agent.is_model_request_node(node)
+
+            async def events() -> AsyncGenerator[AgentStreamEvent]:
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:  # pragma: no branch
+                        yield event
+
+            stream = events()
+            await anext(stream)
+            await stream.aclose()
+    return messages, run.usage
+
+
+class TestInterruptedStreams:
+    """A stream the consumer stops was billed for what the provider produced before it stopped."""
+
+    async def test_the_partial_response_is_charged_once(self):
+        store = _CountingStore()
+        model = ScriptedContinuationModel(
+            segments=[
+                StreamSegment(
+                    texts=['A', 'B'], state='complete', provider_response_id='a', input_tokens=7, output_tokens=3
+                )
+            ]
+        )
+        limits = SpendLimits[None](
+            budgets=[Budget(window='total')], store=store, price=lambda response: Decimal(response.usage.total_tokens)
+        )
+
+        usage = await _stop_streaming(Agent(model, deps_type=type(None), capabilities=[limits]), at='A')
+
+        assert usage == RunUsage(input_tokens=7, output_tokens=3, requests=1)
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('10'), tokens=10, requests=1)
+        assert [[(entry.tokens, entry.requests) for entry in batch] for batch in store.batches] == [[(10, 1)]]
+
+    async def test_a_chain_stopped_mid_segment_is_charged_what_core_counted(self):
+        """The merged response of a chain stopped during its second segment is accrued once, matching `RunUsage`."""
+        store = _CountingStore()
+        model = ScriptedContinuationModel(
+            segments=[
+                StreamSegment(
+                    texts=['A'], state='suspended', provider_response_id='a', input_tokens=7, output_tokens=3
+                ),
+                StreamSegment(
+                    texts=['B', 'C'], state='complete', provider_response_id='b', input_tokens=8, output_tokens=3
+                ),
+            ]
+        )
+        limits = SpendLimits[None](
+            budgets=[Budget(window='total')], store=store, price=lambda response: Decimal(response.usage.total_tokens)
+        )
+
+        usage = await _stop_streaming(Agent(model, deps_type=type(None), capabilities=[limits]), at='B')
+
+        assert usage.total_tokens == 21
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('21'), tokens=21, requests=1)
+        assert [[(entry.tokens, entry.requests) for entry in batch] for batch in store.batches] == [[(21, 1)]]
+
+    async def test_a_suspended_job_walked_away_from_is_charged_and_stays_resumable(self):
+        """The partial response is charged by the run that walked away, which leaves the turn resumable."""
+        store = _CountingStore()
+        model = ScriptedContinuationModel(
+            segments=[
+                StreamSegment(
+                    texts=['A', 'B'], state='suspended', provider_response_id='a', input_tokens=5, output_tokens=2
+                ),
+                StreamSegment(texts=['C'], state='complete', provider_response_id='b', input_tokens=8, output_tokens=6),
+            ]
+        )
+        limits = SpendLimits[None](
+            budgets=[Budget(window='total')], store=store, price=lambda response: Decimal(response.usage.total_tokens)
+        )
+
+        messages, _ = await _walk_away(Agent(model, deps_type=type(None), capabilities=[limits]))
+
+        suspended = messages[-1]
+        assert isinstance(suspended, ModelResponse)
+        assert suspended.state == 'suspended'
+        assert model.cancelled == []
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('7'), tokens=7, requests=1)
+        assert [[(entry.tokens, entry.requests) for entry in batch] for batch in store.batches] == [[(7, 1)]]
+
+    @pytest.mark.parametrize('stop', [False, True])
+    async def test_a_walk_away_and_its_resume_are_charged_what_was_billed(self, stop: bool):
+        """The walk-away counts its partial and the resume what it billed beyond it, also when the resume is stopped too.
+
+        `RunUsage`, `SpendLimits` and the `chat` spans each add up to the 21 tokens the provider billed for the turn.
+        """
+        model = ScriptedContinuationModel(
+            segments=[
+                StreamSegment(
+                    texts=['A', 'B'], state='suspended', provider_response_id='a', input_tokens=5, output_tokens=2
+                ),
+                StreamSegment(
+                    texts=['C', 'D'], state='complete', provider_response_id='b', input_tokens=8, output_tokens=6
+                ),
+            ]
+        )
+        limits = SpendLimits[None](
+            budgets=[Budget(window='total')], price=lambda response: Decimal(response.usage.total_tokens)
+        )
+        exporter = InMemorySpanExporter()
+        tracer_provider = TracerProvider()
+        tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+        instrumentation = Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider))
+        agent = Agent(model, deps_type=type(None), capabilities=[instrumentation, limits])
+
+        messages, walked_away = await _walk_away(agent)
+        assert walked_away.total_tokens == 7
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('7'), tokens=7, requests=1)
+
+        if stop:
+            with capture_run_messages() as resumed_messages:
+                async with agent.iter(message_history=messages) as run:
+                    with pytest.raises(RuntimeError, match='consumer stopped'):
+                        async for node in run:  # pragma: no branch
+                            if Agent.is_model_request_node(node):
+                                async with node.stream(run.ctx) as stream:
+                                    async for _ in stream.stream_text(debounce_by=None):  # pragma: no branch
+                                        raise RuntimeError('consumer stopped')
+            resumed = run.usage
+            assert isinstance(resumed_messages[-1], ModelResponse)
+            assert resumed_messages[-1].state == 'interrupted'
+        else:
+            async with agent.run_stream(message_history=messages) as result:
+                await result.get_output()
+            resumed = result.usage
+
+        assert walked_away.total_tokens + resumed.total_tokens == 21
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('21'), tokens=21, requests=2)
+        chat_spans = [span for span in exporter.get_finished_spans() if span.name.startswith('chat ')]
+        assert len(chat_spans) == 2
+        assert (
+            sum(
+                cast(int, (span.attributes or {})['gen_ai.usage.input_tokens'])
+                + cast(int, (span.attributes or {})['gen_ai.usage.output_tokens'])
+                for span in chat_spans
+            )
+            == 21
+        )
+
+    async def test_the_rejected_attempts_before_it_are_charged_too(self):
+        model = _AttemptsBeforeStream(
+            ScriptedContinuationModel(
+                segments=[
+                    StreamSegment(
+                        texts=['A', 'B'], state='complete', provider_response_id='a', input_tokens=7, output_tokens=3
+                    )
+                ]
+            )
+        )
+        limits = SpendLimits[None](
+            budgets=[Budget(window='total')], price=lambda response: Decimal(response.usage.total_tokens)
+        )
+
+        usage = await _stop_streaming(Agent(model, deps_type=type(None), capabilities=[limits]), at='A')
+
+        assert usage.total_tokens == 120
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('120'), tokens=120, requests=2)
 
 
 class TestDeprecatedStore:

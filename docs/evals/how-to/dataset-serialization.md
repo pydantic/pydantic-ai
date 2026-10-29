@@ -275,6 +275,8 @@ Custom evaluators must:
 2. Inherit from `Evaluator`
 3. Be passed to both `to_file()` and `from_file()`
 
+[Function evaluators](../evaluators/custom.md#function-evaluators) can't be serialized: `to_file()` raises an error for a dataset that uses one.
+
 ### Complete Example
 
 ```python
@@ -412,7 +414,7 @@ evaluators:
     max_length: 20
 - LLMJudge:
     rubric: "Response is accurate"
-    model: "openai:gpt-5"
+    model: "{{ openai:medium }}"
     include_input: true
 ```
 

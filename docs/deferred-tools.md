@@ -61,7 +61,7 @@ async def handle_deferred(
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
 )
 
@@ -123,7 +123,7 @@ from pydantic_ai import (
     ToolDenied,
 )
 
-agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+agent = Agent('{{ openai:medium }}', output_type=[str, DeferredToolRequests])
 
 PROTECTED_FILES = {'.env'}
 
@@ -224,10 +224,8 @@ print(result.all_messages())
                 tool_call_id='update_file_dotenv',
             ),
         ],
-        usage=RequestUsage(
-            cost=Decimal('0.00040425'), input_tokens=63, output_tokens=21
-        ),
-        model_name='gpt-5.2',
+        usage=RequestUsage(cost=Decimal('0.000336'), input_tokens=63, output_tokens=21),
+        model_name='{{ openai:medium.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -277,10 +275,8 @@ print(result.all_messages())
                 tool_call_id='update_file_backup',
             )
         ],
-        usage=RequestUsage(
-            cost=Decimal('0.0005845'), input_tokens=86, output_tokens=31
-        ),
-        model_name='gpt-5.2',
+        usage=RequestUsage(cost=Decimal('0.000482'), input_tokens=86, output_tokens=31),
+        model_name='{{ openai:medium.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -304,10 +300,8 @@ print(result.all_messages())
                 content="Here's what I've done:\n- Attempted to delete __init__.py, but deletion is not allowed.\n- Updated README.md with: Hello, world!\n- Cleared .env (set to empty).\n- Created a backup at README.md.bak containing: Hello, world!\n\nIf you want a different backup name or format (e.g., timestamped like README_2025-11-24.bak), let me know."
             )
         ],
-        usage=RequestUsage(
-            cost=Decimal('0.00140875'), input_tokens=93, output_tokens=89
-        ),
-        model_name='gpt-5.2',
+        usage=RequestUsage(cost=Decimal('0.001076'), input_tokens=93, output_tokens=89),
+        model_name='{{ openai:medium.name }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -367,7 +361,7 @@ async def calculate_answer_task(task_id: str, question: str) -> TaskResult:
     return TaskResult(task_id=task_id, result=42)
 
 
-agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+agent = Agent('{{ openai:medium }}', output_type=[str, DeferredToolRequests])
 
 tasks: list[asyncio.Task[TaskResult]] = []
 
@@ -446,9 +440,9 @@ async def main():
                 )
             ],
             usage=RequestUsage(
-                cost=Decimal('0.00029225'), input_tokens=63, output_tokens=13
+                cost=Decimal('0.000256'), input_tokens=63, output_tokens=13
             ),
-            model_name='gpt-5.2',
+            model_name='{{ openai:medium.name }}',
             timestamp=datetime.datetime(...),
             run_id='...',
             conversation_id='...',
@@ -473,9 +467,9 @@ async def main():
                 )
             ],
             usage=RequestUsage(
-                cost=Decimal('0.000504'), input_tokens=64, output_tokens=28
+                cost=Decimal('0.000408'), input_tokens=64, output_tokens=28
             ),
-            model_name='gpt-5.2',
+            model_name='{{ openai:medium.name }}',
             timestamp=datetime.datetime(...),
             run_id='...',
             conversation_id='...',
@@ -505,7 +499,7 @@ from pydantic_ai import (
     RunContext,
 )
 
-agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+agent = Agent('{{ openai:medium }}', output_type=[str, DeferredToolRequests])
 
 
 @agent.tool

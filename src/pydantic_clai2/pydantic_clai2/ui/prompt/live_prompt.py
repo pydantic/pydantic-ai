@@ -1,31 +1,31 @@
 """Pinned editor and scrollback ownership, without a PromptSession renderer."""
 
 import asyncio
+import math
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from itertools import islice
 
 import anyio
 from PIL import Image
 from prompt_toolkit.application.current import get_app_session
 from prompt_toolkit.history import History
-from rich.console import Console
+from rich.console import Console, ConsoleDimensions
 from termflow.ansi.utils import visible_length
 from termflow.tui.completion import CompleteEvent, Completion, Document
 from termflow.tui.layout import truncate
 
-from pydantic_clai2.cli.shell_passthrough import shell_command
 from pydantic_clai2.commands import Commands, expand_bare_command, is_command_input
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import holding_output
-from pydantic_clai2.ui.prompt.image_input import ImageInput, clipboard_images, pasted_paths, read_images
+from pydantic_clai2.ui.prompt.image_input import ATTACHED, ImageInput, clipboard_images, pasted_paths, read_images
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
+from pydantic_clai2.ui.prompt.prompt_queue import QueuedPrompt, can_steer, input_kind
 from pydantic_clai2.ui.prompt.prompt_resize import resize_notifications
 from pydantic_clai2.ui.prompt.prompt_surface import TRANSCRIPT_KEYS, PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
@@ -33,14 +33,16 @@ from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
+IDLE_REPAINT = 1.0
+"""Seconds between timed repaints of an idle editor, and how long it keeps repainting fast after animating.
 
-@dataclass(eq=False)
-class _Queued:
-    """A queued prompt compared by identity, so an edit finds it even after the queue shifts."""
+Timed repaints pick up status that no key, output, or resize announces, such as a plugin's status
+segment. They run every `ANIMATED_REPAINT` seconds while a turn runs or the panel shows forks or tasks;
+an idle editor sleeps between them.
+"""
 
-    text: str
-    recorded: str = ''
-    """The raw draft `accept` saved to history for this prompt, before command expansion."""
+ANIMATED_REPAINT = 0.1
+"""Seconds between timed repaints while the editor animates, unless the spinner is faster."""
 
 
 class PromptWakeup(Exception):
@@ -71,6 +73,7 @@ class LivePrompt:
         pinned: Callable[[], str] = lambda: '',
         spinner: Callable[[], Spinner] = lambda: BUILTIN_SPINNERS[DEFAULT_SPINNER],
         panel: Callable[[str], Sequence[str]] = lambda _: (),
+        queue_changed: Callable[[], None] = lambda: None,
     ) -> None:
         """Bind editing state, terminal ownership and per-session services.
 
@@ -80,6 +83,7 @@ class LivePrompt:
         `spinner` returns the working animation; it is read on every frame, so a new choice shows at once.
         `panel` receives the current spinner frame and returns styled rows painted above the queue,
         such as running forks; it is read on every repaint, including between turns.
+        `queue_changed` is told whenever a prompt joins, leaves, or is rewritten in the queue.
         """
         self.console = console
         self.commands = commands
@@ -94,6 +98,7 @@ class LivePrompt:
         self.pinned = pinned
         self.spinner = spinner
         self.panel = panel
+        self.queue_changed = queue_changed
         self.notice = ''
         self._chord_prefix = ''
         self._last_escape: float | None = None
@@ -104,13 +109,15 @@ class LivePrompt:
             feed=self.feed,
             eof=lambda: self.submit(EOFError()),
         )
-        self._submissions: deque[_Queued | KeyboardInterrupt | EOFError | PromptRewind] = deque()
+        self._submissions: deque[QueuedPrompt | KeyboardInterrupt | EOFError | PromptRewind] = deque()
         # The queued prompt the draft would rewrite on Enter, and the queue as a recall walk found it.
-        self._editing: _Queued | None = None
-        self._recall_queue: list[_Queued] = []
-        self._recall_target: _Queued | None = None
-        self._search_target: _Queued | None = None
+        self._editing: QueuedPrompt | None = None
+        self._recall_queue: list[QueuedPrompt] = []
+        self._recall_target: QueuedPrompt | None = None
+        self._search_target: QueuedPrompt | None = None
         self._submitted = asyncio.Event()
+        self._animate = asyncio.Event()
+        """Set to cut short the timed repaint's idle sleep, as work starts."""
         self._wake_pending = False
         self._suspended = False
         self._completions: list[Completion] = []
@@ -123,22 +130,47 @@ class LivePrompt:
         self._completion_worker = CompletionWorker()
         self._completion_error = ''
         self._opened = False
+        self._panel_shown = False
+        self._animated_at = -math.inf
+        self._painted_at = -math.inf
+        self._painted_size: ConsoleDimensions | None = None
 
     @property
     def queued_messages(self) -> tuple[str, ...]:
         """Pending text, excluding control signals."""
-        return tuple(item.text for item in self._queued())
+        return tuple(item.text for item in self.queued_prompts())
 
-    def _queued(self) -> list[_Queued]:
-        return [item for item in self._submissions if isinstance(item, _Queued)]
+    def queued_prompts(self) -> list[QueuedPrompt]:
+        """The queued prompts, oldest first, without control signals."""
+        return [item for item in self._submissions if isinstance(item, QueuedPrompt)]
 
-    def submit(self, value: str | KeyboardInterrupt | EOFError | PromptRewind) -> None:
+    def take_queued(self) -> list[QueuedPrompt]:
+        """Remove the queued prompts and return them, as when another session reads this editor next."""
+        queued = self.queued_prompts()
+        for entry in queued:
+            self._discard(entry)
+        return queued
+
+    def submit(self, value: str | QueuedPrompt | KeyboardInterrupt | EOFError | PromptRewind) -> None:
         """Publish a submission without ending or replacing the editor."""
-        self._enqueue(_Queued(value) if isinstance(value, str) else value)
+        self._enqueue(QueuedPrompt(value) if isinstance(value, str) else value)
 
-    def _enqueue(self, value: _Queued | KeyboardInterrupt | EOFError | PromptRewind) -> None:
+    def rewrite(self, entry: QueuedPrompt, text: str) -> None:
+        """Replace a queued prompt's text, keeping its place, as Enter on a recalled one does."""
+        entry.text = text
+        self.queue_changed()
+        self.paint()
+
+    def discard(self, entry: QueuedPrompt) -> None:
+        """Drop a queued prompt, as clearing a recalled one before Enter does."""
+        self._discard(entry)
+        self.paint()
+
+    def _enqueue(self, value: QueuedPrompt | KeyboardInterrupt | EOFError | PromptRewind) -> None:
         self._submissions.append(value)
         self._submitted.set()
+        if isinstance(value, QueuedPrompt):
+            self.queue_changed()
         self.paint()
 
     def wake(self) -> None:
@@ -146,14 +178,19 @@ class LivePrompt:
         self._wake_pending = True
         self._submitted.set()
 
-    def _discard(self, entry: _Queued) -> None:
+    def _discard(self, entry: QueuedPrompt) -> None:
         self._submissions.remove(entry)
         if not self._submissions and not self._wake_pending:
             self._submitted.clear()
+        self.queue_changed()
 
     async def read(self) -> str:
-        """Consume queued submissions in order."""
+        """Consume queued submissions in order, first showing the status the shell set up for this read."""
+        self.paint()
         await self._submitted.wait()
+        # What a read returns starts work, whose spinner animates from its first frame, not the next idle one.
+        self._animated_at = self.clock()
+        self._animate.set()
         if not self._submissions:
             self._wake_pending = False
             self._submitted.clear()
@@ -176,6 +213,7 @@ class LivePrompt:
                 self.buffer.insert(text, paste=True)
             else:
                 self.buffer.insert(self.images.attach(read_images(paths) if text is not None else clipboard_images()))
+                self.images.notice = ATTACHED
         except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
             self.images.notice = f'Image paste failed: {exc}. Linux requires wl-paste (Wayland) or xclip (X11).'
 
@@ -334,9 +372,10 @@ class LivePrompt:
         elif target is not None:
             route = 'edited queued'
             target.text, target.recorded = command, text
+            self.queue_changed()
         else:
             route = 'queued' if self.interrupts.active else 'submitted'
-            self._enqueue(_Queued(command, recorded=text))
+            self._enqueue(QueuedPrompt(command, recorded=text))
         telemetry.record('prompt submitted', route=route, recalled=recalled, **_submission(command, self.commands))
 
     def recall(self, *, backwards: bool) -> None:
@@ -347,7 +386,7 @@ class LivePrompt:
         it, and clearing the draft before Enter removes it.
         """
         if self.buffer.history_index is None:
-            self._recall_queue = self._queued()
+            self._recall_queue = self.queued_prompts()
             self._recall_target = self._editing
         self.buffer.vertical(
             backwards=backwards,
@@ -363,12 +402,7 @@ class LivePrompt:
     def _steered(self, text: str) -> bool:
         """Hand prompt text to the active run; commands and shell lines never steer."""
         command = expand_bare_command(text)
-        return (
-            self.steer is not None
-            and not is_command_input(command)
-            and shell_command(command) is None
-            and self.steer(command)
-        )
+        return self.steer is not None and can_steer(command) and self.steer(command)
 
     def steer_draft(self) -> None:
         """Send the draft to the active run now, or accept it as Enter would when it cannot steer."""
@@ -393,7 +427,7 @@ class LivePrompt:
         if not self._submissions or self.steer is None:
             return
         head = self._submissions[0]
-        if not isinstance(head, _Queued) or not self._steered(head.text):
+        if not isinstance(head, QueuedPrompt) or not self._steered(head.text):
             telemetry.record('prompt steer', steered=False, source='queue')
             return
         self.output.view.follow()
@@ -507,11 +541,13 @@ class LivePrompt:
         width, height = max(1, width), max(2, height)
         muted, reset = theme.sgr(theme.MUTED), '\x1b[0m'
         if width < 6 or height < 6:
+            self._panel_shown = False
             return tuple(self.buffer.rows(width=width, limit=1))
         # `paint` keeps `height - 2` rows; the title, one draft row, the rule, and the footer need four.
         room = height - 6
         limit = max(1, height // 6)
         panel = [truncate(row, width) + reset for row in self.panel(self.spinner().frame(self.clock()))]
+        self._panel_shown = bool(panel)
         rows = _capped(panel, limit=limit, room=room, more=muted + '+{} more' + reset)
         queued = [
             muted
@@ -521,12 +557,12 @@ class LivePrompt:
                 width,
             )
             + reset
-            for entry in self._queued()
+            for entry in self.queued_prompts()
         ]
         rows += _capped(queued, limit=limit, room=room - len(rows), more=muted + '+{} more queued' + reset)
         title = ''
         if self.interrupts.active:
-            head, glyph = ' Working ', self.spinner().frame(self.clock())
+            head, glyph = '─ Working ', self.spinner().frame(self.clock())
             # Queue and steer hints only matter once there is something to send, matching pi and Claude Code.
             hints = '| Enter: queue | Alt+Enter: steer ' if self.queued_messages or self.buffer.text.strip() else ''
             title = truncate(f'{head}{glyph} {hints}', width)
@@ -574,6 +610,37 @@ class LivePrompt:
         """Draw only when the editor owns the terminal."""
         if self._opened and not self._suspended:
             self.output.paint(self.frame())
+            self._painted_at = self.clock()
+            self._painted_size = self.console.size
+
+    def tick(self) -> float:
+        """Repaint for status changes when due, returning the seconds until the next tick.
+
+        Every `ANIMATED_REPAINT` seconds while a turn runs, the panel shows forks or tasks, or for
+        `IDLE_REPAINT` after either; `IDLE_REPAINT` seconds after the last frame otherwise. A spinner
+        faster than that gets a repaint per frame, but only while it shows.
+        """
+        now = self.clock()
+        if self.interrupts.active or self._panel_shown:
+            self._animated_at = now
+        if not self._suspended and (
+            now - self._animated_at < IDLE_REPAINT
+            or now - self._painted_at >= IDLE_REPAINT
+            # Hosts without SIGWINCH find a resize only here.
+            or self.console.size != self._painted_size
+        ):
+            self.paint()
+        else:
+            # Output written too soon after the last frame waits for this, idle or not.
+            self.output.refresh()
+        if self.interrupts.active:
+            return min(ANIMATED_REPAINT, self.spinner().interval)
+        # The frame just painted may have found the panel's first fork or task.
+        if self._panel_shown or now - self._animated_at < IDLE_REPAINT:
+            return ANIMATED_REPAINT
+        due = self._painted_at + IDLE_REPAINT - now
+        # A menu owning the screen leaves the last frame behind; nothing is due until it closes.
+        return due if due > 0 else IDLE_REPAINT
 
     @asynccontextmanager
     async def suspended(self) -> AsyncGenerator[None]:
@@ -604,12 +671,9 @@ class LivePrompt:
 
         async def refresh() -> None:
             while True:
-                if self._suspended:
-                    self.output.refresh()
-                else:
-                    self.paint()
-                # A spinner faster than the status poll gets a repaint per frame, but only while it shows.
-                await anyio.sleep(min(0.1, self.spinner().interval) if self.interrupts.active else 0.1)
+                with anyio.move_on_after(self.tick()):
+                    await self._animate.wait()
+                self._animate.clear()
 
         loop = asyncio.get_running_loop()
 
@@ -658,9 +722,10 @@ def _submission(text: str, commands: Commands) -> dict[str, telemetry.Attribute]
     records only its registered name, never its arguments: any plugin can add a command, and arguments such as
     `/plugins add` settings JSON or an MCP server's headers can hold a secret CLAI cannot recognize.
     """
-    if is_command_input(text):
+    kind = input_kind(text)
+    if kind == 'command':
         name = text.split(maxsplit=1)[0].removeprefix('/')
-        return {'kind': 'command', 'command': name if name in commands else 'unknown', 'chars': len(text)}
-    if shell_command(text) is not None:
-        return {'kind': 'shell', 'chars': len(text)}
-    return {'kind': 'prompt', 'chars': len(text), **telemetry.prompt_text(text)}
+        return {'kind': kind, 'command': name if name in commands else 'unknown', 'chars': len(text)}
+    if kind == 'shell':
+        return {'kind': kind, 'chars': len(text)}
+    return {'kind': kind, 'chars': len(text), **telemetry.prompt_text(text)}

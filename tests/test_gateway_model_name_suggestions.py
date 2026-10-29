@@ -126,6 +126,9 @@ async def test_gateway_direct_model_suggests_gateway_model_id(
         case 'anthropic':
             model = AnthropicModel(model_name, provider='gateway')
         case 'google':
+            monkeypatch.setattr(
+                'pydantic_ai.providers.google._create_google_httpx2_client', create_gateway_httpx2_client
+            )
             model = GoogleModel(model_name, provider='gateway')
         case 'groq':
             model = GroqModel(model_name, provider='gateway')

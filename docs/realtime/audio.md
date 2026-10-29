@@ -29,8 +29,9 @@ Start with 100 ms input chunks to balance interactive cadence with per-chunk ove
 your transport. The provider pages list their model-specific rates and constraints:
 [OpenAI](openai.md#feature-support-and-limitations),
 [Azure OpenAI](azure.md#feature-support-and-limitations),
-[Google Gemini](gemini.md#feature-support-and-limitations), and
-[xAI](xai.md#feature-support-and-limitations).
+[Google Gemini](gemini.md#feature-support-and-limitations),
+[xAI](xai.md#feature-support-and-limitations), and
+[ElevenLabs](elevenlabs.md#audio-formats).
 
 For a complete microphone and speaker loop with bounded buffers, playback accounting, and clean
 shutdown, use the [realtime voice assistant example](../examples/realtime-voice.md).
@@ -62,7 +63,7 @@ async def show_transcripts(parts: AsyncIterator[SpeechPart]) -> None:
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
         audio_task = asyncio.create_task(play_audio(session.stream_audio()))
         transcript_task = asyncio.create_task(show_transcripts(session.stream_transcripts()))
         async for event in session:
@@ -122,6 +123,42 @@ async def show_captions(session: RealtimeSession) -> None:
         bubbles[update.index] = (update.speaker, update.transcript)
 ```
 
+### Speech timestamps
+
+To line the model's words up with its audio, such as revealing each word as it's spoken, turn on
+[`output_speech_timestamps`][pydantic_ai.realtime.RealtimeModelSettings.output_speech_timestamps].
+Each [`SpeechTimestamp`][pydantic_ai.messages.SpeechTimestamp] gives a piece of text with where it
+starts in the audio of its speech part and how long it takes to say, in milliseconds. They stream as
+[`SpeechPartDelta.timestamps`][pydantic_ai.messages.SpeechPartDelta.timestamps] on the part's `index`:
+
+```python
+from pydantic_ai.messages import PartDeltaEvent, SpeechPartDelta, SpeechTimestamp
+from pydantic_ai.realtime import RealtimeSession
+
+words: dict[int, list[SpeechTimestamp]] = {}
+
+
+async def collect_words(session: RealtimeSession) -> None:
+    async for event in session:
+        if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta):
+            words.setdefault(event.index, []).extend(event.delta.timestamps or ())
+```
+
+The offsets count from the start of that part's own audio, like
+[`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms], so show a word once
+the part has played up to its `start_ms`. They can arrive ahead of the audio they describe, so compare
+them with your playback position rather than showing them as they come. Each `SpeechTimestamp`'s
+`granularity` says whether it covers one `'word'` or a `'segment'` of several, and the model profile's
+[`output_speech_timestamp_granularity`][pydantic_ai.realtime.RealtimeModelProfile.output_speech_timestamp_granularity]
+says which a model reports.
+
+The timestamps are also recorded on the [`SpeechPart`][pydantic_ai.messages.SpeechPart] in
+[history](history.md), as its `timestamps`. When the user barges in, those starting at or after where
+playback stopped are dropped, along with the speech they timed.
+[Azure AI Voice Live](azure.md#speech-timestamps) and [ElevenLabs Agents](elevenlabs.md#speech-timestamps) report
+them; on other models, the setting emits an
+[`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] when the session opens.
+
 ## Input transcription
 
 The shared `input_transcription_model` setting controls whether user speech reaches history as text:
@@ -132,9 +169,13 @@ The shared `input_transcription_model` setting controls whether user speech reac
 | A model ID | Pins a dedicated transcription model on providers that support one. |
 | `None` | Disables input transcription. |
 
-OpenAI, Azure OpenAI, and xAI use dedicated transcription models. Gemini uses native transcription,
+OpenAI gpt-realtime, Azure OpenAI, and xAI use dedicated transcription models. OpenAI GPT-Live and
+Eleven Realtime always transcribe and take no transcription model: `None` leaves transcription on, and
+a pinned model ID is ignored. Gemini uses native transcription,
 configured with `google_input_transcription`: a pinned model ID in the shared setting is ignored
-(native transcription stays on), and only `None` turns it off. Provider-specific defaults and
+(native transcription stays on), and only `None` turns it off. ElevenLabs Agents transcribes with the ASR
+configured on the agent, which its pipeline needs to answer: the setting is ignored, and `None` leaves
+transcription on. Provider-specific defaults and
 deployment constraints live on the provider pages.
 
 The user transcript is a separate transcription pass, not a readout of what the realtime model

@@ -26,6 +26,8 @@ JavaScript-rendered SPAs, and interactive multi-step flows.
     capability runs its own browser, so a session opened by one is not visible
     to the other.
 
+![The model drives a real Chromium browser itself, one tool call per action, using the eighteen tools PlaywrightBrowser adds, such as navigate, snapshot, click and type_text. Chromium starts on the first browser call and closes when the run ends. Every request passes an egress guard that enforces allowed_domains and refuses private addresses. Each tool returns the page text, trimmed to a token budget, or a screenshot as image content.](../img/harness/playwright.svg)
+
 ## Installation
 
 The `playwright` extra pulls in Playwright, and Chromium is a separate binary
@@ -53,7 +55,7 @@ binary automatically on the first miss instead.
 from pydantic_ai import Agent
 from pydantic_ai_harness.playwright import PlaywrightBrowser
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[PlaywrightBrowser()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[PlaywrightBrowser()])
 result = await agent.run('Open https://example.com and tell me the page title.')
 ```
 
@@ -160,6 +162,17 @@ not raised to abort the agent run.
 | `storage_state` | `None` | Playwright storage state (cookies + localStorage) loaded at launch; see [Authenticated sites](#authenticated-sites). |
 | `cdp_url` | `None` | Attach to a Chromium already running at this CDP endpoint instead of launching one; see [Attaching to a running browser](#attaching-to-a-running-browser). |
 
+## Two of them
+
+`PlaywrightBrowser` declares the default `id` `'playwright_browser'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `PlaywrightBrowser`s on one agent that
+share it are one browser stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. Merging them instead could widen the egress one of them was given. To keep two, give each its own `id` and wrap them
+in [PrefixTools](../capabilities/prefix-tools.md), since both register the same browser tools.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.
+
 ## Authenticated sites
 
 Pass `storage_state` to start the browser already logged in. It is a Playwright
@@ -199,7 +212,7 @@ from pydantic_ai_harness.playwright import PlaywrightBrowser
 state = ...  # captured above
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         PlaywrightBrowser(storage_state=state, allowed_domains=['example.com']),
     ],
@@ -235,7 +248,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.playwright import PlaywrightBrowser
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222')],
 )
 ```

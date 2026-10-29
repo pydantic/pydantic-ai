@@ -36,7 +36,7 @@ class Worktree:
 
 def open_worktree(*, name: str) -> Worktree:
     """Reopen `.worktrees/NAME`, or check it out on `clai-NAME`, reusing that branch if it exists."""
-    name = name or f'worktree-{uuid4().hex[:8]}'
+    name = name or _generated_name()
     if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', name) is None:
         raise ValueError('Worktree names must start with a letter or digit and contain only letters, digits, - or _.')
     try:
@@ -57,18 +57,126 @@ def open_worktree(*, name: str) -> Worktree:
                 _git('worktree', 'prune')  # The checkout was deleted by hand; Git still lists it until pruned.
             worktree = _check_out(path=path, name=name)
         # Also when reopening: a worktree made with plain `git worktree add` has no exclude entry yet.
-        if b'/.worktrees/' not in contents.splitlines():
-            try:
-                exclude.parent.mkdir(parents=True, exist_ok=True)
-                with exclude.open('ab') as file:
-                    file.write(b'\n/.worktrees/\n')
-            except OSError as exc:
-                raise ValueError(f'Worktree kept at {path}, but could not update Git excludes: {exc}') from exc
+        _exclude_worktrees(exclude, contents, kept=path)
     except subprocess.CalledProcessError as exc:
         raise ValueError(f'Cannot create worktree: {exc.stderr.strip()}') from exc
     except OSError as exc:
         raise ValueError(f'Cannot create worktree: {exc}') from exc
     return worktree
+
+
+def _exclude_worktrees(exclude: Path, contents: bytes, *, kept: Path) -> None:
+    """Add `/.worktrees/` to the repository's Git excludes, so its checkouts never show as untracked files."""
+    if b'/.worktrees/' in contents.splitlines():
+        return
+    try:
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        with exclude.open('ab') as file:
+            file.write(b'\n/.worktrees/\n')
+    except OSError as exc:
+        raise ValueError(f'Worktree kept at {kept}, but could not update Git excludes: {exc}') from exc
+
+
+def add_worktree(*, repo: Path, path: Path, branch: str, base: str) -> Worktree:
+    """Check out a new `branch` from `base` at `path`, a linked worktree of `repo`; `ValueError` when Git refuses.
+
+    The branch tracks nothing, so a push names its own upstream. A checkout in `repo`'s own
+    `.worktrees/`, where `clai2 --worktree` puts them, is added to Git's excludes as that does.
+    """
+    try:
+        _git('-C', str(repo), 'worktree', 'add', '--no-track', '-b', branch, '--', str(path), base)
+        head = _git('-C', str(path), 'rev-parse', 'HEAD')
+        if path.parent == repo / '.worktrees':
+            exclude = repo / _git('-C', str(repo), 'rev-parse', '--git-path', 'info/exclude')
+            _exclude_worktrees(exclude, exclude.read_bytes() if exclude.exists() else b'', kept=path)
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(f'Cannot create worktree: {exc.stderr.strip()}') from exc
+    except OSError as exc:
+        raise ValueError(f'Cannot create worktree: {exc}') from exc
+    return Worktree(path=path, branch=branch, head=head, created=True, new_branch=True)
+
+
+def new_worktree(*, repo: Path, branch: str, base: str) -> Worktree:
+    """Check out a new `branch` from `base` in `.worktrees/` of the checkout `repo` is in, where `clai2 --worktree` puts them.
+
+    The folder is the branch with anything but letters, digits, `.`, `-`, and `_` turned into `-`. Without
+    a branch, the name is generated and the branch is `clai-NAME`, as with `--worktree` without NAME; without
+    a base, it is the checkout's `HEAD`. Raises `ValueError` outside Git, or when the folder exists or Git refuses.
+    """
+    root = repository_root(repo)
+    if branch:
+        try:
+            _git('-C', str(root), 'check-ref-format', '--branch', branch)
+        except subprocess.CalledProcessError as exc:
+            raise ValueError(f'Cannot create worktree: {exc.stderr.strip()}') from exc
+        try:
+            _git('-C', str(root), 'show-ref', '--verify', '--quiet', f'refs/heads/{branch}')
+        except subprocess.CalledProcessError:
+            pass
+        else:
+            raise ValueError(f'Cannot create worktree: branch {branch} already exists. Pick another name.')
+        folder = re.sub(r'[^A-Za-z0-9._-]+', '-', branch)
+    else:
+        folder = _generated_name()
+        branch = f'clai-{folder}'
+    path = root / '.worktrees' / folder
+    if path.exists():
+        raise ValueError(f'Cannot create worktree: {path} already exists. Pick another name.')
+    return add_worktree(repo=root, path=path, branch=branch, base=commit_of(repo=root, ref=base, remote=False))
+
+
+def _generated_name() -> str:
+    return f'worktree-{uuid4().hex[:8]}'
+
+
+def repository_root(path: Path) -> Path:
+    """The top of the Git checkout `path` is in; `ValueError` outside one."""
+    try:
+        return Path(_git('-C', str(path), 'rev-parse', '--show-toplevel')).resolve()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ValueError(f'{path} is not in a Git repository.') from exc
+
+
+def clone_or_fetch(*, url: str, path: Path) -> None:
+    """Clone `url` into `path`, or fetch `origin` there when an earlier clone is in place; `ValueError` when Git fails."""
+    try:
+        if (path / '.git').exists():
+            _git('-C', str(path), 'fetch', '--quiet', '--prune', 'origin')
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _git('clone', '--quiet', '--', url, str(path))
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(f'Cannot fetch {url}: {exc.stderr.strip()}') from exc
+    except OSError as exc:
+        raise ValueError(f'Cannot fetch {url}: {exc}') from exc
+
+
+def commit_of(*, repo: Path, ref: str, remote: bool) -> str:
+    """The commit `ref` names in `repo`, preferring the `origin` branch in a clone; empty `ref` means its `HEAD`.
+
+    A clone's `HEAD` is `origin`'s default branch as of the last fetch. Raises `ValueError` when it names nothing.
+    """
+    if remote:
+        names = [f'origin/{ref}', ref] if ref else ['origin/HEAD']
+    else:
+        names = [ref or 'HEAD']
+    for name in names:
+        try:
+            return _git('-C', str(repo), 'rev-parse', '--verify', '--quiet', '--end-of-options', f'{name}^{{commit}}')
+        except (OSError, subprocess.CalledProcessError):
+            continue
+    raise ValueError(f'{ref or "HEAD"} is not a branch, tag, or commit in {repo}.')
+
+
+def remove_worktree(*, path: Path) -> None:
+    """Remove the linked worktree at `path` and its uncommitted changes, keeping its branch; `ValueError` if Git refuses."""
+    try:
+        common = (path / _git('-C', str(path), 'rev-parse', '--git-common-dir')).resolve()
+        _git('-C', str(common), 'worktree', 'remove', '--force', '--', str(path))
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(f'Cannot remove worktree {path}: {exc.stderr.strip()}') from exc
+    except OSError as exc:
+        raise ValueError(f'Cannot remove worktree {path}: {exc}') from exc
 
 
 def _check_out(*, path: Path, name: str) -> Worktree:

@@ -32,7 +32,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     capabilities=[
         # Runs the MCP server locally by default
         MCP(url='https://mcp.example.com/api'),

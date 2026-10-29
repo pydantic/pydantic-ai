@@ -1,21 +1,23 @@
 ---
 title: Grain
-description: Connect a Pydantic AI agent to Grain's hosted MCP server to search and read meetings, transcripts, and notes.
+description: Connect a Pydantic AI agent to Grain's hosted MCP server to search and read meetings, transcripts, and notes, and to create clips and tag meetings.
 ---
 
 # Grain
 
-`Grain` connects an agent to [Grain](https://grain.com)'s hosted MCP server so it can search and read the meetings, transcripts, notes, and deals the signed-in user can see.
+`Grain` connects an agent to [Grain](https://grain.com)'s hosted MCP server. The agent can search and read the meetings, transcripts, notes, and deals the signed-in user can see, and create clips and tag meetings unless you set `read_only=True`.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/grain/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the Grain capability connects to Grain's hosted MCP server at api.grain.com/_/mcp with an OAuth access token, and the model sees the server's tools under the grain_ prefix. It connects when the run starts, even with defer_loading=True, so an invalid or expired token raises httpx.HTTPStatusError with status 401; return None from the auth function to give that run no Grain tools instead. read_only=True drops tools the server does not mark read-only.](../img/harness/grain.svg)
+
 ## Before you start
 
-Grain MCP works on every Grain plan; the deal and coaching tools need the Business or Enterprise plan. Grain MCP takes an OAuth access token.
+Grain MCP works on every Grain plan. The deal and coaching tools need the Business or Enterprise plan.
 
-Grain issues these tokens only through OAuth. Your application gets one by running the standard MCP authorization flow: the server names its authorization server and supports dynamic client registration, so any MCP OAuth client library can sign the user in. Store the token it returns and pass it as `auth` or `GRAIN_ACCESS_TOKEN`.
+Grain MCP takes an OAuth access token, which Grain issues only through the standard MCP authorization flow. The server supports dynamic client registration, so any MCP OAuth client library can sign the user in. Pass the token it returns as `auth` or `GRAIN_ACCESS_TOKEN`.
 
 ## Installation
 
@@ -31,7 +33,7 @@ The second package installs the OpenAI provider the example uses. For another mo
 from pydantic_ai import Agent
 from pydantic_ai_harness import Grain
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[Grain()])
+agent = Agent('{{ openai:medium }}', capabilities=[Grain()])
 result = agent.run_sync('Summarize my most recent Grain meeting')
 print(result.output)
 ```
@@ -47,7 +49,7 @@ Set `GRAIN_ACCESS_TOKEN` to a Grain access token, or pass `auth=` a token. On yo
 | Not set, `None`, or `''` | `GRAIN_ACCESS_TOKEN`. If that is not set either, creating the agent raises an error. |
 | An access token | That token, for every run. |
 | `'oauth'` | The account you sign in to through the browser. This only works on your own machine. |
-| A function | Called at the start of each run. The token it returns is used for that run. If it returns `None` or `''`, that run has no Grain tools. A function never uses `GRAIN_ACCESS_TOKEN`, and must not return `'oauth'`. |
+| A function | Called at the start of each run, and can be async. The token it returns is used for that run. If it returns `None` or `''`, that run has no Grain tools. A function never uses `GRAIN_ACCESS_TOKEN`, and must not return `'oauth'`. |
 
 A fixed token or `GRAIN_ACCESS_TOKEN` suits a script or an agent on your own machine, where every run is the same account.
 
@@ -69,18 +71,36 @@ def grain_token(ctx: RunContext[Deps]) -> str | None:
     return ctx.deps.grain_token
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Grain(auth=grain_token)])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[Grain(auth=grain_token)])
 ```
 
-Each run connects as its own user, so concurrent runs never share an account.
+The function runs once per run, so each run connects with the token from its own deps.
 
-Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Grain" button that runs the OAuth flow from [Before you start](#before-you-start) and saves the token to their account. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
+Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Grain" button that runs the OAuth flow from [Before you start](#before-you-start) and saves the token to their account. Before each run, put it in the deps, or load it in an async `auth` function.
 
-With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `grain`, so `defer_loading=True` works without one. To add more than one `Grain` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
+With durable execution such as Temporal, read the token from the run's deps, not a global: the function may run in another process.
+
+Grain connects when the run starts, even with `defer_loading=True`. If the token is invalid or expired, the run raises an `httpx.HTTPStatusError` with status 401, so return `None` from the function when you know the token is no longer valid.
+
+The capability's `id` defaults to `grain`, so `defer_loading=True` works without one. To use two Grain accounts in one agent, give each `Grain` its own `id` and `tool_prefix`. Two that share an `id` but differ raise an error.
+
+## Tool names
+
+The agent sees each of the server's tools under the `grain_` prefix, as in `grain_<tool>`, so they don't collide with other tools on the agent. Set `tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names the server gives them.
+
+`read_only` selects tools by what the server marks as read-only, not by name, so the prefix does not change what it keeps. A [toolset wrapper](../toolsets.md) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
+
+## Upgrading
+
+`Grain` used to give the agent the server's tool names unprefixed. They now reach the agent as `grain_<tool>`. Code that refers to them by name, such as a `filtered()` wrapper, an approval rule, or a `ToolGuardrail(tools=[...])`, needs the new names. A rule that no longer matches stops applying, so an approval rule or guardrail that named an old tool lets its calls through without approval or checks until you update it. Pass `tool_prefix=None` to keep the old names. If you wrapped `Grain` in [PrefixTools](../capabilities/prefix-tools.md) to avoid collisions, you can drop the wrapper and set `tool_prefix` instead; keeping it adds both prefixes.
+
+- **Durable runs in flight.** A Temporal or DBOS run replays the model responses it recorded, and their tool calls use the old names, so a run started before the change that calls a `Grain` tool after it no longer replays. Activity and step names come from the capability's `id`, which is unchanged. Let those runs finish, keep `tool_prefix=None` until they have, or deploy the change with [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) or a new DBOS application version.
 
 ## Tool selection and approval
 
 `read_only=True` gives the agent only the tools that Grain's server labels as read-only, and leaves out all the others. If Grain has not labeled its read tools, the agent gets no Grain tools and emits an `MCPReadOnlyNoToolsWarning`. The token's permissions still decide what the agent can reach.
+
+Transcripts and meeting titles contain text from everyone in the meeting, including external guests, and that text reaches the model as tool output. Use `read_only=True` or require approval if the agent should not change Grain data. `include_instructions=False` stops the server's own instructions from reaching the agent.
 
 To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call, so you decide which meeting data reaches the model:
 
@@ -91,7 +111,7 @@ from pydantic_ai_harness import Grain
 
 capability = Grain()
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     output_type=[str, DeferredToolRequests],
 )
@@ -101,13 +121,13 @@ Handle the approval requests with the [deferred tools workflow](../deferred-tool
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a proxy or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `read_only` and `include_instructions` still apply. `include_instructions=False` stops the server's own instructions from reaching the agent.
+Pass `client` (a FastMCP client or transport) to control the connection yourself, for example to add a proxy or MCP handlers. The client owns the URL and authentication, so it cannot be combined with `auth`. `read_only` and `include_instructions` still apply.
 
 A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately.
 
 ## Telemetry
 
-`Grain` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) already records each Grain tool call as a tool span, and connecting makes no decision worth a span of its own.
+`Grain` emits no spans of its own. Core [instrumentation](../capabilities/instrumentation.md) records each Grain tool call as a tool span.
 
 ## Define the agent in YAML or JSON
 
@@ -119,7 +139,7 @@ pip/uv-add "pydantic-ai-slim[spec]"
 
 ```yaml
 # agent.yaml
-model: openai:gpt-5.6-sol
+model: {{ openai:medium }}
 capabilities:
   - Grain: {}
 ```

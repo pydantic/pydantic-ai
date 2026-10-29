@@ -16,7 +16,7 @@ If you have a direct URL for the image, you can use [`ImageUrl`][pydantic_ai.Ima
 ```py {title="image_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, ImageUrl
 
-agent = Agent(model='openai:gpt-5.2')
+agent = Agent(model='{{ openai:medium }}')
 result = agent.run_sync(
     [
         'What company is this logo from?',
@@ -36,7 +36,7 @@ from pydantic_ai import Agent, BinaryContent
 
 image_response = httpx.get('https://iili.io/3Hs4FMg.png')  # Pydantic logo
 
-agent = Agent(model='openai:gpt-5.2')
+agent = Agent(model='{{ openai:medium }}')
 result = agent.run_sync(
     [
         'What company is this logo from?',
@@ -75,7 +75,7 @@ If you have a direct URL for the document, you can use [`DocumentUrl`][pydantic_
 ```py {title="document_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, DocumentUrl
 
-agent = Agent(model='anthropic:claude-sonnet-4-6')
+agent = Agent(model='{{ anthropic:medium }}')
 result = agent.run_sync(
     [
         'What is the main content of this document?',
@@ -95,7 +95,7 @@ from pathlib import Path
 from pydantic_ai import Agent, BinaryContent
 
 pdf_path = Path('document.pdf')
-agent = Agent(model='anthropic:claude-sonnet-4-6')
+agent = Agent(model='{{ anthropic:medium }}')
 result = agent.run_sync(
     [
         'What is the main content of this document?',
@@ -119,7 +119,7 @@ You can use [`TextContent`][pydantic_ai.TextContent] to provide text input with 
 ```py {title="text_content_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, TextContent
 
-agent = Agent(model='openai:gpt-5.2')
+agent = Agent(model='{{ openai:medium }}')
 result = agent.run_sync([
     'Summarize the key points from this text.',
     TextContent(
@@ -138,6 +138,63 @@ programmatically in your agent logic.
 !!! note
     The `content` field is treated as input to the model, but the `metadata` is **not sent to the model**.
     It is preserved in messages for programmatic access.
+
+## Structured Input {#structured-input}
+
+Use [`StructuredContent`][pydantic_ai.StructuredContent] to pass a structured value as part of the user prompt, such as the state of the app the user is looking at, or the data a [decision model](models/decision.md#structured-input) should judge. The value stays structured in the message history, so a [history processor](message-history.md#processing-message-history) or an evaluator can read it back, while the model is sent it as text:
+
+```py {title="structured_content_input.py" test="skip"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, StructuredContent
+
+
+class UIState(BaseModel):
+    url: str
+    cart_total: float
+
+
+agent = Agent('{{ openai:medium }}')
+ui_state = UIState(url='/products/42', cart_total=949.0)
+result = agent.run_sync([StructuredContent(ui_state, tag='ui_state'), 'Why did the total jump?'])
+```
+
+The model is sent `<ui_state>{"url":"/products/42","cart_total":949.0}</ui_state>`, followed by the question. By default the value is rendered as compact JSON, wrapped in `tag` when one is given, with `<`, `>` and `&` escaped so that a value from an untrusted client, rendered on your server, can't close the tag. Pass `format='xml'` to render it with [`format_as_xml`][pydantic_ai.format_prompt.format_as_xml] instead, or a function that takes the value and returns the text. A `description` is written on the line before the value. A `tag` is lowercase with `_` between words, and can't be one of the tags the framework frames its own text in, such as `system` or `tool_result`, so the value can't read as the framework speaking.
+
+The text is rendered once, when the item is created, and stored in [`content`][pydantic_ai.messages.StructuredContent.content] beside the value. A message history that is stored and loaded again is therefore sent exactly as before, which keeps the prompt cache prefix intact, even when the text came from a function that isn't stored. The text isn't rendered again when the value changes, so to change the value, create a new item, or use `dataclasses.replace(item, value=..., content='')`, passing `format` again if the item was created with one. After loading, [`value`][pydantic_ai.messages.StructuredContent.value] is the JSON-compatible form of the value, such as a dict in place of a Pydantic model.
+
+To render a kind of value the same way wherever it is used, subclass `StructuredContent` and override [`render`][pydantic_ai.messages.StructuredContent.render]:
+
+```py {title="structured_content_subclass.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import StructuredContent, format_as_xml
+
+
+class UIState(BaseModel):
+    url: str
+    cart_total: float
+
+
+class UIStateContent(StructuredContent):
+    value: UIState
+
+    def render(self) -> str:
+        return format_as_xml(self.value, root_tag='ui_state')
+
+
+print(UIStateContent(UIState(url='/products/42', cart_total=949.0)).content)
+"""
+<ui_state>
+  <url>/products/42</url>
+  <cart_total>949.0</cart_total>
+</ui_state>
+"""
+```
+
+`StructuredContent` is a [`TextContent`][pydantic_ai.TextContent], so code that reads the text of a prompt handles it like any other text. A [decision model](models/decision.md#structured-input) is the exception: it is sent the value itself when the prompt is a single `StructuredContent`. Code that rewrites the text of a prompt, such as a redaction step, should therefore replace the item with a plain `TextContent` holding the new text, as the harness's [guardrails](harness/guardrails.md) and [compaction](harness/compaction.md) do.
+
+The [Vercel AI](ui/vercel-ai.md#structured-content) and [AG-UI](ui/ag-ui.md#structured-content) adapters dump the item as ordinary text in the user message, which a frontend shows like any other user text, and carry its value in the metadata of that text part (Vercel AI) or message (AG-UI, from `ag-ui-protocol` 0.1.11), so it loads back whole. The same goes for an item [enqueued mid-run](message-history.md#injecting-messages-mid-run) with `ctx.enqueue`, which accepts it like any other user content. Like `TextContent.metadata`, its `metadata` doesn't make the round-trip.
 
 
 ## User-side download vs. direct file URL
@@ -158,6 +215,8 @@ Support for file URLs varies depending on type and provider:
 | [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` |
 | [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` | — |
 
+A model that does not accept a kind of file at all can still be given one through the [File Understanding](capabilities/file-understanding.md) capability, which has another model describe it in text first. Without it, a file in a user prompt that the model can't take fails the request, while one a tool returned is [replaced by a note naming it](tools-advanced.md#tool-return-file-provenance), so the run goes on.
+
 A model API may be unable to download a file (e.g., because of crawling or access restrictions) even if it supports file URLs. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Google Cloud limits YouTube video URLs to one URL per request.
 
 In such cases, you can instruct Pydantic AI to download the file content locally and send that instead of the URL by setting `force_download` on the URL object:
@@ -169,6 +228,14 @@ ImageUrl(url='https://example.com/image.png', force_download=True)
 AudioUrl(url='https://example.com/audio.mp3', force_download=True)
 VideoUrl(url='https://example.com/video.mp4', force_download=True)
 DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
+```
+
+When Pydantic AI downloads a file, it sends the `media_type` you passed if it differs from the one the URL's extension implies. Otherwise it uses the server's `Content-Type`, falling back to the URL's extension when the header is missing or generic (`application/octet-stream` or `binary/octet-stream`). Pass `media_type` explicitly for URLs without an extension, or for servers that report the wrong type:
+
+```py {title="explicit_media_type.py" test="skip" lint="skip"}
+from pydantic_ai import ImageUrl
+
+ImageUrl(url='https://example.com/receipt-123', media_type='image/png', force_download=True)
 ```
 
 !!! warning "Trust model for file URLs"
@@ -235,7 +302,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 
 async def main():
     provider = AnthropicProvider()
-    model = AnthropicModel('claude-sonnet-4-5', provider=provider)
+    model = AnthropicModel('{{ anthropic:medium.name }}', provider=provider)
 
     # Upload a file using the provider's client (Anthropic client)
     with open('document.pdf', 'rb') as f:
@@ -270,7 +337,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 async def main():
     provider = OpenAIProvider()
-    model = OpenAIChatModel('gpt-5', provider=provider)
+    model = OpenAIChatModel('{{ openai:medium.name }}', provider=provider)
 
     # Upload a file using the provider's client (OpenAI client)
     with open('document.pdf', 'rb') as f:
@@ -311,7 +378,7 @@ from pydantic_ai.providers.google import GoogleProvider
 
 async def main():
     provider = GoogleProvider()
-    model = GoogleModel('gemini-2.5-flash', provider=provider)
+    model = GoogleModel('{{ google:medium.name }}', provider=provider)
 
     # Upload a file using the provider's client (Google GenAI client)
     with open('document.pdf', 'rb') as f:
@@ -348,7 +415,7 @@ from pydantic_ai.models.bedrock import BedrockConverseModel
 
 
 async def main():
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0')
+    model = BedrockConverseModel('{{ bedrock:medium.name }}')
 
     agent = Agent(model)
     result = await agent.run([
@@ -383,7 +450,7 @@ from pydantic_ai.providers.xai import XaiProvider
 
 async def main():
     provider = XaiProvider()
-    model = XaiModel('grok-4.3', provider=provider)
+    model = XaiModel('{{ xai:medium.name }}', provider=provider)
 
     # Upload a file using the provider's client (xAI client)
     with open('document.pdf', 'rb') as f:

@@ -55,6 +55,7 @@ async def test_startup_import_errors_reach_configured_logfire(
                 'token': {'name': 'CLAI2_LOGFIRE_TOKEN'},
                 'service_name': 'plugin-errors-test',
                 'ui_events': ui_events,
+                'include_content': True,
             },
         )
     )
@@ -135,7 +136,9 @@ async def test_startup_only_reports_import_errors_inside_available_plugins(
         tmp_path,
         builtin=(
             PluginSettings(id='mcp', factory='clai2_startup_test_plugin'),
-            PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),
+            PluginSettings(
+                id='observability', factory='pydantic_clai2.builtin_plugins.logfire', settings={'include_content': True}
+            ),
         ),
     )
     try:
@@ -171,7 +174,7 @@ async def test_failing_observer_does_not_prevent_error_reporting(tmp_path: Path,
             PluginSettings(
                 id='observability',
                 factory='pydantic_clai2.builtin_plugins.logfire',
-                settings={'send_to_logfire': False},
+                settings={'send_to_logfire': False, 'include_content': True},
             ),
         ),
     )
@@ -228,16 +231,10 @@ async def test_handled_errors_keep_plugin_and_event_names_without_ui_events(tmp_
     assert failed[1]['event'] == 'SessionEnd'
 
 
-async def test_startup_errors_keep_only_their_type_without_content(tmp_path: Path, recorder: Recorder) -> None:
+async def test_startup_errors_keep_only_their_type_by_default(tmp_path: Path, recorder: Recorder) -> None:
     harness = Harness(
         tmp_path,
-        builtin=(
-            PluginSettings(
-                id='observability',
-                factory='pydantic_clai2.builtin_plugins.logfire',
-                settings={'include_content': False},
-            ),
-        ),
+        builtin=(PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),),
     )
     (harness.store.plugins_dir / 'broken.py').write_text('raise ImportError("missing pasted-token dependency")\n')
     try:

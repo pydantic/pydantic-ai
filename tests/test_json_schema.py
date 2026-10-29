@@ -7,14 +7,18 @@ from copy import deepcopy
 from typing import Any
 
 import pytest
+from typing_extensions import TypeAliasType
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, Tool, UserError
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from ._inline_snapshot import snapshot
+
+Key = TypeAliasType('Key', str)
 
 
 class _PassthroughTransformer(JsonSchemaTransformer):
@@ -851,3 +855,154 @@ def test_json_pointer_ref_tool_with_inlining_profile():
     agent = Agent(FunctionModel(model_function, profile=meta_model_profile('llama-3.3-70b')), tools=[tool])
 
     assert agent.run_sync('ship it').output == 'done'
+
+
+def test_inline_defs_resolves_property_names_ref_through_tool_preparation():
+    """A named dict key type reaches the model with its property-name definition inlined."""
+
+    def accept_values(values: dict[Key, int]) -> str:
+        return 'accepted'  # pragma: no cover
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.function_tools[0].parameters_json_schema == snapshot(
+            {
+                'type': 'object',
+                'properties': {
+                    'values': {
+                        'type': 'object',
+                        'additionalProperties': {'type': 'integer'},
+                        'propertyNames': {'type': 'string'},
+                    }
+                },
+                'required': ['values'],
+                'additionalProperties': False,
+            }
+        )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_function, profile=meta_model_profile('llama-3.3-70b')),
+        tools=[accept_values],
+    )
+    assert agent.run_sync('accept').output == 'done'
+
+
+@pytest.mark.parametrize(
+    ('prefer_inlined_defs', 'expected'),
+    [
+        (
+            True,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'additionalProperties': {'type': 'integer'},
+                            'propertyNames': {'type': 'string'},
+                            'type': 'object',
+                            'properties': {},
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                }
+            ),
+        ),
+        (
+            False,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'values': {
+                            'additionalProperties': {'type': 'integer'},
+                            'propertyNames': {'$ref': '#/$defs/Key'},
+                            'type': 'object',
+                            'properties': {},
+                        }
+                    },
+                    'required': ['values'],
+                    'type': 'object',
+                    '$defs': {'Key': {'type': 'string'}},
+                }
+            ),
+        ),
+    ],
+)
+def test_property_names_ref_through_tool_preparation_follows_prefer_inlined_defs(
+    prefer_inlined_defs: bool, expected: JsonSchema
+):
+    """A transformer that drops `$defs` inlines the `$ref` under `propertyNames`; one that keeps them leaves both alone.
+
+    A recording can't check this: cassettes match on method and URI, not the request body.
+    """
+
+    class InliningOpenAIJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
+        def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+            super().__init__(schema, strict=strict)
+            self.prefer_inlined_defs = True
+
+    def accept_values(values: dict[Key, int]) -> str:
+        return 'accepted'  # pragma: no cover
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.function_tools[0].parameters_json_schema == expected
+        return ModelResponse(parts=[TextPart('done')])
+
+    transformer = InliningOpenAIJsonSchemaTransformer if prefer_inlined_defs else OpenAIJsonSchemaTransformer
+    profile = ModelProfile(json_schema_transformer=transformer)
+    agent = Agent(FunctionModel(model_function, profile=profile), tools=[accept_values])
+    assert agent.run_sync('accept').output == 'done'
+
+
+def test_inline_defs_resolves_a_contains_ref():
+    """Pydantic does not emit `contains`, so this walker-only branch needs direct coverage."""
+    schema: JsonSchema = {
+        'type': 'array',
+        'contains': {'$ref': '#/$defs/Positive'},
+        '$defs': {'Positive': {'type': 'integer', 'minimum': 1}},
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == snapshot(
+        {'type': 'array', 'contains': {'type': 'integer', 'minimum': 1}}
+    )
+
+
+def test_inline_defs_subclass_transforms_a_keyword_ref_once():
+    """A `$ref` under `propertyNames` or `contains` is walked once, so a subclass's `transform()` runs on it once.
+
+    A recording can't check this: cassettes match on method and URI, not the request body.
+    """
+
+    class MarkingTransformer(InlineDefsJsonSchemaTransformer):
+        def transform(self, schema: JsonSchema) -> JsonSchema:
+            if 'description' in schema:
+                schema['description'] += '!'
+            return schema
+
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {
+            'keyed': {'type': 'object', 'propertyNames': {'$ref': '#/$defs/Key'}},
+            'listed': {'type': 'array', 'contains': {'$ref': '#/$defs/Key'}},
+            'key': {'$ref': '#/$defs/Key'},
+        },
+        '$defs': {'Key': {'type': 'string', 'description': 'key'}},
+    }
+    assert MarkingTransformer(schema).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'keyed': {'type': 'object', 'propertyNames': {'type': 'string', 'description': 'key!'}},
+                'listed': {'type': 'array', 'contains': {'type': 'string', 'description': 'key!'}},
+                'key': {'type': 'string', 'description': 'key!'},
+            },
+        }
+    )
+
+
+@pytest.mark.parametrize(('type_', 'keyword'), [('object', 'propertyNames'), ('array', 'contains')])
+@pytest.mark.parametrize('value', [True, False])
+def test_boolean_extra_subschemas_round_trip(type_: str, keyword: str, value: bool):
+    """Pydantic does not emit these boolean schemas, so exercise the walker directly."""
+    schema: JsonSchema = {'type': type_, keyword: value}
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == schema

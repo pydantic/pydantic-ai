@@ -21,6 +21,8 @@ follow `parallel_execution_mode`, which runs them one at a time by default (see
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![An agent named analyst runs inside a pgtask task. On the first attempt its model request and its tool call each finish and are saved to Postgres as pgtask steps, named analyst__model.request and analyst__function_toolset__{id}.call_tool:{tool}; then the worker crashes during the next model request, which is not saved. pgtask runs the task again: the two saved steps return their stored results without calling the model or the tool, and only the unfinished model request runs live.](../img/harness/pgtask.svg)
+
 ## Installation
 
 ```bash
@@ -47,7 +49,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.pgtask import PGTaskDurability
 
 tasks = TaskRegistry(queue_name='agents')
-agent = Agent('openai:gpt-5', name='analyst', capabilities=[PGTaskDurability()])
+agent = Agent('{{ openai:medium }}', name='analyst', capabilities=[PGTaskDurability()])
 
 
 @tasks.task('analyse')
@@ -71,8 +73,9 @@ pgtask runs your task function again from the start. Ordinary code in the functi
 when the agent reaches a model request or tool call that already has a saved step, it uses the saved
 result and skips the call.
 
-- A tool that raises `ModelRetry` or `ToolFailed` has that outcome saved too, so after a crash the
-  model gets the same error and the tool doesn't run again.
+- A tool that raises `ModelRetry` or `ToolFailed`, or a sub-agent run inside a tool that cancels
+  itself or times out (`RunCancelled`), has that outcome saved too, so after a crash the model gets
+  the same error and the tool doesn't run again.
 - A tool that raises any other exception has nothing saved, so it runs again when pgtask retries the
   task.
 - An MCP server is only connected when a call needs it. If every call to it already has a saved
@@ -126,6 +129,10 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   fine.
 - Streaming inside a task isn't live: the whole model response is received and saved first, and
   then its events are sent to you.
+- Under [`BatchModelRequests`](../batch.md#durable-execution), submitting a request and each check on its batch are
+  saved steps, but the waits between checks are plain sleeps: the task has to keep running for as
+  long as the batch takes, within its timeout, and a recovered run sleeps again through the waits
+  it already did.
 
 ## Running tools at the same time
 

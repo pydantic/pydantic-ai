@@ -35,12 +35,28 @@ class ConversationConflict(ValueError):
 
 
 @dataclass(frozen=True, kw_only=True)
+class GitCheckout:
+    """The Git checkout a conversation's workspace was in, so a browser can group it after the folder is gone."""
+
+    repository: str
+    """The repository's common Git directory, the same for each of its worktrees."""
+    name: str
+    """The repository's display name."""
+    root: str
+    """The checkout's top-level folder."""
+    branch: str = ''
+    """The checked-out branch, or a label for a detached checkout."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class ConversationSummary:
-    """Browser metadata. Naming edits do not change activity or content revision."""
+    """Browser metadata. Naming and archiving do not change activity or content revision."""
 
     schema_version: Literal[1] = 1
     id: str = field(default_factory=lambda: str(uuid4()))
     workspace: str
+    checkout: GitCheckout | None = None
+    """The Git checkout `workspace` was in when saved; `None` outside Git or when the application records none."""
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     revision: int = 0
     title: str = 'New session'
@@ -56,6 +72,17 @@ class ConversationSummary:
     message_count: int = 0
     total_tokens: int = 0
     naming_tokens: int = 0
+    archived_at: datetime | None = None
+    """When the conversation was archived, which `listing(archived=False)` leaves out; `None` when it is not.
+
+    A content save of an existing conversation clears it.
+    """
+    forked_from: str | None = None
+    """The `id` of the saved conversation this one was copied from; `None` when the application recorded none.
+
+    It names the whole source conversation, not a message in it. The store only saves it; the application
+    decides which copies record it, and `listing(forked_from=...)` finds those.
+    """
 
 
 def ensure_inactive(summary: ConversationSummary) -> None:
@@ -155,6 +182,8 @@ class SqliteConversationStore:
                 'id TEXT PRIMARY KEY, revision INTEGER NOT NULL, metadata TEXT NOT NULL, '
                 'messages TEXT NOT NULL, search_text TEXT NOT NULL, updated_at TEXT NOT NULL)'
             )
+            # `updated_at` is stored after the transcript, so ordering by it without an index reads every transcript.
+            conn.execute('CREATE INDEX IF NOT EXISTS conversations_updated_at ON conversations (updated_at DESC, id)')
             with conn:
                 yield conn
         finally:
@@ -203,7 +232,8 @@ class SqliteConversationStore:
             prior = self._summary.validate_json(row[0])
             if prior.revision != expected:
                 raise ConversationConflict('Session changed in another process. Resume it again before continuing.')
-            # Preserve a background naming commit which raced with this content save.
+            # Preserve a background naming commit which raced with this content save. New content is activity,
+            # so it lists an archived conversation again.
             summary = replace(
                 summary,
                 title=prior.title,
@@ -213,6 +243,7 @@ class SqliteConversationStore:
                 naming_version=prior.naming_version,
                 named_revision=prior.named_revision,
                 naming_tokens=prior.naming_tokens,
+                archived_at=None,
             )
             conn.execute(
                 'UPDATE conversations SET revision=?, metadata=?, messages=?, search_text=?, updated_at=? WHERE id=?',
@@ -240,18 +271,43 @@ class SqliteConversationStore:
                 raise LookupError(f'No saved session: {conversation_id}')
             return self._summary.validate_json(row[0]), str(row[1])
 
-    async def listing(self, *, query: str = '', limit: int = 200, offset: int = 0) -> list[ConversationSummary]:
-        """Page summaries without loading transcripts. Search includes title, tags and conversation text."""
+    async def listing(
+        self,
+        *,
+        query: str = '',
+        limit: int = 200,
+        offset: int = 0,
+        archived: bool | None = None,
+        forked_from: str | None = None,
+    ) -> list[ConversationSummary]:
+        """Page summaries without loading transcripts. Search includes title, tags and conversation text.
+
+        `archived=False` leaves archived conversations out, `True` lists only those, and `None` lists both.
+        `forked_from` lists only conversations whose `forked_from` is that ID.
+        """
         if limit < 1 or offset < 0:
             raise ValueError('limit must be positive and offset nonnegative')
-        return await run_sync(self._listing, query, limit, offset)
+        return await run_sync(self._listing, query, limit, offset, archived, forked_from)
 
-    def _listing(self, query: str, limit: int, offset: int) -> list[ConversationSummary]:
+    def _listing(
+        self, query: str, limit: int, offset: int, archived: bool | None, forked_from: str | None
+    ) -> list[ConversationSummary]:
+        # Every row matches an empty query, and searching reads each transcript, so only a real query searches.
+        search = 'instr(casefold(search_text || metadata), casefold(?)) > 0 AND ' if query else ''
+        fork = "json_extract(metadata, '$.forked_from') = ? AND " if forked_from is not None else ''
         with self._connection() as conn:
             rows = conn.execute(
-                'SELECT metadata FROM conversations WHERE instr(casefold(search_text || metadata), casefold(?)) > 0 '
+                f'SELECT metadata FROM conversations WHERE {search}{fork}'
+                "(? IS NULL OR (json_extract(metadata, '$.archived_at') IS NOT NULL) = ?) "
                 'ORDER BY updated_at DESC, id LIMIT ? OFFSET ?',
-                (query, limit, offset),
+                (
+                    *([query] if query else []),
+                    *([forked_from] if forked_from is not None else []),
+                    archived,
+                    archived,
+                    limit,
+                    offset,
+                ),
             ).fetchall()
         return [self._summary.validate_json(row[0]) for row in rows]
 
@@ -301,6 +357,29 @@ class SqliteConversationStore:
                 'UPDATE conversations SET metadata=? WHERE id=?', (self._summary.dump_json(updated).decode(), source.id)
             )
             return True
+
+    async def set_archived(self, *, conversation_id: str, archived: bool) -> ConversationSummary:
+        """Archive or unarchive a conversation, keeping its messages, revision, and activity time; return its summary.
+
+        Archiving one already archived keeps the first time. Raises `LookupError` for an unknown ID.
+        """
+        return await run_sync(self._set_archived, conversation_id, archived)
+
+    def _set_archived(self, conversation_id: str, archived: bool) -> ConversationSummary:
+        with self._connection() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('SELECT metadata FROM conversations WHERE id=?', (conversation_id,)).fetchone()
+            if row is None:
+                raise LookupError(f'No saved session: {conversation_id}')
+            current = self._summary.validate_json(row[0])
+            if archived == (current.archived_at is not None):
+                return current
+            updated = replace(current, archived_at=datetime.now(UTC) if archived else None)
+            conn.execute(
+                'UPDATE conversations SET metadata=? WHERE id=?',
+                (self._summary.dump_json(updated).decode(), current.id),
+            )
+            return updated
 
     async def delete(self, *, source: ConversationSummary) -> None:
         """Delete the expected content revision; concurrent writers cannot be silently erased."""

@@ -8,7 +8,8 @@ import shlex
 import signal
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
 
@@ -23,14 +24,27 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import chat
 from pydantic_clai2.cli.shell_passthrough import (
+    _ctrl_c_ignored,  # pyright: ignore[reportPrivateUsage]
     _ShellOutput,  # pyright: ignore[reportPrivateUsage]
+    run_in_terminal,
     run_shell_command,
     shell_command,
+    terminal_modes_kept,
 )
+from pydantic_clai2.config import Settings
+from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.runtime._processes import taskkill_path
+from pydantic_clai2.runtime.processes import taskkill_path
+from pydantic_clai2.runtime.session_runtime import create_shell
+from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from tests.clai2.test_app_edges import inputs
+
+
+@pytest.fixture(autouse=True)
+def piped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Commands here use pipes even when the tests run on a terminal; `test_shell_terminal.py` covers terminals."""
+    monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough.attached_terminal', lambda: None)
 
 
 @pytest.mark.parametrize(
@@ -39,9 +53,13 @@ from tests.clai2.test_app_edges import inputs
         ('!ls -lh', 'ls -lh'),
         ('  !git status  ', 'git status'),
         ('!  echo hi', 'echo hi'),
+        ('!!nano .env', '!nano .env'),
+        ('!! python', '! python'),
         ('!', None),
         ('!   ', None),
         ('  !  ', None),
+        ('!!', None),
+        ('! ! ', None),
         ('ls !', None),
         ('/help', None),
         ('hello', None),
@@ -146,7 +164,7 @@ class TestShellPassthrough:
         output = io.StringIO()
         interrupts = Interrupts()
         command = asyncio.create_task(
-            run_shell_command('sleep forever', console=Console(file=output), interrupts=interrupts)
+            run_shell_command('sleep forever', console=Console(file=output), interrupts=interrupts, cwd=Path.cwd())
         )
         await spawn_started.wait()
 
@@ -181,10 +199,17 @@ class TestShellPassthrough:
             stdin: int | None,
             stdout: int,
             stderr: int,
+            cwd: str,
         ) -> tuple[asyncio.SubprocessTransport, asyncio.SubprocessProtocol]:
             # Press Ctrl-C only once the spawn has returned and the shell has installed its trap.
             process = await spawn(
-                factory, command, start_new_session=start_new_session, stdin=stdin, stdout=stdout, stderr=stderr
+                factory,
+                command,
+                start_new_session=start_new_session,
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+                cwd=cwd,
             )
             with anyio.fail_after(5):
                 while not (tmp_path / 'ready').exists():
@@ -193,6 +218,9 @@ class TestShellPassthrough:
             return process
 
         monkeypatch.setattr(loop, 'subprocess_shell', spawn_then_ctrl_c)
+        # A loaded runner can take longer than the real grace to run the trap, and a kill landing
+        # mid-trap leaves `cleanup.txt` empty. The trap exits on its own, so a longer grace costs nothing.
+        monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough._INTERRUPT_GRACE', 5)
         command = "trap 'printf cleaned > cleanup.txt; exit 130' INT; : > ready; while :; do :; done"
         text = await shell_session(tmp_path, monkeypatch, [f'!{command}', '/exit'])
         assert 'Interrupted (' in text
@@ -249,6 +277,7 @@ class TestShellPassthrough:
         text = await shell_session(tmp_path, monkeypatch, ['/help', '/exit'])
         assert '!COMMAND: Run COMMAND with the system shell' in text
         assert 'save command and output for the next prompt' in ' '.join(text.split())
+        assert '!!COMMAND: Give COMMAND the terminal' in text
 
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
@@ -362,7 +391,9 @@ async def test_large_stdout_and_stderr_are_drained_concurrently(
     output = io.StringIO()
     command = "i=0; while [ $i -lt 20000 ]; do printf 'stdout\\n'; printf 'stderr\\n' >&2; i=$((i + 1)); done"
     with anyio.fail_after(10):
-        context = await run_shell_command(command, console=Console(file=output), interrupts=Interrupts())
+        context = await run_shell_command(
+            command, console=Console(file=output), interrupts=Interrupts(), cwd=Path.cwd()
+        )
     stdout = 'stdout\n' * 20000
     stderr = 'stderr\n' * 20000
     if max_output_chars == 100:
@@ -390,7 +421,9 @@ async def test_output_streams_before_exit_and_readers_are_drained(external_cance
     interrupts = Interrupts()
     tasks_before = asyncio.all_tasks()
     task = asyncio.create_task(
-        run_shell_command('printf ready; exec sleep 30', console=Console(file=output), interrupts=interrupts)
+        run_shell_command(
+            'printf ready; exec sleep 30', console=Console(file=output), interrupts=interrupts, cwd=Path.cwd()
+        )
     )
     with anyio.fail_after(10):
         await printed.wait()
@@ -456,6 +489,7 @@ async def test_detached_descendant_cannot_hold_output_open(
             f'exec {shlex.quote(sys.executable)} -c {shlex.quote(code)}',
             console=Console(file=Output()),
             interrupts=interrupts,
+            cwd=Path.cwd(),
         )
     )
     try:
@@ -508,3 +542,146 @@ def test_decodes_split_and_invalid_utf8() -> None:
     assert output.stdout.getvalue() == 'start€'
     assert output.stderr.getvalue() == '��'
     assert console_output.getvalue() == 'start€��'
+
+
+def _interactive_context(command: str, status: str) -> str:
+    return (
+        'The user ran an interactive local shell command in the terminal (not an agent tool call); '
+        f'its output was not captured:\n$ {command}\n{status}'
+    )
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
+async def test_terminal_command_runs_with_the_screen_released(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """The live panel leaves the screen before the command starts and returns after it exits.
+
+    The command runs in the session's directory, not the process's.
+    """
+    events: list[str] = []
+
+    @contextmanager
+    def hold(*, leave_screen: bool) -> Generator[None]:
+        events.append(f'hold leave_screen={leave_screen} ran={(tmp_path / "ran").exists()}')
+        yield
+        events.append(f'release ran={(tmp_path / "ran").exists()}')
+
+    command = "printf 'sec''ret'; printf 'oo''ps' >&2; : > ran; exit 4"
+    output = io.StringIO()
+    with holding_output(hold):
+        context = await run_in_terminal(command, console=Console(file=output), cwd=tmp_path)
+    assert events == ['hold leave_screen=True ran=False', 'release ran=True']
+    # The command wrote to CLAI's own standard streams, not to pipes CLAI reads.
+    assert capfd.readouterr() == ('secret', 'oops')
+    assert 'secret' not in output.getvalue()
+    assert 'oops' not in output.getvalue()
+    assert 'Exit code 4 (' in output.getvalue()
+    assert context == _interactive_context(command, 'Exit code 4')
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
+async def test_forced_terminal_command_saves_only_its_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """`!!` hands over the terminal; Ctrl-C reaches the command, not CLAI, and output stays unsaved."""
+    requests: list[ModelRequestContext] = []
+    handler = signal.getsignal(signal.SIGINT)
+    command = "kill -INT $PPID; printf 'hid''den'; : > marker"
+    text = await shell_session(
+        tmp_path, monkeypatch, [f'!!{command}', 'after', '/exit'], agent_turns=1, requests=requests
+    )
+    assert signal.getsignal(signal.SIGINT) == handler
+    assert (tmp_path / 'marker').exists()
+    assert 'hidden' in capfd.readouterr().out
+    assert 'hidden' not in text
+    assert 'Interactive command: it has the terminal, and its output is not saved' in text
+    assert 'Done (' in text
+    assert [
+        part.content
+        for message in requests[-1].messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ] == [_interactive_context(command, 'Exit code 0'), 'after']
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
+async def test_cancelled_terminal_command_is_killed(tmp_path: Path) -> None:
+    task = asyncio.create_task(
+        run_in_terminal(': > ready; exec sleep 30', console=Console(file=io.StringIO()), cwd=tmp_path)
+    )
+    with anyio.fail_after(5):
+        while not (tmp_path / 'ready').exists():
+            await anyio.sleep(0.01)  # pragma: lax no cover -- the shell may already be ready.
+    task.cancel()
+    with anyio.fail_after(5), pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_terminal_command_spawn_failure_is_reported() -> None:
+    output = io.StringIO()
+    context = await run_in_terminal('echo a\x00b', console=Console(file=output), cwd=Path.cwd())
+    assert 'Shell error: embedded null byte' in output.getvalue()
+    assert context == _interactive_context('echo a\x00b', 'Shell error: embedded null byte')
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='needs a POSIX pseudo-terminal')
+def test_terminal_modes_are_restored_after_the_command() -> None:
+    import termios
+    import tty
+
+    leader, follower = os.openpty()
+    try:
+        cooked = termios.ICANON | termios.ECHO
+        assert termios.tcgetattr(follower)[3] & cooked == cooked
+        with terminal_modes_kept(follower):
+            tty.setraw(follower)
+            assert termios.tcgetattr(follower)[3] & cooked == 0
+        assert termios.tcgetattr(follower)[3] & cooked == cooked
+    finally:
+        os.close(leader)
+        os.close(follower)
+
+
+def test_terminal_modes_need_a_terminal() -> None:
+    reader, writer = os.pipe()
+    try:
+        with terminal_modes_kept(reader):
+            pass
+    finally:
+        os.close(reader)
+        os.close(writer)
+
+
+async def test_ctrl_c_is_left_alone_off_the_main_thread() -> None:
+    def handler_inside() -> object:
+        with _ctrl_c_ignored():
+            return signal.getsignal(signal.SIGINT)
+
+    assert await asyncio.to_thread(handler_inside) == signal.getsignal(signal.SIGINT)
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
+async def test_commands_run_in_the_sessions_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`!pwd` prints the session's directory, not the one CLAI was started in."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'repo').mkdir()
+    output = io.StringIO()
+    shell = create_shell(
+        Agent(TestModel(), deps_type=type(None)),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=output, force_terminal=False, width=200),
+        settings=Settings(model='test'),
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+        workspace=tmp_path / 'repo',
+    )
+    shell.send_input('!pwd')
+    shell.send_input('/exit')
+    assert await shell.run() == 'exit'
+    assert str((tmp_path / 'repo').resolve()) in output.getvalue()
