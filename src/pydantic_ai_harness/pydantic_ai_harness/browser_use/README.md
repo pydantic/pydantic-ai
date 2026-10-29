@@ -124,10 +124,12 @@ Every browser model call backed by a Pydantic AI model -- the host run's model,
 a Pydantic AI model or model name passed as `llm`, and any `*_llm` in
 `BrowserAgentSettings` -- counts toward the host run's usage and is bounded by
 its `UsageLimits`, the same as the host's own requests. When a limit is
-reached, `browse_web` raises `UsageLimitExceeded` and the run stops, even though browser-use would
-otherwise swallow the error and carry on. A browser-use chat model such as
-`ChatAnthropic` or `ChatBrowserUse` is called by browser-use directly, so its
-calls are neither counted nor bounded.
+reached, the browser agent stops at its next step and `browse_web` raises
+`UsageLimitExceeded`, ending the host run, rather than browser-use swallowing
+the error and carrying on. The default `request_limit` of 50 now covers
+browsing too, so raise it for long browsing tasks or a large `max_steps`. A
+browser-use chat model such as `ChatAnthropic` or `ChatBrowserUse` is called by
+browser-use directly, so its calls are neither counted nor bounded.
 
 ## Agent settings
 

@@ -316,13 +316,15 @@ class TestHostUsage:
     """Browser model calls spend the host run's usage and are bounded by its limits."""
 
     completions: list[ChatInvokeCompletion[str]]
+    stop_requested: list[bool]
 
     @pytest.fixture(autouse=True)
     def browser_steps(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Run two steps and a judge call, swallowing their errors like browser-use's step loop does."""
         monkeypatch.setenv('ANONYMIZED_TELEMETRY', 'false')
         self.completions = []
-        completions = self.completions
+        self.stop_requested = []
+        completions, stop_requested = self.completions, self.stop_requested
 
         async def run(self: BrowserUseAgent[None, BaseModel], max_steps: int = 500) -> AgentHistoryList[BaseModel]:
             for llm in (self.llm, self.llm, self.judge_llm):
@@ -330,6 +332,8 @@ class TestHostUsage:
                     completions.append(await llm.ainvoke([UserMessage(content='page')]))
                 except Exception:
                     pass
+            assert self.register_should_stop_callback is not None
+            stop_requested.append(await self.register_should_stop_callback())
             return AgentHistoryList[BaseModel](history=[])
 
         async def kill(self: BrowserSession) -> None:
@@ -367,6 +371,7 @@ class TestHostUsage:
 
         assert len(sent) == 5  # Two host turns, two browser steps, one judge call.
         assert result.usage.requests == 5
+        assert self.stop_requested == [False]
         assert result.usage.total_tokens == sum(
             message.usage.total_tokens for message in result.all_messages() if isinstance(message, ModelResponse)
         ) + sum(completion.usage.total_tokens for completion in self.completions if completion.usage)
@@ -380,6 +385,8 @@ class TestHostUsage:
 
         # The host turn and one browser step; browser-use's swallowed retries send nothing more.
         assert len(sent) == 2
+        # browser-use is told to stop at its next step rather than count failures up to `max_failures`.
+        assert self.stop_requested == [True]
 
     async def test_browser_completion_reports_its_own_usage(self) -> None:
         agent = Agent(TestModel(), capabilities=[BrowserUse()])

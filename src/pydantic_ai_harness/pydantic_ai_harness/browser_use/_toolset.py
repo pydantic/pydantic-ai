@@ -18,7 +18,7 @@ from pydantic import BaseModel, JsonValue, ValidationError
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness.browser_use._model import RunChatModel, host_budget, resolve_chat_model
+from pydantic_ai_harness.browser_use._model import RunChatModel, host_budget, host_budget_exhausted, resolve_chat_model
 from pydantic_ai_harness.browser_use._settings import BrowserAgentSettings
 
 try:
@@ -554,6 +554,25 @@ def default_browser_agent(request: BrowserTask) -> BrowserAgent:
     )
 
 
+async def _never_stop() -> bool:
+    return False
+
+
+def _stop_on_exhausted_budget(agent: BrowserAgent) -> None:
+    """Make a browser-use agent stop once the host's usage limit is hit, keeping any stop callback it has.
+
+    browser-use counts a refused model call as one more failed step and keeps driving the browser
+    until `max_failures`; its stop callback ends the run cleanly at the next step instead.
+    """
+    if isinstance(agent, _BrowserUseAgent):
+        previous = agent.register_should_stop_callback or _never_stop
+
+        async def should_stop() -> bool:
+            return host_budget_exhausted() or await previous()
+
+        agent.register_should_stop_callback = should_stop
+
+
 def _disable_browser_use_telemetry(agent: BrowserAgent) -> None:
     """Replace a browser-use agent's telemetry client with a no-op; other agents are left alone."""
     if isinstance(agent, _BrowserUseAgent):
@@ -695,6 +714,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
             # Applied here rather than in `default_browser_agent`, so a custom factory
             # that builds a real browser-use agent gets the same policy.
             _disable_browser_use_telemetry(agent)
+        _stop_on_exhausted_budget(agent)
         return await agent.run(max_steps=self._max_steps)
 
     def _render_result(self, history: BrowserAgentHistory) -> str:

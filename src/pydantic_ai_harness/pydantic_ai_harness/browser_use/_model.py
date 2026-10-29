@@ -145,7 +145,8 @@ class _HostBudget:
     def spend(self) -> Generator[None]:
         """Refuse a call once the budget is exhausted, and remember the error that exhausts it."""
         if self.exceeded is not None:
-            raise self.exceeded
+            # A fresh error each time, so repeated refusals do not pile frames onto one traceback.
+            raise UsageLimitExceeded(str(self.exceeded)) from self.exceeded
         try:
             yield
         except UsageLimitExceeded as error:
@@ -170,6 +171,12 @@ def host_budget(ctx: RunContext[Any]) -> Generator[_HostBudget]:
         yield budget
     finally:
         _host_budget.reset(token)
+
+
+def host_budget_exhausted() -> bool:
+    """Whether a browser model call in this `browse_web` call has hit a host usage limit."""
+    budget = _host_budget.get()
+    return budget is not None and budget.exceeded is not None
 
 
 def _call_usage(result: AgentRunResult[Any]) -> RequestUsage:
