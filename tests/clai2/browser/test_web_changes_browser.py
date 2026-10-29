@@ -1,6 +1,7 @@
 """The Changes panel in the shipped UI: a session's changed files after two turns, by scope."""
 
 import json
+import re
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -96,6 +97,11 @@ async def test_changes_panel_lists_the_files_of_two_turns(page: Page, changes_ui
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Changes')
     await expect(page.locator('.session.opening')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
+    # Open while the turns run, the panel and the header's count each ask again once the session has saved each turn.
+    await page.get_by_role('button', name=re.compile(r'^Changes')).click()
+    panel = page.get_by_role('complementary', name='Changes')
+    files = panel.get_by_role('list', name='Changed files').get_by_role('listitem')
+    await panel.get_by_role('tab', name='This session').click()
     for number, prompt in enumerate(TURNS, start=1):
         await expect(composer).to_be_enabled()
         await composer.fill(prompt)
@@ -106,11 +112,6 @@ async def test_changes_panel_lists_the_files_of_two_turns(page: Page, changes_ui
     toggle = page.get_by_role('button', name='Changes: 3 files changed')
     await expect(toggle).to_be_visible()
     await expect(toggle.locator('.changes-count')).to_have_text('3')
-    await toggle.click()
-    panel = page.get_by_role('complementary', name='Changes')
-    files = panel.get_by_role('list', name='Changed files').get_by_role('listitem')
-
-    await panel.get_by_role('tab', name='This session').click()
     await expect(files).to_have_text(['Aa.py+3 −0', 'Ab.py+2 −0', 'Ac.py+2 −0'])
 
     await panel.get_by_role('tab', name='Last turn').click()

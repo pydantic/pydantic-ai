@@ -101,7 +101,10 @@ async def test_commit_push_and_open_a_pull_request_from_the_header(
     await dialog.get_by_role('button', name='Open pull request').click()
     link = dialog.get_by_role('link', name=PR_URL)
     await expect(link).to_have_attribute('href', PR_URL)
-    assert calls(gh_state)[-1] == 'pr create --head=feature --title=Edit three files --body-file=-'
+    # Opening it refreshes the chip, whose status read checks `gh auth token` meanwhile.
+    assert [call for call in calls(gh_state) if not call.startswith('auth token ')][-1] == (
+        'pr create --head=feature --title=Edit three files --body-file=-'
+    )
 
     # Esc closes the dialog, not the page's turn.
     await page.keyboard.press('Escape')
