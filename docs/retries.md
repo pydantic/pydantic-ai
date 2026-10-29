@@ -46,20 +46,7 @@ The HTTP transport, the provider SDK and a durable execution engine all re-send 
 | A [retrying transport](#transport-retries) | You want one policy across providers, your own choice of which errors to retry, or waits that respect `Retry-After` up to a limit you set | [`ModelSettings['max_retries']`](#setting-the-sdk-retry-count-per-request) set to `0`, and one attempt in a durable engine's retry policy |
 | A [durable execution](durable_execution/overview.md) engine | The model request runs as a Temporal activity or a DBOS or Prefect step, and you want the engine to record and schedule its attempts | `max_retries` set to `0`, and no retrying transport |
 
-How many attempts the SDK makes by default, and how to bring it down to one, depends on the provider:
-
-| Model | Attempts the SDK makes by default | One attempt with | Retrying transport |
-|---|---|---|---|
-| OpenAI, and the model classes built on it | 3 | `max_retries` set to `0` | ✅ |
-| Anthropic | 3 | `max_retries` set to `0` | ✅ |
-| Groq | 3 | `max_retries` set to `0` | ✅ With the deprecated [`AsyncTenacityTransport`][pydantic_ai.retries.AsyncTenacityTransport], as the SDK takes a legacy `httpx` client |
-| Cohere | 3 for status 408, 409, 429 and 5xx, but 1 for a connection error or timeout | `max_retries` set to `0` | ✅ As for Groq |
-| TypeSafe | 3 | `max_retries` set to `0` | ✅ |
-| Google | 1, unless you pass the provider `retry_options` | `max_retries` set to `0`, if you passed `retry_options` | ✅ |
-| Mistral | 1, unless the client has a `retry_config` | `max_retries` set to `0`, if the client has a `retry_config` | ✅ |
-| AWS Bedrock | 5, in boto3's default `legacy` retry mode | A `bedrock_client` built with `Config(retries={'max_attempts': 0})`; see [Configuring Retries](models/bedrock.md#configuring-retries) | ❌ boto3 is the lowest layer, so it or a durable engine owns retrying |
-| xAI | Up to 5, for a request that fails with `UNAVAILABLE` | An `xai_client` with gRPC retries disabled; see [SDK retries](models/xai.md#sdk-retries) | ❌ gRPC retries inside the channel |
-| Hugging Face | 1 | Nothing to change | ❌ |
+How many attempts the SDK makes by default, and whether `max_retries` can bring it down to one, depends on the provider: most make 3, Google, Mistral and Hugging Face make 1 unless you configure retries, AWS Bedrock makes 5, and xAI up to 5. [Setting the SDK retry count per request](#setting-the-sdk-retry-count-per-request) has the numbers for each, and how to make one attempt where the setting doesn't apply. A retrying transport works with every provider whose SDK takes an `httpx2` client; see [Using with `httpx2`-compatible providers](#using-with-httpx2-compatible-providers) for the exceptions.
 
 With one owner, a failing model request is retried on the wire at most as many times as that owner allows: `K` for a transport stopped by `stop_after_attempt(K)`, `1 + N` for an SDK allowed `N` retries, or the engine's maximum attempts. Each model in a [`ModelFallback`](capabilities/model-fallback.md) chain gets that budget again, so a chain of `F` models allows `F` times as many. To fall back sooner, give the models before the last one a smaller budget, as in [Setting the SDK retry count per request](#setting-the-sdk-retry-count-per-request).
 
@@ -533,20 +520,20 @@ agent = Agent(
 
 The same holds for a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]'s candidates.
 
-Not every SDK can take the setting per request:
+Not every SDK can take the setting per request, and they don't all start from the same number of attempts:
 
-| Model | Supported | Notes |
-|---|---|---|
-| OpenAI, and the model classes built on it | ✅ | Full feature support, including an `AsyncAzureOpenAI` client. |
-| Anthropic | ✅ | Full feature support, including `AsyncAnthropicBedrock`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients |
-| Groq | ✅ | Full feature support |
-| Cohere | ✅ | Full feature support |
-| Google | ✅ | Limited parameter support: keeps the delays and status codes of the provider's `retry_options`, or the SDK's defaults when those aren't set |
-| Mistral | ✅ | Limited parameter support: `0` only. The SDK bounds retries by elapsed time, not count, so `0` turns off a `retry_config` set on the client and other values are ignored |
-| TypeSafe | ✅ | Limited parameter support: the request's other `RetryPolicy` options are the SDK defaults, not the client's |
-| AWS Bedrock | ❌ | boto3 retries per client; see [Configuring Retries](models/bedrock.md#configuring-retries) |
-| xAI | ❌ | gRPC retries per channel; see [SDK retries](models/xai.md#sdk-retries) |
-| Hugging Face | ❌ | The client makes no retries |
+| Model | Attempts by default | Supported | Notes |
+|---|---|---|---|
+| OpenAI, and the model classes built on it | 3 | ✅ | Full feature support, including an `AsyncAzureOpenAI` client. |
+| Anthropic | 3 | ✅ | Full feature support, including `AsyncAnthropicBedrock`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients |
+| Groq | 3 | ✅ | Full feature support |
+| Cohere | 3 for status 408, 409, 429 and 5xx, 1 for a connection error or timeout | ✅ | Full feature support |
+| Google | 1, unless the provider has `retry_options` | ✅ | Limited parameter support: keeps the delays and status codes of the provider's `retry_options`, or the SDK's defaults when those aren't set |
+| Mistral | 1, unless the client has a `retry_config` | ✅ | Limited parameter support: `0` only. The SDK bounds retries by elapsed time, not count, so `0` turns off a `retry_config` set on the client and other values are ignored |
+| TypeSafe | 3 | ✅ | Limited parameter support: the request's other `RetryPolicy` options are the SDK defaults, not the client's |
+| AWS Bedrock | 5, in boto3's default `legacy` retry mode | ❌ | boto3 retries per client, so for one attempt, pass a `bedrock_client` built with `Config(retries={'max_attempts': 0})`; see [Configuring Retries](models/bedrock.md#configuring-retries) |
+| xAI | Up to 5, for a request that fails with `UNAVAILABLE` | ❌ | gRPC retries per channel; see [SDK retries](models/xai.md#sdk-retries) |
+| Hugging Face | 1 | ❌ | The client makes no retries |
 
 The model classes that honor it are listed under [`ModelSettings.max_retries`][pydantic_ai.settings.ModelSettings.max_retries]; the others don't change their retries, and warn with [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] that they ignore it. With such a model in a fallback chain, set `max_retries` on the other models' own settings, as above, rather than on the agent or run.
 
