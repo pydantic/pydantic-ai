@@ -150,9 +150,13 @@ async def test_a_display_that_went_away_is_started_again(fake_e2b: FakeE2B, disp
     display.up = False
     with pytest.raises(WorkspaceError):
         await workspace.act(Click(x=1, y=1))
+    # The next action starts the display again, and doesn't run on the new screen.
+    with pytest.raises(WorkspaceError, match='The display restarted before this action'):
+        await workspace.act(Click(x=1, y=1))
     await workspace.act(Click(x=1, y=1))
 
-    assert len(display.starts) == 2
+    # The last action runs the start script too, and finds the display up.
+    assert len(display.starts) == 3
     assert backend.display.starts == 2
 
 
