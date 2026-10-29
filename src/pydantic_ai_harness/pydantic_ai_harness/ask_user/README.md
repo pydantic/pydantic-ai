@@ -22,8 +22,6 @@ The capability owns the schema and validation. It never prints, reads stdin, or 
 terminal library: the `answerer` is whatever puts the questions in front of a person, and you
 supply it. There is no default, because a capability that reads stdin is unusable from a server.
 
-Import `AskUser` at module level, before framing data or running agents, to register its note tag up front.
-
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import AskUser
@@ -111,6 +109,10 @@ The boundary items are `TextContent` with `metadata` containing
 can identify the record without matching visible text.
 The user-content origin keeps notes classified as user turns during compaction.
 Without notes, the result is the answer dictionary or decline text.
+
+`answer_note` is a built-in core data tag, available before importing `AskUser`. All core data
+frames escape its opening and closing spellings, even in applications that do not use notes.
+Importing `AskUser` does not register a tag or change how existing history renders.
 
 Annotate results with `AskUserResult` from `pydantic_ai_harness.ask_user`. To inspect wrapped
 answers, narrow with `isinstance(result, ToolReturn)` and read `result.return_value`.

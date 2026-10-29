@@ -40,8 +40,15 @@ DataTag = Literal[
     'validation_errors',
     'retry_feedback',
     'conversation_summary',
+    'answer_note',
 ]
-"""Pydantic AI's own data tags, which say where content came from. Extensions can render these and registered tags."""
+"""Built-in data tags, which say where content came from. Extensions can render these and registered tags.
+
+`answer_note` frames a user's note accompanying an answer, keyed by question header. It is built in
+so importing an answerer after framing text cannot change escaping or previously rendered history.
+Like every built-in data tag, its opening and closing spellings are escaped in all data frames,
+even when the application does not use answer notes.
+"""
 
 FramingTag = Literal['system', DataTag]
 """Every tag Pydantic AI itself writes into prompt text: the `'system'` voice tag and the data tags."""

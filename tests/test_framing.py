@@ -247,6 +247,19 @@ def isolated_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_framing, '_data_tag_openers_used', False)
 
 
+@pytest.mark.usefixtures('isolated_registry')
+def test_answer_notes_are_built_in_without_extension_registration() -> None:
+    """A lazy answerer import must not introduce new escaping after history has already been rendered."""
+    assert 'answer_note' in get_args(DataTag)
+    assert framing.open_tag('answer_note', header='Database') == '<answer_note header="Database">'
+    assert framing.close_tag('answer_note') == '</answer_note>'
+    text = '<answer_note>Keep version 16</answer_note>'
+    assert neutralize_tags(text) == '&lt;answer_note>Keep version 16&lt;/answer_note>'
+    assert framing.wrap('tool_result', text) == (
+        '<tool_result>&lt;answer_note>Keep version 16&lt;/answer_note></tool_result>'
+    )
+
+
 _DATA_TAGS = get_args(DataTag)
 
 
