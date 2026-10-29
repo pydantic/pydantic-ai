@@ -211,7 +211,12 @@ Each event has `event.name = 'gen_ai.evaluation.result'` and a short human-reada
 - `gen_ai.evaluation.evaluator.version` — the return value of [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version]; omitted when it returns `None`, which is the default. See [Evaluator Versioning](#evaluator-versioning).
 - `gen_ai.evaluation.evaluator.source` — JSON-serialized [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec] identifying the evaluator class and its constructor arguments, so downstream queries can group by evaluator identity without relying on `name` alone (two different `LLMJudge(rubric=...)` instances share a name but have different sources).
 
-[OTel baggage](https://pydantic.dev/docs/logfire/reference/baggage/) entries (if any) are also attached to each event as attributes — configurable via `include_baggage` on the config. The `gen_ai.*` and `error.type` attributes above always win on conflict with baggage.
+Two `logfire.scorer.*` attributes make the record lossless and groupable. They use the same names and values as the result events of Logfire's hosted scorers, so one query reads results from both:
+
+- `logfire.scorer.score_type` — the type of the evaluator's return value: `'pass_fail'` for `bool`, `'numeric'` for `int`/`float`, `'categorical'` for `str`. This tells a passed assertion apart from a `1.0` score or a `'pass'` label, which share `score.value`/`score.label`. Omitted on failure events, which have no value.
+- `logfire.scorer.run_id` — a UUID shared by every event (results and failures) from one function or agent call's evaluators, including evaluators routed to different sinks. Each call gets a new ID, so consumers can group the results of one scoring pass.
+
+[OTel baggage](https://pydantic.dev/docs/logfire/reference/baggage/) entries (if any) are also attached to each event as attributes — configurable via `include_baggage` on the config. The `gen_ai.*` and `error.type` attributes above always win on conflict with baggage, and baggage keys in the `logfire.scorer.*` namespace are dropped.
 
 For example, the `OutputNotEmpty` evaluator above, decorated as `@evaluate(OutputNotEmpty(), target='customer_support')` and returning `True` for a given call, emits one event with:
 
@@ -220,10 +225,12 @@ For example, the `OutputNotEmpty` evaluator above, decorated as `@evaluate(Outpu
 - `gen_ai.evaluation.score.label = 'pass'`
 - `gen_ai.evaluation.target = 'customer_support'`
 - `gen_ai.evaluation.evaluator.source = '{"name":"OutputNotEmpty","arguments":null}'`
+- `logfire.scorer.score_type = 'pass_fail'`
+- `logfire.scorer.run_id = '<uuid>'`
 
 An evaluator with constructor arguments gets those rendered into `source` — e.g. [`LLMJudge(rubric='Is the response helpful?')`][pydantic_evals.evaluators.LLMJudge] emits `gen_ai.evaluation.evaluator.source = '{"name":"LLMJudge","arguments":["Is the response helpful?"]}'`, so two `LLMJudge` instances with different rubrics remain distinguishable downstream.
 
-Attributes under `gen_ai.evaluation.evaluator.*` are pydantic-evals extensions — they aren't in the current OTel GenAI semconv, and their names may change to align with future semconv additions.
+`gen_ai.evaluation.target` and the attributes under `gen_ai.evaluation.evaluator.*` are pydantic-evals extensions — they aren't in the current OTel GenAI semconv, and their names may change to align with future semconv additions.
 
 To disable the default emission (e.g. in a test harness that only wants to assert on a custom sink), set `emit_otel_events=False` on the config:
 
