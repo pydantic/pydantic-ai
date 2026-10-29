@@ -1,5 +1,6 @@
 import os
 import re
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import patch
@@ -340,6 +341,7 @@ async def test_gateway_provider_with_openai(allow_model_requests: None, gateway_
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('Paris.')
+    assert result.usage.cost == snapshot(Decimal('0.00012625'))
 
 
 async def test_gateway_provider_with_openai_responses(allow_model_requests: None, gateway_api_key: str):
@@ -349,6 +351,7 @@ async def test_gateway_provider_with_openai_responses(allow_model_requests: None
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('Paris.')
+    assert result.usage.cost == snapshot(Decimal('9.625000000000001E-5'))
 
 
 async def test_gateway_provider_with_groq(allow_model_requests: None, gateway_api_key: str):
@@ -358,18 +361,24 @@ async def test_gateway_provider_with_groq(allow_model_requests: None, gateway_ap
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
+    assert result.usage.cost == snapshot(Decimal('0.0000311'))
 
 
 async def test_gateway_provider_with_google_cloud(allow_model_requests: None, gateway_api_key: str):
+    """The recording only has the deprecated `pydantic-ai-gateway-price-estimate` header, which isn't read, so the
+    cost is the genai-prices estimate."""
     provider = gateway_provider('google-cloud', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = GoogleModel('gemini-2.5-flash', provider=provider)
     agent = Agent(model)
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is **Paris**.')
+    assert result.usage.cost == snapshot(Decimal('0.0001546'))
 
 
 async def test_gateway_provider_with_anthropic(allow_model_requests: None, gateway_api_key: str):
+    """The asserted cost carries the gateway's float artifacts (`...199999999999998`), which a clean
+    client-side genai-prices estimate can't produce, proving the reported cost took precedence."""
     provider = gateway_provider('anthropic', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = AnthropicModel('claude-sonnet-4-5', provider=provider)
     # Pinned below the SDK's non-streaming limit so the request matches the local-gateway recording.
@@ -377,9 +386,12 @@ async def test_gateway_provider_with_anthropic(allow_model_requests: None, gatew
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
+    assert result.usage.cost == snapshot(Decimal('0.00019199999999999998'))
 
 
 async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway_api_key: str):
+    """The recording only has the deprecated `pydantic-ai-gateway-price-estimate` header, which isn't read, so the
+    cost is the genai-prices estimate."""
     provider = gateway_provider('bedrock', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=provider)
     agent = Agent(model)
@@ -388,6 +400,7 @@ async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway
     assert result.output == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. The city is known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées, among many other attractions.'
     )
+    assert result.usage.cost == snapshot(Decimal('0.000011165'))
 
 
 @patch.dict(

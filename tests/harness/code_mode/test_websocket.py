@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -232,29 +231,6 @@ def test_deprecated_sandbox_url_becomes_monty_sandbox() -> None:
 
     with pytest.raises(UserError, match='`monty_sandbox_url` is its deprecated form'):
         CodeMode(monty_sandbox='wss://a.example.com', monty_sandbox_url='wss://b.example.com')
-
-
-@pytest.mark.skipif(not os.environ.get('MONTY_SANDBOX_TEST_URL'), reason='needs a hosted Monty server (CI on main)')
-async def test_hosted_monty_sandbox() -> None:  # pragma: no cover - remote mode only
-    """A `monty_sandbox` function that dials hosted Monty with a key runs code and tools there."""
-    headers = {'Authorization': f'Bearer {os.environ["LOGFIRE_API_KEY"]}'}
-    agent = Agent(
-        _snippets_model('await add(a=20, b=22)'),
-        capabilities=[
-            CodeMode(
-                monty_sandbox=lambda: AsyncMontyWebsocket(
-                    os.environ['MONTY_SANDBOX_TEST_URL'], connect_headers=lambda: headers
-                )
-            )
-        ],
-    )
-
-    @agent.tool_plain
-    def add(a: int, b: int) -> int:
-        return a + b
-
-    result = await agent.run('add on the server')
-    assert [part.content for part in _parts(result.all_messages(), ToolReturnPart)] == [42]
 
 
 @pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')

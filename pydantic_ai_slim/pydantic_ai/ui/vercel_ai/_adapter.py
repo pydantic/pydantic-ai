@@ -37,6 +37,7 @@ from ...messages import (
     RetryFeedbackPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -70,6 +71,8 @@ from .._adapter import (
     resolve_allow_uploaded_files,
     retry_feedback_from_payload,
     retry_feedback_payload,
+    structured_content_from_payload,
+    structured_content_payload,
     tool_availability_delta_from_payload,
     tool_retry_payload,
 )
@@ -102,6 +105,7 @@ from .request_types import (
     FileUIPart,
     ProviderMetadata,
     ReasoningUIPart,
+    RegenerateMessage,
     RequestData,
     SourceDocumentUIPart,
     SourceUrlUIPart,
@@ -172,6 +176,13 @@ def _generate_message_id(
     """
     if (ui_message_id := get_ui_message_id(msg)) is not None:
         return ui_message_id
+    return _generate_fresh_message_id(msg, role, message_index)
+
+
+def _generate_fresh_message_id(
+    msg: ModelRequest | ModelResponse, role: Literal['system', 'user', 'assistant'], message_index: int
+) -> str:
+    """Return a deterministic ID from content and position, ignoring the `UIMessage.id` the message was loaded from."""
     if isinstance(msg, ModelResponse) and msg.provider_response_id:
         return f'{msg.provider_response_id}-{message_index}'
     if msg.run_id:
@@ -220,6 +231,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         sdk_version: Literal[5, 6, 7] = 5,
         server_message_id: str | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
+        manage_message_history: Literal['client', 'server'] = 'client',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -238,6 +250,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             sdk_version=sdk_version,
             server_message_id=server_message_id,
             manage_system_prompt=manage_system_prompt,
+            manage_message_history=manage_message_history,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -271,6 +284,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
         on_cancel: OnCancelFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
+        manage_message_history: Literal['client', 'server'] = 'client',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -306,6 +320,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             on_complete=on_complete,
             on_cancel=on_cancel,
             manage_system_prompt=manage_system_prompt,
+            manage_message_history=manage_message_history,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -347,6 +362,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def conversation_id(self) -> str | None:
         """Conversation ID from the top-level `id` field of the Vercel AI request body (the chat ID)."""
         return self.run_input.id
+
+    def _regenerates(self) -> bool:
+        return isinstance(self.run_input, RegenerateMessage)
 
     @classmethod
     def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
@@ -397,14 +415,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         # A user part reloads as harness retry feedback only when it carries the
                         # marker this adapter dumped it with; text a person wrote has no such payload
                         # and stays a `UserPromptPart`. See `retry_feedback_from_payload`.
-                        feedback = retry_feedback_from_payload(
-                            load_provider_metadata(part.provider_metadata).get('retry_feedback')
-                        )
+                        provider_meta = load_provider_metadata(part.provider_metadata)
+                        feedback = retry_feedback_from_payload(provider_meta.get('retry_feedback'))
+                        structured = provider_meta.get('structured_content')
                         if feedback is not None:
                             flush_user_prompt()
                             builder.add(feedback)
                         else:
-                            user_prompt_content.append(part.text)
+                            user_prompt_content.append(
+                                part.text
+                                if structured is None
+                                else structured_content_from_payload(_parse_json(structured), part.text)
+                            )
                     elif isinstance(part, FileUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         # Restoring client-supplied `vendor_metadata` is intentional (as the `UploadedFile` branch
@@ -1198,7 +1220,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         namespace and top-level `ModelResponse.provider_details` do not. `UIMessage.metadata` is
         client-controlled, so framework and provider response state is not exposed or restored through
         it; see `_PydanticAIMessageMetadata`. The `UIMessage.id` that `load_messages` keeps in that
-        namespace is the exception: the default `generate_message_id` restores it.
+        namespace is the exception: the default `generate_message_id` restores it, on the last `UIMessage`
+        dumped from a split request, which is the one it was loaded from.
 
         When `sdk_version=6`, tool calls that have no corresponding result in the message history
         are automatically detected as deferred and emitted with `state='approval-requested'`, so the
@@ -1246,7 +1269,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 user_positions = [position for position, (role, _) in enumerate(segments) if role == 'user']
                 metadata_position = user_positions[-1] if user_positions else len(segments) - 1
                 for position, (role, ui_parts) in enumerate(segments):
-                    ui_message = UIMessage(id=id_generator(msg, role, message_index), role=role, parts=ui_parts)
+                    if generate_message_id is None and position < len(segments) - 1:
+                        # `load_messages` kept the id of the last UIMessage merged into the request, so it
+                        # goes back on the last one dumped from it. The others need ids of their own.
+                        message_id = _generate_fresh_message_id(msg, role, message_index)
+                    else:
+                        message_id = id_generator(msg, role, message_index)
+                    ui_message = UIMessage(id=message_id, role=role, parts=ui_parts)
                     if request_metadata and position == metadata_position:
                         ui_message.metadata = request_metadata
                     result.append(ui_message)
@@ -1307,6 +1336,19 @@ def _convert_user_prompt_part(
         for item in part.content:
             if isinstance(item, str):
                 ui_parts.append(TextUIPart(text=item, state='done'))
+            elif isinstance(item, StructuredContent):
+                # A text part the frontend shows like any user text, with the value in its metadata. The payload
+                # is a JSON string, which the AI SDK passes through untouched: as a JavaScript object, a value like
+                # `949.0` would come back as `949`.
+                ui_parts.append(
+                    TextUIPart(
+                        text=item.content,
+                        state='done',
+                        provider_metadata=dump_provider_metadata(
+                            structured_content=json.dumps(structured_content_payload(item))
+                        ),
+                    )
+                )
             elif isinstance(item, TextContent):
                 ui_parts.append(TextUIPart(text=item.content, state='done'))
             elif isinstance(item, BinaryContent):
@@ -1379,6 +1421,16 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
     if isinstance(part.approval, ToolApprovalResponded) and part.approval.reason:
         return part.approval.reason
     return ToolDenied().message
+
+
+def _parse_json(value: object) -> object:
+    """A client-sent JSON string parsed, or `None` when it isn't a string or doesn't parse."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
+        return None
 
 
 def _retried_structured_content(tool_result: ToolReturnPart | None) -> list[Any] | None:

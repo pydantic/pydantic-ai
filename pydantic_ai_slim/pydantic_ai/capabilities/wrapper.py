@@ -111,7 +111,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self.wrapped.apply(wrapped_capabilities.append)
         if _registers_children(self.wrapped, wrapped_capabilities):
             for capability in wrapped_capabilities:
-                visitor(capability)
+                if not self._stands_in_for(capability):
+                    visitor(capability)
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT] | None]
@@ -134,7 +135,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self.wrapped.apply(wrapped_capabilities.append)
         if not _registers_children(self.wrapped, wrapped_capabilities):
             return self
-        new_wrapped = self.wrapped.visit_and_replace(visitor)
+        new_wrapped = self.wrapped.visit_and_replace(
+            lambda capability: capability if self._stands_in_for(capability) else visitor(capability)
+        )
         if new_wrapped is None:
             # `wrapped` is required, and a wrapper whose subtree is gone has nothing left to modify.
             return None
@@ -143,6 +146,19 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         new_self = replace_no_init(self, wrapped=new_wrapped)
         new_self.__adopt_wrapped_identity()
         return new_self
+
+    def _stands_in_for(self, capability: AbstractCapability[AgentDepsT]) -> bool:
+        """Whether `capability` is the wrapped capability registering itself under this wrapper's own `id`.
+
+        A deferred group (see `CombinedCapability`) is registered itself and shares its `id` with a
+        wrapper that adopted it, so only the wrapper is registered for the pair.
+        """
+        return (
+            capability is self.wrapped
+            and capability.defer_loading is True
+            and self.id is not None
+            and capability.id == self.id
+        )
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -174,6 +190,18 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return (
             type(self).on_model_request_error is not WrapperCapability.on_model_request_error
             or self.wrapped._has_on_model_request_error
+        )
+
+    def _handles_model_request_error(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> bool:
+        if type(self).on_model_request_error is not WrapperCapability.on_model_request_error:
+            return True
+        return self.wrapped._handles_model_request_error(ctx, request_context)
+
+    @property
+    def _has_prepare_model_request(self) -> bool:
+        return (
+            type(self).prepare_model_request is not WrapperCapability.prepare_model_request
+            or self.wrapped._has_prepare_model_request
         )
 
     @property
@@ -253,6 +281,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return self.wrapped.get_model()
 
     @property
+    def _can_supply_model(self) -> bool:
+        return type(self).get_model is not WrapperCapability.get_model or self.wrapped._can_supply_model
+
+    def _model_is_default(self) -> bool:
+        # A subclass that supplies its own model makes a selection of its own, not a stand-in.
+        return type(self).get_model is WrapperCapability.get_model and self.wrapped._model_is_default()
+
+    @property
     def has_resolve_model_id(self) -> bool:
         return (
             type(self).resolve_model_id is not WrapperCapability.resolve_model_id or self.wrapped.has_resolve_model_id
@@ -274,6 +310,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        return self.wrapped.get_wrapper_model(model)
 
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
         # Every hook here delegates to `wrapped`, which the session asks for itself.
@@ -409,6 +448,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         return await self.wrapped.before_model_request(ctx, request_context)
+
+    async def prepare_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        return await self.wrapped.prepare_model_request(ctx, request_context)
 
     async def after_model_request(
         self,

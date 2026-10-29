@@ -57,6 +57,7 @@ from pydantic_ai._run_context import AnchoredEvidence, get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
+    BatchModelRequests,
     Capability,
     Hooks,
     ImageGeneration,
@@ -552,6 +553,43 @@ async def test_temporal_agent_rejects_timeout() -> None:
     """The deprecated wrapper agent has no replay-safe clock, so it points to `TemporalDurability` instead."""
     with pytest.raises(UserError, match='`timeout` is not supported by the deprecated `TemporalAgent`'):
         await _legacy_migration_agent.run('hello', timeout=1)
+
+
+_batched_legacy_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(TestModel(), name='temporal_batched_agent', capabilities=[BatchModelRequests()]),
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class TemporalAgentModelWrapperWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _batched_legacy_agent.run(prompt)).output
+
+
+async def test_temporal_agent_rejects_model_wrappers(client: Client) -> None:
+    """In a workflow, the deprecated wrapper agent sends requests without the capabilities' model wrappers."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalAgentModelWrapperWorkflow],
+        activities=_batched_legacy_agent.temporal_activities,
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                TemporalAgentModelWrapperWorkflow.run,
+                args=['hello'],
+                id=f'{TemporalAgentModelWrapperWorkflow.__name__}-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+            )
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == UserError.__name__
+    assert cause.message == snapshot(
+        '`TemporalAgent` does not support capabilities that wrap the model, such as `BatchModelRequests`. '
+        'Use `TemporalDurability` instead.'
+    )
 
 
 _migration_agent: AbstractAgent[None, str] = _legacy_migration_agent
@@ -2357,6 +2395,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
                     provider_details={
                         'finish_reason': 'tool_calls',
                         'service_tier': 'default',
@@ -2409,6 +2448,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
                     provider_details={
                         'finish_reason': 'stop',
                         'service_tier': 'default',
@@ -2496,6 +2536,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
                     provider_details={
                         'finish_reason': 'tool_calls',
                         'service_tier': 'default',
@@ -2545,6 +2586,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
                     provider_details={
                         'finish_reason': 'tool_calls',
                         'service_tier': 'default',
@@ -2586,6 +2628,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
                     provider_details={
                         'finish_reason': 'stop',
                         'service_tier': 'default',
@@ -3502,6 +3545,7 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     assert sorted(field.name for field in fields(copied)) == snapshot(
         [
             '_anchored_evidence',
+            '_dispatched_tool_name',
             '_durable_operations',
             '_run_capabilities_by_id',
             '_run_held_toolsets',

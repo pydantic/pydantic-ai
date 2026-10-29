@@ -802,6 +802,13 @@ class TestAgentSpec:
         """A second instance next to `PrefixTools` needs its own `id`, so a spec has to be able to set one."""
         assert ExaSearch[None].from_spec(include_domains=['a.dev'], id='a_search').id == 'a_search'
 
+    def test_from_spec_sets_the_base_capability_fields(self) -> None:
+        """`id`, `description` and `defer_loading` live on `AbstractCapability`, so a spec must name them too."""
+        definitions = AgentSpec.model_json_schema_with_capabilities([ExaSearch])['$defs']
+        assert {'id', 'description', 'defer_loading'} <= definitions['spec_params_ExaSearch']['properties'].keys()
+        capability = ExaSearch[None].from_spec(id='second', description='The second one.', defer_loading=True)
+        assert (capability.id, capability.description, capability.defer_loading) == ('second', 'The second one.', True)
+
     def test_agent_loads_from_spec_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('EXA_API_KEY', 'test-key')
         spec = tmp_path / 'agent.yaml'

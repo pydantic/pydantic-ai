@@ -461,6 +461,15 @@ class LoadedInstructionValues:
     _changed: set[str] = field(default_factory=set[str], repr=False)
     """The capabilities whose value an instruction change delivered, rather than their load return."""
 
+    @property
+    def stated_in_history(self) -> list[str]:
+        """The loaded capabilities whose instructions an instruction change in history states, in load order.
+
+        The others are stated, if at all, by their load return, as a realtime session's loads and those from
+        earlier versions are.
+        """
+        return [capability_id for capability_id in self.values if capability_id in self._changed]
+
     @classmethod
     def of(cls, messages: Sequence[ModelMessage]) -> LoadedInstructionValues:
         """The values at the end of `messages`."""

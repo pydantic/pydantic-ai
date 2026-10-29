@@ -13,13 +13,14 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import replace
 from functools import partial
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol, Self, TypeVar, cast, runtime_checkable
 from weakref import ReferenceType, ref
 
+import anyio
 from opentelemetry.trace import get_current_span
 from pydantic_core import PydanticSerializationError
 
@@ -30,7 +31,7 @@ from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.capabilities import Instrumentation, ProcessEventStream
+from pydantic_ai.capabilities import Instrumentation, ModelFallback, ProcessEventStream
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -49,6 +50,7 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
+    StreamedResponse,
     infer_model,
 )
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -62,6 +64,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .. import _usage_attribution
+from ..models.wrapper import serving_wrapper_scope
 from ._capability_operation import (
     CapabilityBoundOperation,
     CapabilityCacheIdentity,
@@ -131,7 +134,14 @@ from ._toolset import (
     validate_dynamic_tool_args,
     wrap_tool_call_result,
 )
-from ._utils import DurableModel, StreamedModelRequestResult, consume_event_stream, managed_model_scope, unwrap_model
+from ._utils import (
+    DurableModel,
+    StreamedModelRequestResult,
+    consume_event_stream,
+    managed_model_scope,
+    mark_streamed_before_failing,
+    unwrap_model,
+)
 from ._workspace import (
     WORKSPACE_OPERATION_ID,
     DurableWorkspace,
@@ -1001,7 +1011,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     @asynccontextmanager
     async def _durable_model_scope(
-        self, model_id: str | None, run_context: RunContext[AgentDepsT]
+        self, model_id: str | None, run_context: RunContext[AgentDepsT], *, serving: bool = False
     ) -> AsyncGenerator[tuple[Model, RunContext[AgentDepsT]]]:
         """Enter a model durable unit: guard the run context, then rebuild the request's model.
 
@@ -1010,7 +1020,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         replayed on recovery or a cache hit without re-running its body, so a `ctx.enqueue()` from
         the model -- or from a `resolve_model_id` capability rebuilding it -- would be dropped.
         Models rebuilt inside the unit are owned and context-managed here; the agent's default and
-        `models=` registry instances keep their existing external lifecycle owner.
+        `models=` registry instances keep their existing external lifecycle owner. A unit that sends a model request
+        passes `serving`, so the yielded model is wrapped by the capabilities'
+        [`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model], as the core wraps it
+        outside durable execution.
         Pairing the two here means a unit can't get its model without the guard, instead of each
         engine remembering to install it per unit (Temporal has its own chokepoint in
         `deserialize_run_context`, so it doesn't use this).
@@ -1022,7 +1035,18 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 ctx.model = active_model
                 if isinstance(ctx, _RestrictedRunContext):
                     ctx._expose_field('model')  # pyright: ignore[reportPrivateUsage]
-                yield active_model, ctx
+                # The workflow side applied the capabilities' model wrappers to its own copy of the model, which
+                # doesn't send requests, so they're applied again to the model that does.
+                root_capability = ctx.root_capability
+                serving_model = (
+                    root_capability.get_wrapper_model(active_model) if serving and root_capability is not None else None
+                )
+                if serving_model is None:
+                    yield active_model, ctx
+                    return
+                # Entered around the request it sends, as the core enters it outside durable execution.
+                async with serving_wrapper_scope(serving_model, active_model) as entered:
+                    yield entered, ctx
 
     @contextmanager
     def _request_policy_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[None]:
@@ -1594,6 +1618,25 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Validate the final request and repair durability after an outer hook swaps the model."""
+        return await self._ensure_durable_model(ctx, request_context)
+
+    async def prepare_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        """Repair durability for each attempt: another attempt may be on a model a hook asked for.
+
+        [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] swaps in the requested model
+        as-is, so without this a fallback or retry attempt would call it inline in workflow code.
+        """
+        return await self._ensure_durable_model(ctx, request_context)
+
+    async def _ensure_durable_model(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
         if not self.in_durable_context:
             return request_context
 
@@ -1727,30 +1770,78 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         )
 
     async def _model_request_operation(self, params: ModelRequestParams) -> ModelResponse:
-        async with self._durable_model_scope(params.model_id, params.run_context) as (model, _):
-            response = await model.request(params.messages, params.model_settings, params.model_request_parameters)
+        response: ModelResponse | None = None
+        try:
+            async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (model, _):
+                response = await model.request(params.messages, params.model_settings, params.model_request_parameters)
+        except BaseException:
+            await self._withdraw_unreturned_response(params, response)
+            raise
         self._stamp_response(response, params.messages)
         return response
 
     async def _model_request_stream_operation(self, params: ModelRequestParams) -> ModelResponse:
-        async with self._durable_model_scope(params.model_id, params.run_context) as (model, durable_ctx):
-            async with model.request_stream(
-                params.messages, params.model_settings, params.model_request_parameters, durable_ctx
-            ) as streamed:
-                await consume_event_stream(
-                    run_context=durable_ctx,
-                    stream=streamed,
-                    handler=self._model_stream_event_handler(),
-                )
-        response = streamed.get()
+        response: ModelResponse | None = None
+        streamed: StreamedResponse | None = None
+        produced_output = False
+
+        async def events(stream: StreamedResponse) -> AsyncIterator[ModelResponseStreamEvent]:
+            nonlocal produced_output
+            async for event in stream:
+                produced_output = True
+                yield event
+
+        try:
+            async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (
+                model,
+                durable_ctx,
+            ):
+                async with model.request_stream(
+                    params.messages, params.model_settings, params.model_request_parameters, durable_ctx
+                ) as streamed:
+                    await consume_event_stream(
+                        run_context=durable_ctx,
+                        stream=events(streamed),
+                        handler=self._model_stream_event_handler(),
+                    )
+                    # Before the stream is closed, so the request is still withdrawn if closing it fails.
+                    response = streamed.get()
+                # Read again, for what closing the stream filled in.
+                response = streamed.get()
+        except BaseException as error:
+            if response is None and streamed is not None:
+                # The stream failed while it was consumed: its request may already have been submitted.
+                with suppress(Exception):
+                    response = streamed.get()
+            await self._withdraw_unreturned_response(params, response)
+            if produced_output and response is not None and isinstance(error, Exception):
+                # Its events may already have reached an event handler in the unit, so the run mustn't retry or fall
+                # back from it as from a stream that failed to open, and should count the usage of what it produced.
+                mark_streamed_before_failing(error, response)
+            raise
         self._stamp_response(response, params.messages)
         return response
+
+    async def _withdraw_unreturned_response(self, params: ModelRequestParams, response: ModelResponse | None) -> None:
+        """Withdraw a pending batch request whose unit failed after the request returned it, once it was sent.
+
+        Exiting a capability's model wrapper can fail after the request returned, and the response then never reaches
+        the run to be left for a later one or withdrawn, as the core does with a pending response a hook rejected. Like
+        that withdrawal, it's best effort and shielded, so the unit's own error is the one raised.
+        """
+        if response is None or response.state != 'suspended':
+            return
+        with anyio.CancelScope(shield=True), suppress(Exception):
+            async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (model, _):
+                # Other models' suspended jobs are left running, as when the core can't settle them.
+                if model._withdraws_rejected_suspended_response(response):  # pyright: ignore[reportPrivateUsage]
+                    await model.cancel_suspended_response(response)
 
     async def _cancel_suspended_response_operation(self, params: ModelCancelSuspendedResponseParams) -> None:
         if params.run_context is None:
             await self._cancel_suspended_response_without_run_context(params.model_id, params.response)
             return
-        async with self._durable_model_scope(params.model_id, params.run_context) as (model, _):
+        async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (model, _):
             await model.cancel_suspended_response(params.response)
 
     async def _compact_messages_operation(self, params: ModelCompactMessagesParams) -> ModelResponse:
@@ -1808,8 +1899,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost: install durable dispatch before outer before-hooks may perform model I/O,
-        # then run the final before-hook repair after every outer request rewrite.
-        return CapabilityOrdering(position='innermost')
+        # then run the final before-hook repair after every outer request rewrite. Inside `ModelFallback`,
+        # which is innermost too, so the per-attempt repair sees the model `ModelFallback` moved to.
+        return CapabilityOrdering(position='innermost', wrapped_by=(ModelFallback,))
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -1872,21 +1964,32 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         sibling [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] gets to reinterpret it.
         Instead no `'default'` is registered; every request for the default carries the raw string
         and re-resolves through the capability chain (or `infer_model`) on the worker.
+
+        An agent without a model of its own can still be bound when a capability can supply one, such as
+        [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] or
+        [`SelectModel`][pydantic_ai.capabilities.SelectModel]. Its requests then carry the model the agent
+        resolves from that capability at run time, like a request a capability moves to another model does,
+        so no `'default'` is registered.
         """
-        if agent.model is None:
+        agent_model = agent.model
+        # Which model a capability supplies may only be known once every capability has bound, or at run
+        # time, so only whether one can supply it is asked here.
+        if agent_model is None and not agent.root_capability._can_supply_model:  # pyright: ignore[reportPrivateUsage]
             raise UserError(
                 f'An agent needs to have a `model` in order to be used with {self.engine_name}, '
                 'it cannot be set at agent run time.'
             )
-        self._default_model_id = agent.model if isinstance(agent.model, str) else None
+        self._default_model_id = agent_model if isinstance(agent_model, str) else None
         default_model: Model | None
-        if isinstance(agent.model, str):
+        if agent_model is None:
+            default_model = None
+        elif isinstance(agent_model, str):
             # Only a `models=` mapping resolves the string to a concrete default here; any other
             # string defers to run-time resolution (a sibling `ResolveModelId`, this capability's
             # registry, or `infer_model`) so it's built worker-side with the run's deps.
-            default_model = self._extra_models.get(agent.model)
+            default_model = self._extra_models.get(agent_model)
         else:
-            default_model = agent.model
+            default_model = agent_model
 
         self._models_by_id = {} if default_model is None else {'default': default_model}
         for model_id, model_instance in self._extra_models.items():

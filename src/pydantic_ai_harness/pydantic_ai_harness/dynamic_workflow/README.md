@@ -4,6 +4,8 @@ Let one agent coordinate a whole team of sub-agents by writing a small Python sc
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/dynamic_workflow/)
 
+![The orchestrator agent has one tool, run_workflow. Its model writes a Python script that runs in the Monty sandbox, where each sub-agent is an async function: the script runs reviewer twice in parallel with asyncio.gather, then passes both reports to summarizer. Each call is a separate sub-agent run with its own model loop. Only the script's final value, the summary, goes back to the orchestrator's next model request.](https://pydantic.dev/docs/ai/img/harness/dynamic-workflow.svg)
+
 ## The idea
 
 Say you have a few specialist agents. One reviews code. One summarizes findings. One writes the
@@ -166,9 +168,14 @@ reads them by subscript on its own.
 
 An `output_type` can include
 [`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) so a top-level
-caller can approve tools and resume the run. A workflow script cannot do either, so the catalog
-leaves `DeferredToolRequests` out of the sub-agent's return type, and a sub-agent run that ends with
-it raises a `RuntimeError` in the script, like any other sub-agent failure.
+caller can approve tools and resume the run, or
+[`PendingModelResponse`](https://pydantic.dev/docs/ai/core-concepts/batch/#ending-a-run-while-it-waits) so
+it can check on a model request the provider is still processing later. A workflow script cannot do
+either, so the catalog leaves both out of the sub-agent's return type, and a sub-agent run that ends
+with one raises a `RuntimeError` in the script, like any other sub-agent failure. A model request
+it left pending is cancelled, best effort: a
+[batch](https://pydantic.dev/docs/ai/core-concepts/batch/) is only cancelled once no other request in
+it is still waiting.
 
 ## A complete, runnable example
 

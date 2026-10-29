@@ -24,6 +24,8 @@ Why it exists: a conversation that carries images, audio, or other `BinaryConten
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![externalize_media walks the JSON form of a message history. Each binary or text payload at or above threshold_bytes is written to a MediaStore with put and replaced by a media+sha256:// URI derived from its hash, so the same image referenced twice is stored once. restore_media reads each URI back with get and puts the original payload in place. Disk, SQLite, S3, MongoDB and PostgreSQL stores are available.](../img/harness/media.svg)
+
 ## Consumers
 
 [`StepPersistence`](step-persistence.md) uses these stores to externalize large `BinaryContent` and text parts in run snapshots through its file, sqlite, mongo, and postgres backends (see [Persisting media](step-persistence.md#persisting-media)).
@@ -105,7 +107,7 @@ lean = await externalize_media(tree, media_store=store, threshold_bytes=32_000)
 messages = ModelMessagesTypeAdapter.validate_python(await restore_media(lean, media_store=store))
 ```
 
-`externalize_media` externalizes both large `BinaryContent` and large text: any message part whose string `content` reaches `threshold_bytes` UTF-8 bytes (`TextPart`, `ThinkingPart`, a string-returning `ToolReturnPart`, a string-valued `UserPromptPart`), plus any `TextContent` element travelling inside a `UserPromptPart.content` sequence or a `ToolReturn`. The same `threshold_bytes` governs binary and text, and payloads below it stay inline. Round-trip is transparent -- `restore_media` re-inlines binary bytes and text symmetrically. `BinaryContent` `data` that is not canonical base64 stays inline, since a tool can return a dict of the same shape. If you need to key media yourself, `media_uri_for` and `parse_media_uri` give you the raw URI round-trip.
+`externalize_media` externalizes both large `BinaryContent` and large text: any message part whose string `content` reaches `threshold_bytes` UTF-8 bytes (`TextPart`, `ThinkingPart`, a string-returning `ToolReturnPart`, a string-valued `UserPromptPart`), plus any `TextContent` element travelling inside a `UserPromptPart.content` sequence or a `ToolReturn`, including a `StructuredContent`, whose rendered text is externalized while its structured `value` stays inline. The same `threshold_bytes` governs binary and text, and payloads below it stay inline. Round-trip is transparent -- `restore_media` re-inlines binary bytes and text symmetrically. `BinaryContent` `data` that is not canonical base64 stays inline, since a tool can return a dict of the same shape. If you need to key media yourself, `media_uri_for` and `parse_media_uri` give you the raw URI round-trip.
 
 The current reader restores binary markers written before text externalization. That compatibility is upgrade-only: a release that predates text externalization treats every marker as binary, so it cannot validate a snapshot containing an externalized text marker. Keep a current reader for persisted snapshots that contain those markers.
 

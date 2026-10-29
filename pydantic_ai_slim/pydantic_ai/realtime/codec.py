@@ -35,6 +35,8 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
+    SpeechTimestamp,
+    SystemPromptPart,
     ToolCallPart,
     UserContent,
 )
@@ -127,13 +129,14 @@ class TruncateOutput:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-RealtimeSessionInput = TypeAliasType('RealtimeSessionInput', 'str | BinaryContent')
+RealtimeSessionInput = TypeAliasType('RealtimeSessionInput', 'str | BinaryContent | SystemPromptPart')
 """The content types a caller feeds into [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send].
 
-Session content only, in the shared message vocabulary: a `str` is a complete text turn, and
+Session content only, in the shared message vocabulary: a `str` is a complete text turn,
 [`BinaryContent`][pydantic_ai.messages.BinaryContent] carries an image frame, WAV audio (unwrapped to
 raw PCM before it is streamed, matching the history-seeding path), or a raw PCM chunk
-(`media_type='audio/pcm'`). The session normalizes these before forwarding them to the connection.
+(`media_type='audio/pcm'`), and a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is a
+system prompt added mid-session, delivered on the provider's channel for the operator's own text. The session normalizes these before forwarding them to the connection.
 Turn-control verbs (`CommitAudio`, `ClearAudio`, `CreateResponse`, `CancelResponse`,
 `TruncateOutput`) are connection-level vocabulary driven through the dedicated `RealtimeSession`
 methods (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`), and
@@ -202,6 +205,21 @@ class OutputTranscript:
     Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
     as one cut off by a dropped connection or by closing the session.
     """
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class OutputSpeechTimestamps:
+    """When pieces of the model's speech are heard in its audio, as the provider reports them."""
+
+    timestamps: list[SpeechTimestamp]
+    """The new timestamps, relative to the start of the spoken output item's audio."""
+    _: KW_ONLY
+    item_id: str | None = None
+    """Provider item ID for the spoken output, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -435,6 +453,7 @@ RealtimeCodecEvent = TypeAliasType(
     'RealtimeCodecEvent',
     AudioDelta
     | OutputTranscript
+    | OutputSpeechTimestamps
     | InputTranscript
     | ToolCall
     | ToolCallCancelled
@@ -583,8 +602,8 @@ class RealtimeConnection(ABC):
         session instead of resuming with total amnesia. The session's history grows as the call goes on,
         hence a callable rather than a snapshot.
 
-        A no-op by default: a provider with native session resumption (Gemini Live) has nothing to
-        replay, and one that can't seed a session at all has nowhere to put it.
+        A no-op by default: a provider that can't seed a session has nowhere to put it. Gemini Live, which
+        resumes natively, replays only when a reconnect gets no resumption handle to resume from.
         """
 
     @property
@@ -691,6 +710,7 @@ __all__ = (
     # Codec events a connection yields.
     'AudioDelta',
     'OutputTranscript',
+    'OutputSpeechTimestamps',
     'InputTranscript',
     'ToolCall',
     'ToolResult',
