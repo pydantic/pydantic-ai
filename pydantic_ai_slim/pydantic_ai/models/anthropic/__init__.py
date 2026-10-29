@@ -295,12 +295,11 @@ try:
     )
     from ._computer import (
         COMPUTER_ACTION_COUNTS,
+        COMPUTER_HELD_BACK,
         COMPUTER_NOT_EXECUTED,
         COMPUTER_TOOL_BETAS,
         RETURNS_OUTPUT,
         NativeComputer,
-        computer_member,
-        map_computer_member,
     )
     from ._containers import is_tool_result_only
     from ._errors import is_expired_container_error, map_api_errors
@@ -401,6 +400,14 @@ _BATCH_UNSUPPORTED_CLIENTS = (
 # These platforms serve computer use only through the earlier beta tool versions; Claude Models on Google Cloud serves
 # the toolset like the Claude API. https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool
 _COMPUTER_BETA_TOOLS_ONLY_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicFoundry)
+_CLAUDE_5_5_MODELS = (
+    'claude-fable-5-5',
+    'claude-mythos-5-5',
+    'claude-opus-5-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+)
+"""The Claude 5.5 models, which Foundry doesn't serve with a computer use tool."""
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
 # `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
@@ -3745,6 +3752,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         The calls that ran get `OK` and what their actions returned, such as a zoom's image, and the last of
         them the screenshot, since an error result can hold only text; the failed call gets its error and the rest
         Anthropic's not-executed text. A failed or denied result doesn't say which calls ran, so each gets its text.
+        When the display restarted, or actions were held back without an error, the summary saying so goes with the
+        screenshot to the last call that ran, or to the first when none did, and the calls held back are not run.
         """
 
         def result(block: dict[str, Any], is_error: bool, *content: beta_tool_result_block_param.Content):
@@ -3767,11 +3776,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if part.outcome != 'success':
             text = BetaTextBlockParam(text=part.model_response_str(wrap_if_error=False), type='text')
             return [result(block, True, text) for block in blocks]
-        # Each member may have become several actions, such as a key sequence. A call stored before the counts were
-        # recorded is mapped again.
-        counts: list[int] = details.get(COMPUTER_ACTION_COUNTS) or [
-            len(map_computer_member(*computer_member(block, 'computer_toolset_20260801'))) for block in blocks
-        ]
+        # Each member may have become several actions, such as a key sequence.
+        counts: list[int] = details[COMPUTER_ACTION_COUNTS]
         ends = list(itertools.accumulate(counts))
         raw_metadata: Any = part.metadata
         # A result without its metadata, such as one rebuilt by a UI, reads as every call having run, and the last
@@ -3795,7 +3801,25 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 for index, block in enumerate(blocks)
             ]
         last_ran = max((index for index, end in enumerate(ends) if end <= performed), default=-1)
-        results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
+        # The display restarted, or actions were held back for that reason: `OK` alone would say they all ran.
+        held = known and error is None and performed < ends[-1]
+        if held or metadata.get('restarted'):
+            told = max(last_ran, 0)
+            results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
+            for index, block in enumerate(blocks):
+                ran = ends[index] <= performed
+                returned = (
+                    [await content_block(outputs.pop(0))] if ran and block['name'] in RETURNS_OUTPUT and outputs else []
+                )
+                if index == told:
+                    rest = [await content_block(screen)] if screen is not None else []
+                    results.append(result(block, False, await content_block(content[0]), *returned, *rest))
+                elif ran:
+                    results.append(result(block, False, BetaTextBlockParam(text='OK', type='text'), *returned))
+                else:
+                    results.append(result(block, True, BetaTextBlockParam(text=COMPUTER_HELD_BACK, type='text')))
+            return results
+        results = []
         for index, (block, count) in enumerate(zip(blocks, counts)):
             start = ends[index] - count
             if ends[index] <= performed:
@@ -4162,6 +4186,6 @@ def _computer_tool_version_for_client(
     if version != 'computer_toolset_20260801' or not isinstance(client, _COMPUTER_BETA_TOOLS_ONLY_CLIENTS):
         return version
     # The toolset models take `computer_20251124` there, but the Claude 5.5 models only on Bedrock.
-    if '-5-5' in model_name and isinstance(client, AsyncAnthropicFoundry):
+    if model_name.startswith(_CLAUDE_5_5_MODELS) and isinstance(client, AsyncAnthropicFoundry):
         return None
     return 'computer_20251124'

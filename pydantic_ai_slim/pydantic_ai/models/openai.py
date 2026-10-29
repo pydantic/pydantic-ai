@@ -46,7 +46,7 @@ from .._utils import (
     number_to_datetime,
 )
 from ..capabilities.abstract import AbstractCapability
-from ..computer_use import COMPUTER_KIND, SAFETY_CHECKS, computer_tool_name
+from ..computer_use import COMPUTER_KIND, SAFETY_CHECKS, ComputerResult, computer_tool_name
 from ..exceptions import (
     ModelConnectionError,
     ModelRequestRejectedError,
@@ -3285,6 +3285,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         instructions_override: str | None = None,
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
+        # Before trimming, as in `_build_responses_request_params`: an output acknowledges its call's checks.
+        calls = _tool_calls_by_id(messages)
         previous_response_id, messages = self._resolve_previous_response_id(
             model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
         )
@@ -3305,6 +3307,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
             previous_response_id=previous_response_id,
             standing_prompt_retained=False,
+            calls=calls,
         )
         if instructions_override is not None:
             instructions = instructions_override
@@ -3942,7 +3945,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         # Collected before the history is trimmed to what the server doesn't hold: a call's output acknowledges its
         # checks even when the call itself stays in the stored response or conversation, as OpenAI's guide shows.
-        safety_checks = _computer_safety_checks(messages)
+        calls = _tool_calls_by_id(messages)
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
         if not sends_effort_changes:
             messages = _without_model_settings_deltas(messages)
@@ -3952,7 +3955,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_settings,
             wire_request_parameters,
             previous_response_id=previous_response_id,
-            safety_checks=safety_checks,
+            calls=calls,
         )
         reasoning = self._translate_thinking(model_settings, effort_request_parameters)
 
@@ -4737,7 +4740,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         standing_prompt_retained: bool = True,
         previous_response_id: str | None = None,
-        safety_checks: dict[str, Any] | None = None,
+        calls: dict[str, ToolCallPart] | None = None,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -4840,8 +4843,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             and part.tool_kind == COMPUTER_KIND.id
                             and call_id not in replayed_call_ids
                         ):
-                            checks = (safety_checks or {}).get(part.tool_call_id)
-                            openai_messages.extend(_map_computer_call_output(part, call_id, checks))
+                            openai_messages.extend(
+                                _map_computer_call_output(part, call_id, (calls or {}).get(part.tool_call_id))
+                            )
                         elif call_id in client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
                             # Replay the local `search_tools` result as a
                             # `tool_search_output` so the provider rehydrates the
@@ -7781,19 +7785,35 @@ def _map_computer_call(
     )
 
 
-def _computer_safety_checks(messages: list[ModelMessage]) -> dict[str, Any]:
-    """The safety checks of each `computer` call in the history, by tool call ID."""
+def _tool_calls_by_id(messages: list[ModelMessage]) -> dict[str, ToolCallPart]:
+    """Each tool call in the history, by tool call ID, so a `computer` output can read its call."""
     return {
-        part.tool_call_id: checks
+        part.tool_call_id: part
         for message in messages
         if isinstance(message, ModelResponse)
         for part in message.parts
-        if isinstance(part, ToolCallPart) and (checks := (part.provider_details or {}).get(SAFETY_CHECKS))
+        if isinstance(part, ToolCallPart)
     }
 
 
+def _needs_summary(metadata: Any, call: ToolCallPart | None) -> bool:
+    """Whether a `computer` result needs its text beside the screenshot: the image alone would say the call ran.
+
+    A result without metadata, such as one a UI rebuilt, may describe a failure. A call that failed, was changed
+    before it ran, met a display that restarted, or ran fewer actions than it asked without an error says so in its
+    text.
+    """
+    if not isinstance(metadata, dict):
+        return True
+    result = cast(ComputerResult, metadata)
+    if 'error' in result or result.get('changed') or result.get('restarted'):
+        return True
+    asked: Any = call.args_as_dict().get('actions') if call else None
+    return isinstance(asked, list) and result.get('performed', 0) < len(cast(list[Any], asked))
+
+
 def _map_computer_call_output(
-    part: ToolReturnPart, call_id: str, safety_checks: Any
+    part: ToolReturnPart, call_id: str, call: ToolCallPart | None
 ) -> list[responses.ResponseInputItemParam]:
     """A `computer` result as a `computer_call_output`, followed by a user message when it needs more than an image.
 
@@ -7809,23 +7829,15 @@ def _map_computer_call_output(
             'type': 'computer_screenshot',
             'image_url': image.data_uri if image else _BLANK_SCREENSHOT,
             # `original` keeps every pixel the model clicks on (OpenAI's advice for computer use); `auto` may
-            # downscale. The SDK's types don't list `detail` yet, though the API accepts it (verified live).
-            'detail': (image.vendor_metadata or {}).get('detail', 'original') if image else 'original',  # pyright: ignore[reportAssignmentType]
+            # downscale. The SDK's types don't list `detail` yet, though the API accepts it.
+            'detail': 'original',  # pyright: ignore[reportAssignmentType]
         },
     }
-    if part.outcome == 'success' and safety_checks:
+    details = (call.provider_details if call else None) or {}
+    if part.outcome == 'success' and (safety_checks := details.get(SAFETY_CHECKS)):
         output['acknowledged_safety_checks'] = safety_checks
-    metadata: Any = part.metadata
     items: list[responses.ResponseInputItemParam] = [output]
-    # A result without metadata, such as one a UI rebuilt, may describe a failure, so its text goes along too. So does
-    # that of a call changed before it ran, which says what ran instead of the model's own actions.
-    if (
-        image is None
-        or part.outcome != 'success'
-        or not isinstance(metadata, dict)
-        or 'error' in metadata
-        or cast(dict[str, Any], metadata).get('changed')
-    ):
+    if image is None or part.outcome != 'success' or _needs_summary(part.metadata, call):
         # The output can only carry an image: say what didn't run, or why the image is blank.
         texts = [item for item in part.content_items() if isinstance(item, str)]
         note = ' '.join(texts) if texts else part.model_response_str(wrap_if_error=False)

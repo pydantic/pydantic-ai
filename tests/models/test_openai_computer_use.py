@@ -22,7 +22,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import Click, TypeText
 
@@ -201,6 +201,62 @@ async def test_an_approved_call_in_a_conversation_acknowledges_its_safety_checks
     assert output['acknowledged_safety_checks'] == [CHECK]
 
 
+async def test_compacting_a_history_with_an_approved_call_acknowledges_its_safety_checks(
+    allow_model_requests: None,
+) -> None:
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key='test'))
+    call = ToolCallPart(
+        'computer',
+        {'actions': [{'type': 'click', 'x': 5, 'y': 6}]},
+        tool_call_id='call_1',
+        provider_name='openai',
+        provider_details={
+            'safety_checks': [CHECK],
+            'computer_call': {'type': 'computer_call', 'id': 'cu_1', 'call_id': 'call_1', 'status': 'completed'},
+        },
+    )
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Go.'),
+        ModelResponse(parts=[call], provider_name='openai'),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'computer',
+                    ['Ran 1 action.', _SCREEN],
+                    tool_call_id='call_1',
+                    metadata={'performed': 1},
+                    tool_kind='computer',
+                )
+            ]
+        ),
+    ]
+    sent: dict[str, Any] = {}
+
+    async def compact(**kwargs: Any) -> Any:
+        sent.update(kwargs)
+        return resp.CompactedResponse(
+            id='resp_compact',
+            created_at=0,
+            object='response.compaction',
+            output=[resp.ResponseCompactionItem(id='comp_1', encrypted_content='summary', type='compaction')],
+            usage=resp.ResponseUsage.model_construct(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+    model.client.responses.compact = compact
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind='computer')
+    await model.compact_messages(
+        ModelRequestContext(
+            model=model,
+            messages=history,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(function_tools=[computer], allow_text_output=True),
+        )
+    )
+
+    (output,) = [item for item in sent['input'] if item.get('type') == 'computer_call_output']
+    assert output['acknowledged_safety_checks'] == [CHECK]
+
+
 @pytest.mark.parametrize(
     'settings',
     [{'openai_previous_response_id': 'auto'}, {'openai_conversation_id': 'conv_1'}],
@@ -319,6 +375,22 @@ _SCREEN = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
             'Before it ran, this call was changed to: [...]. Ran 1 action.',
             id='changed-before-it-ran',
         ),
+        # The windows the model saw are gone, and an action it asked for may have been held back.
+        pytest.param(
+            ['The display restarted since your last screenshot, so the windows that were open are gone.', _SCREEN],
+            {'performed': 0, 'restarted': True},
+            _SCREEN.data_uri,
+            'The display restarted since your last screenshot, so the windows that were open are gone.',
+            id='restarted',
+        ),
+        # Fewer actions ran than the call asked for, without an error: the rest were held back.
+        pytest.param(
+            ['No action ran.', _SCREEN],
+            {'performed': 0},
+            _SCREEN.data_uri,
+            'No action ran.',
+            id='held-back',
+        ),
     ],
 )
 async def test_a_result_goes_out_as_a_computer_call_output_and_a_note_when_the_screenshot_does_not_tell(
@@ -357,7 +429,10 @@ async def test_a_result_goes_out_as_a_computer_call_output_and_a_note_when_the_s
     (request,) = get_mock_responses_kwargs(client)
     output = next(item for item in request['input'] if item.get('type') == 'computer_call_output')
     sent = output['output']['image_url']
-    assert sent == image_url if image_url else _is_a_valid_png(sent)
+    if image_url is None:
+        assert _is_a_valid_png(sent)
+    else:
+        assert sent == image_url
     assert output['output']['detail'] == 'original'
     after = request['input'][request['input'].index(output) + 1 :]
     assert after == ([{'role': 'user', 'content': note}] if note else [])
