@@ -113,7 +113,7 @@ If you already installed the extra the error names, install the missing package 
 
 ## Model Providers
 
-### [`UserError`][pydantic_ai.exceptions.UserError]: `Native structured output is not supported by this model.`
+### [`UserError`][pydantic_ai.exceptions.UserError]: `Native structured output is not supported by this model.` {#stale-model-profiles}
 
 A new or unrecognized model can be rejected or quietly get the wrong capabilities when your installed model profiles are stale. You may instead see `Tool output is not supported by this model.`, or find that a supported setting has no effect.
 
@@ -123,7 +123,7 @@ Upgrade Pydantic AI first and check the provider prefix and model ID. Then inspe
 
 Pydantic AI keeps a list of the OpenAI models that Bedrock serves on its Converse API (the `bedrock:` prefix) and refuses the others, which AWS serves only through Bedrock Mantle (the `bedrock-mantle:` prefix). When AWS starts serving a new model on Converse, the list catches up in a release, so upgrade first: Converse support arrived for GPT-5.6 Sol, Luna and Terra in v2.45.0, for GPT-6 Sol, Luna and Astra in v2.49.0, and for GPT-6.1 Sol in v2.55.0. If the model is Mantle-only, use the `bedrock-mantle:` prefix and install the `bedrock-mantle` extra; see [OpenAI model routes](models/bedrock.md#bedrock-openai-model-routes) and [Bedrock Mantle](models/bedrock.md#bedrock-mantle).
 
-If AWS already serves the model on Converse and no release knows it yet, follow the [model profile guidance above](#usererror-native-structured-output-is-not-supported-by-this-model). The narrow override is `BedrockConverseModel(model_name, profile={'bedrock_supported_on_converse': True})`.
+If AWS already serves the model on Converse and no release knows it yet, follow the [model profile guidance above](#stale-model-profiles). The narrow override is `BedrockConverseModel(model_name, profile={'bedrock_supported_on_converse': True})`.
 
 ### [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]: `status_code: 400, model_name: ..., body: ...`
 
