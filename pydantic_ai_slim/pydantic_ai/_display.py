@@ -220,6 +220,9 @@ _INSTALLED_PACKAGE_DIRS = frozenset({'site-packages', 'dist-packages'})
 
 _UI_ADAPTER_PACKAGE = 'pydantic_ai.ui.'
 
+_EVENT_LOOP_PACKAGES = frozenset({'asyncio', 'anyio', 'trio'})
+"""Packages whose frames sit between an event loop, or a task it runs, and the code the task runs."""
+
 
 def started_by_installed_package(frame: FrameType | None) -> bool:
     """Whether the code that started an agent run is an installed package, rather than the user's own.
@@ -230,8 +233,9 @@ def started_by_installed_package(frame: FrameType | None) -> bool:
     while an installed package runs from `site-packages`, so the first frame outside Pydantic AI and
     the standard library says which of the two started the run.
 
-    Below an event loop the frames belong to whatever drives the loop (`uvicorn`, `ipykernel`), not
-    to whoever started the run, unless Pydantic AI's own sync methods drive it. A run whose starter
+    Below an event loop, or a task an `asyncio`, `anyio` or `trio` runner starts, the frames belong to
+    whatever drives the loop (`uvicorn`, `ipykernel`), not to whoever started the run, unless Pydantic
+    AI's own sync methods drive it. A run whose starter
     lies past such a boundary is not attributed to a package: it keeps the banner, as before. So
     does a run a UI adapter streams: the web framework pulling the stream is installed, but the app
     that handed it the adapter's response is the user's.
@@ -250,7 +254,7 @@ def started_by_installed_package(frame: FrameType | None) -> bool:
         if package in _OWN_PACKAGES:
             # `run_sync()` and friends drive the loop themselves, so their caller started the run.
             below_event_loop = False
-        elif package == 'asyncio':
+        elif package in _EVENT_LOOP_PACKAGES:
             below_event_loop = True
         # Checked before the standard library, which a system Python's `site-packages` sits inside.
         elif not _INSTALLED_PACKAGE_DIRS.isdisjoint(PurePath(filename).parts):

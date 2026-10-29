@@ -12,6 +12,7 @@ from importlib import metadata
 from io import StringIO
 from typing import Any
 
+import anyio
 import pytest
 from pydantic import BaseModel
 
@@ -952,6 +953,16 @@ def test_banner_is_shown_for_a_run_whose_starter_is_past_an_event_loop(
     exec(compile(source, '/venv/lib/python3.13/site-packages/some_server/loop.py', 'exec'), namespace)
 
     namespace['serve'](Agent(TestModel(), name='support_agent').run('hello'))
+
+    assert 'agent: support_agent' in stderr.getvalue()
+
+
+async def test_banner_is_shown_for_a_run_an_anyio_task_group_starts(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """`anyio` runs a task through a frame of its own, which is installed, but the user started the run."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(Agent(TestModel(), name='support_agent').run, 'hello')
 
     assert 'agent: support_agent' in stderr.getvalue()
 

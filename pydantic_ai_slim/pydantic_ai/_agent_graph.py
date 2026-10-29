@@ -2146,7 +2146,9 @@ def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDe
 
     A run an installed package started has no `display_banner` at all: see
     `_display.started_by_installed_package`. That doesn't spend the claim, so a process whose only
-    agents are a library's walks a few stack frames at the start of each uninstrumented run.
+    agents are a library's walks a few stack frames at the start of each uninstrumented run, and a
+    `run_stream_events()` stream does so when it starts whether instrumented or not, as long as no
+    banner has been shown.
 
     An instrumented run has what the banner would point it to, so it stays out of the way — without
     spending the claim, since another agent in this process may not be instrumented. `clai` differs:

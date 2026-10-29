@@ -2227,7 +2227,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # A run a library or platform started on its users' behalf gets no banner, and leaves the claim
         # for the user's own agents. Decided here, while the frames of whoever called `run()` are still
         # on the stack, and only when the run could show one: an instrumented run never does, and a
-        # process that has shown one has nothing left to decide.
+        # process that has shown one has nothing left to decide. (`run_stream_events()` walks its
+        # caller's stack before instrumentation is known; see `AgentRunEvents._ensure_started`.)
         # `run_stream_events()` runs the agent in a task of its own, so it decides in its caller's stack.
         display_banner = (
             None
