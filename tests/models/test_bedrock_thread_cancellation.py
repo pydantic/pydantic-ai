@@ -190,7 +190,7 @@ async def test_request_timeout_ends_a_stream_read_blocked_on_a_real_connection(a
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
-    client: BedrockRuntimeClient = boto3.client(
+    client: BedrockRuntimeClient = boto3.client(  # pyright: ignore[reportUnknownMemberType]
         'bedrock-runtime',
         region_name='us-east-1',
         endpoint_url=f'http://127.0.0.1:{server.getsockname()[1]}',
