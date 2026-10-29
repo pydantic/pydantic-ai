@@ -67,7 +67,7 @@ from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._lifecycle import InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, StaleEvent
+from ._lifecycle import InputId, LifecycleEvent, RealtimeFrame, ResponseEnded, ResponseStatus, StaleEvent
 from ._openai_lifecycle import OpenAILifecycle, frame_response_id
 from ._openai_protocol import (
     ACTIVE_RESPONSE_ERROR_CODE,
@@ -99,7 +99,7 @@ from ._openai_protocol import (
     config_interrupts_response_on_speech,
     connect_openai_protocol,
     expect_event,
-    is_user_message_item,
+    is_client_message_item,
     loads_obj,
     map_connect_errors,
     map_event,
@@ -130,6 +130,8 @@ from ._openai_webrtc import (
 )
 from ._utils import (
     DEFAULT_MAX_RECONNECTS,
+    SystemPromptContext,
+    SystemPromptText,
     inject_trace_context,
     reconnect_with_backoff,
     require_pcm_audio,
@@ -147,6 +149,7 @@ from .codec import (
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
+    ResponseDone,
     SessionUsage,
     TextContext,
     ToolCall,
@@ -594,7 +597,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
 
     def _history_items_sent(self, items: Sequence[dict[str, Any]]) -> None:
         """Seeded or replayed history went out on the socket: the items that join the conversation place no input."""
-        self._lifecycle.foreign_messages_sent(sum(is_user_message_item(item) for item in items))
+        self._lifecycle.foreign_messages_sent(sum(is_client_message_item(item) for item in items))
 
     @property
     def _can_reconnect(self) -> bool:
@@ -641,9 +644,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     'audio': base64.b64encode(content.data).decode('ascii'),
                 }
             )
+        elif isinstance(content, (SystemPromptText, SystemPromptContext)):
+            await self._send_text(
+                content.system_prompt, role='system', respond=isinstance(content, str), input_index=input_index
+            )
         elif isinstance(content, (str, TextContext)):
             text = content if isinstance(content, str) else content.text
-            await self._send_text(text, respond=isinstance(content, str), input_index=input_index)
+            await self._send_text(text, role='user', respond=isinstance(content, str), input_index=input_index)
         elif isinstance(content, ToolResult):
             await self._send_tool_result(content, input_index=input_index)
         elif isinstance(content, BinaryImage):
@@ -817,7 +824,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             request = self._solicit_response if solicited else self._request_response
             await request((batch.inputs[-1],), answers=batch.inputs)
 
-    async def _send_text(self, text: str, *, respond: bool, input_index: int) -> None:
+    async def _send_text(self, text: str, *, role: Literal['user', 'system'], respond: bool, input_index: int) -> None:
         self._lifecycle.message_sent(input_index)
         await self._send_event(
             {
@@ -826,7 +833,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 'item': {
                     'id': client_item_id(input_index),
                     'type': 'message',
-                    'role': 'user',
+                    'role': role,
                     'content': [{'type': 'input_text', 'text': text}],
                 },
             }
@@ -971,7 +978,17 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             reconnects = not self._session_ended and self._reconnect is not None and self._dial is not None
             if reconnects and await self._try_reconnect():
                 reconnected = RealtimeSessionReconnectEvent(state_restored=self._restores_state_on_reconnect)
-                yield [*self._take_pending_lifecycle(), reconnected]
+                lifecycle = self._take_pending_lifecycle()
+                # A response the old socket was streaming is never continued on the new one (its replay carries
+                # only finalized turns), so its `response.done` never comes. The lifecycle already ended it as
+                # lost; this terminal is the codec stream's alone, so messages queued behind the reply go out
+                # rather than waiting forever for a boundary.
+                orphaned: list[StaleEvent] = (
+                    [StaleEvent(ResponseDone(interrupted=True))]
+                    if any(isinstance(event, ResponseEnded) and event.status == 'lost' for event in lifecycle)
+                    else []
+                )
+                yield [*lifecycle, *orphaned, reconnected]
                 continue
             if reconnects:
                 # Out of attempts: no reconnect is coming any more.
@@ -1692,6 +1709,8 @@ class OpenAIRealtimeModel(RealtimeModel):
             model_name=self.model_name,
             session_config=self._webrtc_session_config(instructions, tools, model_settings),
             expires_after_seconds=expires_after_seconds,
+            # The same endpoint `answer_webrtc_offer` relays to, with the same query (Azure's `webrtcfilter=on`).
+            webrtc_url=self._webrtc_calls_url() if self.profile.get('supports_webrtc') else None,
         )
 
     async def answer_webrtc_offer(

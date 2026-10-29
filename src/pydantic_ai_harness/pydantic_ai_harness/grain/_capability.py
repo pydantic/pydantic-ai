@@ -18,15 +18,14 @@ Re-check by sending an unauthenticated POST to the endpoint.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai_harness._combine import one_per_id
-from pydantic_ai_harness._mcp import credential, per_run_connection, read_only_toolset
+from pydantic_ai_harness._mcp import credential, one_connection, per_run_connection, prefixed_toolset, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -66,8 +65,17 @@ class Grain(AbstractCapability[AgentDepsT]):
     description: str | None = _DEFAULT_DESCRIPTION
     """Routing description used when the capability is loaded on demand."""
 
-    auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
-    """A Grain access token, `'oauth'` to sign in through the browser locally, or a function of the run context that returns a token.
+    tool_prefix: str | None = 'grain'
+    """Prepended with `_` to the server's tool names, as in `grain_<tool>`, so they don't collide with other tools.
+
+    Give two instances distinct prefixes to use both. `None` keeps the names the server gives its tools.
+    """
+
+    auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
+        default=None, repr=False
+    )
+    """A Grain access token, `'oauth'` to sign in through the browser locally, or a sync or async function
+    of the run context that returns a token.
 
     Unset, it uses `GRAIN_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no Grain tools.
     """
@@ -90,7 +98,7 @@ class Grain(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
-        return one_per_id(capabilities)
+        return one_connection(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the Grain MCP tools."""
@@ -103,8 +111,8 @@ class Grain(AbstractCapability[AgentDepsT]):
         else:
             toolset = self._connect(self.auth)
         if self.read_only:
-            return read_only_toolset(toolset)
-        return toolset
+            toolset = read_only_toolset(toolset)
+        return prefixed_toolset(toolset, self.tool_prefix)
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         return MCPToolset(

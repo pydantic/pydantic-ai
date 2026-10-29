@@ -81,6 +81,88 @@ callable, picking it *calls* it — sync or async, with no arguments — so the 
 returned, the way an output function's is, and `ModelRetry` from it sends the model back for another pick. A set
 with a callable value is an `output_type` only; as a field or a parameter it raises `UserError`.
 
+## Validate Output Against Your Domain
+
+The output type's Pydantic validation checks shape. Checks that need the run's deps or I/O — an id the model returned
+must be one the app gave it, a referenced record must exist — go in an `@agent.output_validator`. Raising `ModelRetry`
+there sends the message back to the model, which corrects its output within the same run. **Domain checks belong in
+the validator, not after `run()`**: code that rejects `result.output` once the run has returned has lost the retry and
+can only start over.
+
+```python
+from dataclasses import dataclass
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, ModelRetry, RunContext
+
+
+@dataclass
+class TriageDeps:
+    open_ticket_ids: set[str]
+
+
+class Triage(BaseModel):
+    ticket_id: str
+    summary: str
+
+
+agent = Agent('openai:gpt-5.2', name='triage_agent', deps_type=TriageDeps, output_type=Triage)
+
+
+@agent.output_validator
+def check_ticket_id(ctx: RunContext[TriageDeps], output: Triage) -> Triage:
+    if output.ticket_id not in ctx.deps.open_ticket_ids:
+        raise ModelRetry(f'{output.ticket_id!r} is not an open ticket. Use one of {sorted(ctx.deps.open_ticket_ids)}.')
+    return output
+```
+
+Validators can be async, so a lookup can use a database client from deps. Look up all the ids in one query, so the
+number of queries doesn't grow with the size of the model's output:
+
+```python
+from dataclasses import dataclass
+from typing import Protocol
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, ModelRetry, RunContext
+
+
+class OrderStore(Protocol):
+    async def existing_order_ids(self, order_ids: list[str]) -> set[str]: ...
+
+
+@dataclass
+class RefundDeps:
+    orders: OrderStore
+
+
+class Refund(BaseModel):
+    order_id: str
+    reason: str
+
+
+agent = Agent('openai:gpt-5.2', name='refund_agent', deps_type=RefundDeps, output_type=list[Refund])
+
+
+@agent.output_validator
+async def check_orders_exist(ctx: RunContext[RefundDeps], output: list[Refund]) -> list[Refund]:
+    if ctx.partial_output:  # streamed runs also validate partial output; check only the final one
+        return output
+    order_ids = [refund.order_id for refund in output]
+    missing = set(order_ids) - await ctx.deps.orders.existing_order_ids(order_ids)
+    if missing:
+        raise ModelRetry(f'No orders with ids {sorted(missing)}. Refund only orders that exist.')
+    return output
+```
+
+- Each `ModelRetry` uses one output retry; the default budget is 1, raised with `retries={'output': N}` on the agent
+  or the run. When it runs out, the run raises `UnexpectedModelBehavior`.
+- The validator may return a modified output; what it returns is `result.output`.
+- When the valid ids are known as the run starts and the model must pick one, `Choices` (above) puts them in the
+  schema itself; a validator also covers ids nested in larger outputs and checks that need I/O.
+
 ## Dependency Injection
 
 Use `deps_type=...` plus `RunContext[...]` when tools or instructions need app state.
@@ -115,7 +197,9 @@ Compaction or loss of the baseline starts a new prefix from current instructions
 Use a durable operation for instruction callbacks that read external state during durable execution.
 Deferred capabilities and realtime sessions do not support this update policy.
 Leave the default `on_change='rewrite'` when prefix preservation is unnecessary.
+A `@agent.system_prompt(dynamic=True)` function is re-run for each later run of a conversation and, by default, rewrites its part in history in place, which busts the prompt cache. Prefer instructions; when a system prompt is needed (other agents continue the history), use `@agent.system_prompt(on_change='append')` (which implies `dynamic=True`): a changed value is appended as a new `SystemPromptPart` sent as `<context id="system_prompt:<name>">`, where `<name>` (the function's `__name__`, or `name=`) is visible to the model. History ties the prompt to the function's `__qualname__`, so renaming or moving the function disconnects it from existing conversations, even with `name=`.
 The deferred capability catalog and Harness `SubAgents` and `RepoContext` instructions already append their changes.
+So do MCP server instructions from `MCPToolset(..., include_instructions=True)`, keyed `toolset:<id>` (a URL toolset's `id` defaults to its hostname; durable execution needs an explicit one); stdio and in-process servers need an `id=` to append. Only enable `include_instructions` for servers you trust.
 
 ## Define Agents Declaratively with Specs
 
@@ -199,7 +283,7 @@ async def main():
 
 Deferred tool calls also surface as batch-level events: `DeferredToolRequestsEvent` (once per batch of deferred calls, before any `HandleDeferredToolCalls` handler runs) and `DeferredToolResultsEvent` (when a handler resolves requests inline). Use these to tell a frontend the run is paused waiting for approvals or external calls.
 
-To surface progress or intermediate results from an async tool into the same event stream without polluting the model's context, define a dataclass subclass of `CustomEvent` (its fields are the payload; the event name derives from the class name) and await `ctx.emit(event)`. Sync tools cannot emit events. It reaches the `event_stream_handler`, `run_stream_events()`, `iter()` streaming, and the AG-UI/Vercel AI adapters; when emitted from a tool, its `tool_call_id` and `tool_name` are auto-stamped, and consumers use `isinstance()` against the class. Code driving `agent.iter()` can inject events by awaiting `AgentRun.emit()`. The payload can't reuse the envelope's own field names: `data`, `tool_call_id`, `tool_name`, and `event_kind` are rejected at class definition.
+To surface progress or intermediate results from an async tool into the same event stream without polluting the model's context, define a dataclass subclass of `CustomEvent` (its fields are the payload; the event name derives from the class name) and await `ctx.emit(event)`. Sync tools cannot emit events. It reaches the `event_stream_handler`, `run_stream_events()`, `iter()` streaming, the AG-UI/Vercel AI adapters, and a realtime session's event stream (where events emitted from `before_run` lead the stream, and those emitted from `after_run`, after the stream has ended, aren't delivered, as in `iter()`); when emitted from a tool, its `tool_call_id` and `tool_name` are auto-stamped, and consumers use `isinstance()` against the class. Code driving `agent.iter()` can inject events by awaiting `AgentRun.emit()`. The payload can't reuse the envelope's own field names: `data`, `tool_call_id`, `tool_name`, and `event_kind` are rejected at class definition.
 
 `CustomEvent` is for application-owned code only. Code that lives inside a capability must define namespaced `CapabilityEvent` subclasses instead; emitting either family from the other's side raises `UserError`. See CAPABILITIES-AND-HOOKS.md.
 
@@ -228,21 +312,22 @@ async def process(ctx: RunContext, count: int) -> str:
 
 ## Handle Provider Failures
 
-Use `FallbackModel` when the user wants automatic provider or model failover.
+Use the `ModelFallback` capability when the user wants automatic provider or model failover. The chain is the model selected for the step (the agent's, `run(model=...)`'s, or `SelectModel`'s), then the capability's models.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.capabilities import ModelFallback
 
-fallback = FallbackModel(
-    OpenAIChatModel('gpt-5.2'),
-    AnthropicModel('claude-sonnet-4-6'),
+agent = Agent(
+    'openai:gpt-6.1-sol',
+    name='fallback_agent',
+    capabilities=[ModelFallback('anthropic:claude-fable-5-1')],
 )
-
-agent = Agent(fallback, name='fallback_agent')
 ```
+
+`fallback_on` defaults to `ModelAPIError`; it also takes exception types, exception handlers, and response handlers (`(ModelResponse) -> bool`, which reject a successful response). Each candidate gets its own `prepare_model_request` pass and native tool factory call (with the candidate as `ctx.model`), so provider-specific preparation is redone per model, and outer capabilities only see the accepted response. Use `FallbackModel` instead only outside an agent (direct model requests or a standalone `Model`).
+
+In a YAML/JSON agent spec, declare it as `- ModelFallback: [anthropic:claude-opus-5-5]`, or `- ModelFallback: {models: [...], fallback_on: [ModelRateLimitError, ModelUnavailableError]}`. A spec's `fallback_on` takes only names of `ModelAPIError` classes from `pydantic_ai.exceptions`; handlers need Python. Model names resolve lazily, so `ResolveModelId` aliases work there too.
 
 Good defaults:
 
@@ -259,7 +344,7 @@ The answering response's `failed_attempts` lists the attempts the fallback moved
 cost limits, but not in the answering response's `usage`. Neither they nor failed attempts count towards
 `UsageLimits.request_limit`, which bounds the model responses the agent acts on, not requests sent to the provider.
 
-To react to a specific kind of failure regardless of provider, catch an error category rather than inspecting status codes or provider exceptions: `ModelRateLimitError` (with `retry_after`), `ModelQuotaExceededError` (exhausted quota or billing, only when the provider says so; waiting won't help), `ModelUnavailableError` and its `ModelOverloadedError` (only when the provider says overloaded, e.g. HTTP 529), `ModelServerError` (other 5xx), `ModelConnectionError` (and its `ModelTimeoutError`), or `ModelContextWindowExceededError`. All are `ModelAPIError`s, so `FallbackModel` falls back on them by default; one that came with an HTTP status is also a `ModelHTTPError`, and a custom model can raise such a combined error with `ModelHTTPError.for_category(category, status_code=..., model_name=...)`. An error inside an already open stream gets the status the same error has before the stream opens, with `in_stream=True`, so errors don't depend on whether the request was streamed. Provider details are on `provider_error_code`, `provider_error_type`, and `body`; `retry_after` is on every `ModelAPIError`, `ModelHTTPError.provider_retry_hint` reads `x-should-retry`, and `ModelConnectionError.phase` (`'pool'`, `'connect'`, `'write'`, `'read'`) says whether the request may have reached the provider. Embedding models (`Embedder`) raise the same errors.
+To react to a specific kind of failure regardless of provider, catch an error category rather than inspecting status codes or provider exceptions: `ModelRateLimitError` (with `retry_after`), `ModelQuotaExceededError` (exhausted quota or billing, only when the provider says so; waiting won't help), `ModelUnavailableError` and its `ModelOverloadedError` (only when the provider says overloaded, e.g. HTTP 529), `ModelServerError` (other 5xx), `ModelConnectionError` (and its `ModelTimeoutError`), or `ModelRequestRejectedError` (a 400/422 or other rejection that resending unchanged won't fix) and its `ModelAuthenticationError` (401/403, bad or unauthorized credentials), `ModelNotFoundError` (404, unknown model or resource) and `ModelContextWindowExceededError`. A specific category wins over the generic rejection: a 400 context overflow is a `ModelContextWindowExceededError`, and Anthropic's out-of-credits 400 is a `ModelQuotaExceededError`, not a rejection. A retry predicate can skip permanent failures with `isinstance(e, ModelRequestRejectedError | ModelQuotaExceededError)`. All are `ModelAPIError`s, so `ModelFallback` and `FallbackModel` fall back on them by default; one that came with an HTTP status is also a `ModelHTTPError`, and a custom model can raise such a combined error with `ModelHTTPError.for_category(category, status_code=..., model_name=...)`. An error inside an already open stream gets the status the same error has before the stream opens, with `in_stream=True`, so errors don't depend on whether the request was streamed. Provider details are on `provider_error_code`, `provider_error_type`, and `body`; `retry_after` is on every `ModelAPIError`, `ModelHTTPError.provider_retry_hint` reads `x-should-retry`, and `ModelConnectionError.phase` (`'pool'`, `'connect'`, `'write'`, `'read'`) says whether the request may have reached the provider. Embedding models (`Embedder`) raise the same errors.
 
 When a completed model response omits usage, configured token or cost limits emit `UsageLimitUnavailableWarning` and return the result with known totals as lower bounds. Promote the warning to an error when the application must abort if a limit cannot be fully checked:
 
@@ -275,7 +360,8 @@ warnings.filterwarnings('error', category=UsageLimitUnavailableWarning)
 To bound how long one model can hold up the fallback, set `model_settings={'request_timeout': seconds}`. Unlike
 `timeout`, which the provider SDK applies to each attempt and re-arms on every retry, it is one deadline enforced by
 Pydantic AI over all attempts at a request to one model, and over reading a streamed response through its last chunk
-(consumer time included). Expiry raises `ModelRequestTimeout` (a `ModelAPIError`), which `FallbackModel` falls back on
-by default; each model it tries gets a fresh deadline. It applies to any model, with or without a fallback. Under
-Temporal, a plain model's deadline runs as a workflow timer that cancels the model activity; a `FallbackModel`'s
-per-model deadlines run inside the activity instead.
+(consumer time included). Expiry raises `ModelRequestTimeout` (a `ModelAPIError`), which `ModelFallback` and `FallbackModel` fall back on
+by default; each model they try gets a fresh deadline. It applies to any model, with or without a fallback. Under
+Temporal, a model's deadline runs as a workflow timer that cancels its model activity, including each model
+`ModelFallback` tries, as each attempt is an activity of its own; a `FallbackModel`'s per-model deadlines run inside
+its one activity instead.

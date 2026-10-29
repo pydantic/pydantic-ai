@@ -4,7 +4,7 @@ description: "Debug and monitor Pydantic AI agents with Pydantic Logfire or any 
 
 # Pydantic Logfire Debugging and Monitoring
 
-Once an agent is in production, its traces are how you find out why a run gave a wrong answer, took too long or cost too much. Pydantic AI emits OpenTelemetry traces of every run, model request and tool call; this page sets up [Pydantic Logfire](#pydantic-logfire) to view them, and covers [any other OpenTelemetry backend](#otel-without-logfire) too.
+While you build an agent, and once it is in production, its traces are how you find out why a run gave a wrong answer, took too long or cost too much. Pydantic AI emits OpenTelemetry traces of every run, model request and tool call; this page sets up [Pydantic Logfire](#pydantic-logfire) to view them, and covers [any other OpenTelemetry backend](#otel-without-logfire) too.
 
 Applications that use LLMs have some challenges that are well known and understood: LLMs are **slow**, **unreliable** and **expensive**.
 
@@ -21,7 +21,7 @@ LLM Observability tools that just let you understand how your model is performin
 
 ## Pydantic Logfire
 
-[Pydantic Logfire](https://pydantic.dev/logfire) is an observability platform developed by the team who created and maintain Pydantic Validation and Pydantic AI. Logfire aims to let you understand your entire application: Gen AI, classic predictive AI, HTTP traffic, database queries and everything else a modern application needs, all using OpenTelemetry.
+[Pydantic Logfire](https://pydantic.dev/logfire) is an AI engineering platform developed by the team who created and maintain Pydantic Validation and Pydantic AI. Logfire aims to let you understand your entire application: Gen AI, classic predictive AI, HTTP traffic, database queries and everything else a modern application needs, all using OpenTelemetry.
 
 !!! tip "Pydantic Logfire is a commercial product"
     Logfire is a commercially supported, hosted platform with an extremely generous and perpetual [free tier](https://pydantic.dev/pricing/).
@@ -98,6 +98,21 @@ The [Logfire documentation](https://logfire.pydantic.dev/docs/) has more details
 including how to instrument other libraries like [HTTPX](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) and [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/).
 
 Since Logfire is built on [OpenTelemetry](https://opentelemetry.io/), you can use the Logfire Python SDK to send data to any OpenTelemetry collector, see [below](#using-opentelemetry).
+
+### Use Logfire for local development, even if production uses something else {#local-development}
+
+You can use Logfire while you develop, whatever your company runs in production. Logfire's [free tier](https://pydantic.dev/pricing/) needs only a GitHub login, and setup is the two commands and two lines of code above.
+
+Pydantic AI's instrumentation is plain OpenTelemetry, so the same spans can go to your company's backend in production and to Logfire on your laptop. Tell Logfire to send only when it has a token:
+
+```python {test="skip"}
+import logfire
+
+logfire.configure(send_to_logfire='if-token-present')
+logfire.instrument_pydantic_ai()
+```
+
+On your machine, `logfire.configure()` reads the token from the `.logfire` directory that `logfire projects new` wrote, which is gitignored. A deployment without that directory or a `LOGFIRE_TOKEN` sends nothing to Logfire (`.gitignore` does not keep it out of a Docker build context, so exclude it there too), and the Logfire SDK still exports to the backend set in the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable, as shown [below](#otel). If your application sets up its own OpenTelemetry SDK in production instead, call `logfire.configure()` and `logfire.instrument_pydantic_ai()` only when developing locally, and use [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all] in production: it uses the global OpenTelemetry providers your SDK set up.
 
 ### Debugging
 
@@ -239,7 +254,7 @@ print(result.output)
 
 ### Alternative Observability backends
 
-Because Pydantic AI uses OpenTelemetry for observability, you can easily configure it to send data to any OpenTelemetry-compatible backend, not just our observability platform [Pydantic Logfire](#pydantic-logfire).
+Because Pydantic AI uses OpenTelemetry for observability, you can easily configure it to send data to any OpenTelemetry-compatible backend, not just [Pydantic Logfire](#pydantic-logfire).
 
 ## Advanced usage
 
@@ -264,7 +279,7 @@ Only an `unexpected` collapse — one that happens while the provider's document
 |-------------------|---------|-----------------|
 | `unexpected` | The retention window should still have been active, so the cached prefix most likely changed. Check for prefix changes and the provider's cache diagnostics. | Yes |
 | `ttl_expired` | The gap since the last request exceeded the provider's retention window. | No |
-| `compacted` | Provider-native compaction replaced the history before a [`CompactionPart`][pydantic_ai.messages.CompactionPart] with its summary, which shrinks the prefix by design. | No |
+| `compacted` | A [`CompactionPart`][pydantic_ai.messages.CompactionPart] (from provider-native compaction, or a summary the application or `SummarizingCompaction` wrote) replaced the history before it, which shrinks the prefix by design. A summary that replaces one with the same text and `metadata` can't be told apart from it, so give each summary you write distinct `metadata`, as `SummarizingCompaction` does. | No |
 | `unknown` | The provider publishes no retention window, so the collapse can't be attributed. | No |
 | `unreported` | The response reported no cache usage at all (see below). | No |
 

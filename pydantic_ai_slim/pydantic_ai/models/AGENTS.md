@@ -37,8 +37,11 @@ Rendering history into a request must be deterministic and must keep every messa
 ## General
 
 <!-- rule:9 -->
-- Place provider-specific code in `models/{provider}.py`, not shared modules — add functions consistently across all providers even if some are simple — Maintains clear architectural boundaries and prevents shared compatibility layers from accumulating provider-specific logic that becomes hard to maintain
-- Anthropic-only helpers with a long background live in `_anthropic_*.py` siblings (`_anthropic_containers.py`, `_anthropic_bedrock_count_tokens.py`) so a reader of `anthropic.py` is not forced through them
+- Place provider-specific code in the provider's own module (`models/{provider}.py`, or the `models/{provider}/` package), not shared modules — add functions consistently across all providers even if some are simple — Maintains clear architectural boundaries and prevents shared compatibility layers from accumulating provider-specific logic that becomes hard to maintain
+- Turn a provider module into a `models/{provider}/` package once its module-level helpers form concerns that a reader of the `Model` class can skip. `models/anthropic/` is the reference layout:
+  - `__init__.py` defines the `Model` subclass and exposes the public API. Import each public API name a submodule defines (`AnthropicStreamedResponse`, `AnthropicStaleThinkingBlockWarning`) into `__init__.py` and list it in `__all__`, along with every name the module exported before it became a package (the `*_content_ta` type adapters): the API docs render an imported name only when `__all__` lists it. Never list any other submodule helper there.
+  - Each other concern gets its own `_*.py` submodule. A function in a `_*.py` submodule has no leading underscore: the module name already marks it private.
+  - The package's own `AGENTS.md` holds the rules for that provider alone. List it in the root `AGENTS.md`.
 
 A model should read reveal modes through `self.tool_deferral_mode` and
 `self.tool_addition_mode`, never directly from the corresponding profile keys. An adapter that
@@ -47,14 +50,17 @@ implements a reveal renderer must declare its supported values in
 the safe default for adapters with no renderer.
 
 An adapter that honors `CompactionPart`s on the wire declares
-`compaction_requires_encrypted_content` and `compaction_retains_standing_prompt` and calls
-`self._trim_before_compaction()` from its own message-prep step — never `_trim_messages_before_compaction`
-directly, and never restating what those declarations imply. Each states only what the API does
+`compaction_requires_encrypted_content` and `compaction_retains_standing_prompt`, sets
+`_honors_compaction_boundaries = True`, and calls `self._trim_before_compaction()` from its own message-prep
+step — never `_trim_messages_before_compaction` directly, and never restating what those declarations imply.
+Each of the two `compaction_*` declarations states only what the API does
 (does it need the encrypted blob to honor an item; does the item keep serving the window's system
 items); turning that into trim behavior belongs to the one helper. The two are independent — today's
 two adapters happen to answer both the same way, so don't infer one from the other when adding a
-third. They belong on the adapter, not the profile: eight providers route a profile of their own
-through `OpenAIResponsesModel`, so a profile key would be absent exactly where the wire format is
+third. The flag and the call go together: the flag is what lets tool dispatch judge a compaction boundary with
+the same `accepts_stateless_artifacts` the trim used. Without it, tool dispatch falls back to matching the
+response's provider name, which can disagree with what the request kept. The declarations belong on the
+adapter, not the profile: eight providers route a profile of their own through `OpenAIResponsesModel`, so a profile key would be absent exactly where the wire format is
 most certain. Where in a request build the trim belongs stays adapter mechanics (OpenAI Responses
 resolves server-side state from the *untrimmed* history, so it keeps a separate trimmed view).
 
@@ -73,7 +79,18 @@ on that model. Reading `declared_tool_defs` and `visibility_of()` opts the adapt
 
 <!-- /braindump -->
 - When a model forwards a generic `ModelSettings` field, add it to that field's `Supported by:` list in `pydantic_ai/settings.py` and leave it out of the class's `unsupported_settings`, and give a new `Model` class a case in `tests/models/test_model_settings_support.py` — that test probes each class's outgoing request and fails when a list, the declaration and the wire disagree.
-- Narrow a capability by client class, never by the client's `base_url`. Where the gateway serves a model it must behave exactly as the provider's canonical API does, and the Pydantic AI Gateway — like an ordinary corporate proxy — reaches that API through the provider's normal SDK client carrying a proxy base URL. A host test therefore splits those callers off from the transport they actually reach and silently degrades them, which is why no capability here is decided that way. Genuinely separate transports (`AsyncAnthropicBedrock`, `AsyncAnthropicVertex`, `AsyncAnthropicFoundry`, …) are distinct client classes and earn their own gates — that is the line `isinstance` already draws. Probe the gateway leg (`Model('<id>', provider='gateway')`) rather than reasoning about it; a model the gateway genuinely does not serve belongs in `UNSUPPORTED_GATEWAY_MODEL_NAMES`, not in a carve-out that leaves the id advertised and degraded.
+- Narrow a capability by client class, never by the client's `base_url`. Where the gateway serves a model it must behave exactly as the provider's canonical API does, and the Pydantic AI Gateway — like an ordinary corporate proxy — reaches that API through the provider's normal SDK client carrying a proxy base URL. A host test therefore splits those callers off from the transport they actually reach and silently degrades them, which is why no capability here is decided that way. Genuinely separate transports (`AsyncAnthropicBedrock`, `AsyncAnthropicVertex`, `AsyncAnthropicFoundry`, …) are distinct client classes and earn their own gates. Gate on the transport (the client class, or the client's own mode such as `genai.Client.vertexai`) only in the model's `_instance_profile_defaults()` or `profile`: turn the result into a profile flag there. Where the capability is used, read only a profile flag or the adapter's own declaration. A branch that sends one feature in each transport's own wire form is mapping, not a gate. Probe the gateway leg (`Model('<id>', provider='gateway')`) rather than reasoning about it; a model the gateway genuinely does not serve belongs in `UNSUPPORTED_GATEWAY_MODEL_NAMES`, not in a carve-out that leaves the id advertised and degraded.
+- The one place a base URL is read as identity is `_canonical_system.py::stateless_artifact_system`, for history recorded before responses carried `canonical_system`: a `google` or `google-cloud` response whose `provider_url` is the *other* first-party Google transport's host gets that transport's canonical system, so its thought signatures aren't replayed where they're rejected. It only tells the two Google transports apart, it reads only their first-party hosts, and any other URL, a gateway's or a proxy's included, keeps the name-based behavior. Don't add another: new history carries `canonical_system`.
+
+## Adapter structure
+
+Each rule's precedent, and the rules for tool-call IDs, replay data, thinking, empty content, tool-return media and cache markers, are in [Provider Adapters](../../../agent_docs/provider-adapters.md). Read it before you add a part type, a native tool kind or a capability gate to an adapter.
+
+- Map each part type in its own method, called from one exhaustive dispatch per message kind. An arm of one statement stays inline. A new part type adds one arm, never a branch nested in the mapping loop.
+- Keep request-wide mapping state in a private dataclass that holds data only, unless a subclass overrides its methods.
+- Map each response wire item in one function, called from both `_process_response` and the stream.
+- Lower a part type most APIs can't render in `Model.prepare_messages`. An adapter that doesn't render it raises `_unprepared_part_error(part)` in one arm.
+- Map native tool parts through one table per adapter, from `kind` to wire name.
 
 ## `TestModel`
 

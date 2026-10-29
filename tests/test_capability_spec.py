@@ -9,6 +9,7 @@ import re
 import warnings
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -23,13 +24,16 @@ from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
+    BatchModelRequests,
     Caching,
     Capability,
+    Citations,
     FileUnderstanding,
     ImageGeneration,
     IncludeToolReturnSchemas,
     Instrumentation,
     LocalWorkspace,
+    ModelFallback,
     NativeTool,
     PrefixTools,
     RaiseContentFilterError,
@@ -94,7 +98,9 @@ def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
             'NativeTool': NativeTool,
+            'BatchModelRequests': BatchModelRequests,
             'Caching': Caching,
+            'Citations': Citations,
             'RaiseContentFilterError': RaiseContentFilterError,
             'FileUnderstanding': FileUnderstanding,
             'ImageGeneration': ImageGeneration,
@@ -102,6 +108,7 @@ def test_capability_types() -> None:
             'Instrumentation': Instrumentation,
             'LocalWorkspace': LocalWorkspace,
             'MCP': MCP,
+            'ModelFallback': ModelFallback,
             'PrefixTools': PrefixTools,
             'ReinjectSystemPrompt': ReinjectSystemPrompt,
             'SetToolMetadata': SetToolMetadata,
@@ -336,6 +343,55 @@ def test_agent_from_spec_web_fetch():
     assert cap.max_uses == 5
 
 
+def test_agent_from_spec_batch_model_requests(tmp_path: Path):
+    """A spec gives durations as seconds or ISO 8601 durations, and each agent built from it has its own pool."""
+    spec_path = tmp_path / 'agent.yaml'
+    spec_path.write_text(
+        'model: test\n'
+        'capabilities:\n'
+        '  - BatchModelRequests:\n'
+        '      max_requests: 5000\n'
+        '      max_wait: PT5M\n'
+        '      max_resubmissions: 0\n'
+        '      poll_interval: 1.5\n'
+        '      max_poll_interval: "00:20:00"\n',
+        encoding='utf-8',
+    )
+    spec = AgentSpec.from_file(spec_path)
+
+    def batching(agent: Agent[Any, Any]) -> BatchModelRequests:
+        children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+        return next(c for c in children if isinstance(c, BatchModelRequests))
+
+    first = batching(Agent.from_spec(spec))
+    assert first == BatchModelRequests(
+        max_requests=5000,
+        max_wait=timedelta(minutes=5),
+        max_resubmissions=0,
+        poll_interval=timedelta(seconds=1.5),
+        max_poll_interval=timedelta(minutes=20),
+    )
+    second = batching(Agent.from_spec(spec))
+    assert second is not first
+    assert second._pool is not first._pool  # pyright: ignore[reportPrivateUsage]
+
+    defaults = batching(Agent.from_spec({'model': 'test', 'capabilities': ['BatchModelRequests']}))
+    assert defaults == BatchModelRequests()
+    no_wait = batching(Agent.from_spec({'model': 'test', 'capabilities': [{'BatchModelRequests': {'max_wait': None}}]}))
+    assert no_wait.max_wait is None
+
+
+async def test_agent_from_spec_batch_model_requests_runs_in_a_batch():
+    agent = Agent.from_spec(
+        {'model': 'test', 'capabilities': [{'BatchModelRequests': {'max_wait': 0.001, 'poll_interval': 0.001}}]}
+    )
+    result = await agent.run('Hello')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert result.output == 'success (no tool calls)'
+    assert 'batch' in (response.provider_details or {})
+
+
 def test_agent_from_spec_mcp():
     pytest.importorskip('mcp', reason='mcp package not installed')
     agent = Agent.from_spec(
@@ -346,6 +402,7 @@ def test_agent_from_spec_mcp():
                     'MCP': {
                         'url': 'https://mcp.example.com/sse',
                         'allowed_tools': ['search'],
+                        'tool_prefix': True,
                         'native': True,
                         'id': 'search-mcp',
                         'description': 'Search MCP server.',
@@ -359,6 +416,7 @@ def test_agent_from_spec_mcp():
     cap = next(c for c in children if isinstance(c, MCP))
     assert cap.url == 'https://mcp.example.com/sse'
     assert cap.allowed_tools == ['search']
+    assert cap.tool_prefix is True
     assert cap.id == 'search-mcp'
     assert cap.description == 'Search MCP server.'
     assert cap.defer_loading is True
@@ -1053,6 +1111,7 @@ def test_model_json_schema_with_capabilities():
                         'crusoe:zai/GLM-5.1',
                         'crusoe:zai/GLM-5.2',
                         'deepseek:deepseek-chat',
+                        'deepseek:deepseek-flash',
                         'deepseek:deepseek-reasoner',
                         'deepseek:deepseek-v4-flash',
                         'deepseek:deepseek-v4-pro',
@@ -1235,6 +1294,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-6-luna',
                         'gateway/openai:gpt-6-sol',
                         'gateway/openai:gpt-6.1-sol',
+                        'gateway/openai:gpt-6.1-terra',
                         'gateway/openai:gpt-daybreak-blue-latest',
                         'gateway/openai:gpt-daybreak-red-latest',
                         'gateway/openai:gpt-rosalind-research',
@@ -1354,6 +1414,8 @@ def test_model_json_schema_with_capabilities():
                         'moonshotai:kimi-k2.7-code',
                         'moonshotai:kimi-k2.7-code-highspeed',
                         'moonshotai:kimi-k3',
+                        'moonshotai:kimi-k3.1-pro',
+                        'moonshotai:kimi-k3.1-pro-highspeed',
                         'moonshotai:kimi-latest',
                         'moonshotai:kimi-thinking-preview',
                         'moonshotai:moonshot-v1-128k',
@@ -1436,6 +1498,7 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-6-luna',
                         'openai-chat:gpt-6-sol',
                         'openai-chat:gpt-6.1-sol',
+                        'openai-chat:gpt-6.1-terra',
                         'openai-chat:gpt-daybreak-blue-latest',
                         'openai-chat:gpt-daybreak-red-latest',
                         'openai-chat:gpt-rosalind-research',
@@ -1524,6 +1587,7 @@ def test_model_json_schema_with_capabilities():
                         'openai:gpt-6-luna',
                         'openai:gpt-6-sol',
                         'openai:gpt-6.1-sol',
+                        'openai:gpt-6.1-terra',
                         'openai:gpt-daybreak-blue-latest',
                         'openai:gpt-daybreak-red-latest',
                         'openai:gpt-rosalind-research',
@@ -1720,6 +1784,7 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Thinking',
                         },
+                        'citations': {'title': 'Citations', 'type': 'boolean'},
                         'cache': {
                             'anyOf': [
                                 {'type': 'boolean'},
@@ -1974,6 +2039,25 @@ def test_model_json_schema_with_capabilities():
                     'title': 'short_spec_NativeTool',
                     'type': 'object',
                 },
+                'short_spec_ModelFallback': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'ModelFallback': {
+                            'anyOf': [
+                                {'$ref': '#/$defs/KnownModelName'},
+                                {'type': 'string'},
+                                {
+                                    'items': {'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}]},
+                                    'type': 'array',
+                                },
+                            ],
+                            'title': 'Modelfallback',
+                        }
+                    },
+                    'required': ['ModelFallback'],
+                    'title': 'short_spec_ModelFallback',
+                    'type': 'object',
+                },
                 'short_spec_MCP': {
                     'additionalProperties': False,
                     'properties': {'MCP': {'title': 'Mcp', 'type': 'string'}},
@@ -1990,6 +2074,13 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_IncludeToolReturnSchemas',
                     'type': 'object',
                 },
+                'spec_BatchModelRequests': {
+                    'additionalProperties': False,
+                    'properties': {'BatchModelRequests': {'$ref': '#/$defs/spec_params_BatchModelRequests'}},
+                    'required': ['BatchModelRequests'],
+                    'title': 'spec_BatchModelRequests',
+                    'type': 'object',
+                },
                 'spec_FileUnderstanding': {
                     'additionalProperties': False,
                     'properties': {'FileUnderstanding': {'$ref': '#/$defs/spec_params_FileUnderstanding'}},
@@ -2002,6 +2093,13 @@ def test_model_json_schema_with_capabilities():
                     'properties': {'Caching': {'$ref': '#/$defs/spec_params_Caching'}},
                     'required': ['Caching'],
                     'title': 'spec_Caching',
+                    'type': 'object',
+                },
+                'spec_Citations': {
+                    'additionalProperties': False,
+                    'properties': {'Citations': {'$ref': '#/$defs/spec_params_Citations'}},
+                    'required': ['Citations'],
+                    'title': 'spec_Citations',
                     'type': 'object',
                 },
                 'short_spec_SetToolMetadata': {
@@ -2045,6 +2143,13 @@ def test_model_json_schema_with_capabilities():
                     'properties': {'Thinking': {'$ref': '#/$defs/spec_params_Thinking'}},
                     'required': ['Thinking'],
                     'title': 'spec_Thinking',
+                    'type': 'object',
+                },
+                'spec_ModelFallback': {
+                    'additionalProperties': False,
+                    'properties': {'ModelFallback': {'$ref': '#/$defs/spec_params_ModelFallback'}},
+                    'required': ['ModelFallback'],
+                    'title': 'spec_ModelFallback',
                     'type': 'object',
                 },
                 'spec_ImageGeneration': {
@@ -2114,6 +2219,27 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_WebSearch',
                     'type': 'object',
                 },
+                'spec_params_BatchModelRequests': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'max_requests': {'title': 'Max Requests', 'type': 'integer'},
+                        'max_wait': {
+                            'anyOf': [{'format': 'duration', 'type': 'string'}, {'type': 'number'}, {'type': 'null'}],
+                            'title': 'Max Wait',
+                        },
+                        'max_resubmissions': {'title': 'Max Resubmissions', 'type': 'integer'},
+                        'poll_interval': {
+                            'anyOf': [{'format': 'duration', 'type': 'string'}, {'type': 'number'}],
+                            'title': 'Poll Interval',
+                        },
+                        'max_poll_interval': {
+                            'anyOf': [{'format': 'duration', 'type': 'string'}, {'type': 'number'}],
+                            'title': 'Max Poll Interval',
+                        },
+                    },
+                    'title': 'spec_params_BatchModelRequests',
+                    'type': 'object',
+                },
                 'spec_params_FileUnderstanding': {
                     'additionalProperties': False,
                     'properties': {
@@ -2143,6 +2269,16 @@ def test_model_json_schema_with_capabilities():
                         'messages': {'title': 'Messages', 'type': 'boolean'},
                     },
                     'title': 'spec_params_Caching',
+                    'type': 'object',
+                },
+                'spec_params_Citations': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                    },
+                    'title': 'spec_params_Citations',
                     'type': 'object',
                 },
                 'spec_XSearch': {
@@ -2216,6 +2352,71 @@ def test_model_json_schema_with_capabilities():
                         },
                     },
                     'title': 'spec_params_Thinking',
+                    'type': 'object',
+                },
+                'spec_params_ModelFallback': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'models': {
+                            'anyOf': [
+                                {'$ref': '#/$defs/KnownModelName'},
+                                {'type': 'string'},
+                                {
+                                    'items': {'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}]},
+                                    'type': 'array',
+                                },
+                            ],
+                            'title': 'Models',
+                        },
+                        'fallback_on': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'ModelAPIError',
+                                        'ModelHTTPError',
+                                        'ModelRateLimitError',
+                                        'ModelQuotaExceededError',
+                                        'ModelUnavailableError',
+                                        'ModelOverloadedError',
+                                        'ModelServerError',
+                                        'ModelConnectionError',
+                                        'ModelTimeoutError',
+                                        'ModelRequestRejectedError',
+                                        'ModelContextWindowExceededError',
+                                        'ModelAuthenticationError',
+                                        'ModelNotFoundError',
+                                        'ModelRequestTimeout',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {
+                                    'items': {
+                                        'enum': [
+                                            'ModelAPIError',
+                                            'ModelHTTPError',
+                                            'ModelRateLimitError',
+                                            'ModelQuotaExceededError',
+                                            'ModelUnavailableError',
+                                            'ModelOverloadedError',
+                                            'ModelServerError',
+                                            'ModelConnectionError',
+                                            'ModelTimeoutError',
+                                            'ModelRequestRejectedError',
+                                            'ModelContextWindowExceededError',
+                                            'ModelAuthenticationError',
+                                            'ModelNotFoundError',
+                                            'ModelRequestTimeout',
+                                        ],
+                                        'type': 'string',
+                                    },
+                                    'type': 'array',
+                                },
+                            ],
+                            'title': 'Fallback On',
+                        },
+                    },
+                    'required': ['models'],
+                    'title': 'spec_params_ModelFallback',
                     'type': 'object',
                 },
                 'spec_params_ImageGeneration': {
@@ -2375,6 +2576,10 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
                             'title': 'Allowed Tools',
                         },
+                        'tool_prefix': {
+                            'anyOf': [{'type': 'string'}, {'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Tool Prefix',
+                        },
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                     },
@@ -2390,8 +2595,12 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [
                                 {'const': 'NativeTool', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_NativeTool'},
+                                {'const': 'BatchModelRequests', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_BatchModelRequests'},
                                 {'const': 'Caching', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_Caching'},
+                                {'const': 'Citations', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_Citations'},
                                 {'const': 'RaiseContentFilterError', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                                 {'$ref': '#/$defs/short_spec_FileUnderstanding'},
@@ -2406,6 +2615,8 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/spec_LocalWorkspace'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
+                                {'$ref': '#/$defs/short_spec_ModelFallback'},
+                                {'$ref': '#/$defs/spec_ModelFallback'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
                                 {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
@@ -2621,8 +2832,12 @@ def test_model_json_schema_with_capabilities():
                         'anyOf': [
                             {'const': 'NativeTool', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_NativeTool'},
+                            {'const': 'BatchModelRequests', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_BatchModelRequests'},
                             {'const': 'Caching', 'type': 'string'},
                             {'$ref': '#/$defs/spec_Caching'},
+                            {'const': 'Citations', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_Citations'},
                             {'const': 'RaiseContentFilterError', 'type': 'string'},
                             {'$ref': '#/$defs/spec_RaiseContentFilterError'},
                             {'$ref': '#/$defs/short_spec_FileUnderstanding'},
@@ -2637,6 +2852,8 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/spec_LocalWorkspace'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
+                            {'$ref': '#/$defs/short_spec_ModelFallback'},
+                            {'$ref': '#/$defs/spec_ModelFallback'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
                             {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},

@@ -130,16 +130,18 @@ async def test_meta_keeps_sampling_params_while_reasoning(
     assert request_capture.body('/responses')['temperature'] == 0.2
 
 
-async def test_meta_thinking_false_keeps_reasoning_on(
-    allow_model_requests: None, meta_api_key: str, request_capture: RequestCapture
-):
-    """Muse can't turn reasoning off (`effort='none'` is rejected), so `thinking=False` sends no effort at all."""
-    agent = Agent(_responses_model(meta_api_key, request_capture))
+async def test_meta_thinking_false_sends_lowest_effort(allow_model_requests: None):
+    """Muse can't turn reasoning off (`effort='none'` is rejected), so `thinking=False` sends its lowest effort.
+
+    Not recorded (no Meta key at hand): `test_meta_unified_thinking_effort` records Meta accepting `'minimal'`.
+    """
+    client = MockOpenAIResponses.create_mock(response_message([_text_message('msg_1', 'OK')]))
+    agent = Agent(OpenAIResponsesModel('muse-spark-1.3', provider=MetaProvider(openai_client=client)))
 
     result = await agent.run('Reply with exactly: OK', model_settings=ModelSettings(thinking=False))
     assert result.output == snapshot('OK')
-    assert 'reasoning' not in request_capture.body('/responses')
-    assert any(isinstance(part, ThinkingPart) for part in result.all_messages()[-1].parts)
+    [request] = get_mock_responses_kwargs(client)
+    assert request['reasoning'] == snapshot({'effort': 'minimal'})
 
 
 async def test_meta_unified_thinking_effort(

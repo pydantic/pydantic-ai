@@ -9,6 +9,8 @@ description: "Let a Pydantic AI orchestrator agent coordinate subagents by writi
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The orchestrator agent has one tool, run_workflow. Its model writes a Python script that runs in the Monty sandbox, where each sub-agent is an async function: the script runs reviewer twice in parallel with asyncio.gather, then passes both reports to summarizer. Each call is a separate sub-agent run with its own model loop. Only the script's final value, the summary, goes back to the orchestrator's next model request.](../img/harness/dynamic-workflow.svg)
+
 ## The idea
 
 The usual way to coordinate sub-agents is one tool call per step. The agent calls the reviewer and waits, reads the result, calls the reviewer again, waits again, and so on. Every intermediate result travels back into the agent's context, and every step that depends on the previous one is a separate model turn.
@@ -99,7 +101,7 @@ result["value"]   # not result.value
 
 The catalog the model sees renders each output type as a `TypedDict`, so it knows the fields and reads them by subscript on its own.
 
-An `output_type` can include [`DeferredToolRequests`](../deferred-tools.md) so a top-level caller can approve tools and resume the run. A workflow script cannot do either, so the catalog leaves `DeferredToolRequests` out of the sub-agent's return type, and a sub-agent run that ends with it raises a `RuntimeError` in the script, like any other sub-agent failure.
+An `output_type` can include [`DeferredToolRequests`](../deferred-tools.md) so a top-level caller can approve tools and resume the run, or [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits) so it can check on a model request the provider is still processing later. A workflow script cannot do either, so the catalog leaves both out of the sub-agent's return type, and a sub-agent run that ends with one raises a `RuntimeError` in the script, like any other sub-agent failure. A model request it left pending is cancelled, best effort: a [batch](../batch.md) is only cancelled once no other request in it is still waiting.
 
 ## How results come back
 

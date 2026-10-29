@@ -18,6 +18,7 @@ from ...messages import (
     FinishReason as PydanticFinishReason,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelSettingsDeltaEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -36,15 +37,19 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
-from .._adapter import compaction_payload, enqueued_messages_for_client
+from .._adapter import compaction_payload, enqueued_messages_for_client, model_settings_delta_payload
 from ._utils import (
     COMPACTION_DATA_TYPE,
     DATA_CHUNK_TYPES,
     ENQUEUED_MESSAGES_DATA_TYPE,
+    MODEL_SETTINGS_DELTA_DATA_TYPE,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     dump_message_metadata,
     dump_provider_metadata,
+    dump_text_metadata,
+    iter_citation_source_chunks,
     iter_metadata_chunks,
+    merged_text_citations,
     tool_return_output,
 )
 from .request_types import RequestData
@@ -134,6 +139,11 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     `output-error` with no input announcement in between.
     """
 
+    _text_parts: list[TextPart] = field(default_factory=list[TextPart])
+    """Text parts streamed so far into the current UI text part."""
+    _source_urls: set[str] = field(default_factory=set[str])
+    """Web source URLs already emitted as `source-url` chunks, so each source is listed once per message."""
+
     @property
     def response_headers(self) -> Mapping[str, str] | None:
         return VERCEL_AI_DSP_HEADERS
@@ -212,6 +222,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             message_id = self.message_id
         else:
             message_id = self.new_message_id()
+            self._text_parts = []
             yield TextStartChunk(id=message_id, provider_metadata=provider_metadata)
 
         if part.content:
@@ -225,11 +236,12 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             yield TextDeltaChunk(id=self.message_id, delta=delta.content_delta, provider_metadata=provider_metadata)
 
     async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[BaseChunk]:
+        # Consecutive text parts stream into one UI text part, whose metadata is sent on its `text-end` chunk.
+        self._text_parts.append(part)
         if not followed_by_text:
-            provider_metadata = dump_provider_metadata(
-                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
-            )
-            yield TextEndChunk(id=self.message_id, provider_metadata=provider_metadata)
+            yield TextEndChunk(id=self.message_id, provider_metadata=dump_text_metadata(self._text_parts))
+            for chunk in iter_citation_source_chunks(merged_text_citations(self._text_parts), self._source_urls):
+                yield chunk
 
     async def handle_thinking_start(
         self, part: ThinkingPart, follows_thinking: bool = False
@@ -417,6 +429,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):
             yield chunk
+
+    async def handle_model_settings_delta(self, event: ModelSettingsDeltaEvent) -> AsyncIterator[BaseChunk]:
+        yield DataChunk(type=MODEL_SETTINGS_DELTA_DATA_TYPE, data=model_settings_delta_payload(event.part))
 
     async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[BaseChunk]:
         part = event.part

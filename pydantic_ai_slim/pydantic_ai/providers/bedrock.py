@@ -12,7 +12,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -64,6 +64,30 @@ _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE: dict[str, tuple[str, ...]] = {
     'integer': ('minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf'),
     'array': ('maxItems',),
 }
+
+# Bedrock rejects a `pattern` using lookaround or backreferences with a 400. Source: AWS docs at
+# https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html, verified against
+# `us.anthropic.claude-opus-4-7` and `qwen.qwen3-32b-v1:0` on 2026-10-29. Every escaped digit counts as a
+# backreference, octal escapes and character classes included; `(?=` inside a character class is literal.
+_REGEX_UNSUPPORTED_TOKENS = ('(?=', '(?!', '(?<=', '(?<!', '(?P=')
+
+
+def _regex_contains_unsupported_syntax(pattern: str) -> bool:
+    escaped = in_class = False
+    for i, char in enumerate(pattern):
+        if escaped:
+            if char in '0123456789':
+                return True
+            escaped = False
+        elif char == '\\':
+            escaped = True
+        elif in_class:
+            in_class = char != ']'
+        elif char == '[':
+            in_class = True
+        elif pattern.startswith(_REGEX_UNSUPPORTED_TOKENS, i):
+            return True
+    return False
 
 
 @dataclass(init=False)
@@ -119,6 +143,9 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
                     incompatible[key] = schema[key]
             if schema_type == 'array' and schema.get('minItems', 0) > 1:
                 incompatible['minItems'] = schema['minItems']
+        pattern = schema.get('pattern')
+        if isinstance(pattern, str) and _regex_contains_unsupported_syntax(pattern):
+            incompatible['pattern'] = pattern
 
         if incompatible:
             notes: list[str] = []
@@ -198,6 +225,16 @@ class BedrockModelProfile(ModelProfile, total=False):
     Default: `False` (strict — synthesize a leading user message when history starts with an
     assistant turn).
     """
+    bedrock_supports_citations: bool
+    """Whether this model returns citations for documents with citations enabled.
+
+    Other models reject a request that enables citations (`"This model doesn't support citations."`), so
+    [`citations`][pydantic_ai.settings.ModelSettings.citations] is ignored for them. Verified against
+    Bedrock `us-east-1` on 2026-10-20: Claude models return citations; Amazon Nova, Meta Llama, Mistral Pixtral and
+    DeepSeek reject the request.
+
+    Default: `False`.
+    """
     bedrock_supports_tool_result_status: bool
     """Whether this model accepts the `status` field on a `toolResult` block in Bedrock's Converse API.
 
@@ -226,7 +263,7 @@ class BedrockModelProfile(ModelProfile, total=False):
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
     - `'openai_responses'`: Uses `{'reasoning': {'effort': 'none'|'low'|'medium'|'high'|'xhigh'}}`, the Responses API
       shape that the OpenAI GPT-5.6 and GPT-6 models take on Converse.
-    - `'qwen'`: Uses `{'reasoning_config': 'low'|'high'}`
+    - `'qwen'`: Uses `{'reasoning_config': 'none'|'low'|'high'}`
     - `'xai'`: Uses `{'reasoning': {'effort': 'low'|'medium'|'high'|'xhigh'}}`
     - `None`: No unified thinking support.
 
@@ -286,11 +323,11 @@ class BedrockModelProfile(ModelProfile, total=False):
 
     Bedrock rejects a `cachePoint` directly after some document blocks, so it can't always go at the end:
 
-    - `'anthropic'`: a `cachePoint` may follow a PDF, so it's appended, for a `CachePoint` too. Bedrock renders
-      documents of every other format as text, moves them to the front of the message unless a `cachePoint`
+    - `'anthropic'`: a `cachePoint` may follow a PDF or a document with citations on, so it's appended, for a
+      `CachePoint` too. Bedrock renders documents of every other format as text, moves them to the front of the message unless a `cachePoint`
       precedes them, and rejects a `cachePoint` after them. When the message has no earlier `cachePoint`, an
       automatic `bedrock_cache_messages` cache point goes at the end, with such trailing documents moved ahead of
-      the block before them, unless that's a PDF: the rendered prompt is unchanged, and matches the next request's,
+      the block before them, unless that's a PDF or a document with citations on: the rendered prompt is unchanged, and matches the next request's,
       which no longer has this `cachePoint`, so that request reads the cache.
     - `None`: the `cachePoint` goes before the trailing documents and videos.
 
@@ -334,6 +371,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             # accepts text and images alongside it. See https://github.com/pydantic/pydantic-ai/issues/6081.
             bedrock_tool_result_colocatable_content=frozenset({'text', 'image'}),
             bedrock_supports_leading_assistant_message=True,
+            bedrock_supports_citations=True,
             bedrock_thinking_variant='anthropic',
             bedrock_supports_adaptive_thinking=supports_adaptive,
             bedrock_supports_effort=supports_effort,
@@ -355,6 +393,8 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
         ),
+        # Converse compiles Claude's strict schemas with Anthropic's limits, verified live.
+        AnthropicModelProfile(anthropic_enforces_strict_schema_limits=True),
     )
 
 
@@ -441,15 +481,15 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Qwen model used via Bedrock."""
     models_that_support_structured_output = ('qwen3',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    # Bedrock-Converse exposes only `reasoning_config ∈ {low, high}` for Qwen3 — no disable value.
-    supports_reasoning = 'qwq' in model_name or 'qwen3' in model_name
+    # Converse takes `reasoning_config` as `none`, `low`, `medium`, or `high`, and Qwen3 reasons only when asked to, so
+    # thinking can be turned off. Qwen3-Coder returns no reasoning at any level.
+    supports_reasoning = ('qwq' in model_name or 'qwen3' in model_name) and 'qwen3-coder' not in model_name
     return merge_profile(
         _strip_builtin_tools(qwen_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_supports_leading_assistant_message=True,
             bedrock_thinking_variant='qwen',
             supports_thinking=supports_reasoning,
-            thinking_always_enabled=supports_reasoning,
             json_schema_transformer=(
                 _BedrockJsonSchemaTransformerWithoutContains
                 if supports_structured_output
@@ -624,7 +664,7 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     # Keep other proprietary GPT models gated until their Converse support is confirmed.
     if not model_name.startswith('gpt-oss'):
         return BedrockModelProfile(bedrock_supported_on_converse=False)
-    # Converse rejects `reasoning_effort='none'` — mark always-on.
+    # Converse rejects `reasoning_effort='none'`, so gpt-oss can't turn reasoning off.
     return BedrockModelProfile(
         bedrock_thinking_variant='openai',
         supports_thinking=True,
@@ -641,6 +681,12 @@ class BedrockProvider(Provider[BaseClient]):
 
     @property
     def name(self) -> str:
+        return 'bedrock'
+
+    @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing signed reasoning. `BedrockConverseModel`
+        # reports `'anthropic'` for Claude models instead, whose thinking signatures the Anthropic API verifies.
         return 'bedrock'
 
     @property

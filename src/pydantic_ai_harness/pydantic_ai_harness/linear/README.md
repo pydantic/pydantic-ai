@@ -4,6 +4,8 @@ Let an agent read and change Linear issues, projects, teams, and comments throug
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![Inside your agent, the Linear capability connects to Linear's hosted MCP server with a bearer token, and the model sees the server's tools under the linear_ prefix, such as linear_list_issues. Your auth function returns the token for each run from its deps. With read_only=True the capability connects to the read-only endpoint, mcp.linear.app/mcp/readonly, instead of mcp.linear.app/mcp.](https://pydantic.dev/docs/ai/img/harness/linear.svg)
+
 ## Install and connect
 
 uv:
@@ -38,7 +40,7 @@ print(result.output)
 | Not set, `None`, or `''` | `LINEAR_ACCESS_TOKEN`. If that is not set either, creating the agent raises an error. |
 | An API key or OAuth token | That token, for every run. |
 | `'oauth'` | The account you sign in to through the browser. This only works on your own machine. |
-| A function | Called at the start of each run. The token it returns is used for that run. If it returns `None` or `''`, that run has no Linear tools. A function never uses `LINEAR_ACCESS_TOKEN`, and must not return `'oauth'`. |
+| A function | Called at the start of each run, and can be async. The token it returns is used for that run. If it returns `None` or `''`, that run has no Linear tools. A function never uses `LINEAR_ACCESS_TOKEN`, and must not return `'oauth'`. |
 
 A fixed token or `LINEAR_ACCESS_TOKEN` suits a script or an agent on your own machine, where every run is the same account.
 
@@ -65,17 +67,29 @@ agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Linear(auth=li
 
 Each run opens its own connection. `read_only=True` still applies to every run.
 
-Your app obtains, stores, and refreshes each user's token: a Linear API key the user pastes, or an access token from your own Linear OAuth flow. Load it into the deps before the run, asynchronously if you need to. The `auth` function itself is sync and only reads it.
+Your app obtains, stores, and refreshes each user's token: a Linear API key the user pastes, or an access token from your own Linear OAuth flow. Put it in the deps before the run, or load it in an async `auth` function.
 
 With durable execution such as Temporal, read the token from the run's deps, not a global: the function may run in another process.
 
 ## Multiple connections
 
-The capability's `id` defaults to `linear`, so `defer_loading=True` works without one. `None` and `''` also mean `linear`. To use two Linear accounts in one agent, give each `Linear` its own `id` and wrap them in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since their tool names are the same. Two with the same `id` but different settings raise when the agent is built.
+The capability's `id` defaults to `linear`, so `defer_loading=True` works without one. With `None` or `''` it still connects under `linear`, but that `Linear` is not combined with others. To use two Linear accounts in one agent, give each `Linear` its own `id` and `tool_prefix`. Two with the same `id` but different settings raise when the agent is built.
 
 ## Provider settings
 
 `read_only=True` connects to Linear's read-only endpoint instead of the full one. OAuth token scopes can limit access further.
+
+## Tool names
+
+The agent sees each of the server's tools under the `linear_` prefix, as in `linear_list_issues`, so they don't collide with other tools on the agent. Set `tool_prefix` to use a different prefix, or `tool_prefix=None` to keep the names the server gives them.
+
+`read_only` selects tools by what the server marks as read-only, not by name, so the prefix does not change what it keeps. A [toolset wrapper](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/) on `capability.get_toolset()`, such as `filtered()`, sees the names the agent sees, prefix included.
+
+## Upgrading
+
+`Linear` used to give the agent the server's tool names unprefixed. A tool such as `list_issues` now reaches the agent as `linear_list_issues`. Code that refers to them by name, such as a `filtered()` wrapper, an approval rule, or a `ToolGuardrail(tools=[...])`, needs the new names. A rule that no longer matches stops applying, so an approval rule or guardrail that named an old tool lets its calls through without approval or checks until you update it. Pass `tool_prefix=None` to keep the old names. If you wrapped `Linear` in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) to avoid collisions, you can drop the wrapper and set `tool_prefix` instead; keeping it adds both prefixes.
+
+- **Durable runs in flight.** A Temporal or DBOS run replays the model responses it recorded, and their tool calls use the old names, so a run started before the change that calls a `Linear` tool after it no longer replays. Activity and step names come from the capability's `id`, which is unchanged. Let those runs finish, keep `tool_prefix=None` until they have, or deploy the change with [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) or a new DBOS application version.
 
 ## Tool selection and approval
 
@@ -104,7 +118,7 @@ Pass `client` (a FastMCP client or transport) to control the connection yourself
 
 The server's own instructions, including those of a `client`'s server, are added to the agent's instructions. Pass `include_instructions=False` to leave them out.
 
-A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections whose tool names overlap, give them distinct `id`s and add [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/).
+A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections, give each a distinct `id` and `tool_prefix`.
 
 ## Telemetry
 

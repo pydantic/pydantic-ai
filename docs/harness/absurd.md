@@ -15,6 +15,8 @@ a task the capability is transparent.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![An agent named analyst runs inside an Absurd task handler. On the first attempt its model request and its tool call each finish and are saved to Postgres as Absurd steps, named analyst__model.request and analyst__function_toolset__{id}.call_tool:{tool}; then the worker crashes during the next model request, which is not saved. Absurd retries the task: the handler runs from the top, the two saved steps return their stored results without calling the model or the tool, and only the unfinished model request runs live.](../img/harness/absurd.svg)
+
 ## Installation
 
 ```bash
@@ -103,6 +105,10 @@ These are not checkpointed and run again on replay:
   `UserError`; register them on the agent instead. `ExternalToolset` is allowed.
 - Streaming inside a task is not live: the model stream is consumed inside the step, then its
   final response is replayed to the caller, one event per part.
+- Under [`BatchModelRequests`](../batch.md#durable-execution), submitting a request and each check on its batch are
+  steps, but the waits between checks are plain sleeps: the task has to keep running for as long as
+  the batch takes, within its claim timeout, and a recovered run sleeps again through the waits it
+  already did.
 
 ## Parallel execution
 

@@ -16,11 +16,13 @@ from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEv
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
 from pydantic_clai2.builtin_plugins.coder import DEFAULT_SKILL_FOLDERS, CoderSettings
+from pydantic_clai2.builtin_plugins.compaction import CompactionPlugin
 from pydantic_clai2.builtin_plugins.day_ai import DayAISource
 from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettings, LogfireSource
 from pydantic_clai2.builtin_plugins.logfire_mcp import LogfireMCPSettings
 from pydantic_clai2.builtin_plugins.notion import NotionSource
 from pydantic_clai2.builtin_plugins.ordinal import OrdinalSource
+from pydantic_clai2.builtin_plugins.workspaces import WorkspacesSettings, WorkspacesSource
 from pydantic_clai2.commands import Commands, config_command, plugins_command
 from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, Settings, features
 from pydantic_clai2.config.api_keys import KeyReference
@@ -31,6 +33,7 @@ from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
+from tests.clai2.dialog_script import ScriptedDialogs, Type
 from tests.clai2.test_logfire import Recorder, observability_loader, recorder as recorder
 
 
@@ -285,6 +288,8 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load().update_channel == 'stable'
     # Databases from before grouped tool calls keep one line per call.
     assert store.load().tool_calls == 'detailed'
+    # Older databases show the model in delegated-task rows unless the user turns it off.
+    assert store.load().task_models is True
     # Databases from before `/system_prompt` add no instructions of the user's own.
     assert store.load().instructions == ''
     assert store.overrides() == {'model': 'test', 'display.thinking': False}
@@ -305,6 +310,18 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     with closing(sqlite3.connect(path)) as connection:
         assert list(connection.iterdump()) == snapshot
         assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+
+
+def test_task_model_display_preference_survives_reopen(tmp_path: Path) -> None:
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    assert store.load().task_models is True
+    store.set('display.task_models', False)
+    reopened = SettingsStore(path)
+    assert reopened.load().task_models is False
+    assert reopened.overrides() == {'display.task_models': False}
+    reopened.reset('display.task_models')
+    assert SettingsStore(path).load().task_models is True
 
 
 @pytest.mark.parametrize('value_json', ['false', 'true'])
@@ -870,6 +887,60 @@ async def test_saved_skill_folders_load_in_builds_with_and_without_the_feature(
     await loader.close('exit')
 
 
+@pytest.mark.parametrize(
+    ('stored', 'supported', 'background_start'),
+    [
+        ('{"threshold": 0.7}', True, None),
+        ('{"threshold": 0.7, "background_compaction": true, "background_start": 0.9}', True, 0.9),
+        ('{"threshold": 0.7, "background_compaction": true, "background_start": 0.9}', False, None),
+    ],
+    ids=['saved-before-background-compaction', 'this-build', 'build-without-background-compaction'],
+)
+async def test_saved_background_compaction_loads_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stored: str, supported: bool, background_start: float | None
+) -> None:
+    """A `compaction` saved before background compaction keeps it off; a build lacking the feature drops it."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'compaction',
+                '{"id": "compaction", "factory": "pydantic_clai2.builtin_plugins.compaction", "enabled": true, '
+                f'"settings": {stored}}}',
+            ),
+        )
+    if 'background' in stored:
+        requires = frozenset({'compaction-background'})
+        store.save_plugin(
+            store.plugins()[0], requires={'background_compaction': requires, 'background_start': requires}
+        )
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'compaction-background'})
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    [entry] = [entry for entry in loader.entries() if entry.name == 'compaction']
+    assert entry.loaded is not None and isinstance(entry.loaded.plugin, CompactionPlugin)
+    chain = entry.loaded.plugin.chain
+    assert (chain.max_fraction, chain.background_start) == (0.7, background_start)
+    assert entry.ignored == (
+        None
+        if supported
+        else 'compaction: ignored saved background_compaction, background_start (needs compaction-background); '
+        'using defaults.'
+    )
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
 @pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'build-without-disabled-skills'])
 async def test_saved_disabled_skills_load_in_builds_with_and_without_the_feature(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
@@ -931,6 +1002,60 @@ async def test_saved_disabled_skills_load_in_builds_with_and_without_the_feature
     await loader.close('exit')
 
 
+@pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'build-without-task-control'])
+async def test_saved_task_control_loads_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
+) -> None:
+    """A `coder` saved before `task_control` existed has it on; a build lacking the feature drops a saved value."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id": "coder", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "task_control": false}}',
+            ),
+        )
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'older',
+                '{"id": "older", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false}}',
+            ),
+        )
+    store.save_plugin(store.plugins()[0], requires={'task_control': frozenset({'coder-task-control'})})
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'coder-task-control'})
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    entries = {entry.name: entry for entry in loader.entries() if entry.name in {'coder', 'older'}}
+    # Through the host: an earlier `loader.reload('coder')` in this process may have replaced the module's class.
+    loaded = {
+        name: entry.loaded.plugin.host.settings(CoderSettings)
+        for name, entry in entries.items()
+        if entry.loaded is not None
+    }
+    assert {name: (settings.repo_context, settings.task_control) for name, settings in loaded.items()} == {
+        'coder': (False, not supported),
+        'older': (False, True),
+    }
+    assert entries['coder'].ignored == (
+        None if supported else 'coder: ignored saved task_control (needs coder-task-control); using defaults.'
+    )
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
 @pytest.mark.parametrize(
     ('name', 'previous', 'saved'),
     [
@@ -970,3 +1095,99 @@ async def test_automatic_sign_in_saved_by_older_builds_means_the_browser(
         assert [plugin.settings for plugin in store.plugins()] == [saved]
     finally:
         await loader.close('exit')
+
+
+async def test_a_workspace_kind_keeps_the_model_older_builds_saved() -> None:
+    """A kind's `model`, which builds that ran each workspace's own CLAI read, survives editing other settings."""
+    saved: list[dict[str, JsonValue]] = []
+    host = PluginHost[None](
+        name='workspaces',
+        console=Console(file=io.StringIO()),
+        settings={'kinds': {'local-worktree': {'model': 'openai:gpt-5'}}},
+        save_settings=saved.append,
+    )
+    source = WorkspacesSource(host)
+    rows = {row.key: row for row in source.rows()}
+    assert 'local-worktree.model' not in rows, 'the menu no longer offers it'
+    source.apply(rows['local-worktree.teardown'], 'keep')
+    source.reset(rows['local-worktree.teardown'])
+    assert await source.add(ScriptedDialogs([Type(text='docs')])) == ['Added workspace kind docs.']
+    models = [WorkspacesSettings.model_validate(settings).kinds['local-worktree'].model for settings in saved]
+    assert models == ['openai:gpt-5'] * 3
+
+
+@pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'older-build'])
+@pytest.mark.parametrize('review_supported', [True, False])
+async def test_delegate_models_survive_feature_downgrade_and_unrelated_edits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool, review_supported: bool
+) -> None:
+    from pydantic_clai2.builtin_plugins.coder import CoderSource
+
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id":"coder","factory":"pydantic_clai2.builtin_plugins.coder","enabled":true,'
+                '"settings":{"repo_context":false,"skill_folders":[],"review_agent":true,"delegate_models":'
+                '{"review-light":{"model":"chain:review-light","settings":{"thinking":"high"}}}}}',
+            ),
+        )
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'older',
+                '{"id":"older","factory":"pydantic_clai2.builtin_plugins.coder","enabled":true,'
+                '"settings":{"repo_context":false,"skill_folders":[]}}',
+            ),
+        )
+    store.save_plugin(
+        store.plugins()[0],
+        requires={
+            'delegate_models': frozenset({'coder-delegate-models'}),
+            'review_agent': frozenset({'coder-review-agent'}),
+        },
+    )
+    original = store.plugins()[0].settings['delegate_models']
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'coder-delegate-models'})
+    if not review_supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'coder-review-agent'})
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+    await loader.load_all()
+    entries = {entry.name: entry for entry in loader.entries()}
+    loaded = entries['coder'].loaded
+    old = entries['older'].loaded
+    assert loaded is not None and old is not None
+    assert bool(loaded.plugin.host.settings(CoderSettings).delegate_models) is supported
+    assert loaded.plugin.host.settings(CoderSettings).review_agent is review_supported
+    assert old.plugin.host.settings(CoderSettings).delegate_models == {}
+    assert old.plugin.host.settings(CoderSettings).review_agent is False
+    source = CoderSource(loaded.plugin.host)
+    unrelated = next(row for row in source.rows() if row.key == 'unrestricted_filesystem')
+    source.apply(unrelated, 'true')
+    source.reset(unrelated)
+    assert store.plugins()[0].settings['delegate_models'] == original
+    assert store.plugins()[0].settings['review_agent'] is True
+    if supported:
+        row = next(row for row in source.rows() if row.key == 'delegate_models')
+        saved = store.plugins()
+        with pytest.raises(ValidationError):
+            source.apply(row, '{"review-light":{"model":"chain:review-light","settings":{"thinking":"bad"}}}')
+        assert store.plugins() == saved
+    if review_supported:
+        row = next(row for row in source.rows() if row.key == 'review_agent')
+        saved = store.plugins()
+        with pytest.raises(ValidationError):
+            source.apply(row, '"true"')
+        assert store.plugins() == saved
+    await loader.close('exit')
+    reopened = SettingsStore(store.path)
+    assert reopened.plugins()[0].settings['delegate_models'] == original
+    assert reopened.plugins()[0].settings['review_agent'] is True

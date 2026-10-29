@@ -22,6 +22,7 @@ from browser_use.agent.service import (
 )
 from browser_use.browser import BrowserProfile, BrowserSession
 from browser_use.browser.events import NavigateToUrlEvent
+from browser_use.browser.profile import DOMAIN_OPTIMIZATION_THRESHOLD
 from browser_use.browser.session import ResilientEventBus
 from browser_use.browser.watchdogs.security_watchdog import SecurityWatchdog
 from browser_use.llm.messages import BaseMessage
@@ -111,6 +112,10 @@ class _Pins(BaseModel):
     owner: str
     pins: list[int]
     active: bool
+
+
+class _Balances(BaseModel):
+    by_account: dict[str, int]
 
 
 class _Typed(BaseModel):
@@ -1295,6 +1300,52 @@ class TestSensitiveDataSafety:
 
         assert result == 'typed <secret>x_password</secret>, not <secret>x_password</secret>'
 
+    @pytest.mark.parametrize(
+        ('agent', 'output_schema', 'expected'),
+        [
+            pytest.param(
+                _FakeBrowserAgent(_FakeHistory(result='hunter2 was refused', success=False)),
+                None,
+                'The browser agent could not fully complete the task. '
+                'Its final result: <secret>x_password</secret> was refused',
+                id='unsuccessful-answer',
+            ),
+            pytest.param(
+                _FakeBrowserAgent(_FakeHistory(result='hunter2 worked', success=True)),
+                _Facts,
+                '<secret>x_password</secret> worked',
+                id='schema-without-structured-output',
+            ),
+        ],
+    )
+    async def test_secret_values_are_redacted_from_every_result_form(
+        self,
+        kill_calls: list[BrowserSession],
+        agent: _FakeBrowserAgent,
+        output_schema: type[BaseModel] | None,
+        expected: str,
+    ) -> None:
+        capability = BrowserUse[None](
+            output_schema=output_schema,
+            sensitive_data={'https://safe.example': {'x_password': 'hunter2'}},
+            browser_agent=lambda request: agent,
+        )
+
+        assert await capability.get_toolset().browse_web(_ctx(), 'task') == expected
+
+    async def test_a_secret_split_across_step_errors_is_redacted(self, kill_calls: list[BrowserSession]) -> None:
+        history = _FakeHistory(step_errors=['typed hunter', '2 then gave up'])
+        capability = BrowserUse[None](
+            sensitive_data={'https://safe.example': {'x_password': 'hunter; 2'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert result == (
+            'The browser agent stopped without producing a result (typed <secret>x_password</secret> then gave up).'
+        )
+
     async def test_secret_values_are_redacted_from_step_errors(self, kill_calls: list[BrowserSession]) -> None:
         history = _FakeHistory(step_errors=['typed hunter2 into a field that rejected it'])
         capability = BrowserUse[None](
@@ -1308,6 +1359,53 @@ class TestSensitiveDataSafety:
             'The browser agent stopped without producing a result '
             '(typed <secret>x_password</secret> into a field that rejected it).'
         )
+
+    async def test_url_encoded_secret_values_are_redacted(self, kill_calls: list[BrowserSession]) -> None:
+        """A blocked `search` reports the URL it built, with the value encoded by `quote_plus`."""
+        history = _FakeHistory(
+            step_errors=[
+                'Failed to search duckduckgo for "p@ss word": Navigation to non-allowed URL: '
+                'https://duckduckgo.com/?q=p%40ss+word',
+            ]
+        )
+        capability = BrowserUse[None](
+            sensitive_data={'https://safe.example': {'x_password': 'p@ss word'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert result == (
+            'The browser agent stopped without producing a result (Failed to search duckduckgo for '
+            '"<secret>x_password</secret>": Navigation to non-allowed URL: '
+            'https://duckduckgo.com/?q=<secret>x_password</secret>).'
+        )
+
+    async def test_a_value_equal_to_another_secret_s_encoding_keeps_its_own_placeholder(
+        self, kill_calls: list[BrowserSession]
+    ) -> None:
+        """`p%40ss+word` is `b` itself and `a` URL-encoded; the secret whose value it is names it."""
+        history = _FakeHistory(step_errors=['typed p%40ss+word'])
+        capability = BrowserUse[None](
+            sensitive_data={'https://safe.example': {'a': 'p@ss word', 'b': 'p%40ss+word'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert result == 'The browser agent stopped without producing a result (typed <secret>b</secret>).'
+
+    async def test_secret_with_a_lone_surrogate_is_redacted(self, kill_calls: list[BrowserSession]) -> None:
+        """`os.environ` decodes invalid UTF-8 as lone surrogates, which strict URL encoding cannot encode."""
+        history = _FakeHistory(step_errors=['typed hunter\udcff2'])
+        capability = BrowserUse[None](
+            sensitive_data={'https://safe.example': {'x_password': 'hunter\udcff2'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert result == 'The browser agent stopped without producing a result (typed <secret>x_password</secret>).'
 
     async def test_a_secret_in_a_non_string_schema_field_keeps_the_json_valid(
         self, kill_calls: list[BrowserSession]
@@ -1324,6 +1422,27 @@ class TestSensitiveDataSafety:
         result = await capability.get_toolset().browse_web(_ctx(), 'task')
 
         assert json.loads(result) == {'owner': 'me', 'pins': ['<secret>x_pin</secret>', 5678], 'active': True}
+
+    async def test_schema_keys_that_redact_to_the_same_placeholder_ask_for_a_retry(
+        self, kill_calls: list[BrowserSession]
+    ) -> None:
+        """Domain-scoped secrets can share a placeholder, so two keys can redact alike; neither is dropped silently."""
+        balances = _Balances(by_account={'one': 1, 'two': 2, 'other': 3})
+        history = _FakeHistory(result=balances.model_dump_json(), success=True, structured=balances)
+        capability = BrowserUse[None](
+            output_schema=_Balances,
+            sensitive_data={'https://a.example': {'x_account': 'one'}, 'https://b.example': {'x_account': 'two'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        with pytest.raises(ModelRetry) as caught:
+            await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert caught.value.message == (
+            'The browser agent finished, but more than one key in its result redacts to '
+            '`<secret>x_account</secret>`, so redacting it would drop an entry. '
+            'Ask for a result that is not keyed by secret values.'
+        )
 
     async def test_secret_values_are_redacted_from_schema_json(self, kill_calls: list[BrowserSession]) -> None:
         """JSON escapes a `"` in the value, so the escaped form is redacted too."""
@@ -1676,6 +1795,13 @@ class TestAgentSpec:
         assert capability.agent_settings is None
         assert capability.browser_agent is None
 
+    def test_from_spec_sets_the_base_capability_fields(self) -> None:
+        """`id`, `description` and `defer_loading` live on `AbstractCapability`, so a spec must name them too."""
+        definitions = AgentSpec.model_json_schema_with_capabilities([BrowserUse])['$defs']
+        assert {'id', 'description', 'defer_loading'} <= definitions['spec_params_BrowserUse']['properties'].keys()
+        capability = BrowserUse[None].from_spec(id='second', description='The second one.', defer_loading=True)
+        assert (capability.id, capability.description, capability.defer_loading) == ('second', 'The second one.', True)
+
     def test_agent_loads_from_spec_file(self, tmp_path: Path) -> None:
         spec = tmp_path / 'agent.yaml'
         spec.write_text('model: test\ncapabilities:\n  - BrowserUse:\n      max_steps: 5\n')
@@ -1894,6 +2020,65 @@ class TestLocalFileNavigation:
         """At 100 entries browser-use converts the list to a set, which no normalized entry matches."""
         with pytest.raises(ValueError, match='by exact hostname only'):
             BrowserUse[None](allowed_domains=[f'site{index}.com' for index in range(50)])
+
+    @pytest.mark.parametrize('block_ip_addresses', [False, True])
+    def test_a_prohibited_list_browser_use_would_match_by_exact_hostname_is_rejected(
+        self, block_ip_addresses: bool
+    ) -> None:
+        """At 100 entries, the harness's own rules included, browser-use would drop every glob, `file://` too."""
+        rules = [*_LOCAL_FILE_RULES, *(['localhost', 'localhost.*', '*.localhost'] if block_ip_addresses else [])]
+        entries = DOMAIN_OPTIMIZATION_THRESHOLD - len(rules)
+        profile = BrowserProfile(prohibited_domains=[f'site{index}.com' for index in range(entries)])
+        with pytest.raises(ValueError, match=f'grows to {DOMAIN_OPTIMIZATION_THRESHOLD} entries'):
+            BrowserUse[None](browser_profile=profile, block_ip_addresses=block_ip_addresses)
+
+    async def test_a_prohibited_list_below_the_threshold_still_refuses_files(self) -> None:
+        entries = DOMAIN_OPTIMIZATION_THRESHOLD - len(_LOCAL_FILE_RULES) - 1
+        profile = BrowserProfile(prohibited_domains=[f'site{index}.com' for index in range(entries)])
+        factory = _success_factory()
+        await (
+            BrowserUse[None](browser_profile=profile, block_ip_addresses=False, browser_agent=factory)
+            .get_toolset()
+            .browse_web(_ctx(), 'task')
+        )
+        session = factory.requests[0].browser_session
+
+        assert await self._navigation_allowed(session, 'FILE://localhost/etc/passwd') is False
+        assert await self._navigation_allowed(session, 'https://site1.com/') is False
+
+    async def test_an_allowlist_makes_a_large_prohibited_list_irrelevant(self) -> None:
+        """browser-use ignores the prohibited list once an allowlist is set."""
+        profile = BrowserProfile(prohibited_domains=[f'site{index}.com' for index in range(120)])
+        factory = _success_factory()
+        await (
+            BrowserUse[None](browser_profile=profile, allowed_domains=['example.com'], browser_agent=factory)
+            .get_toolset()
+            .browse_web(_ctx(), 'task')
+        )
+        session = factory.requests[0].browser_session
+
+        assert await self._navigation_allowed(session, 'https://example.com/') is True
+        assert await self._navigation_allowed(session, 'FILE://localhost/etc/passwd') is False
+
+    async def test_a_directly_built_toolset_rejects_a_large_prohibited_list(self) -> None:
+        toolset = BrowserUseToolset[None](
+            browser_agent=_success_factory(),
+            llm=None,
+            browser_profile=BrowserProfile(prohibited_domains=[f'site{index}.com' for index in range(100)]),
+            allowed_domains=None,
+            block_ip_addresses=False,
+            headless=None,
+            max_steps=10,
+            use_vision=True,
+            output_schema=None,
+            sensitive_data=None,
+            extend_system_message=None,
+            settings=BrowserAgentSettings(),
+            session_scope='call',
+            cdp_url=None,
+        )
+        with pytest.raises(ValueError, match='by exact hostname only'):
+            await toolset.browse_web(_ctx(), 'task')
 
     def test_an_allowlist_just_under_browser_use_s_set_threshold_is_accepted(self) -> None:
         """49 bare hostnames normalize to 98 entries, which browser-use still matches as patterns."""

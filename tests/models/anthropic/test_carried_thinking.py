@@ -91,7 +91,7 @@ async def test_carried_thinking_accepted_after_tool_result(
     that turn carries only the answer text the user saw. The recorded 200 behind `result.output` is the
     point — the placement the mapper chose is one the API accepts.
     """
-    model: AnthropicModel = anthropic_model('claude-sonnet-4-5', capture=True)
+    model: AnthropicModel = anthropic_model('claude-sonnet-5-5', capture=True)
     agent = Agent(model)
 
     @agent.tool_plain
@@ -160,7 +160,7 @@ Duration measures price sensitivity to rates, and the lookup came back with 8.1 
         ]
     )
     assert result.output == snapshot(
-        "A longer duration means more interest-rate risk, as the bond's price will be more sensitive to changes in interest rates."
+        "A longer duration means more interest-rate risk, because the bond's price moves more for each change in yields."
     )
 
 
@@ -173,8 +173,8 @@ async def test_carried_thinking_accepted_with_thinking_enabled(
 
     Anthropic only constrains how an assistant turn may open — a `thinking` block first — once thinking is
     enabled, and that is the configuration every user reaching this code path is in: reasoning only exists
-    to be carried because the model produced it. The other recording here is thinking-disabled, so it
-    could not have caught a rule that only applies with the `thinking` object present.
+    to be carried because the model produced it. The other recording here sends no `thinking` object,
+    so it could not have caught a rule that only applies with the `thinking` object present.
     """
     model: AnthropicModel = anthropic_model('claude-sonnet-4-5', capture=True)
     agent = Agent(

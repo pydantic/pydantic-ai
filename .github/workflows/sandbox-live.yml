@@ -1,3 +1,4 @@
+# description: Runs the requested pydantic-ai-harness sandbox providers' live tests against their real services.
 name: Sandbox live tests
 
 # Runs each `pydantic-ai-harness` sandbox provider's live tier against the provider's real
@@ -30,6 +31,8 @@ on:
         required: false
       DAYTONA_API_KEY:
         required: false
+      BOXD_API_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -46,7 +49,7 @@ jobs:
       # the workflow, so the matrix below starts each known provider once.
       - id: plan
         env:
-          PRESENT: '["modal", "e2b", "sprites", "daytona", "docker"]'
+          PRESENT: '["modal", "e2b", "sprites", "daytona", "boxd", "docker"]'
           REQUESTED: ${{ inputs.providers }}
         run: |
           providers="$(python3 -c '
@@ -110,6 +113,7 @@ jobs:
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
           SPRITE_TOKEN: ${{ secrets.SPRITE_TOKEN }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          BOXD_API_KEY: ${{ secrets.BOXD_API_KEY }}
 
       # The runners ship Podman too, which `DockerSandbox` supports through `executable='podman'`.
       - if: matrix.provider == 'docker'

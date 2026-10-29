@@ -46,6 +46,7 @@ def test_model_request_parameters_are_serializable():
             'allow_text_output': True,
             'allow_image_output': False,
             'instruction_parts': None,
+            'instruction_visibility': None,
             'thinking': None,
             'cache': None,
         }
@@ -183,6 +184,7 @@ def test_model_request_parameters_are_serializable():
             'allow_text_output': True,
             'allow_image_output': False,
             'instruction_parts': None,
+            'instruction_visibility': None,
             'thinking': None,
             'cache': None,
         }

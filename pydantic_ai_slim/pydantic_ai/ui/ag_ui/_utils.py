@@ -26,10 +26,10 @@ from .._adapter import parse_tool_retry, retry_feedback_from_payload, retry_feed
 
 ENCRYPTED_VALUE_VERSION = (0, 1, 11)
 """AG-UI version that added the `encrypted_value` field to `ToolCall` and to `BaseMessage` (so to
-`ToolMessage` and `SystemMessage` alike).
+`ToolMessage`, `SystemMessage` and `UserMessage` alike).
 
-Gates the field-based `tool_kind`, tool-result `outcome` and retry-feedback round-trips in
-`dump_messages`/`load_messages`. The streaming carrier (`ReasoningEncryptedValueEvent`) is a separate
+Gates the field-based `tool_kind`, tool-result `outcome`, retry-feedback and `StructuredContent` round-trips
+in `dump_messages`/`load_messages`. The streaming carrier (`ReasoningEncryptedValueEvent`) is a separate
 `REASONING_*` event gated on `REASONING_VERSION` — see `tool_kind_encrypted_value`.
 """
 
@@ -68,6 +68,9 @@ INTERRUPTS_VERSION = (0, 1, 19)
 [ag-ui-protocol#1569](https://github.com/ag-ui-protocol/ag-ui/pull/1569).
 """
 
+LIFECYCLE_1_0_VERSION = (1, 0)
+"""AG-UI version that added `RUN_STARTED.protocolVersion`, the `cancelled` outcome, `pendingToolCallIds` and `usage`."""
+
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
 INTERRUPT_ID_PREFIX: Final[str] = 'int-'
@@ -88,6 +91,9 @@ UPLOADED_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_uploaded_file'
 
 TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_tool_availability_delta'
 """Activity type for tool availability changes stored as AG-UI ActivityMessages."""
+
+MODEL_SETTINGS_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_model_settings_delta'
+"""Activity type for changes to the thinking effort in effect stored as AG-UI ActivityMessages."""
 
 ENQUEUED_MESSAGES_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_enqueued_messages'
 """Activity type for messages delivered into the run by `RunContext.enqueue`, stored as AG-UI ActivityMessages."""
@@ -210,7 +216,7 @@ def tool_kind_encrypted_value(
 
 
 class _EncryptedValueKwargs(TypedDict, total=False):
-    """`encrypted_value` kwarg for a `ToolCall`/`ToolMessage`, absent when there's nothing to carry."""
+    """`encrypted_value` kwarg for a `ToolCall`/`ToolMessage`/`UserMessage`, absent when there's nothing to carry."""
 
     encrypted_value: str
 
@@ -281,12 +287,37 @@ def _parse_encrypted_namespace(encrypted_value: str | None) -> dict[str, Any] | 
         return None
     try:
         data = json.loads(encrypted_value)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
         return None
     if not is_str_dict(data):
         return None
     namespaced = data.get(_ENCRYPTED_VALUE_NAMESPACE)
     return namespaced if is_str_dict(namespaced) else None
+
+
+def structured_content_encrypted_value_kwargs(payloads: dict[int, dict[str, Any]]) -> _EncryptedValueKwargs:
+    """`UserMessage` kwargs carrying the structured content payloads of its text items, or empty to omit it.
+
+    AG-UI has no structured user input, so a `StructuredContent` is sent as a text item the frontend shows, and
+    what text can't carry, keyed by the item's position in the message content, rides the message's
+    `encrypted_value` (from 0.1.11), namespaced as in `tool_kind_encrypted_value`. Empty when there's nothing to
+    carry, so the field is never written as a bare `null`.
+    """
+    if not payloads:
+        return {}
+    entries = {str(index): payload for index, payload in payloads.items()}
+    return {'encrypted_value': _namespaced_encrypted_value({'structured_content': entries})}
+
+
+def parse_encrypted_structured_content(encrypted_value: str | None) -> dict[str, Any]:
+    """Read the structured content payloads, keyed by content position, from a `UserMessage`'s `encrypted_value`.
+
+    Client-supplied and untrusted: anything malformed reads as no payload, so the text loads as plain text. The
+    keys are looked up by the positions of the message's text items, never parsed, so no key can raise.
+    """
+    namespaced = _parse_encrypted_namespace(encrypted_value)
+    entries = namespaced.get('structured_content') if namespaced is not None else None
+    return entries if is_str_dict(entries) else {}
 
 
 def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:

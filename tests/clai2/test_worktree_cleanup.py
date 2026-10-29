@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_clai2 import _app
-from pydantic_clai2.cli import _cli
+from pydantic_clai2 import app
+from pydantic_clai2.cli import cli
 from pydantic_clai2.cli.self_update import Relaunch
 from pydantic_clai2.runtime.worktrees import Worktree, current_worktree, offer_worktree_cleanup, open_worktree
 
@@ -285,7 +285,7 @@ def run_cli(
         prompts.append(prompt)
         return ''
 
-    monkeypatch.setattr(_app, 'chat', chat)
+    monkeypatch.setattr(app, 'chat', chat)
 
     def execv(path: str, argv: list[str]) -> None:
         pass
@@ -295,7 +295,7 @@ def run_cli(
     # Beside the repository: a database inside the checkout would be an untracked change.
     database = repo.parent / 'config.db'
     monkeypatch.setattr('sys.argv', ['clai2', '--database', str(database), '-m', 'test', *args])
-    _cli.run()
+    cli.run()
     return prompts
 
 

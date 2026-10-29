@@ -40,12 +40,14 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
-from pydantic_ai_harness.subagents import DelegationOutcome, is_task_report
-from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus, QueuedInput
-from pydantic_clai2.runtime._session import STEERING
+from pydantic_ai_harness.subagents import DelegationOutcome
+from pydantic_clai2.plugins import ForkEnd, ForkInfo, ForkStatus, PanelIcon, PluginOrigin, PluginStatus, QueuedInput
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
+from pydantic_clai2.runtime.forks import failure_line
+from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.runtime.session import STEERING
 from pydantic_clai2.ui.prompt.prompt_queue import InputKind, input_kind
 from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost
 
@@ -256,10 +258,38 @@ class TaskEntry:
     started_at: datetime
     finished_at: datetime | None
     background: bool
+    backgroundable: bool = False
+    """Whether the Background button can let the run that waits for it go on."""
     resumable: bool
     activity: str
     """Its last action, such as `thinking` or `running: shell`."""
     usage: Usage
+
+
+@dataclass(kw_only=True)
+class ForkEntry:
+    """A background `/fork`, like a `/forks` row."""
+
+    id: int
+    model: str
+    prompt: str
+    status: ForkStatus
+    elapsed: float
+    """Seconds it has run so far, or ran in all once it ended."""
+    session_id: str | None
+    """The saved conversation `/resume` continues it in, once it has saved one."""
+
+
+def fork_entry(fork: ForkInfo) -> ForkEntry:
+    """A fork's row, as browsers receive it."""
+    return ForkEntry(
+        id=fork.id,
+        model=fork.model,
+        prompt=fork.prompt,
+        status=fork.status,
+        elapsed=fork.elapsed,
+        session_id=fork.session_id,
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -337,6 +367,8 @@ class Snapshot:
     version: str = ''
     """The running CLAI's version, or a `main` build's short commit; a new one after a reconnect means it updated."""
     update: UpdateInfo | None = None
+    replaces: str | None = None
+    """The conversation the session held before, when it switched to this one; its watchers watch this one now."""
 
 
 @dataclass(kw_only=True)
@@ -351,7 +383,7 @@ class ItemAdded:
 class TextDelta:
     """More text for an answer or thinking block."""
 
-    type: Literal['delta'] = 'delta'
+    type: Literal['text_delta'] = 'text_delta'
     id: str
     text: str
 
@@ -378,7 +410,7 @@ class ToolArgs:
 class SubCallAdded:
     """A `run_code` cell called a tool from its sandbox, possibly while the cell was still being written."""
 
-    type: Literal['call'] = 'call'
+    type: Literal['sub_call'] = 'sub_call'
     id: str
     call: SubCall
 
@@ -387,7 +419,7 @@ class SubCallAdded:
 class SubCallOutput:
     """More of what a shell command called from a `run_code` cell printed."""
 
-    type: Literal['call_output'] = 'call_output'
+    type: Literal['sub_call_output'] = 'sub_call_output'
     id: str
     call_id: str
     text: str
@@ -397,7 +429,7 @@ class SubCallOutput:
 class SubCallDone:
     """A tool called from a `run_code` cell returned or failed."""
 
-    type: Literal['call_done'] = 'call_done'
+    type: Literal['sub_call_done'] = 'sub_call_done'
     id: str
     call_id: str
     text: str
@@ -445,7 +477,7 @@ class DiffAdded:
 class TurnStarted:
     """A turn started; `item` is its prompt, or `None` for a turn a finished task woke."""
 
-    type: Literal['turn_start'] = 'turn_start'
+    type: Literal['turn_started'] = 'turn_started'
     item: Item | None = None
 
 
@@ -453,7 +485,7 @@ class TurnStarted:
 class TurnEnded:
     """The turn finished, failed, or was cancelled."""
 
-    type: Literal['turn_end'] = 'turn_end'
+    type: Literal['turn_ended'] = 'turn_ended'
     outcome: Literal['completed', 'failed', 'cancelled']
     error: str | None = None
     usage: Usage | None = None
@@ -564,6 +596,18 @@ class Notice:
     command: str | None = None
     usage: UsageReport | None = None
     """For `/usage` and `/cost`: the figures their text reports, which the page shows as a card."""
+    forks: list[ForkEntry] | None = None
+    """For `/forks`: the rows of the table its terminal prints, which the page shows as a card."""
+    fork: ForkEntry | None = None
+    """A background `/fork` that ended; `text` is its answer, why it failed, or empty when it was cancelled."""
+
+
+def fork_notice(event: ForkEnd) -> Notice:
+    """What the page shows of a fork that ended, as the terminal prints its response or its failure."""
+    fork = fork_entry(event.fork)
+    if event.error is not None:
+        return Notice(text=failure_line(event.error), level='error', fork=fork)
+    return Notice(text=event.output or '', fork=fork)
 
 
 @dataclass(kw_only=True)
@@ -671,7 +715,7 @@ ItemMessage = (
 class TaskItems:
     """What a running task's own run did, as item messages for its transcript; their IDs are unlike the session's."""
 
-    type: Literal['task_event'] = 'task_event'
+    type: Literal['task_items'] = 'task_items'
     id: str
     """The task's ID."""
     messages: list[ItemMessage]
@@ -754,6 +798,48 @@ def dump_session(message: SessionMessage, *, session: str) -> str:
     return f'{{"session":{json.dumps(session)},{dump(message)[1:]}'
 
 
+PROTOCOL = 2
+"""The wire version a page names in the WebSocket URL as `protocol`.
+
+A page without it was loaded before the item and turn tags took their class names, and stayed open
+across the `/update` that installed this build; `legacy_tags` translates for it.
+"""
+_LEGACY_TAGS = {
+    'text_delta': 'delta',
+    'sub_call': 'call',
+    'sub_call_output': 'call_output',
+    'sub_call_done': 'call_done',
+    'turn_started': 'turn_start',
+    'turn_ended': 'turn_end',
+    'task_items': 'task_event',
+}
+_JSON_OBJECT: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
+
+
+def legacy_tags(text: str) -> str:
+    """A message as a page from before `PROTOCOL` reads it: the same JSON, under the tags it knows."""
+    message = _JSON_OBJECT.validate_json(text)
+    if not _retag(message):
+        return text
+    return json.dumps(message, separators=(',', ':'), ensure_ascii=False)
+
+
+def _retag(message: dict[str, JsonValue]) -> bool:
+    """Rename `message`'s tag and those of the item messages it carries; whether any changed."""
+    tag = message.get('type')
+    if tag == 'orchestrator':
+        inner = message.get('message')
+        return isinstance(inner, dict) and _retag(inner)
+    if not isinstance(tag, str) or tag not in _LEGACY_TAGS:
+        return False
+    message['type'] = _LEGACY_TAGS[tag]
+    if isinstance(items := message.get('messages'), list):
+        for item in items:
+            if isinstance(item, dict):
+                _retag(item)
+    return True
+
+
 SessionState = Literal['ready', 'running', 'busy', 'completed', 'failed', 'cancelled']
 
 
@@ -772,6 +858,8 @@ class SessionEntry:
     current: bool
     archived: bool
     """Hidden from the sidebar unless it lists archived sessions too."""
+    openable: bool
+    """Whether it opens live, as `Transcript.openable` says, so a click opens it without fetching its transcript first."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -806,9 +894,12 @@ class Transcript:
     workspace: str
     items: list[Item]
     openable: bool
-    """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists."""
+    """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists,
+    and no other CLAI runs it."""
     missing: bool = False
     """Whether CLAI would follow it, but its directory is gone, as with a deleted worktree."""
+    owner_pid: int | None = None
+    """The process ID of another CLAI running it now, when it could otherwise be opened; opening it continues in a fork."""
 
 
 @dataclass(kw_only=True)
@@ -906,38 +997,6 @@ class MenuEdited:
     messages: list[str]
     menu: MenuInfo | None
     """`None` when the plugin no longer declares a menu, such as after it failed to load again."""
-
-
-WorkspaceState = Literal['ready', 'running', 'stopped']
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspaceRow:
-    """A workspace as the sidebar lists it; never its token."""
-
-    id: str
-    kind: str
-    repo: str
-    branch: str
-    path: str
-    status: WorkspaceState
-    url: str | None
-    """Its page's address without the token, while its CLAI runs."""
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspacesInfo:
-    """The sidebar's Workspaces section: shown while the `workspaces` plugin is on."""
-
-    enabled: bool
-    workspaces: list[WorkspaceRow]
-
-
-@dataclass(frozen=True, kw_only=True)
-class WorkspaceOpened:
-    """A workspace's page, with its token, for this page to open."""
-
-    url: str
 
 
 @dataclass(kw_only=True)
@@ -1052,7 +1111,7 @@ def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | Non
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, UserPromptPart):
-                    if not is_task_report(part):
+                    if is_typed_prompt(part):
                         items.append(user_item(part, id=f'h{len(items)}', image_ids=image_ids))
                 elif isinstance(part, ToolReturnPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)

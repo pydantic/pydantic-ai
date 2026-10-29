@@ -47,6 +47,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
+from pydantic_ai_harness._code_tools import NestedCallOutcome, run_nested_call
 from pydantic_ai_harness.code_mode._events import (
     SpeculativeCallClaimedEvent,
     SpeculativeCallEvictedEvent,
@@ -55,6 +56,7 @@ from pydantic_ai_harness.code_mode._events import (
     SpeculativeCallSettledEvent,
     SpeculativeCodeUpdateEvent,
 )
+from pydantic_ai_harness.code_mode._parts import RUN_CODE_TOOL_NAME
 from pydantic_ai_harness.code_mode._streaming import (
     CANCEL_TIMEOUT_SECONDS,
     MAX_SCAN_CHARS,
@@ -63,14 +65,7 @@ from pydantic_ai_harness.code_mode._streaming import (
     decode_partial_args,
     parse_code,
 )
-from pydantic_ai_harness.code_mode._toolset import (
-    NestedCallOutcome,
-    RunCodeExecution,
-    global_mode_is_sequential,
-    run_nested_call,
-)
-
-_RUN_CODE_TOOL_NAME = 'run_code'
+from pydantic_ai_harness.code_mode._toolset import RunCodeExecution, global_mode_is_sequential
 
 MAX_SPECULATIONS_PER_PART = 32
 """Upper bound on early launches per streamed `run_code` part.
@@ -498,7 +493,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
                 self._index_to_part.pop(event.index, None)
                 return
         match event:
-            case PartStartEvent(part=ToolCallPart() as part) if part.tool_name == _RUN_CODE_TOOL_NAME:
+            case PartStartEvent(part=ToolCallPart() as part) if part.tool_name == RUN_CODE_TOOL_NAME:
                 watch = _PartWatch(tool_call_id=part.tool_call_id, run_step=ctx.run_step)
                 if isinstance(part.args, str):
                     watch.args_text = part.args
@@ -540,7 +535,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
             if watch.run_step >= ctx.run_step - 1:
                 continue
             del self._parts[part_id]
-            await self._evict(replace(ctx, tool_call_id=part_id, tool_name=_RUN_CODE_TOOL_NAME), watch)
+            await self._evict(replace(ctx, tool_call_id=part_id, tool_name=RUN_CODE_TOOL_NAME), watch)
 
     def _watch_at(self, part_index: int, tool_call_id: str | None) -> _PartWatch | None:
         """Route a delta by part index, following a call id the provider rewrites mid-stream.
@@ -578,7 +573,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         code = self._decode(watch)
         if code is None:
             return
-        part_ctx = replace(ctx, tool_call_id=watch.tool_call_id, tool_name=_RUN_CODE_TOOL_NAME)
+        part_ctx = replace(ctx, tool_call_id=watch.tool_call_id, tool_name=RUN_CODE_TOOL_NAME)
         newlines = code.count('\n')
         if not final and newlines == watch.scanned_newlines:
             # No line boundary since the last scan: nothing can have closed. Report the grown
@@ -710,7 +705,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
                     if call.settle_emitted or not call.task.done():
                         continue
                     call.settle_emitted = True
-                    await replace(ctx, tool_call_id=watch.tool_call_id, tool_name=_RUN_CODE_TOOL_NAME).emit(
+                    await replace(ctx, tool_call_id=watch.tool_call_id, tool_name=RUN_CODE_TOOL_NAME).emit(
                         SpeculativeCallSettledEvent(
                             launch_id=call.launch_id,
                             outcome='failed' if call.settled_state() == 'failed' else 'ready',

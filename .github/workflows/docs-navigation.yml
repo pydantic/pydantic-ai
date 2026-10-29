@@ -1,3 +1,4 @@
+# description: Asks pydantic/unified-docs to validate a pull request's navigation manifest and referenced Markdown when trigger:docs-preview is applied.
 name: Docs Navigation Check
 
 # Label-triggered navigation validation. Adding `trigger:docs-preview` to a PR asks

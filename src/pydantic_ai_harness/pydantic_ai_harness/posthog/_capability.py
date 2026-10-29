@@ -19,7 +19,7 @@ https://github.com/PostHog/posthog/blob/master/services/mcp/README.md, and
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
@@ -27,8 +27,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai_harness._combine import one_per_id
-from pydantic_ai_harness._mcp import credential, per_run_connection, read_only_toolset
+from pydantic_ai_harness._mcp import credential, one_connection, per_run_connection, prefixed_toolset, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -67,8 +66,17 @@ class PostHog(AbstractCapability[AgentDepsT]):
     description: str | None = _DEFAULT_DESCRIPTION
     """Routing description used when the capability is loaded on demand."""
 
-    auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
-    """A PostHog personal API key or OAuth access token, `'oauth'` to sign in through the browser locally, or a function of the run context that returns one.
+    tool_prefix: str | None = 'posthog'
+    """Prepended with `_` to the server's tool names, as in `posthog_<tool>`, so they don't collide with other tools.
+
+    Give two instances distinct prefixes to use both. `None` keeps the names the server gives its tools.
+    """
+
+    auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None = field(
+        default=None, repr=False
+    )
+    """A PostHog personal API key or OAuth access token, `'oauth'` to sign in through the browser locally,
+    or a sync or async function of the run context that returns one.
 
     Unset, it uses `POSTHOG_PERSONAL_API_KEY`. A function never does: if it returns `None` or `''`, that run has no PostHog tools.
     """
@@ -110,7 +118,7 @@ class PostHog(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
-        return one_per_id(capabilities)
+        return one_connection(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the PostHog MCP tools."""
@@ -120,11 +128,12 @@ class PostHog(AbstractCapability[AgentDepsT]):
                 self.client, id=id, include_instructions=self.include_instructions
             )
             if self.read_only:
-                return read_only_toolset(toolset)
-            return toolset
-        if callable(self.auth):
-            return per_run_connection(self.auth, self._connect, id=id)
-        return self._connect(self.auth)
+                toolset = read_only_toolset(toolset)
+        elif callable(self.auth):
+            toolset = per_run_connection(self.auth, self._connect, id=id)
+        else:
+            toolset = self._connect(self.auth)
+        return prefixed_toolset(toolset, self.tool_prefix)
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         url = _POSTHOG_MCP_URL

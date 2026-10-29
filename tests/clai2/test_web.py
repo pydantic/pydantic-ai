@@ -2,9 +2,16 @@
 
 import asyncio
 import base64
+import gzip
+import hashlib
 import html
 import io
+import json
+import os
 import re
+import shutil
+import subprocess
+import sys
 import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -12,7 +19,7 @@ from contextlib import AbstractContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TypeVar
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import anyio
 import httpx
@@ -40,6 +47,7 @@ from pydantic_clai2.builtin_plugins import web
 from pydantic_clai2.builtin_plugins.web import (
     WebPlugin,
     WebSettings,
+    app as app_module,
     channel as channel_module,
     live,
     service as service_module,
@@ -56,9 +64,11 @@ from pydantic_clai2.builtin_plugins.web.app import (
     create_app,
 )
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    PROTOCOL,
     DialogClosed,
     DialogOpened,
     DialogShown,
+    ForkEntry,
     ItemAdded,
     Notice,
     PluginsChanged,
@@ -76,15 +86,17 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnStarted,
     image_id,
 )
+from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
 from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime.image_codec import decode_images
-from pydantic_clai2.runtime.project_identity import git_checkout, project_identity
+from pydantic_clai2.runtime.project_identity import git_checkout, project_identity, worktree_roots
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
+from pydantic_clai2.ui.menus.menu_worker import require_terminal
 from pydantic_clai2.ui.rendering import theme as terminal_theme
 from tests.clai2.test_session_browser import git, repository
 from tests.clai2.test_tasks import task
@@ -215,7 +227,9 @@ def test_a_turn_streams_to_the_browser(make_web: 'MakeWeb', monkeypatch: pytest.
         TestModel(call_tools=['lookup'], custom_output_text='All **done**.'), deps_type=type(None), capabilities=[tools]
     )
     web_ = make_web(agent)
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         snapshot = WIRE.validate_json(socket.receive_text())
         assert isinstance(snapshot, Snapshot) and snapshot.items == [] and not snapshot.running
         running = web_.run()
@@ -260,7 +274,9 @@ def test_a_background_fork_is_not_a_turn(make_web: 'MakeWeb') -> None:
     """`/fork` fires the turn moments for its background run; the browser shows only the held conversation's turns."""
     web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='ok'), deps_type=type(None)))
     shell = web_.shell
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': '/fork look elsewhere'})
@@ -280,12 +296,49 @@ def test_a_background_fork_is_not_a_turn(make_web: 'MakeWeb') -> None:
         running.result(timeout=10)
 
 
+def test_fork_results_and_the_forks_table_reach_the_browser(make_web: 'MakeWeb') -> None:
+    """What the terminal prints for `/fork` and `/forks`, the answer and the table, reaches the page as notices."""
+    web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='the fork answer'), deps_type=type(None)))
+    shell = web_.shell
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': '/forks'})
+        _, empty = receive_until(socket, Notice)
+        assert (empty.text, empty.forks) == ('No forks yet. Start one with /fork [@model] PROMPT.', None)
+        web_.post('/api/input', {'text': '/fork look elsewhere'})
+        # The fork may finish before its command's notice is sent.
+        notices = [receive_until(socket, Notice)[1], receive_until(socket, Notice)[1]]
+        [started] = [notice for notice in notices if notice.fork is None]
+        [ended] = [notice for notice in notices if notice.fork is not None]
+        assert started.text.startswith('fork #1 (agent default) started in the background.')
+        [record] = shell.forks.records
+        assert record.session_id is not None
+        assert (ended.text, ended.level, ended.command) == ('the fork answer', 'info', None)
+        fork = ended.fork
+        assert fork == ForkEntry(
+            id=1,
+            model='agent default',
+            prompt='look elsewhere',
+            status='done',
+            elapsed=record.elapsed or 0,
+            session_id=record.session_id,
+        )
+        web_.post('/api/input', {'text': '/forks'})
+        _, table = receive_until(socket, Notice)
+        assert (table.command, table.text, table.forks) == ('/forks', '1 done', [fork])
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
 def test_switches(make_web: 'MakeWeb') -> None:
     """The browser's toggles flip code mode and speculation through `/set`, and its status follows the settings."""
     web_ = make_web(Agent(TestModel()))
     status = web_.get('/api/state').json()['status']
     assert (status['code_mode'], status['speculation']) == (False, False), 'the tests turn code mode off'
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         assert web_.post('/api/switch', {'key': 'run.speculative_code_mode', 'on': True}).status_code == 204
@@ -304,7 +357,9 @@ def test_theme(make_web: 'MakeWeb') -> None:
     theme = web_.get('/api/state').json()['theme']
     assert (theme['name'], theme['palette']) == ('default', None)
     assert {'default', 'tokyo_night', 'github_light'} <= set(theme['names'])
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': '/theme tokyo_night'})
@@ -335,7 +390,9 @@ def test_theme_changes_while_a_turn_runs(make_web: 'MakeWeb') -> None:
         return 'released'
 
     web_ = make_web(Agent(TestModel(call_tools=['wait']), deps_type=type(None), capabilities=[tools]))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'wait'})
@@ -357,7 +414,9 @@ def test_a_monty_cell_from_the_browser(make_web: 'MakeWeb') -> None:
     """`/monty` from the browser runs the user's cell in the session's Monty sandbox: shown as theirs, and not a turn."""
     pytest.importorskip('pydantic_monty')
     web_ = make_web(Agent(TestModel()))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': '/set run.code_mode true'})
@@ -389,7 +448,9 @@ def test_a_failed_turn(make_web: 'MakeWeb') -> None:
         yield  # pragma: no cover
 
     web_ = make_web(Agent(FunctionModel(stream_function=fail), deps_type=type(None)))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'try'})
@@ -430,6 +491,92 @@ def test_input_the_browser_cannot_send(make_web: 'MakeWeb', monkeypatch: pytest.
         web_.shell.send_input('look', images=[blue, blue, blue])
 
 
+def test_a_terminal_menu_or_prompt_fails_without_a_terminal(
+    make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no terminal anywhere, a command that would read the terminal's keys fails, naming an alternative.
+
+    A menu would read EOF from stdin and close as cancelled, saying nothing useful, as under `clai2 --web` from a
+    script; that is so whether the command waits for its turn or opens over a running one.
+    """
+    monkeypatch.setattr(sys, 'stdin', None)  # As Python leaves it when CLAI starts with stdin closed.
+    started, release = anyio.Event(), anyio.Event()
+    tools = Capability[None]()
+
+    @tools.tool_plain
+    async def wait() -> str:
+        """Wait to be released."""
+        started.set()
+        await release.wait()
+        return 'released'
+
+    web_ = make_web(Agent(TestModel(call_tools=['wait']), deps_type=type(None), capabilities=[tools]))
+    assert web_.shell.terminal is None
+    needs = 'opens a terminal menu or prompt, and this CLAI has no terminal: enter it in CLAI in a terminal'
+
+    def notices(texts: Sequence[str]) -> list[tuple[str, str, str | None]]:
+        received: list[tuple[str, str, str | None]] = []
+        for text in texts:
+            assert web_.post('/api/input', {'text': text}).json() == {'menu': None}
+            notice = receive_until(socket, Notice)[1]
+            received.append((notice.level, notice.text, notice.command))
+        return received
+
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
+        socket.receive_text()
+        running = web_.run()
+        assert notices(('/model add', '/model settings', '/chain', '/set api_key', '/resume claude')) == [
+            ('error', f'/model add {needs}, or use /model in this page.', '/model add'),
+            ('error', f'/model settings {needs}, or use /model in this page.', '/model settings'),
+            ('error', f'/chain {needs}.', '/chain'),
+            ('error', f'/set api_key {needs}, or use /keys in this page.', '/set api_key'),
+            ('error', f'/resume claude {needs}.', '/resume claude'),
+        ]
+        web_.post('/api/input', {'text': 'wait'})
+        web_.portal.call(started.wait)
+        # `during_turn` commands open over the running turn instead of queueing.
+        assert notices(('/model add', '/chain')) == [
+            ('error', f'/model add {needs}, or use /model in this page.', '/model add'),
+            ('error', f'/chain {needs}.', '/chain'),
+        ]
+        web_.portal.call(release.set)
+        assert receive_until(socket, TurnEnded)[1].outcome == 'completed'
+        web_.post('/api/input', {'text': '/exit'})
+        assert running.result(timeout=10) == 'exit'
+
+
+class _Terminal(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+def test_a_terminal_menu_opens_in_the_terminal_that_runs_clai(
+    make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`clai2 --web` started in a terminal shows no session there, but its menus still open in it, as before."""
+    monkeypatch.setattr(sys, 'stdin', _Terminal())
+    web_ = make_web(Agent(TestModel()))
+    assert web_.shell.terminal is None
+
+    def probe(args: list[str]) -> str:
+        require_terminal()
+        return 'A menu would open here.'
+
+    web_.shell.commands.register(Command(name='probe', description='Open a terminal menu', handler=probe))
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': '/probe'})
+        notice = receive_until(socket, Notice)[1]
+        assert (notice.level, notice.text) == ('info', 'A menu would open here.')
+        web_.post('/api/input', {'text': '/exit'})
+        assert running.result(timeout=10) == 'exit'
+
+
 def png(color: str) -> bytes:
     output = io.BytesIO()
     Image.new('RGB', (3, 2), color=color).save(output, format='PNG')
@@ -455,7 +602,9 @@ def test_images_pasted_in_the_browser_go_with_the_prompt(make_web: 'MakeWeb') ->
         yield 'seen'
 
     web_ = make_web(Agent(FunctionModel(stream_function=stream)))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'first'})
@@ -492,7 +641,9 @@ def test_the_transcript_fetches_the_images_of_a_session(make_web: 'MakeWeb') -> 
     web_ = make_web(Agent(FunctionModel(stream_function=stream)))
     [red] = decode_images([encoded(png('red'))])
     route = f'/api/sessions/{web_.shell.session.conversation_id}/images/{image_id(red)}'
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'look', 'images': [encoded(png('red'))]})
@@ -572,7 +723,9 @@ def test_completion_and_models(make_web: 'MakeWeb') -> None:
 def test_questions_are_answered_from_the_browser(make_web: 'MakeWeb') -> None:
     agent = Agent(QuestionModel(call_tools=['ask_user_question']), deps_type=type(None))
     web_ = make_web(agent)
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'ask me'})
@@ -598,7 +751,9 @@ def test_questions_are_answered_from_the_browser(make_web: 'MakeWeb') -> None:
 def test_a_custom_answer_or_declining(make_web: 'MakeWeb', answers: JsonValue, expected: str) -> None:
     agent = Agent(QuestionModel(call_tools=['ask_user_question']), deps_type=type(None))
     web_ = make_web(agent)
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'ask me'})
@@ -626,7 +781,9 @@ def test_interrupt_from_the_browser(make_web: 'MakeWeb') -> None:
     agent = Agent(TestModel(call_tools=['wait']), deps_type=type(None), capabilities=[tools])
     web_ = make_web(agent)
     assert web_.post('/api/interrupt').json() == {'interrupted': False}
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'wait'})
@@ -645,7 +802,9 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
     """The sidebar lists, reads, renames, forks, deletes, opens, and starts sessions in the store `/resume` uses."""
     web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='ok'), deps_type=type(None)))
     shell = web_.shell
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'first'})
@@ -662,13 +821,14 @@ def test_session_actions(make_web: 'MakeWeb', tmp_path: Path) -> None:
         projects = web_.get('/api/sessions').json()
         assert projects[0]['current'] is True
         [here] = projects[0]['worktrees']
-        assert [(entry['title'], entry['state'], entry['current']) for entry in here['sessions']] == [
-            ('first', 'completed', True)
-        ]
+        assert [
+            (entry['title'], entry['state'], entry['current'], entry['openable']) for entry in here['sessions']
+        ] == [('first', 'completed', True, True)]
         assert [(project['name'], [w['label'] for w in project['worktrees']]) for project in projects[1:]] == [
             ('Removed folders', ['else'])
         ]
-        assert web_.get('/api/sessions?q=Elsewhere').json()[0]['worktrees'][0]['sessions'][0]['id'] == elsewhere.id
+        [listed] = web_.get('/api/sessions?q=Elsewhere').json()[0]['worktrees'][0]['sessions']
+        assert (listed['id'], listed['openable']) == (elsewhere.id, False), 'its row says it only shows'
 
         transcript = web_.get(f'/api/sessions/{elsewhere.id}').json()
         assert (transcript['title'], transcript['openable'], transcript['items']) == ('Elsewhere', False, [])
@@ -712,8 +872,6 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
     """A live session's turn shows as running; one another live process runs, as busy; a dead one, as cancelled."""
     web_ = make_web(Agent(TestModel()))
     store = web_.shell.sessions.store
-    import os
-
     for title, pid in (('Live', os.getppid()), ('Mine', os.getpid()), ('Dead', 2**22 + 12345)):
         web_.portal.call(
             lambda title=title, pid=pid: store.save(
@@ -731,6 +889,45 @@ def test_running_sessions_in_the_sidebar(make_web: 'MakeWeb') -> None:
     web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
     current = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions'][0]
     assert (current['current'], current['state']) == (True, 'running')
+
+
+def test_a_session_another_process_runs_shows_read_only_until_forked(make_web: 'MakeWeb') -> None:
+    """Viewing it saves nothing; opening it, the banner's explicit fork, continues one copy, reused thereafter."""
+    web_ = make_web(Agent(TestModel()))
+    store = web_.shell.sessions.store
+    busy = web_.portal.call(
+        lambda: store.save(
+            summary=ConversationSummary(
+                workspace=web_.shell.session.workspace, title='Busy', outcome='running', owner_pid=os.getppid()
+            ),
+            messages=[],
+        )
+    )
+    transcript = web_.get(f'/api/sessions/{busy.id}').json()
+    assert (transcript['openable'], transcript['missing'], transcript['owner_pid']) == (False, False, os.getppid())
+    assert [entry.id for entry in web_.portal.call(store.listing)] == [busy.id]
+    [row] = web_.get('/api/sessions').json()[0]['worktrees'][0]['sessions']
+    assert (row['id'], row['state'], row['openable']) == (busy.id, 'busy', False), 'a click fetches the transcript'
+    # A fork the user made from the row menu is theirs; continuing the busy session does not take it over.
+    mine = web_.portal.call(web_.shell.sessions.fork, busy.id).id
+
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
+        socket.receive_text()
+        running = web_.run()
+        assert web_.post(f'/api/sessions/{busy.id}/open').status_code == 200
+        copy = receive_until(socket, Snapshot)[1].session
+        assert copy.id not in (busy.id, mine)
+        assert copy.title == 'Busy (fork)'
+        assert web_.get(f'/api/sessions/{copy.id}').json()['owner_pid'] is None
+        web_.post('/api/input', {'text': '/new'})
+        receive_until(socket, Snapshot)
+        assert web_.post(f'/api/sessions/{busy.id}/open').status_code == 200
+        assert receive_until(socket, Snapshot)[1].session.id == copy.id, 'the fork is continued, not forked again'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+    assert sorted(entry.id for entry in web_.portal.call(store.listing)) == sorted([busy.id, mine, copy.id])
 
 
 def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', tmp_path: Path) -> None:
@@ -799,6 +996,226 @@ def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', t
     assert [(w['label'], w['missing']) for w in found['worktrees']] == [('old', True)]
 
 
+def test_sidebar_lists_removed_worktrees_after_live_ones(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """A removed worktree comes after the project's live checkouts, even when its session is the newest."""
+    web_ = make_web(Agent(TestModel()))
+    repo, feature, gone = tmp_path / 'repo', tmp_path / 'wt' / 'feature', tmp_path / 'wt' / 'gone'
+    repository(repo, linked=feature, branch='feature')
+    git('-C', str(repo), 'worktree', 'add', '-b', 'gone', str(gone))
+    for title, workspace in [('Feature', feature), ('Main', repo), ('Gone', gone)]:
+        folder = str(workspace.resolve())
+        summary = ConversationSummary(workspace=folder, title=title, checkout=git_checkout(project_identity(folder)))
+        web_.portal.call(lambda summary=summary: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    git('-C', str(repo), 'worktree', 'remove', str(gone))
+    plain = tmp_path / 'plain'
+    plain.mkdir()
+    web_.shell.session.workspace = str(plain.resolve())
+
+    [project] = [p for p in web_.get('/api/sessions').json() if p['name'] == 'repo']
+    assert [(w['label'], w['missing']) for w in project['worktrees']] == [
+        ('main', False),
+        ('feature', False),
+        ('gone', True),
+    ]
+
+
+def test_archiving_a_worktree_archives_every_session_in_it(make_web: 'MakeWeb') -> None:
+    """One request archives a group's sessions and lists them no more; ones it refuses stay, with the reasons."""
+    web_ = make_web(Agent(TestModel()))
+    old = [
+        web_.portal.call(
+            lambda title=title: web_.shell.sessions.store.save(
+                summary=ConversationSummary(workspace='/gone', title=title), messages=[]
+            )
+        )
+        for title in ('One', 'Two')
+    ]
+    web_.portal.call(web_.shell.session.commit_messages, list[ModelMessage]())
+    current = web_.shell.session.conversation_id
+
+    def listed() -> list[str]:
+        return [
+            entry['title']
+            for project in web_.get('/api/sessions').json()
+            for worktree in project['worktrees']
+            for entry in worktree['sessions']
+        ]
+
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
+        socket.receive_text()
+        ids = [summary.id for summary in old]
+        assert web_.client.post('/api/sessions/archive', json={'ids': ids}).status_code == 403, 'the token is checked'
+        assert web_.post('/api/sessions/archive', {'ids': ids}).status_code == 204
+        receive_until(socket, SessionsChanged)
+        assert listed() == ['New session']
+        assert web_.post(f'/api/sessions/{old[0].id}/unarchive').status_code == 204
+        receive_until(socket, SessionsChanged)
+        refused = web_.post('/api/sessions/archive', {'ids': [current, old[0].id, 'missing']})
+        assert (refused.status_code, refused.json()['detail']) == (
+            400,
+            f"Archived 1 of 3 sessions. '{current}': The current session cannot be archived. Switch to another one "
+            "first. 'missing': No saved session: missing",
+        )
+        receive_until(socket, SessionsChanged)
+        assert web_.post('/api/sessions/archive', {'ids': ['missing']}).json()['detail'] == (
+            "Archived 0 of 1 sessions. 'missing': No saved session: missing"
+        )
+    assert listed() == ['New session']
+
+
+def test_new_session_offers_every_worktree_of_a_known_repository(
+    make_web: 'MakeWeb', tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """New session lists a known repository's other worktrees before any session runs there; the sidebar does not.
+
+    One whose folder was deleted behind Git's back is not offered, nor is any during a search, or when Git fails.
+    """
+    web_ = make_web(Agent(TestModel()))
+    repo, feature, deleted = tmp_path / 'repo', tmp_path / 'wt' / 'feature', tmp_path / 'wt' / 'deleted'
+    repository(repo, linked=feature, branch='feature')
+    git('-C', str(repo), 'worktree', 'add', '--detach', str(deleted))
+    shutil.rmtree(deleted)
+    summary = ConversationSummary(workspace=str(repo.resolve()), title='Main')
+    web_.portal.call(lambda: web_.shell.sessions.store.save(summary=summary, messages=[]))
+    plain = tmp_path / 'plain'
+    plain.mkdir()
+    web_.shell.session.workspace = str(plain.resolve())
+
+    def shown(query: str) -> list[tuple[str, str, list[str]]]:
+        [project] = [p for p in web_.get(f'/api/sessions?{query}').json() if p['name'] == 'repo']
+        return [(w['label'], w['root'], [entry['title'] for entry in w['sessions']]) for w in project['worktrees']]
+
+    main = ('main', str(repo.resolve()), ['Main'])
+    assert shown('include_worktrees=true') == [main, ('feature', str(feature.resolve()), [])]
+    assert shown('q=') == [main], 'the sidebar lists checkouts with sessions only'
+    assert shown('q=Main&include_worktrees=true') == [main]
+    monkeypatch.setenv('PATH', '')
+    assert shown('include_worktrees=true') == [main]
+
+
+def test_new_session_checks_out_a_new_worktree(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """`POST /api/worktrees` checks out a new branch in `.worktrees/`, as `clai2 --worktree` does, and New session lists it.
+
+    Without a branch the name is generated as `--worktree` generates it; Git's refusals come back as the error.
+    """
+    web_ = make_web(Agent(TestModel()))
+    repo = tmp_path / 'repo'
+    repository(repo, linked=tmp_path / 'wt' / 'feature', branch='feature')
+    git(
+        '-C',
+        str(repo),
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.com',
+        'commit',
+        '--allow-empty',
+        '-m',
+        'two',
+    )
+    main = repo.resolve()
+    summary = ConversationSummary(workspace=str(main), title='Main')
+    web_.portal.call(lambda: web_.shell.sessions.store.save(summary=summary, messages=[]))
+
+    def add(body: dict[str, str]) -> tuple[int, str]:
+        response = web_.post('/api/worktrees', body)
+        return response.status_code, response.json()['root' if response.status_code == 200 else 'detail']
+
+    def output(*args: str) -> str:
+        return subprocess.run(['git', *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    status, root = add({'repo': str(repo), 'branch': 'feature-x', 'base': 'main~1'})
+    assert (status, root) == (200, str(main / '.worktrees' / 'feature-x'))
+    assert output('-C', root, 'branch', '--show-current') == 'feature-x'
+    assert output('-C', root, 'rev-parse', 'HEAD') == output('-C', str(repo), 'rev-parse', 'main~1')
+    assert output('-C', str(repo), 'status', '--porcelain') == '', 'the worktrees folder is excluded'
+    [project] = [p for p in web_.get('/api/sessions?include_worktrees=true').json() if p['name'] == 'repo']
+    assert ('feature-x', root) in [(w['label'], w['root']) for w in project['worktrees']]
+
+    # From inside a checkout, by default from its `HEAD`; a branch with a slash gets a flat folder.
+    (main / 'src').mkdir()
+    status, root = add({'repo': str(main / 'src'), 'branch': 'fix/y'})
+    assert (status, root) == (200, str(main / '.worktrees' / 'fix-y'))
+    assert output('-C', root, 'rev-parse', 'HEAD') == output('-C', str(repo), 'rev-parse', 'HEAD')
+    status, root = add({'repo': str(repo)})
+    assert status == 200 and re.fullmatch(r'worktree-[0-9a-f]{8}', Path(root).name)
+    assert output('-C', root, 'branch', '--show-current') == f'clai-{Path(root).name}'
+
+    plain = tmp_path / 'plain'
+    plain.mkdir()
+    assert add({'repo': str(repo), 'branch': 'feature'}) == (
+        400,
+        'Cannot create worktree: branch feature already exists. Pick another name.',
+    )
+    assert add({'repo': str(repo), 'branch': 'feature/x'}) == (
+        400,
+        f'Cannot create worktree: {main / ".worktrees" / "feature-x"} already exists. Pick another name.',
+    )
+    assert add({'repo': str(repo), 'branch': 'a..b'}) == (
+        400,
+        "Cannot create worktree: fatal: 'a..b' is not a valid branch name",
+    )
+    assert add({'repo': str(repo), 'branch': 'other', 'base': 'nowhere'}) == (
+        400,
+        f'nowhere is not a branch, tag, or commit in {main}.',
+    )
+    assert add({'repo': str(plain), 'branch': 'other'}) == (400, f'{plain} is not in a Git repository.')
+    assert add({'repo': 'relative'}) == (400, "Choose a directory by its absolute path, not 'relative'.")
+
+
+def test_new_session_completes_a_typed_path_with_its_repository_worktrees(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """New session completes a typed path to directories, listing each repository's worktrees before any session.
+
+    A subfolder of a checkout is offered as itself, hidden folders only when typed, and a relative,
+    unreadable, or empty path offers nothing.
+    """
+    web_ = make_web(Agent(TestModel()))
+    fresh, linked = tmp_path / 'fresh', tmp_path / 'fresh-wt'
+    repository(fresh, linked=linked, branch='wt')
+    # Git still lists a locked worktree whose folder is gone; the dialog leaves out a missing one.
+    git('-C', str(fresh), 'worktree', 'add', '--lock', '-b', 'gone', str(tmp_path / 'gone'))
+    shutil.rmtree(tmp_path / 'gone')
+    (fresh / 'src').mkdir()
+    (tmp_path / 'frozen').mkdir()
+    (tmp_path / '.free').mkdir()
+    (tmp_path / 'french.txt').touch()
+    assert not any(p['name'] == 'fresh' for p in web_.get('/api/sessions?include_worktrees=true').json())
+
+    def completed(path: str) -> list[tuple[str, list[tuple[str, str]]]]:
+        response = web_.get(f'/api/directories?path={quote(path)}')
+        assert response.status_code == 200, response.text
+        return [
+            (p['name'], [(w['label'], w['root']) for w in p['worktrees'] if not w['missing']]) for p in response.json()
+        ]
+
+    def at(*parts: str) -> str:
+        return str(tmp_path.resolve().joinpath(*parts))
+
+    repo = ('fresh', [('main', at('fresh')), ('wt', at('fresh-wt'))])
+    assert completed(at('fr')) == [repo, ('frozen', [('frozen', at('frozen'))])]
+    assert completed(at('fresh')) == [repo]
+    [found] = web_.get(f'/api/directories?path={quote(at("fresh-"))}').json()
+    assert (at('gone'), True) in [(w['root'], w['missing']) for w in found['worktrees']]
+    assert completed(at('.f')) == [('.free', [('.free', at('.free'))])]
+    assert completed(at('fresh') + os.sep) == [('src', [('src', at('fresh', 'src'))])]
+    assert completed('fresh') == completed(at('nowhere') + os.sep) == completed(at('a\0', 'b')) == completed('') == []
+    # At most `COMPLETIONS` directories, in name order.
+    for index in range(13):
+        (tmp_path / f'z{index:02}').mkdir()
+    assert [name for name, _ in completed(at('z'))] == [f'z{index:02}' for index in range(12)]
+
+
+def test_a_bare_repository_is_not_a_worktree(tmp_path: Path) -> None:
+    """A bare clone's own folder holds no checkout, so only its linked worktrees are offered."""
+    source, bare, feature = tmp_path / 'source', tmp_path / 'bare.git', tmp_path / 'feature'
+    repository(source, linked=tmp_path / 'unused', branch='unused')
+    git('clone', '--bare', str(source), str(bare))
+    git('-C', str(bare), 'worktree', 'add', '-b', 'feature', str(feature))
+    assert worktree_roots(project_identity(str(feature.resolve()))) == [str(feature.resolve())]
+
+
 def test_sidebar_notices_a_folder_removed_or_recreated_while_it_runs(make_web: 'MakeWeb', tmp_path: Path) -> None:
     """Each listing resolves again a folder removed or recreated since the last one, as `/resume` does."""
     web_ = make_web(Agent(TestModel()))
@@ -839,7 +1256,9 @@ def test_archived_sessions_leave_the_sidebar_until_it_lists_them(make_web: 'Make
             for entry in worktree['sessions']
         }
 
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         assert web_.post(f'/api/sessions/{old.id}/archive').status_code == 204
         receive_until(socket, SessionsChanged)
@@ -1101,7 +1520,9 @@ def SampleSettings_schema() -> JsonValue:
 def test_settings_from_the_browser_are_validated_saved_and_applied(make_web: 'MakeWeb', tmp_path: Path) -> None:
     web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
     first = loaded_plugin(web_, 'sample')
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         assert web_.post('/api/plugins/sample/settings', {'changes': {'limit': 5, 'mode': 'slow'}}).status_code == 204
         receive_until(socket, PluginsChanged)
@@ -1164,7 +1585,9 @@ def test_settings_built_from_a_stale_listing_are_refused(
 
 def test_plugins_turn_on_off_and_reload_from_the_browser(make_web: 'MakeWeb', tmp_path: Path) -> None:
     web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         assert web_.post('/api/plugins/sample/disable').status_code == 204
         receive_until(socket, PluginsChanged)
@@ -1192,7 +1615,9 @@ def test_plugins_turn_on_off_and_reload_from_the_browser(make_web: 'MakeWeb', tm
 
 def test_a_plugins_own_settings_menu_opens_in_the_terminal(make_web: 'MakeWeb', tmp_path: Path) -> None:
     web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         web_.run()
         assert web_.post('/api/plugins/sample/menu').status_code == 204
@@ -1221,24 +1646,64 @@ def test_access_checks(make_web: 'MakeWeb') -> None:
         403,
         "Open the address CLAI printed: it carries this launch's access token.",
     )
-    assert client.get('/assets/app.js').status_code == 403
+    assert client.get('/assets/app.js', headers={'host': 'evil.example'}).status_code == 403
     assert client.get(f'/?token={TOKEN}', headers={'host': 'evil.example'}).status_code == 403
 
     page = client.get(f'/?token={TOKEN}')
     assert f'<meta name="clai-token" content="{TOKEN}"></head>' in page.text
-    assert f'src="/assets/app.js?token={TOKEN}"' in page.text and f'href="/assets/index.css?token={TOKEN}"' in page.text
     assert "frame-ancestors 'none'" in page.headers['content-security-policy']
     assert 'set-cookie' not in page.headers, 'cookies reach every port of the host'
-    assert client.get(f'/assets/app.js?token={TOKEN}').text == 'console.log("hi")'
 
     for path, headers in (
         ('/ws', {'origin': 'http://testserver'}),
-        (f'/ws?token={TOKEN}', {}),
-        (f'/ws?token={TOKEN}', {'origin': 'http://evil.example'}),
+        (f'/ws?token={TOKEN}&protocol={PROTOCOL}', {}),
+        (f'/ws?token={TOKEN}&protocol={PROTOCOL}', {'origin': 'http://evil.example'}),
     ):
         with pytest.raises(WebSocketDisconnect) as refused, client.websocket_connect(path, headers=headers):
             pass  # pragma: no cover
         assert refused.value.code == 1008
+
+
+def test_assets_are_versioned_cached_and_compressed(make_web: 'MakeWeb', tmp_path: Path) -> None:
+    """The page links each asset by its content's digest, not the launch's token, so it stays cached across launches."""
+    web_ = make_web(Agent(TestModel()))
+    client = web_.client
+    script = tmp_path / 'static' / 'assets' / 'app.js'
+    version = hashlib.sha256(script.read_bytes()).hexdigest()[:16]
+    page = client.get(f'/?token={TOKEN}').text
+    assert f'src="/assets/app.js?v={version}"' in page
+    assert 'href="/assets/index.css"' in page, 'a link to a missing file is left alone'
+    assert TOKEN not in page.replace(f'<meta name="clai-token" content="{TOKEN}">', '')
+    other = TestClient(
+        create_app(service=web_.plugin.service, token='next-launch', hosts=HOSTS, static=tmp_path / 'static')
+    )
+    assert f'src="/assets/app.js?v={version}"' in other.get('/?token=next-launch').text, 'the same link every launch'
+
+    served = client.get(f'/assets/app.js?v={version}', headers={'accept-encoding': 'gzip, br'})
+    assert served.status_code == 200 and served.text == 'console.log("hi")', 'public build output needs no token'
+    assert served.headers['cache-control'] == 'public, max-age=31536000, immutable'
+    assert served.headers['content-encoding'] == 'gzip'
+    assert served.headers['vary'] == 'Accept-Encoding'
+    assert 'javascript' in served.headers['content-type']
+    plain = client.get('/assets/app.js', headers={'accept-encoding': 'identity'})
+    assert (plain.headers['cache-control'], plain.text) == ('no-cache', 'console.log("hi")')
+    assert 'content-encoding' not in plain.headers
+    revalidated = client.get('/assets/app.js', headers={'if-none-match': served.headers['etag']})
+    assert (revalidated.status_code, revalidated.content) == (304, b'')
+
+    assert client.get('/assets/missing.js').status_code == 404
+
+
+async def test_assets_are_built_once_per_version(tmp_path: Path) -> None:
+    """Each file is read and compressed once, until a rebuild changes it, and only files of the directory are served."""
+    assets = app_module.Assets(static_dir(tmp_path) / 'assets')
+    built = await assets.get('app.js')
+    assert built is not None and built is await assets.get('app.js')
+    (tmp_path / 'static' / 'assets' / 'app.js').write_text('console.log("rebuilt")')
+    rebuilt = await assets.get('app.js')
+    assert rebuilt is not None and (rebuilt.body, rebuilt.version != built.version) == (b'console.log("rebuilt")', True)
+    assert gzip.decompress(rebuilt.gzipped) == rebuilt.body
+    assert await assets.get('../index.html') is None
 
 
 def test_a_checkout_without_a_built_ui(tmp_path: Path) -> None:
@@ -1258,7 +1723,7 @@ def test_a_build_without_assets(tmp_path: Path) -> None:
         PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={})
     ).service
     with TestClient(create_app(service=service, token=TOKEN, hosts=HOSTS, static=static)) as client:
-        assert client.get(f'/assets/app.js?token={TOKEN}').status_code == 404
+        assert client.get('/assets/app.js').status_code == 404
         assert client.post('/api/input', json={'text': 'hi'}, headers={HEADER: TOKEN}).json() == {
             'detail': "Plugin 'web' has no prompt to enter input at."
         }
@@ -1422,7 +1887,9 @@ def test_a_falling_behind_browser_reconnects(make_web: 'MakeWeb', monkeypatch: p
     monkeypatch.setattr(live, 'QUEUE_LIMIT', 2)
     web_ = make_web(Agent(TestModel()))
     hub = web_.plugin.service.hub
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         socket.receive_text()  # The orchestrator chat's state.
         socket.receive_text()  # The live sessions.
@@ -1469,7 +1936,9 @@ def test_a_declared_settings_menu_edits_from_the_browser(make_web: 'MakeWeb', tm
         'button': '',
     }
     assert (fields['size']['note'], fields['token']['secret'], fields['token']['action']) == ('a note', True, True)
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         # A value the menu rejects is reported with its own message, and nothing is saved or reloaded.
         rejected = web_.post('/api/plugins/declared/fields/size', {'value': '0'})
@@ -1506,7 +1975,9 @@ def test_a_settings_menu_action_asks_through_browser_dialogs(make_web: 'MakeWeb'
     web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
     with (
         ThreadPoolExecutor(1) as pool,
-        web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket,
+        web_.client.websocket_connect(
+            f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+        ) as socket,
     ):
         socket.receive_text()
         action = pool.submit(web_.post, '/api/plugins/declared/fields/token/action')
@@ -1580,7 +2051,9 @@ def test_stopping_the_web_ui_backs_out_of_open_dialogs(make_web: 'MakeWeb', tmp_
     web_ = make_web(Agent(TestModel()), extra=panel_plugins(tmp_path))
     with (
         ThreadPoolExecutor(1) as pool,
-        web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket,
+        web_.client.websocket_connect(
+            f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+        ) as socket,
     ):
         socket.receive_text()
         action = pool.submit(web_.post, '/api/plugins/declared/fields/token/action')
@@ -1638,8 +2111,17 @@ def test_sessions_continue_in_their_own_directories(
     repo_context = shell.loader._loaded['repo_context']  # pyright: ignore[reportPrivateUsage]
     assert web_.get('/api/state').json()['follows_workspace'] is True
     assert [web_.get(f'/api/sessions/{id}').json()['openable'] for id in (here, there, lost)] == [True, True, False]
+    rows = {
+        entry['id']: entry['openable']
+        for project in web_.get('/api/sessions').json()
+        for worktree in project['worktrees']
+        for entry in worktree['sessions']
+    }
+    assert [rows[id] for id in (here, there, lost)] == [True, True, False], 'each row says what its transcript says'
     assert web_.get(f'/api/sessions/{lost}').json()['missing'] is True
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
 
@@ -1743,10 +2225,13 @@ def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path
         'items': [],
         'openable': False,
         'missing': False,
+        'owner_pid': None,
     }
     with pytest.raises(ValueError, match='Select it in /resume to confirm'):
         web_.portal.call(shell.sessions.resume, elsewhere)
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         first = shell.session.conversation_id
@@ -1760,5 +2245,21 @@ def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path
         assert web_.post('/api/sessions/new', {'workspace': shell.session.workspace}).status_code == 200
         snapshot = receive_until(socket, Snapshot)[1]
         assert (snapshot.session.id != first, snapshot.session.workspace) == (True, shell.session.workspace)
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_a_page_from_before_the_tag_renames_gets_the_old_tags(make_web: MakeWeb) -> None:
+    """A tab open across the `/update` that renamed the tags sends no `protocol`, so it gets the tags it knows."""
+    web_ = make_web(Agent(TestModel(call_tools=[], custom_output_text='answer'), deps_type=type(None)))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'hello'})
+        tags: list[JsonValue] = []
+        while 'turn_end' not in tags:
+            tags.append(json.loads(socket.receive_text())['type'])
+        assert 'turn_start' in tags
+        assert not {'turn_started', 'turn_ended', 'text_delta'} & set(map(str, tags))
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)

@@ -28,15 +28,19 @@ limit in a subshell, then sets the limit for the calling shell and its children.
 _APPLY_FAILED = "{ echo 'Unable to apply max_file_bytes.' >&2; exit 1; }"
 
 
-def validate_file_limit(limit: object, *, persistent: bool) -> None:
+def validate_byte_limit(name: str, limit: object) -> None:
     if limit is None:
         return
     if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
-        raise ValueError('max_file_bytes must be a positive integer.')
-    if persistent:
-        raise ValueError('max_file_bytes is not supported with the persistent shell tool.')
+        raise ValueError(f'{name} must be a positive integer.')
     if limit > sys.maxsize:
-        raise ValueError('max_file_bytes must not exceed sys.maxsize.')
+        raise ValueError(f'{name} must not exceed sys.maxsize.')
+
+
+def validate_file_limit(limit: object, *, persistent: bool) -> None:
+    validate_byte_limit('max_file_bytes', limit)
+    if limit is not None and persistent:
+        raise ValueError('max_file_bytes is not supported with the persistent shell tool.')
 
 
 def limited_script(command: str, limit: int | None) -> str:

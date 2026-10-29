@@ -1,3 +1,4 @@
+# description: Reconciles completed agent-workflow health artifacts and recovers elapsed provider incidents on workflow completion, hourly, or by dispatch.
 name: Agent Provider Health
 
 on:

@@ -17,7 +17,8 @@ import pytest
 from pydantic import HttpUrl, JsonValue, ValidationError
 from rich.console import Console
 
-import pydantic_clai2.mcp._settings as mcp_settings
+import pydantic_clai2.mcp as mcp_package
+import pydantic_clai2.mcp._client as mcp_client
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
@@ -72,7 +73,7 @@ async def test_http_client_rejects_redirects(monkeypatch: pytest.MonkeyPatch) ->
         requests.append(request)
         return httpx.Response(307, headers={'location': 'http://127.0.0.1/private'}, request=request)
 
-    sdk_client = mcp_settings.create_mcp_http_client
+    sdk_client = mcp_client.create_mcp_http_client
 
     def mock_transport_client(
         headers: dict[str, str] | None = None, timeout: httpx.Timeout | None = None, auth: httpx.Auth | None = None
@@ -83,7 +84,7 @@ async def test_http_client_rejects_redirects(monkeypatch: pytest.MonkeyPatch) ->
         transport = httpx.MockTransport(respond)
         return httpx.AsyncClient(headers=defaults.headers, timeout=defaults.timeout, auth=auth, transport=transport)
 
-    monkeypatch.setattr(mcp_settings, 'create_mcp_http_client', mock_transport_client)
+    monkeypatch.setattr(mcp_client, 'create_mcp_http_client', mock_transport_client)
     async with http_client(headers={'X-Test': 'present'}) as client:
         response = await client.post('https://example.com/mcp')
         assert response.status_code == 307
@@ -105,7 +106,7 @@ async def test_http_client_is_the_httpx_fastmcp_drives(monkeypatch: pytest.Monke
     ) -> httpx2.AsyncClient:
         return httpx2.AsyncClient(headers=headers, timeout=timeout, auth=auth, follow_redirects=True)
 
-    monkeypatch.setattr(mcp_settings, 'create_mcp_http_client', fastmcp_4_client)
+    monkeypatch.setattr(mcp_client, 'create_mcp_http_client', fastmcp_4_client)
     sign_in = httpx2.BasicAuth('user', 'password')
     async with http_client(auth=cast(httpx.Auth, sign_in), follow_redirects=True) as client:
         assert isinstance(client, httpx2.AsyncClient)
@@ -118,7 +119,7 @@ async def test_builtin_is_enabled_and_the_dashboard_is_the_front_door() -> None:
     assert declaration.enabled
     assert declaration.factory == 'pydantic_clai2.mcp'
     plugin = make_plugin({})
-    assert len(plugin.capabilities) == 1
+    assert len(plugin.capabilities) == 2, 'eager servers as one toolset, on-demand servers as capabilities'
     dashboard = await plugin.commands.execute_async('/mcp')
     assert 'No MCP servers yet' in dashboard
     assert '/mcp install' in dashboard
@@ -218,14 +219,14 @@ async def test_loader_persistence_disable_and_project_plugin_trust(tmp_path: Pat
         assert not loader.capabilities()
         assert not list(commands)
         await loader.enable('mcp')
-        assert len(loader.capabilities()) == 1
+        assert len(loader.capabilities()) == 2
         assert 'local' in await commands.execute_async('/mcp')
         await loader.disable('mcp')
         assert not loader.capabilities()
         assert not list(commands)
         await loader.enable('mcp')
         await loader.reload('mcp')
-        assert len(loader.capabilities()) == 1
+        assert len(loader.capabilities()) == 2
         assert len(list(commands)) == 1
     finally:
         await loader.close('exit')
@@ -434,14 +435,20 @@ def test_remote_options_build_the_right_transport(tmp_path: Path) -> None:
 def test_plugin_settings_accept_the_old_transport_key() -> None:
     assert MCPSettings(servers={'x': StdioServer(type='stdio', command='x')}).servers['x'].type == 'stdio'
     plugin = make_plugin({'servers': {'old': {'transport': 'stdio', 'command': 'x'}}})
-    assert len(plugin.capabilities) == 1
+    assert len(plugin.capabilities) == 2
+
+
+def test_unknown_names_are_not_exported() -> None:
+    with pytest.raises(AttributeError, match='no_such_name'):
+        getattr(mcp_package, 'no_such_name')
 
 
 @pytest.mark.subprocess(reason='the logger level a fresh interpreter ends up with depends on import order')
 def test_fastmcp_info_logging_stays_off_the_prompt() -> None:
     """FastMCP sets its logger to INFO as it's imported: the plugin's WARNING must outlast that, whichever comes first."""
     script = (
-        "import logging, pydantic_clai2.mcp; print(logging.getLogger('fastmcp.client.auth.oauth').getEffectiveLevel())"
+        'import logging; from pydantic_clai2.mcp import http_client; '
+        "print(logging.getLogger('fastmcp.client.auth.oauth').getEffectiveLevel())"
     )
     env = {
         name: value

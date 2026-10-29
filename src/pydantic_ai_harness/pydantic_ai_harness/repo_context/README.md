@@ -4,6 +4,8 @@ Discover and load a repo's accumulated coding-assistant context engineering (CE)
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/repo_context/)
 
+![RepoContext has three strategies. On by default, the walk-up loads AGENTS.md and CLAUDE.md from the working directory and each ancestor up to home_dir into the instructions, broadest first, once per run. Off by default, the inventory_agent_context tool reports where the .claude, .agents, .codex and .grok roots keep skills, agents and hooks. Off by default, nested traversal reacts to FileSystem reading or listing a directory, such as src/api, and queues a pointer to that directory's AGENTS.md before the next model request.](https://pydantic.dev/docs/ai/img/harness/repo-context.svg)
+
 ## The problem
 
 A repo accumulates CE for whatever coding assistant worked in it: instruction
@@ -125,10 +127,11 @@ and paths reach the model as a user message, not as instructions. The
 `<system>`-tagged user text otherwise), followed by the file's path as a
 user-message `<context-file path="..." />` tag.
 
-Each file is wrapped in `<context-file path="...">` tags. A closing
-`</context-file>` tag inside a file is escaped as `&lt;/context-file>`, and the
-path is HTML-escaped, so a file cannot end its block early and continue as
-something else.
+Each file is wrapped in `<context-file path="...">` tags. The `<` of every
+opening or closing `<context-file>` tag inside a file, and of every framing tag
+Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest), is
+escaped as `&lt;`, and the path is HTML-escaped, so a file stays inside its own
+block.
 
 ## Cache cost
 

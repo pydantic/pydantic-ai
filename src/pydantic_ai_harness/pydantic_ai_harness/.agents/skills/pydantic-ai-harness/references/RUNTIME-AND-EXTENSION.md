@@ -118,8 +118,10 @@ async def resume(run_id: str):
 Gotchas:
 
 - Shapes a test sees: when a streamed model request fails, the saved history (default read included)
-  ends with an empty or partial-text `ModelResponse`. With `Planning`, a scripted model receives a
-  plan-reminder `UserPromptPart` led by a `CachePoint` at the end of the last request (not stored).
+  ends with an empty or partial-text `ModelResponse`. With `Planning`, each plan tool's `ToolReturnPart`
+  ends with the plan in a `<plan_reminder>` tag and carries
+  `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`; a user-channel plan
+  record with that origin appears only when the latest plan isn't visible (after compaction, say).
   Assert on the parts you need, not exact message shapes.
 - `run_id` is per `Agent.run`. Reusing one instance with the same explicit `run_id` raises `ValueError`.
   Group turns with `conversation_id=` on `Agent.run`.
@@ -141,7 +143,7 @@ Most harness capabilities run under core `TemporalDurability`, `DBOSDurability`,
 `PrefectDurability` (`pydantic_ai.durable_exec.*`), but support is per capability:
 
 - `Agent(...)` with `TemporalDurability` raises `UserError` ("Toolsets that are 'leaves' ... need to
-  have a unique id") for `AskUser`, `CapabilityCreation`, `ExaSearch`, `ExaAgent`, `YouSearch`,
+  have a unique id") for `AskUser`, `ExaSearch`, `ExaAgent`, `YouSearch`,
   `YouResearch`, `Researcher`, `PydanticAIDocs`, `LocalStack`, `Macroscope`, and `BrowserUse` (either
   `session_scope`): their toolsets carry
   no stable id, and passing `id=` to the capability does not reach the toolset.
@@ -174,8 +176,9 @@ Rules that apply to every harness capability:
   derived ids; two instances of one class need distinct `id=`.
 - Per-run inputs (tokens, user ids) come from `deps`, never globals: tools and `auth` functions can
   execute on another worker.
-- Inside a durable workflow or flow, `agent.run(..., capabilities=...)` raises `UserError` for any
-  capability except a few core ones such as `Instrumentation`, and Temporal also refuses toolsets
+- Inside a Temporal or DBOS workflow, `agent.run(..., capabilities=...)` raises `UserError` for any
+  capability except a few core ones such as `Instrumentation`. A Prefect flow accepts per-run
+  capabilities that contribute no function, MCP, or dynamic toolset. Temporal also refuses toolsets
   added at run time (for example `SubAgents` with `agent_folders`). Load authored capabilities at
   construction; they take effect on the next worker start.
 - Removing or adding a capability changes the replay shape. Drain in-flight workflows first.
@@ -436,9 +439,14 @@ async def main():
 
 Gotchas: a run raises `UserError` unless its workspace is a writable `LocalWorkspace`, because
 authored code executes in your process and would bypass a sandbox. Only use it where you would run the
-model's code yourself. `load_active()` skips entries that fail to load. Under durable execution
-`capabilities=` on a run is refused, and `CapabilityCreation` itself does not build under
-`TemporalDurability` (see the durable execution section). `guidance=''` drops the
+model's code yourself. Authored code runs during `author_capability` validation, in the current run.
+`load_active()` runs the same checks and skips entries that fail them. Inside a Temporal or DBOS
+workflow, `capabilities=` on a run is refused, so authored capabilities cannot be activated there;
+a Prefect flow accepts only authored capabilities that contribute no function, MCP, or dynamic
+toolset. The authoring tools still work. A failed re-author keeps the current version when its entry has
+no recorded error and its file still exists, and saves the rejected code as `<name>.rejected.py`. To have a person approve authored
+code before it runs, add `ToolGuardrail(guard=lambda call: GuardrailResult.approve(),
+tools=['author_capability'])` with `output_type=[str, DeferredToolRequests]`. `guidance=''` drops the
 built-in system-prompt guidance. `CapabilityCreation` is not spec-serializable.
 
 ## Harness capabilities in agent specs

@@ -103,6 +103,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_graph import End
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 if TYPE_CHECKING:
     from pydantic_ai.providers.alibaba import AlibabaProvider
@@ -8518,6 +8519,7 @@ def test_binary_content_serializable():
                         'provider_name': None,
                         'part_kind': 'text',
                         'provider_details': None,
+                        'citations': None,
                     }
                 ],
                 'usage': {
@@ -8539,6 +8541,7 @@ def test_binary_content_serializable():
                 'provider_details': None,
                 'provider_response_id': None,
                 'provider_url': None,
+                'canonical_system': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'finish_reason': None,
@@ -8599,6 +8602,7 @@ def test_image_url_serializable_missing_media_type():
                         'provider_name': None,
                         'part_kind': 'text',
                         'provider_details': None,
+                        'citations': None,
                     }
                 ],
                 'usage': {
@@ -8620,6 +8624,7 @@ def test_image_url_serializable_missing_media_type():
                 'provider_name': 'test',
                 'provider_details': None,
                 'provider_url': None,
+                'canonical_system': None,
                 'provider_response_id': None,
                 'kind': 'response',
                 'finish_reason': None,
@@ -8686,6 +8691,7 @@ def test_image_url_serializable():
                         'provider_name': None,
                         'part_kind': 'text',
                         'provider_details': None,
+                        'citations': None,
                     }
                 ],
                 'usage': {
@@ -8707,6 +8713,7 @@ def test_image_url_serializable():
                 'provider_name': 'test',
                 'provider_details': None,
                 'provider_url': None,
+                'canonical_system': None,
                 'provider_response_id': None,
                 'kind': 'response',
                 'finish_reason': None,
@@ -10007,6 +10014,7 @@ def test_adding_tools_during_run():
     )
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 def test_prepare_output_tools():
     @dataclass
     class AgentDeps:

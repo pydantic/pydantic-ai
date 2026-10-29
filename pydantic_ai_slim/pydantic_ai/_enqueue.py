@@ -15,6 +15,7 @@ from ._utils import fill_run_metadata
 from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
+    CompactionPart,
     EnqueuedMessagesEvent,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -22,6 +23,7 @@ from .messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelSettingsDeltaPart,
     RetryFeedbackPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
@@ -116,9 +118,11 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
                 RetryFeedbackPart,
                 ToolSearchReturnPart,
                 ToolAvailabilityDeltaPart,
+                ModelSettingsDeltaPart,
                 InstructionDeltaPart,
                 InstructionBaselinePart,
                 SpeechPart,
+                CompactionPart,
             ),
         ):
             flush_content()
@@ -228,6 +232,18 @@ class PendingMessageQueue(list[PendingMessage]):
             if not asap and not when_idle:
                 self._closed = True
             return asap, when_idle
+
+    def drain_at_pause(self) -> list[PendingMessage] | None:
+        """Drain and close the queue for a deferred-tool pause, or leave it untouched if it holds a `ModelResponse`.
+
+        A recorded response would read as the paused one when the run resumes.
+        """
+        with self._lock:
+            if any(isinstance(message, ModelResponse) for pending in self for message in pending.messages):
+                return None
+            drained = [*self._pop_priority('asap'), *self._pop_priority('when_idle')]
+            self._closed = True
+            return drained
 
     def close(self) -> None:
         with self._lock:
