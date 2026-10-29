@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Annotated, Protocol
+from typing import Annotated, Protocol, TypeAlias
 from uuid import uuid4
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 from typing_extensions import TypedDict
 
 from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.tools import AgentDepsT, RunContext
 
 TOOL_NAME = 'ask_user_question'
 
@@ -179,6 +180,28 @@ class Answerer(Protocol):
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
         """Put `request` to the user and return what they picked."""
         ...  # pragma: no cover
+
+
+class ContextAnswerer(Protocol[AgentDepsT]):
+    """An answerer that also receives the context of the run that asked the question.
+
+    Two required positional parameters select this form. If a callable also accepts just one,
+    annotate the first parameter as `RunContext[DepsT]` to disambiguate. The request and response
+    follow the same contract as `Answerer`; the context is passed separately, not serialized
+    into `AskUserRequest` or its events. Durable execution can restrict context fields; see
+    [Temporal's run-context rules](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#agent-run-context-and-dependencies).
+    """
+
+    async def __call__(self, ctx: RunContext[AgentDepsT], request: AskUserRequest, /) -> AskUserResponse:
+        """Put `request` to the user with access to the asking run's context."""
+        ...  # pragma: no cover
+
+
+AnyAnswerer: TypeAlias = Answerer | ContextAnswerer[AgentDepsT]
+"""Either answerer signature, for hosts storing a callback to pass to `AskUser`.
+
+`Answerer` remains the request-only protocol; `ContextAnswerer` also receives the asking run's context.
+"""
 
 
 def check_response(request: AskUserRequest, response: AskUserResponse) -> None:

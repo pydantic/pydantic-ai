@@ -72,6 +72,43 @@ An `Answerer` is one async callable: it takes an `AskUserRequest` and returns an
 - The model writes the questions, and a prompt injection can make it ask for a password or a
   token. Present the questions as coming from the model, not as a system or sign-in prompt.
 
+### Reading the asking run
+
+An answerer with two required positional parameters receives `(ctx, request)`, satisfying
+`ContextAnswerer`. Request-only answerers keep receiving just the request. Both plain async
+functions and callable objects are supported, including two-argument lambdas.
+
+If a callable accepts both one and two positional arguments, annotate its first parameter as
+`RunContext[DepsT]` to select the context form; otherwise it receives only the request. Only the
+first annotation is inspected; an unresolved annotation naming `RunContext` also selects the context form.
+Use `AnyAnswerer[DepsT]` to annotate a stored callback that may use either signature.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness import AskUser
+from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse
+
+
+async def answer_for_session(ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
+    for question in request.questions:
+        print(f'{ctx.deps}: {question.question}')
+    answers = [AskUserAnswer(header=q.header, selected=(q.options[0].label,)) for q in request.questions]
+    return AskUserResponse(answers=tuple(answers))
+
+
+agent = Agent('anthropic:claude-fable-5-1', deps_type=str, capabilities=[AskUser(answerer=answer_for_session)])
+```
+
+In an in-process run, `ctx.deps`, `ctx.model`, and `ctx.messages` belong to the run that called
+the tool. For a delegated agent, that is the child's run, not the parent's. The messages include the model response that
+asked the question, including thinking parts when the model provides them. Treat the history as
+read-only; other tools may still run while the answerer waits.
+
+The context reaches only the answerer; it is not part of the request, its events or deferred
+calls. With `answerer=None`, no answerer is called: deferred hosts supply context from their own
+state. Durable execution can restrict access to context fields; see
+[Temporal's run-context rules](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#agent-run-context-and-dependencies).
+
 ## Bounding the wait
 
 The run waits inside the tool call for the answerer to return. Set `timeout`, in seconds, to
@@ -232,7 +269,7 @@ to name.
 
 ## API
 
-`AskUser`, `Answerer`, `AskUserRequest`, `AskUserResponse`, `AskUserAnswer`, `Question`,
+`AskUser`, `Answerer`, `ContextAnswerer`, `AnyAnswerer`, `AskUserRequest`, `AskUserResponse`, `AskUserAnswer`, `Question`,
 `QuestionOption`, `AskUserRequestedEvent`, `AskUserAnsweredEvent`, `check_response`, `ask_user_result`,
 `TOOL_NAME`, `DECLINED`, `TIMED_OUT`, and `MAX_QUESTIONS` are exported from `pydantic_ai_harness.ask_user`,
 along with `AskUserToolset`, the toolset `AskUser` registers, and `ASK_USER_EVENTS`, the namespace
