@@ -369,11 +369,14 @@ def test_span_tree_byte_encoding_is_unchanged(span_tree: SpanTree):
         SPAN_TREE_ADAPTER.dump_json(span_tree)
 
 
-def test_span_node_null_attribute_requires_the_key(span_tree: SpanTree):
+def test_span_node_null_attribute_query_matches_missing_key(span_tree: SpanTree):
     node = span_tree.roots[0]
     node.attributes['nullable'] = None
     assert node.matches(SpanQuery(has_attributes={'nullable': None}))
-    assert not node.matches(SpanQuery(has_attributes={'missing': None}))
+    assert node.matches(SpanQuery(has_attributes={'missing': None}))
+    assert not node.matches(SpanQuery(has_attributes={'missing': 'value'}))
+    assert node.matches(SpanQuery(has_attributes={'nullable': None}, has_attribute_keys=['nullable']))
+    assert not node.matches(SpanQuery(has_attributes={'missing': None}, has_attribute_keys=['missing']))
 
 
 async def test_span_tree_repr(span_tree: SpanTree):

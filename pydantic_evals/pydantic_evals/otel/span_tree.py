@@ -267,9 +267,7 @@ class SpanNode:
 
     def _attribute_matches(self, key: str, expected: Any) -> bool:
         """Check if a span attribute matches an expected value, handling JSON-serialized dicts and lists."""
-        if key not in self.attributes:
-            return False
-        stored = self.attributes[key]
+        stored = self.attributes.get(key)
         if stored == expected:
             return True
         # Instrumentation libraries like Logfire may store structured values as JSON strings.
