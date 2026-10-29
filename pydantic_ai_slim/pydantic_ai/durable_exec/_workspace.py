@@ -30,6 +30,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
+    MountError,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -166,6 +167,7 @@ _EXPECTED_ERRORS: tuple[type[Exception], ...] = (
     WorkspaceUnavailableError,
     WorkspaceReadOnlyError,
     WorkspaceOutputLimitError,
+    MountError,
     WorkspaceError,
     FileNotFoundError,
     NotADirectoryError,

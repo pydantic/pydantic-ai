@@ -94,6 +94,8 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
         'pydantic_ai.toolsets.prepared.PreparedToolset',
         'pydantic_ai.toolsets.renamed.RenamedToolset',
         'pydantic_ai.toolsets.set_metadata.SetMetadataToolset',
+        # A mount is a path and a filesystem, as in `Mount('data', s3)`; every option after them is keyword-only.
+        'pydantic_ai.workspaces.mounts.Mount',
     }
 )
 

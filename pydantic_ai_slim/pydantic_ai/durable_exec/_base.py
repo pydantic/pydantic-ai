@@ -273,13 +273,14 @@ def _durable_policies(workspace: Workspace) -> list[tuple[object, ...]]:
     """Constructor values of each policy wrapper, outermost first.
 
     `workspace_layers` records only types. Two wrappers of one class can still be different policies,
-    and a durable unit rebuilds the construction-time one.
+    and a durable unit rebuilds the construction-time one. A plain layer counts when it has mounts.
     """
     policies: list[tuple[object, ...]] = []
     layer: Workspace = workspace
     while True:
-        if type(layer) is not Workspace:
-            policies.append(layer.durable_policy())
+        policy = layer.durable_policy()
+        if type(layer) is not Workspace or policy:
+            policies.append(policy)
         backend = layer._backend  # pyright: ignore[reportPrivateUsage]
         if not isinstance(backend, Workspace):
             return policies
@@ -568,11 +569,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             )
         supplied = workspace.wrapped if isinstance(workspace, DurableWorkspace) else workspace
         supplied_layers = workspace_layers(supplied)
-        # A bare backend takes the capability's policy; only a caller-side wrapper can be lost.
-        if len(supplied_layers) > 1 and not _same_durable_workspace(supplied, rebuilt):
+        # A bare backend takes the capability's policy; only a caller-side wrapper or mounts can be lost.
+        if (len(supplied_layers) > 1 or _durable_policies(supplied)) and not _same_durable_workspace(supplied, rebuilt):
             raise UserError(
                 f'Under {self.engine_name}, a `workspace=` policy would be lost across durable units; '
-                'configure its wrapper on the capability instead.'
+                'configure its wrapper or mounts on the capability instead.'
             )
         return rebuilt
 
