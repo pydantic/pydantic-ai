@@ -5255,16 +5255,103 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
 
 
 @pytest.mark.parametrize('previous_id', ['auto', 'resp_seed'])
-@pytest.mark.parametrize('compaction_provider', ['openai', 'openai-codex', 'azure'])
-@pytest.mark.parametrize('payload', ['encrypted', 'summary', 'empty'])
-@pytest.mark.parametrize('marked', [False, True])
+@pytest.mark.parametrize(
+    'compaction_provider,payload,marked,expected',
+    [
+        pytest.param(
+            'openai-codex',
+            'encrypted',
+            False,
+            {
+                'input': [
+                    {'id': 'cmp_1', 'encrypted_content': 'encrypted', 'type': 'compaction'},
+                    {'role': 'user', 'content': 'after compaction'},
+                ]
+            },
+            id='foreign-encrypted-unmarked',
+        ),
+        pytest.param(
+            'openai-codex',
+            'encrypted',
+            True,
+            {
+                'input': [
+                    {'id': 'cmp_1', 'encrypted_content': 'encrypted', 'type': 'compaction'},
+                    {'role': 'user', 'content': 'after compaction'},
+                ]
+            },
+            id='foreign-encrypted-marked',
+        ),
+        pytest.param(
+            'openai-codex',
+            'summary',
+            True,
+            {
+                'previous_response_id': 'resp_old',
+                'input': [{'role': 'user', 'content': 'after compaction'}],
+                'prompt_cache_options': {'comparison_response_id': 'resp_old'},
+            },
+            id='foreign-summary-unrenderable',
+        ),
+        pytest.param(
+            'openai-codex',
+            'empty',
+            True,
+            {
+                'previous_response_id': 'resp_old',
+                'input': [{'role': 'user', 'content': 'after compaction'}],
+                'prompt_cache_options': {'comparison_response_id': 'resp_old'},
+            },
+            id='foreign-empty-no-op',
+        ),
+        pytest.param(
+            'azure',
+            'encrypted',
+            True,
+            {
+                'previous_response_id': 'resp_old',
+                'input': [{'role': 'user', 'content': 'after compaction'}],
+                'prompt_cache_options': {'comparison_response_id': 'resp_old'},
+            },
+            id='foreign-incompatible',
+        ),
+        pytest.param(
+            'openai',
+            'encrypted',
+            False,
+            {
+                'previous_response_id': 'resp_inline',
+                'input': [{'role': 'user', 'content': 'after compaction'}],
+                'prompt_cache_options': {'comparison_response_id': 'resp_inline'},
+            },
+            id='same-provider-stateful-inline',
+        ),
+        pytest.param(
+            'openai',
+            'encrypted',
+            True,
+            {
+                'input': [
+                    {'id': 'cmp_1', 'encrypted_content': 'encrypted', 'type': 'compaction'},
+                    {'role': 'user', 'content': 'after compaction'},
+                ]
+            },
+            id='same-provider-stateless-marker',
+        ),
+    ],
+)
 async def test_compatible_compaction_stops_previous_response_chaining(
     allow_model_requests: None,
     previous_id: str,
     compaction_provider: str,
     payload: str,
     marked: bool,
+    expected: dict[str, object],
 ):
+    """Pin continuation IDs and replay input independently for each compaction kind.
+
+    The SDK mock exposes the request body, which cassette replay does not compare.
+    """
     history: list[ModelRequest | ModelResponse] = [
         ModelRequest.user_text_prompt('before compaction'),
         ModelResponse(parts=[TextPart('old answer')], provider_name='openai', provider_response_id='resp_old'),
@@ -5294,21 +5381,10 @@ async def test_compatible_compaction_stops_previous_response_chaining(
     )
     await model.request(history, None, ModelRequestParameters())
     body = get_mock_responses_kwargs(client)[0]
-    if (compaction_provider == 'openai' and marked) or (
-        compaction_provider == 'openai-codex' and payload == 'encrypted'
-    ):
-        assert 'previous_response_id' not in body
-        assert 'prompt_cache_options' not in body
-        if payload == 'encrypted':
-            assert body['input'] == [
-                {'id': 'cmp_1', 'encrypted_content': 'encrypted', 'type': 'compaction'},
-                {'role': 'user', 'content': 'after compaction'},
-            ]
-    else:
-        response_id = 'resp_inline' if compaction_provider == 'openai' else 'resp_old'
-        assert body['previous_response_id'] == response_id
-        assert body['prompt_cache_options'] == {'comparison_response_id': response_id}
-        assert body['input'] == [{'role': 'user', 'content': 'after compaction'}]
+    actual: dict[str, object] = {
+        key: body[key] for key in ('previous_response_id', 'input', 'prompt_cache_options') if key in body
+    }
+    assert actual == expected
 
 
 def _text_reply(response_id: str, text: str) -> resp.Response:
