@@ -156,13 +156,18 @@ def main() -> None:
             waiver = waivers.get(finding.fingerprint)
             if waiver is None or waiver.against != args.against:
                 failed = True
-                emit_annotation(
-                    'error',
-                    finding,
+                path = f'{args.waivers / finding.fingerprint}.json'
+                message = (
                     f'{finding.message} [fingerprint: {finding.fingerprint}]. '
                     'Preserve compatibility or follow the allowed compatibility-impact process, '
-                    f'with a waiver in `{args.waivers / finding.fingerprint}.json`.',
+                    f'with a waiver in `{path}`.'
                 )
+                if waiver is not None:
+                    message += (
+                        f' `{path}` waives it against {waiver.against}; '
+                        f'replace its contents with a waiver against {args.against}.'
+                    )
+                emit_annotation('error', finding, message)
             else:
                 used_waivers.add(finding.fingerprint)
                 emit_annotation(

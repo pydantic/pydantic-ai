@@ -344,6 +344,8 @@ def test_main_fails_for_unapproved_breakage(
     output = capsys.readouterr().out
     assert '::error file=messages.py,line=12::' in output
     assert f'with a waiver in `{tmp_path}/waivers/{finding.fingerprint}.json`' in output
+    stale = 'waives it against v2.31.0; replace its contents with a waiver against v2.32.1.'
+    assert (stale in output) is (waived_against is not None)
 
 
 def test_main_warns_for_approved_breakage(
