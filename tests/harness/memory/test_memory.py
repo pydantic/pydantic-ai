@@ -2474,9 +2474,12 @@ class TestConfigurationAndSpecs:
             'agent_name',
             'backend',
             'database',
+            'defer_loading',
+            'description',
             'directory',
             'guidance',
             'heading',
+            'id',
             'inject_memory',
             'injection_errors',
             'max_lines',
@@ -2516,6 +2519,13 @@ class TestConfigurationAndSpecs:
             if name not in {'backend', 'directory', 'database'}
         }
         assert options == {name: defaults[name] for name in options}
+
+    def test_from_spec_sets_the_base_capability_fields(self) -> None:
+        """`id`, `description` and `defer_loading` live on `AbstractCapability`, so a spec must name them too."""
+        definitions = AgentSpec.model_json_schema_with_capabilities([Memory])['$defs']
+        assert {'id', 'description', 'defer_loading'} <= definitions['spec_params_Memory']['properties'].keys()
+        capability = Memory[None].from_spec(id='second', description='The second one.', defer_loading=True)
+        assert (capability.id, capability.description, capability.defer_loading) == ('second', 'The second one.', True)
 
     def test_from_spec_backends_and_cross_backend_validation(self, tmp_path: Path) -> None:
         assert isinstance(Memory.from_spec().store, InMemoryStore)
