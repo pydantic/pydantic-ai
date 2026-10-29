@@ -51,6 +51,10 @@ with try_import() as vercel_available:
 with try_import() as agui_available:
     from pydantic_ai.ui.ag_ui import AGUIAdapter
 
+with try_import() as agui_encrypted_value_available:
+    # `encrypted_value`, the carrier the ref rides, landed in ag-ui-protocol 0.1.11 with `ReasoningMessage`.
+    from ag_ui.core import ReasoningMessage  # noqa: F401  # pyright: ignore[reportUnusedImport]
+
 
 class AnnouncingFunctionModel(FunctionModel):
     """A `FunctionModel` that is told about the frame ref, as a model with a wire is."""
@@ -264,6 +268,7 @@ def test_vercel_round_trip_keeps_the_ref():
 
 
 @pytest.mark.skipif(not agui_available(), reason='ag-ui not installed')
+@pytest.mark.skipif(not agui_encrypted_value_available(), reason='ag-ui-protocol < 0.1.11 (no `encrypted_value`)')
 def test_agui_round_trip_keeps_the_ref():
     """AG-UI has no slot for request metadata, so the ref rides the namespaced `encrypted_value` carrier."""
     loaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(history_with_a_ref()))
