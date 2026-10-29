@@ -36,7 +36,8 @@ try:
             real_span = span  # pragma: lax no cover
         else:
             real_span = getattr(span, '_span', None)
-            assert isinstance(real_span, Span)
+            if not isinstance(real_span, Span):
+                return ''
         context = set_span_in_context(real_span)
         carrier: dict[str, Any] = {}
         TRACEPARENT_PROPAGATOR.inject(carrier, context)

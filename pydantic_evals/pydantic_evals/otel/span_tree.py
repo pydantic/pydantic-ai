@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import cache
 from textwrap import indent
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from pydantic import TypeAdapter
 from typing_extensions import TypeAliasType, TypedDict
@@ -16,11 +16,17 @@ if TYPE_CHECKING:  # pragma: no cover
     # Since opentelemetry isn't a required dependency, don't actually import these at runtime
     from opentelemetry.sdk.trace import ReadableSpan
 
-# Match recursive OTel values while retaining the existing byte-string validation.
-AttributeValue = TypeAliasType(
-    'AttributeValue',
-    str | bool | int | float | Sequence['AttributeValue'] | Mapping[str, 'AttributeValue'] | None,
-)
+if TYPE_CHECKING:
+    # Recursive TypeAliasType values can resolve to Unknown in threaded type checking.
+    AttributeValue: TypeAlias = (
+        str | bool | int | float | Sequence['AttributeValue'] | Mapping[str, 'AttributeValue'] | None
+    )
+else:
+    # Match recursive OTel values while retaining the existing byte-string validation.
+    AttributeValue = TypeAliasType(
+        'AttributeValue',
+        'str | bool | int | float | Sequence[AttributeValue] | Mapping[str, AttributeValue] | None',
+    )
 
 SpanStatus = Literal['unset', 'ok', 'error']
 """The status of a span, mirroring `opentelemetry.trace.StatusCode`."""

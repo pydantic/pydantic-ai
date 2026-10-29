@@ -16,6 +16,13 @@ if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
 
+@pytest.mark.skipif(find_spec('logfire') is not None, reason='requires API-only Logfire')
+def test_get_traceparent_from_api_only_logfire_span():
+    pytest.importorskip('opentelemetry.trace')
+    with logfire_span('test API-only traceparent') as span:
+        assert get_traceparent(span) == ''
+
+
 @pytest.mark.skipif(find_spec('logfire') is None, reason='logfire not installed')
 def test_get_traceparent_from_logfire_span(capfire: 'CaptureLogfire'):
     with logfire_span('test traceparent') as span:
