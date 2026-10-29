@@ -46,6 +46,8 @@ from ._inline_snapshot import snapshot
 from .conftest import undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 
+READINESS_WAIT_TIMEOUT = 5
+
 
 async def test_await_maybe():
     async def _coro() -> int:
@@ -1499,7 +1501,7 @@ async def test_scoped_task_result_raises_task_error_without_awaiter_cancellation
         raise ValueError('boom')
 
     awaiter = asyncio.create_task(ScopedTask(body()).result())
-    async with asyncio.timeout(5):
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
         await started.wait()
         awaiter.cancel('stop')
         await asyncio.wait((awaiter,))
