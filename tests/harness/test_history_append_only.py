@@ -79,7 +79,7 @@ from pydantic_ai_harness.subagents import (
     SubAgents,
     is_task_report,
 )
-from pydantic_ai_harness.system_reminders import LLMReminder
+from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
 from ..append_only import (
     CLOCK,
@@ -296,6 +296,13 @@ FIXTURES: dict[str, Fixture] = {
 """Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
 
 VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
+    # A lasting reminder is recorded on each firing and sent again on every later request, so it only ever appends.
+    "SystemReminders(scope='conversation')": (
+        lambda _: SystemReminders(
+            reminders=[Reminder('Cite your sources.', interval=2, tag=None, scope='conversation')]
+        ),
+        Scenario(),
+    ),
     # Each firing records a framework note and the generated text for good, so they must only ever be appended.
     'SystemReminders(LLMReminder)': (
         lambda _: SystemReminders(
@@ -456,13 +463,6 @@ ALLOWED: dict[str, Allowed] = {
     # With a 10-token target every request is over it, so the tier clears each tool result as it ages out of
     # `keep_pairs`: one on the third request and one on the fifth.
     'TieredCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
-    'Planning': Allowed(
-        f'Request-only plan reminder at the end of each request, behind a cache breakpoint ({_PULLS}10257)',
-        # Anthropic adds it to the last tool result message; the OpenAI APIs send it as a user message.
-        (('messages', 'tool-return'), ('messages', 'user-prompt')),
-        tail=True,
-        records=('request-only user prompt',),
-    ),
     'WarnNearLimits': Allowed(
         f'Request-scoped system prompt ({_PULLS}10561): sent for one request, then left out. Anthropic clears it '
         'natively with `clear_at`; elsewhere it is a request-only tail',
@@ -524,6 +524,7 @@ ALLOWED: dict[str, Allowed] = {
 """Documented prefix movers, checked exactly."""
 
 OPTIONAL_DEPENDENCIES: dict[str, str] = {
+    'BoxdSandbox': 'boxd',
     'BoxLiteSandbox': 'boxlite',
     'BrowserUse': 'browser_use',
     'DaytonaSandbox': 'daytona',
