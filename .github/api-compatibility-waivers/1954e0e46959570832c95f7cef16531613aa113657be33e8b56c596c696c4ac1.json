@@ -1,5 +1,0 @@
-{
-  "against": "v2.63.0",
-  "reason": "Adds the `ModelFallback` capability to `CAPABILITY_TYPES` so agent specs can declare it; every existing entry is unchanged.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11679"
-}

@@ -239,6 +239,13 @@ _COLLECTION_ENTRY_CHANGES: list[tuple[str, tuple[list[str], list[str]] | None]] 
     ("['a'] -> ['a', 'b']", None),
     ("frozenset({'a'}, key=1) -> frozenset({'a', 'b'})", None),
     ("{'a': 'x' -> {'a': 'x', 'b': 'y'}", None),
+    ('{c.name: c for c in (A, B)} -> {c.name: c for c in (A, C, B)}', (['C'], [])),
+    ('{c.name: c for c in (A, B)} -> {c.name: c for c in (A,)}', ([], ['B'])),
+    ('{c for c in [A]} -> {c for c in [A, B]}', (['B'], [])),
+    ('{c.name: c for c in (A, B)} -> {c.id: c for c in (A, B, C)}', None),
+    ('{c.name: c for c in (A, B) if c.ok} -> {c.name: c for c in (A, B, C)}', None),
+    ('{c.name: c for c in (A, B)} -> {c for c in (A, B, C)}', None),
+    ('{c.name: c for c in TYPES} -> {c.name: c for c in TYPES}', None),
 ]
 
 

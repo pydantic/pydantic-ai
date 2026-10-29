@@ -501,6 +501,7 @@ async def main():
                     cost=Decimal('0.000182'), input_tokens=56, output_tokens=7
                 ),
                 model_name='{{ openai:medium.name }}',
+                model_id='{{ openai:medium }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',
@@ -571,6 +572,7 @@ async def main():
                         cost=Decimal('0.000182'), input_tokens=56, output_tokens=7
                     ),
                     model_name='{{ openai:medium.name }}',
+                    model_id='{{ openai:medium }}',
                     timestamp=datetime.datetime(...),
                     run_id='...',
                     conversation_id='...',
@@ -2144,6 +2146,7 @@ with capture_run_messages() as messages:  # (2)!
                     cost=Decimal('0.000164'), input_tokens=62, output_tokens=4
                 ),
                 model_name='{{ openai:medium.name }}',
+                model_id='{{ openai:medium }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',
@@ -2175,6 +2178,7 @@ with capture_run_messages() as messages:  # (2)!
                     cost=Decimal('0.000216'), input_tokens=68, output_tokens=8
                 ),
                 model_name='{{ openai:medium.name }}',
+                model_id='{{ openai:medium }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',

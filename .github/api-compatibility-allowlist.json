@@ -129,6 +129,10 @@
     {
       "path": "src/pydantic_clai2/pydantic_clai2/config/__init__.py",
       "symbol": "STRING_SETTINGS"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/capabilities/__init__.py",
+      "symbol": "CAPABILITY_TYPES"
     }
   ]
 }
