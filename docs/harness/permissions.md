@@ -25,7 +25,7 @@ A coding agent's [`FileSystem`](filesystem.md) and [`Shell`](shell.md) tools run
 | `'auto'` | run | run, unless they match `ask_commands` |
 | `'read-only'` | ask | ask |
 
-A call that asks raises [`ApprovalRequired`](../deferred-tools.md#human-in-the-loop-tool-approval), so it uses the same deferred approval flow as `requires_approval=True`. Without a handler the run ends with the call in its `DeferredToolRequests` output. To ask a person inline instead, add a [`HandleDeferredToolCalls`](../capabilities/handle-deferred-tool-calls.md) handler that calls `ask_permissions` with an approver:
+A call that asks raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired], so it uses the same [deferred approval flow](../deferred-tools.md#human-in-the-loop-tool-approval) as `requires_approval=True`. Without a handler the run ends with the call in its [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output. To ask a person inline instead, add a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler that calls `ask_permissions` with an approver:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -74,7 +74,7 @@ Approvals that other capabilities ask for, such as a tool registered with `requi
 
 `mode` can be a function of the run context. It is read on every call, so an application can switch modes while a run is going, and the run's next call follows the new mode:
 
-```python {test="skip"}
+```python
 from pydantic_ai_harness.permissions import PermissionMode, Permissions
 
 current: PermissionMode = 'read-only'
