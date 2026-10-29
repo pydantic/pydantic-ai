@@ -614,6 +614,7 @@ def test_model_profile_fable_5_1():
             'thinking_enabled_by_default': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_adaptive_thinking': True,
+            'anthropic_computer_tool_version': 'computer_toolset_20260801',
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_xhigh_effort': True,
@@ -633,6 +634,7 @@ def test_model_profile_fable_5_1():
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
+            'computer_use_screenshot_limit': (2576, 3600000),
         }
     )
 
@@ -696,6 +698,7 @@ def test_model_profile_opus_5():
             'thinking_enabled_by_default': True,
             'forced_tool_choice_disables_thinking': True,
             'anthropic_supports_adaptive_thinking': True,
+            'anthropic_computer_tool_version': 'computer_toolset_20260801',
             'anthropic_supports_effort': True,
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_supports_xhigh_effort': True,
@@ -715,6 +718,7 @@ def test_model_profile_opus_5():
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
+            'computer_use_screenshot_limit': (2576, 3600000),
         }
     )
 

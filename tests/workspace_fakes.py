@@ -4,13 +4,22 @@ import posixpath
 import struct
 import zlib
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Protocol, Self, cast
+from typing import Any, Protocol, Self
 
 import anyio
 
 from pydantic_ai import RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.computer_use import COMPUTER_KIND, ComputerResult, ComputerToolAction, Screenshot, Wait
+from pydantic_ai.computer_use import (
+    COMPUTER_KIND,
+    DISPLAY_SIZE,
+    ComputerResult,
+    ComputerToolAction,
+    CursorPosition,
+    Screenshot,
+    Wait,
+    Zoom,
+)
 from pydantic_ai.messages import BinaryImage, ToolReturn
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import (
@@ -560,29 +569,42 @@ class ProviderWorkspaces(AbstractCapability[Any]):
         return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend
 
 
-def computer_toolset(*, requires_approval: bool = False) -> FunctionToolset[Any]:
+def computer_toolset(
+    *, requires_approval: bool = False, display_size: tuple[int, int] | None = None
+) -> FunctionToolset[Any]:
     """A `computer` tool that keeps the tool's contract and nothing more, for testing model adapters.
 
-    It runs the actions on the workspace's display until one fails, then returns a summary and a screenshot, with
-    the outcome in the result's metadata.
+    It runs the actions on the workspace's display until one fails, then returns a summary, what zoom and
+    cursor-position actions returned, and a screenshot, with the outcome in the result's metadata.
     """
 
     async def computer(ctx: RunContext[Any], actions: list[ComputerToolAction]) -> ToolReturn:
         result = ComputerResult(performed=0)
+        outputs: list[str | BinaryImage] = []
         for action in actions:
-            if not isinstance(action, Wait | Screenshot):
-                try:
-                    # The display refuses what it can't do, such as zooming.
-                    await ctx.workspace.act(cast(ComputerAction, action))
-                except WorkspaceError as error:
-                    result['error'] = str(error)
-                    break
+            try:
+                if isinstance(action, Zoom):
+                    outputs.append(BinaryImage(data=await ctx.workspace.zoom(action.region), media_type='image/png'))
+                elif isinstance(action, CursorPosition):
+                    point = await ctx.workspace.cursor_position()
+                    outputs.append(f'The pointer is at ({point.x}, {point.y}).')
+                elif not isinstance(action, Wait | Screenshot):
+                    await ctx.workspace.act(action)
+            except WorkspaceError as error:
+                result['error'] = str(error)
+                break
             result['performed'] += 1
         summary = f'Ran {result["performed"]} of {len(actions)} actions.'
         if 'error' in result:
             summary += f' The next one failed: {result["error"]}'
         screenshot = BinaryImage(data=await ctx.workspace.screenshot(), media_type='image/png')
-        return ToolReturn([summary, screenshot], metadata=result)
+        return ToolReturn([summary, *outputs, screenshot], metadata=result)
 
-    tool = Tool(computer, name='computer', tool_kind=COMPUTER_KIND, requires_approval=requires_approval)
+    tool = Tool(
+        computer,
+        name='computer',
+        tool_kind=COMPUTER_KIND,
+        requires_approval=requires_approval,
+        metadata={DISPLAY_SIZE: display_size} if display_size else None,
+    )
     return FunctionToolset([tool])

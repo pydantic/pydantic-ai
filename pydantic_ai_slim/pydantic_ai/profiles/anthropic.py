@@ -39,6 +39,9 @@ model, because `models/bedrock.py` cannot import from `models/anthropic/` withou
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
 """Concrete Anthropic code execution tool version to send for `CodeExecutionTool`."""
 
+AnthropicComputerToolVersion: TypeAlias = Literal['computer_toolset_20260801', 'computer_20251124', 'computer_20250124']
+"""Anthropic computer use tool version to send for a tool of the `computer` kind."""
+
 _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
     'claude-fable-5',
     'claude-mythos-5',
@@ -146,6 +149,13 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model supports `output_config.task_budget`. Default: `False`.
 
     Anthropic currently documents task budgets as a Claude Opus 4.7 / 4.8 / 5 / 5.5 and Haiku 5.5 beta feature.
+    """
+
+    anthropic_computer_tool_version: AnthropicComputerToolVersion | None
+    """The computer use tool a tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind is sent as.
+
+    Default: `None`, meaning a function tool. `AnthropicModel` narrows it by client: Bedrock and Foundry serve only
+    the earlier beta versions.
     """
 
     anthropic_supports_on_demand_compaction: bool
@@ -287,6 +297,17 @@ def resolve_anthropic_effort(
     if effort == 'max' and not supports_max:
         return 'xhigh' if supports_xhigh else 'high'
     return effort
+
+
+_COMPUTER_TOOLSET_MODELS = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-5',
+    'claude-sonnet-5',
+    'claude-haiku-5',
+    'claude-opus-4-8',
+)
+"""The models that take Anthropic's `computer_toolset_20260801`."""
 
 
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:
@@ -538,6 +559,17 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     if supports_advisor:
         supported_native_tools = supported_native_tools | {AdvisorTool}
 
+    # Each model's computer use tool, from Anthropic's compatibility table. Claude 5.5 and later take only the
+    # toolset on the Claude API.
+    # https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
+    computer_tool_version: AnthropicComputerToolVersion | None = None
+    if model_name.startswith(_COMPUTER_TOOLSET_MODELS):
+        computer_tool_version = 'computer_toolset_20260801'
+    elif model_name.startswith(('claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5')):
+        computer_tool_version = 'computer_20251124'
+    elif model_name.startswith(('claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-opus-4', 'claude-sonnet-4')):
+        computer_tool_version = 'computer_20250124'
+
     profile = AnthropicModelProfile(
         # Read by `OpenAIChatModel`, not by `AnthropicModel`: litellm, vercel, heroku, snowflake and
         # openrouter serve Claude through that adapter and map it onto this profile, so these tags are
@@ -561,6 +593,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         # on. Extended thinking rejects forcing outright, which `AnthropicModel` handles itself.
         forced_tool_choice_disables_thinking=True,
         anthropic_supports_adaptive_thinking=supports_adaptive,
+        anthropic_computer_tool_version=computer_tool_version,
         anthropic_supports_effort=supports_effort,
         anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
         anthropic_supports_xhigh_effort=supports_xhigh_effort,
@@ -580,6 +613,13 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
     if supports_tool_search:
         profile['tool_deferral_mode'] = 'standalone'
+    # The largest screenshot each model takes: the toolset refuses a larger one (at most 2576 px on the longer side
+    # and 4784 tiles of 28 px, kept below with room for rounding), and the earlier tools send it scaled down while
+    # Claude answers in the smaller image's pixels. Opus 4.7 takes the larger size on `computer_20251124`.
+    if model_name.startswith((*_COMPUTER_TOOLSET_MODELS, 'claude-opus-4-7')):
+        profile['computer_use_screenshot_limit'] = (2576, 3_600_000)
+    elif computer_tool_version is not None:
+        profile['computer_use_screenshot_limit'] = (1568, 1_150_000)
     return profile
 
 

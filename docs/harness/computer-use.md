@@ -45,9 +45,9 @@ async def main():
 
 The model must accept images. Gemini 3 models point on a 0-999 grid, which `ComputerUse` scales to pixels for them. Gemini gets `computer` as a function tool, not its own computer use tool, until `GoogleModel` moves to the Interactions API ([#6192](https://github.com/pydantic/pydantic-ai/issues/6192)).
 
-GPT-5.4 and later, except GPT-5.4 nano, on the Responses API of OpenAI, Azure OpenAI and Bedrock Mantle get
-`computer` as OpenAI's native computer tool, the format they were trained on. Every other model that accepts images
-gets it as a function tool.
+Claude 4 and later get Anthropic's computer use tool, on the APIs listed for [Anthropic](../models/anthropic.md#computer-use). GPT-5.4 and
+later, except GPT-5.4 nano, get OpenAI's on the Responses API of OpenAI, Azure OpenAI and Bedrock Mantle. Both are the
+format the models were trained on. Every other model that accepts images gets `computer` as a function tool.
 
 ## Computer use, Playwright, or Browser Use
 
@@ -77,11 +77,13 @@ far: on Claude, a run costs several times more without it. Set `cache=False` in 
 
 ## Screen size
 
-A model's profile can limit the size of the screenshots it takes, as `computer_use_screenshot_limit`. GPT's is
-2560x1440, since it clicks less accurately on a larger screen. On a larger screen, `ComputerUse` sends the model the screenshot scaled down and scales its positions back up, when the display
-can scale its screenshots ([`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot]); otherwise
-the run stops with an error naming the largest screen that fits. A zoom into a region larger than the limit fails the
-call before anything runs, and the result names the largest zoom of that shape that fits.
+A model's profile can limit the size of the screenshots it takes, as `computer_use_screenshot_limit`: Claude Opus 4.7,
+Opus 4.8 and the Claude 5 models take up to 2576 pixels on the longer side, earlier Claude models 1568 pixels and
+about 1.15 megapixels, and GPT 2560x1440, since it clicks less accurately on a larger screen. A 1280x800 screen fits
+every model. On a larger screen, `ComputerUse` sends the model the screenshot scaled down and scales its positions
+back up, when the display can scale its screenshots ([`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot]); otherwise the run stops with an error naming the largest
+screen that fits. A zoom into a region larger than the limit fails the call before anything runs, and the result
+names the largest zoom of that shape that fits.
 
 ## When an action fails
 

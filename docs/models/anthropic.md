@@ -891,6 +891,23 @@ agent = Agent(
 
 The response's usage, and so its cost, stays the sum of the passes either way.
 
+## Computer use
+
+Computer use is provided by the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. Its
+`computer` tool is sent as the computer use tool each Claude model was trained on:
+
+| Models | Claude API and Google Cloud | Bedrock and Foundry |
+|---|---|---|
+| Claude Opus 4.8 and Claude 5 | `computer_toolset_20260801` | `computer_20251124` (on Foundry, not the 5.5 models) |
+| Claude Opus 4.7, 4.6 and 4.5, Sonnet 4.6 | `computer_20251124` | `computer_20251124` |
+| Claude Sonnet 4.5, Haiku 4.5, Opus 4.1, Opus 4, Sonnet 4 | `computer_20250124` | `computer_20250124` |
+
+Other models get a function tool.
+
+Claude Opus 4.7, Opus 4.8 and the Claude 5 models take screenshots up to 2576 pixels on the longer side, and earlier
+models up to 1568 pixels and about 1.15 megapixels; on a larger screen, `ComputerUse` sends them a scaled-down
+screenshot (see [Screen size](../harness/computer-use.md#screen-size)).
+
 ## Code Execution Tool Version
 
 By default, Pydantic AI chooses a compatible Anthropic code execution tool version for the selected model. You can override this with [`AnthropicModelSettings.anthropic_code_execution_tool_version`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_code_execution_tool_version] when you need a specific supported Anthropic tool version:
