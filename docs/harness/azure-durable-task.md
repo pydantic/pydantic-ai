@@ -156,7 +156,7 @@ becomes `-x3C-agent-x3E-`. Escaping the marker and terminating each code point m
 unambiguous, including non-BMP characters and literal escape-like names.
 Names exceeding 100 characters retain their first 83 escaped characters, followed by `-`
 and the first 16 hex digits of SHA-256 of the original journal name. Registration rejects
-invalid or duplicate generated names with `UserError`, including a hash collision.
+invalid or duplicate generated names with [`UserError`][pydantic_ai.exceptions.UserError], including a hash collision.
 
 This mapping is persisted compatibility data. Do not change it for in-flight histories;
 drain old instances or explicitly migrate them first. User-written orchestrator names are
@@ -213,9 +213,9 @@ Activities cannot emit run events or enqueue messages.
 
 ## Approvals and deferred calls
 
-Approvals belong to your orchestrator. Include `DeferredToolRequests` in the output type, wait for
+Approvals belong to your orchestrator. Include [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] in the output type, wait for
 an external event, then resume with the complete message history, cumulative usage and
-`DeferredToolResults`. Waiting holds no activity resource open.
+[`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults]. Waiting holds no activity resource open.
 
 This approval loop uses one event per pause, with decisions keyed by the original tool-call IDs:
 
@@ -286,7 +286,7 @@ event is still pending before sending. The per-pause event name keeps a late eve
 a later wait, including a race after the client's state check.
 Authenticate and authorize your review UI/API; payload validation does not identify the sender.
 
-For argument overrides, denial messages and externally executed calls (including `ModelRetry`),
+For argument overrides, denial messages and externally executed calls (including [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]),
 see [Deferred Tools](../deferred-tools.md#human-in-the-loop-tool-approval) and
 [external tool execution](../deferred-tools.md#external-tool-execution). Resolve externally executed
 calls through `DeferredToolResults.calls` rather than `approvals`. Use SDK durable timers for
@@ -296,7 +296,7 @@ review deadlines, not wall-clock sleeps in the orchestrator.
 
 Pass native `durabletask.task.RetryPolicy` values as `model_options`, `tool_options`,
 `event_options` and `capability_options` to configure activity failures by role.
-`ModelRetry`, `ApprovalRequired` and `CallDeferred` are recorded control flow, not SDK failures.
+`ModelRetry`, [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] are recorded control flow, not SDK failures.
 Codec failures and `UserError` configuration errors are recorded and raised outside native retries.
 Other activity exceptions remain eligible for retries. Serialization failure after a tool side effect
 does not undo that effect.

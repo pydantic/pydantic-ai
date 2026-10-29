@@ -9,7 +9,7 @@ from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
 from contextlib import contextmanager
 from contextvars import Context, ContextVar
 from datetime import UTC, datetime, timedelta
-from typing import Protocol, TypeVar, cast
+from typing import TypeVar, cast
 from weakref import WeakSet
 
 from durabletask import task
@@ -19,10 +19,6 @@ from pydantic_ai.exceptions import UserError
 
 T = TypeVar('T')
 __all__ = ('run_durable', 'current_loop')
-
-
-class _RunnableHandle(Protocol):
-    def _run(self) -> None: ...
 
 
 def _as_task(value: task.Task[T]) -> task.Task[object]:
@@ -107,7 +103,7 @@ class _TrampolineLoop(asyncio.BaseEventLoop):
             for _ in range(len(self._ready)):
                 handle = self._ready.popleft()
                 if not handle.cancelled():
-                    cast(_RunnableHandle, handle)._run()  # pyright: ignore[reportPrivateUsage]
+                    handle._run()
 
     def drain_cleanup(self) -> None:
         self.drain()
