@@ -2328,6 +2328,7 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Working Dir',
                         },
                         'read_only': {'title': 'Read Only', 'type': 'boolean'},
+                        'trusted': {'title': 'Trusted', 'type': 'boolean'},
                         'env': {
                             'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
                             'title': 'Env',

@@ -47,6 +47,7 @@ from pydantic_ai.workspaces import (
     SupportsCommands,
     SupportsFilesystem,
     UnavailableWorkspace,
+    UntrustedWorkspace,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -803,6 +804,18 @@ def test_a_plain_workspace_around_a_wrapper_keeps_its_policy() -> None:
 
     assert nested.read_only
     assert workspace_layers(nested) == [ReadOnlyWorkspace, FakeWorkspace]
+
+
+def test_trust_is_lost_under_an_untrusted_wrapper() -> None:
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    plain = Workspace(FakeWorkspace('plain'))
+    stacked = Workspace(ReadOnlyWorkspace(UntrustedWorkspace(plain)))
+
+    assert ctx.workspace.trusted
+    assert plain.trusted
+    assert ReadOnlyWorkspace(plain).trusted
+    assert not UntrustedWorkspace(plain).trusted
+    assert not stacked.trusted
 
 
 async def test_bare_run_context_workspace_explains_how_to_attach_one() -> None:

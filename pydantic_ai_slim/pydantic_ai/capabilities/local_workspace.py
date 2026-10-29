@@ -5,7 +5,14 @@ from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import (
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    UntrustedWorkspace,
+    Workspace,
+    WorkspaceBackend,
+    WorkspaceRef,
+)
 
 from .abstract import AbstractCapability
 
@@ -35,6 +42,10 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     read_only: bool = False
     """Whether to wrap the workspace in a [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace]."""
 
+    trusted: bool = True
+    """Whether the operator controls the directory's files; `False` wraps the workspace in an
+    [`UntrustedWorkspace`][pydantic_ai.workspaces.UntrustedWorkspace]."""
+
     env: Mapping[str, str] | None = None
     """Environment variables for every command, on top of `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`.
 
@@ -52,7 +63,7 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         # The later configuration replaces the earlier one whole, so
-        # an `env` (and its secrets) or `read_only` stated only on the replaced one never carries over.
+        # an `env` (and its secrets), `read_only` or `trusted` stated only on the replaced one never carries over.
         return capabilities[-1]
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
@@ -60,4 +71,9 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
         if ref is not None and ref != backend.ref:
             # A ref from history never redirects host access away from the configured backend.
             return None
-        return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend
+        workspace: WorkspaceBackend = backend
+        if self.read_only:
+            workspace = ReadOnlyWorkspace(Workspace(workspace))
+        if not self.trusted:
+            workspace = UntrustedWorkspace(Workspace(workspace))
+        return workspace

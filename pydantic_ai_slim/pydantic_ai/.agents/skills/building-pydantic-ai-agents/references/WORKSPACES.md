@@ -15,13 +15,14 @@ async def execute(ctx: RunContext[None], command: list[str]) -> str:
     return result.stdout
 ```
 
-`LocalWorkspace(working_dir, *, read_only=False, env=None)` runs host subprocesses and provides no
+`LocalWorkspace(working_dir, *, read_only=False, trusted=True, env=None)` runs host subprocesses and provides no
 isolation: `working_dir` is only the default directory and the base for relative paths, not a jail
 or a security boundary. Use it only for trusted work. `working_dir` is required; a relative path
 such as `'.'` resolves against the current directory at construction, and a leading `~` is
 expanded; the caller owns that directory. Commands inherit only `PATH`,
 `HOME`, and the locale variables `LANG`, `LC_ALL`, and `LC_CTYPE` from the agent process, with `env` and then the per-call `env` layered on top. Never pass `os.environ` wholesale: it hands the
-model's commands every secret in the process, LLM API keys included. `read_only=True` wraps it in `ReadOnlyWorkspace`. Two
+model's commands every secret in the process, LLM API keys included. `read_only=True` wraps it in `ReadOnlyWorkspace`,
+and `trusted=False` in `UntrustedWorkspace`, for files the operator didn't write (a cloned repo, an upload). Two
 `LocalWorkspace`s share the default id `local_workspace` and combine into the last one (none of
 the earlier one's settings carry over); give one a distinct `id` to keep both.
 Its ref is `WorkspaceRef(provider='local', id=<absolute working_dir>)` from construction (the
@@ -37,7 +38,9 @@ Without an attached workspace, operations raise `WorkspaceUnavailableError`; a c
 `ctx.workspace.attached` in `before_run` and raises a `UserError` naming what to attach. `Workspace` offers the same run
 and file methods for every backend; `WrapperWorkspace` is the base for policy wrappers (override
 operations, delegate the rest to `self.wrapped`), `ReadOnlyWorkspace` blocks commands and changes,
-and `workspace.read_only` lets a tool provider leave write tools out. To disable workspace access
+and `workspace.read_only` lets a tool provider leave write tools out. `UntrustedWorkspace` changes no operation:
+a capability checks `workspace.trusted` before putting file text it reads from the workspace in instructions, and
+sends that text as tool output when it is `False`. To disable workspace access
 for a run on purpose, pass `workspace=UnavailableWorkspace(reason=...)`: its operations raise
 `WorkspaceUnavailableError` with that reason, which a tool can catch as a `WorkspaceError`.
 
@@ -106,7 +109,7 @@ same capabilities (policy wrappers included). One `ensure` unit at run start cre
 environment and records its ref and working directory, so all units share one environment and
 `working_dir()`/`resolve()` need no unit. Inside a container `workspace=` takes `None`, `'new'`, a
 `WorkspaceRef`, a previous `result.workspace`, or a live instance whose ref a capability recognizes,
-which is rebuilt through that capability. A wrapper around it, such as `ReadOnlyWorkspace`, is
+which is rebuilt through that capability. A wrapper around it, such as `ReadOnlyWorkspace` or `UntrustedWorkspace`, is
 rejected with `UserError` unless the capability rebuilds the same policy, so put policy on the capability (e.g. `LocalWorkspace(..., read_only=True)`). A
 live instance without a recognized ref raises `UserError`. Workspace calls retry like capability
 operations, so a command or write may repeat if a worker dies mid-call. The deprecated `TemporalAgent`/`DBOSAgent`/`PrefectAgent` wrappers refuse

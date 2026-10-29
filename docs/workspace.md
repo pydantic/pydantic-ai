@@ -280,6 +280,32 @@ This is a preflight check, not a security boundary against concurrent symlink ch
 isolated backend for untrusted commands. On a backend without commands or `SupportsRealpath`,
 `realpath` only normalizes text; see [Resolving symlinks](#resolving-symlinks).
 
+## Files you didn't write {#untrusted-workspaces}
+
+Pass `trusted=False` when the agent works on files the operator doesn't control, such as a cloned
+repository or a customer's upload:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('./checkout', trusted=False)])
+```
+
+Tools work as before: the agent reads, edits and runs commands in it. The flag is for capabilities
+that pass the workspace's own files to the model. The model treats the agent's instructions as the
+operator speaking, so a capability that would put text read from the workspace there checks
+[`ctx.workspace.trusted`][pydantic_ai.workspaces.Workspace.trusted] and, when it is `False`, sends
+that text as tool output instead. `trusted=False` doesn't limit what the agent can do; use
+[tool approval](deferred-tools.md#human-in-the-loop-tool-approval) or a sandbox for that.
+
+A capability checks `trusted` when it builds a run's content, so a change applies from the next run.
+Text it already added to a conversation stays in that history, so start a new conversation after
+marking a workspace untrusted.
+
+For a single run, wrap its workspace in `UntrustedWorkspace` and pass it as `workspace=`, as with
+`ReadOnlyWorkspace`.
+
 ## Choosing a run's workspace
 
 A run picks its workspace from the first of these that applies:
@@ -390,11 +416,11 @@ activities.
   `activity_config`; if you set that, keep a `start_to_close_timeout` in it, for example
   `activity_config={'start_to_close_timeout': timedelta(seconds=60), 'retry_policy': RetryPolicy(maximum_attempts=3)}`.
 - `workspace=` passes on only a reference, and the run rebuilds the workspace from the agent's own
-  capabilities. A `ReadOnlyWorkspace(...)` argument raises `UserError` if rebuilding would drop its
-  read-only policy, and so does a live backend that has no ref yet or a capability passed to the run
+  capabilities. A policy wrapper such as `ReadOnlyWorkspace(...)` or `UntrustedWorkspace(...)` raises
+  `UserError` if rebuilding would drop its policy, and so does a live backend that has no ref yet or a capability passed to the run
   that changes the workspace's type or policy. Other settings of a run-level workspace capability,
   such as a sandbox image, do not apply: every unit rebuilds the workspace from the agent's. A previous `result.workspace` without a ref starts a fresh workspace. Put policy on the agent's capability instead, such as
-  `LocalWorkspace(..., read_only=True)`.
+  `LocalWorkspace(..., read_only=True)` or `LocalWorkspace(..., trusted=False)`.
 - `workspace.backend` is not available in workflow code, which includes DBOS function tools and
   Temporal tools with `metadata={'temporal': False}`. Reach the provider's own API from a tool that
   runs as an activity or task.
