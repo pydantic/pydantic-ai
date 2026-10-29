@@ -8,12 +8,12 @@ description: "Make Pydantic AI agents durable with Prefect, running model reques
 
 ## Durable Execution
 
-Prefect 3.0 brings [transactional semantics](https://www.prefect.io/blog/transactional-ml-pipelines-with-prefect-3-0) to your Python workflows, allowing you to group tasks into atomic units and define failure modes. If any part of a transaction fails, the entire transaction can be rolled back to a clean state.
+Prefect 3.0 brings [transactional semantics](https://www.prefect.io/blog/transactional-ml-pipelines-with-prefect-3-0) to your Python workflows: every task runs within a transaction that governs when and where its result record is persisted.
 
 * **Flows** are the top-level entry points for your workflow. They can contain tasks and other flows.
 * **Tasks** are individual units of work that can be retried, cached, and monitored independently.
 
-Prefect 3.0's approach to transactional orchestration makes your workflows automatically **idempotent**: rerunnable without duplication or inconsistency across any environment. Every task is executed within a transaction that governs when and where the task's result record is persisted. If the task runs again under an identical context, it will not re-execute but instead load its previous result.
+When a task runs again under an identical context, such as a retry of the same flow run, it loads its recorded result instead of re-executing. This doesn't make external side effects exactly-once; see [Caching and Idempotency](#caching-and-idempotency).
 
 The diagram below shows the overall architecture of an agentic application with Prefect.
 Prefect uses client-side task orchestration by default, with optional server connectivity for advanced features like scheduling and monitoring.
@@ -152,11 +152,31 @@ When using Prefect with Pydantic AI agents, there are a few important considerat
 
 Each agent instance must have a unique `name` so Prefect can correctly identify and track its flows and tasks.
 
-Toolsets that implement their own tool listing and calling (i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]) must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id] set, which is used to identify their tasks within the flow.
+Toolsets that implement their own tool listing and calling (i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]) must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id] set, which is used to identify their tasks within the flow. The hostname a URL `MCPToolset` without one takes as its `id` doesn't count.
 
 ### Capabilities at Runtime
 
 Unlike Temporal and DBOS, Prefect creates a task per call rather than registering its durable units up front, so [capabilities](../capabilities/overview.md) passed to `agent.run(capabilities=[...])` inside a flow are accepted. A capability that contributes an executing toolset is still rejected, by the same guard that rejects `run(toolsets=...)`: the toolset arrives after the agent's toolsets were wrapped. Attach those at agent construction time.
+
+### Durable Capability Operations
+
+Capability tasks include the agent's name in their cache key, so two agents in one flow never
+share a cached result.
+
+Custom [`@durable_operation`][pydantic_ai.capabilities.durable_operation] calls use the run's
+[`run_id`][pydantic_ai.tools.RunContext.run_id] and a per-operation call sequence in their task cache
+keys. Distinct, stable explicit `run_id=` values keep each run's results attached to that run even
+when runs arrive in a different order on a flow retry. Repeated identical calls within one run
+keep separate recorded results. Automatically derived run IDs still depend on
+arrival order, so pass explicit IDs for branches that can reorder.
+
+!!! warning "Upgrading custom capability task cache keys"
+
+    Persisted custom capability task results from versions before this change use different cache
+    keys. Retrying an in-flight flow across the upgrade re-executes these operations, which can
+    repeat their external effects. Let in-flight flows using custom durable capability operations
+    finish before upgrading. No manual cache deletion is required. Model, tool, workspace, and
+    event stream handler cache keys are unchanged by this update.
 
 ### Workspaces
 
@@ -165,7 +185,19 @@ Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, wh
 Adding a workspace to an agent changes the tasks its flows run, so let running flows finish before
 you deploy the change.
 
-Event stream handler and capability tasks include the agent's name in their cache key, so two agents in one
+Workspace task cache keys include the run's [`run_id`][pydantic_ai.tools.RunContext.run_id] and a
+per-run call sequence. With distinct, stable explicit `run_id=` values, concurrent runs keep their
+own environments even when their arrival order changes on flow retry. Automatically derived run
+IDs still depend on arrival order, so pass explicit IDs for concurrent branches that can reorder.
+
+!!! warning "Upgrading workspace task cache keys"
+
+    Persisted workspace task results from versions before this change use different cache keys.
+    Retrying an in-flight flow across the upgrade re-executes workspace calls, which can create a
+    new environment instead of reattaching the original one. Let in-flight workspace flows finish
+    before upgrading. No manual cache deletion is required.
+
+Event stream handler tasks include the agent's name in their cache key, so two agents in one
 flow never share a cached result. A flow retried across the upgrade that introduced this re-runs those tasks
 once instead of reading them from the cache.
 
@@ -238,11 +270,11 @@ their Prefect task, so `metadata={'prefect': False}` on an MCP tool raises a `Us
 
 ### Streaming
 
-[`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] work inside a Prefect flow, but their events are buffered rather than delivered in real time. The model stream runs inside the durable task, and its events are replayed to the flow after the task completes.
+[`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] work inside a Prefect flow, but their events are buffered rather than delivered in real time. The model stream runs inside the durable task, and once the task completes the flow replays its final response: each part arrives as one [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] carrying its full content, rather than as the deltas the model streamed, so the deltas aren't recorded in the task's result.
 
 For handlers with I/O side effects, pass `event_stream_handler=` to [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]. Model events are delivered live inside each model-request task, while each tool event is delivered in its own event-handler task. Configure those per-event tasks with `event_stream_handler_task_config=`. As with any Prefect task, a handler may run more than once if a task retries, so keep its side effects idempotent.
 
-Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream]. Its handler runs in flow code and must be deterministic because it re-runs on flow replay. Tool and final-output events arrive live, while the real captured model events are replayed after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
+Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream]. Its handler runs in flow code and must be deterministic because it re-runs on flow replay. Tool and final-output events arrive live, while model events are replayed from the final response after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
 A durability `event_stream_handler=` and a separately registered `ProcessEventStream` are two distinct handlers, and each fires once. The durability handler receives live events inside the durable task, while `ProcessEventStream` sees the buffered replay in flow code.
 
@@ -256,9 +288,15 @@ Because the model stream is consumed inside the task, cancelling it from the flo
 
 [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for flow code: it requires no running event loop and wraps `run_stream()`. Under [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a flow, an agent with `PrefectDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `PrefectAgent` forbids `run_stream` inside flows — use `run` + event stream handler there.)
 
+### Run Timeouts
+
+A run's [`timeout=`](../timeouts.md#bounding-a-whole-run) works inside a flow. The run's start time is recorded by a cached `{name}__run_start_time` task, so a flow retry keeps the deadline the run started with, and may find it has already passed. When the deadline passes, the run raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] in flow code, where you can catch it. The deprecated `PrefectAgent` rejects `timeout=`.
+
+The deadline bounds the agent run, not the flow. To bound the whole flow as well, set Prefect's own `timeout_seconds` on the flow.
+
 ### Suspended Turns and Background Mode
 
-When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request task. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first task. Size `timeout_seconds` in [Task Configuration](#task-configuration) for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation task.
+When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request task. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first task. Size `timeout_seconds` in [Task Configuration](#task-configuration) for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation task. Prefect has no durable sleep, so the wait between polls is a plain sleep in flow code that a retried flow run sleeps again. [Batched requests](../batch.md#durable-execution) work the same way: submitting a request and each check on its batch are separate tasks.
 
 ### Toolsets at Runtime
 
@@ -290,6 +328,8 @@ Available `TaskConfig` options:
 Example:
 
 ```python {title="prefect_durability_task_config.py" test="skip"}
+from prefect import flow
+
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectDurability, TaskConfig
 
@@ -309,11 +349,14 @@ agent = Agent(
 )
 
 
+@flow  # (1)!
 async def main():
     result = await agent.run('What is the capital of France?')
     print(result.output)
     #> Paris
 ```
+
+1. The task configuration only applies inside a Prefect flow. Outside one, the agent runs its model requests directly, without Prefect tasks.
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
@@ -331,14 +374,14 @@ If you don't pass `run_id` or `conversation_id` to [`Agent.run()`][pydantic_ai.a
 
 ## Caching and Idempotency
 
-Prefect 3.0 provides built-in caching and transactional semantics. Tasks with identical inputs will not re-execute if their results are already cached, making workflows naturally idempotent and resilient to failures.
+Prefect 3.0 provides built-in caching and transactional semantics. A task whose result is already recorded under the same cache key loads that result instead of re-executing, so a retried flow run replays the model requests and tool calls that completed. A task interrupted before its result was recorded runs again, even if its external side effect already happened, so side-effecting tools should be idempotent (for example, by passing an idempotency key to the external service).
 
 !!! warning "Dynamic-tool cache keys changed"
     Dynamic-tool task keys now include the prepared tool definition. Existing cached results for dynamic tools will miss once after upgrading and recompute. The discovery, argument-validation and tool-call tasks of a dynamic toolset listed under a prefix or rename also key on those prefixes and renames, and miss once after upgrading in the same way. No manual cache deletion is required; subsequent calls reuse the new value-addressed keys.
 
 * **Task inputs**: A model request's messages, settings and parameters; a tool call's name, arguments, definition and [`tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] (so two parallel calls to the same tool with the same arguments each execute); the prefixes and renames a dynamic toolset is listed under (so one dynamic toolset under two prefixes keeps a result per prefix); and the run state the task's work can depend on: dependencies, [`metadata`][pydantic_ai.tools.RunContext.metadata], [`validation_context`][pydantic_ai.tools.RunContext.validation_context], the prompt, and the message history.
 
-Per-run identifiers like [`run_id`][pydantic_ai.tools.RunContext.run_id] and [`conversation_id`][pydantic_ai.tools.RunContext.conversation_id], and message timestamps, are deliberately left out, so an otherwise identical run replays recorded results instead of re-executing them.
+Model and tool task cache keys deliberately leave out per-run identifiers like [`run_id`][pydantic_ai.tools.RunContext.run_id] and [`conversation_id`][pydantic_ai.tools.RunContext.conversation_id], and message timestamps, so identical inputs can reuse results across agent runs in the same flow. A run with a [`timeout=`](#run-timeouts) is the exception: its tool tasks key on the run's [`deadline`][pydantic_ai.tools.RunContext.deadline], so a tool that sizes its work to the time left doesn't replay a result computed under a different budget. A flow retry keeps the deadline, so its tool results still replay. The default cache policy does include the Prefect flow run ID, so a separate flow run has its own cache scope and executes its tasks afresh.
 
 **Note**: For user dependencies, `metadata` and `validation_context` to be included in cache keys, they must be serializable (e.g., Pydantic models or basic Python types). Non-serializable values are automatically excluded from cache computation.
 
@@ -407,4 +450,4 @@ The `serve()` method accepts scheduling options:
 - **`interval`**: Schedule interval in seconds or as a timedelta
 - **`rrule`**: iCalendar RRule schedule string
 
-For production deployments with Docker, Kubernetes, or other infrastructure, use the flow's [`deploy()`](https://docs.prefect.io/v3/how-to-guides/deployments/deploy-via-python) method. See the [Prefect deployment documentation](https://docs.prefect.io/v3/how-to-guides/deployments/create-deploymentsy) for more information.
+For production deployments with Docker, Kubernetes, or other infrastructure, use the flow's [`deploy()`](https://docs.prefect.io/v3/how-to-guides/deployments/deploy-via-python) method. See the [Prefect deployment documentation](https://docs.prefect.io/v3/how-to-guides/deployments/create-deployments) for more information.

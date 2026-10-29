@@ -6,6 +6,7 @@ import shlex
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import JsonValue, TypeAdapter
 from termflow.tui.completion import (
@@ -24,11 +25,16 @@ from pydantic_clai2.config import (
     UPDATE_CHANNELS,
     PluginSettings,
 )
+from pydantic_clai2.config.builtins import STOCK_PLUGINS
 from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_id
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
 from pydantic_clai2.ui.rendering.theme import names as theme_names
+
+if TYPE_CHECKING:
+    # Only for the annotation: `pydantic_clai2.plugins` imports this module.
+    from pydantic_clai2.plugins.menus import SettingsMenu
 
 _COMMAND_NAME = re.compile(r'\w[\w-]*')
 """Letters, digits, underscores, and hyphens, not starting with a hyphen: what a skill such as `code-review` is called."""
@@ -103,14 +109,22 @@ class Command:
     For commands named after something the user names, such as a skill, which may collide with a
     built-in like `/model`. The hidden command is reported, not dropped silently.
     """
+    menu: 'Callable[[], SettingsMenu] | None' = None
+    """A settings menu over what the bare command changes, for surfaces that cannot show the terminal's own.
+
+    The terminal still runs `handler`, whose menu may offer more, such as `/spinner`'s speed keys; the
+    web UI shows this one in the page instead, so its edits must save and apply as the command's do.
+    Built each time it is shown.
+    """
 
 
 class Commands(Completer):
     """Instance-owned registry, based on Code Puppy's registry/completer pattern."""
 
-    def __init__(self) -> None:
-        """Create an empty registry and filesystem completer."""
+    def __init__(self, *, workspace: Callable[[], Path] = Path.cwd) -> None:
+        """Create an empty registry and filesystem completer; relative `@` paths complete in `workspace()`."""
         self._commands: dict[str, Command] = {}
+        self._workspace = workspace
 
     def register(self, command: Command) -> None:
         """Register one command, rejecting ambiguous duplicate names."""
@@ -159,6 +173,11 @@ class Commands(Completer):
         """Iterate a snapshot, so callers may register or unregister while looping."""
         return iter(list(self._commands.values()))
 
+    def get(self, name: str) -> Command | None:
+        """The command called `name` (without its slash), or `None` when there is none or it is not available now."""
+        command = self._commands.get(name)
+        return command if command is not None and command.available() else None
+
     def execute(self, text: str) -> str | Awaitable[str]:
         """Parse shell-style arguments and dispatch without invoking a shell."""
         parts = text.removeprefix('/').split(maxsplit=1)
@@ -205,9 +224,9 @@ class Commands(Completer):
             try:
                 result = self.execute(text)
                 return result if isinstance(result, str) else await result
-            except Exception as error:
-                if not isinstance(error, ValueError | UserError):
-                    telemetry.handled_error('command /{command} failed', error, command=command)
+            except Exception as exc:
+                if not isinstance(exc, ValueError | UserError):
+                    telemetry.handled_error('command /{command} failed', exc, command=command)
                 raise
 
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterator[Completion]:
@@ -220,7 +239,7 @@ class Commands(Completer):
                 directory = path if word.endswith('/') else path.parent
                 prefix = '' if word.endswith('/') else path.name
                 try:
-                    for child in sorted(directory.iterdir()):
+                    for child in sorted((self._workspace() / directory).iterdir()):
                         if prefix in child.name:
                             yield Completion(child.name + ('/' if child.is_dir() else ''), start_position=-len(prefix))
                 except OSError:
@@ -349,7 +368,9 @@ def plugins_command(store: SettingsStore, args: list[str]) -> str:
         # Without importing, only a capability class's tags are known; a plugin's own come when it saves.
         store.save_plugin(added, requires=CAPABILITY_REQUIREMENTS.get(added.factory))
     elif len(args) == 2 and args[0] in ('enable', 'disable'):
-        plugin = next((p for p in declarations if p.id == args[1]), None)
+        # A saved declaration overrides the built-in, as in the shell; the CLI owns its agent, so the stock ones.
+        builtin = {p.id: p for p in STOCK_PLUGINS}
+        plugin = next((p for p in declarations if p.id == args[1]), builtin.get(args[1]))
         if plugin is None:
             raise ValueError(f'Unknown plugin: {args[1]}')
         store.save_plugin(plugin.model_copy(update={'enabled': args[0] == 'enable'}))

@@ -26,6 +26,31 @@ durable-execution backend goes in the "Durable Execution" section instead (like
 `harness/acp.md`). `tests/test_docs_navigation.py` fails for a page that has no entry and is not
 listed in that test's `UNPUBLISHED_PAGES`.
 
+## Semantic Parity
+
+Update both the capability README and `docs/harness/<capability>.md` for every user-facing change:
+public classes, parameters, defaults, tool names, extras, and safety semantics.
+ACP's README stays under `pydantic_ai_harness/experimental/acp/`; its docs page remains flat under `docs/harness/`.
+The two docs must agree with each other and the source. Document composition constraints and safety implications.
+Treat README, docs page, or example drift as a defect to fix before merge.
+
+Keep the packaged `pydantic-ai-harness` agent skill in sync too:
+`src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/`.
+Add new capabilities to its routing table and matching `references/` file.
+Update changed parameters, defaults, tool names, and extras there.
+
+Every snippet in both docs must run with the declared extras and all imports present.
+Check class and parameter names against the source; preserve the source's model choices.
+Use canonical module paths, without `experimental` for graduated capabilities.
+Follow the rendering-specific model-name rules under "Page Conventions" below.
+
+Use relative `.md` links for harness and Pydantic AI docs links on docs pages (`../toolsets.md` from `docs/harness/`).
+Use reference-style links for API elements (`[RunContext][pydantic_ai.tools.RunContext]`).
+CI's offline link check verifies target files and anchors.
+
+`tests/harness/test_docs_parity.py` enforces mechanical checks, not semantic agreement or runnable snippets.
+The [docs-parity-reviewer skill](../../../.agents/skills/docs-parity-reviewer/SKILL.md) covers those checks.
+
 ## Sidebar Source Of Truth
 
 The harness sidebar renders from **`docs/navigation.yml`**: mostly the category
@@ -48,15 +73,17 @@ slug as `harness/<page>`. When renaming a page, keep its existing `aliases:`.
   Use `uv run` for README follow-up executables in the uv project environment.
   Workflow YAML and repository-development commands retain
   their required execution environment rather than becoming `uv add` examples.
-- **Purpose-first lead**: the opening paragraph says what the capability is for and when to use
+- **Purpose-first lead**: the opening paragraph of each docs page and README says what the capability is for and when to use
   it. Lifecycle hook names (`before_model_request`, …) never appear in the lead — mechanism goes
-  below the purpose.
-- **H1 = the capability's spaced name** (`Code Mode`, not `CodeMode`), matching filename and nav
-  label. Allowlisted ClassName exceptions live in the parity test.
-- **Every page links its own source module** on GitHub.
-- **Experimental framing only on ACP.** Every other capability page carries the standard
-  version-promise blockquote ("While Pydantic AI Harness is on 0.x releases, the API may change
-  between minor releases — …") directly before its first `##` heading, linking the
+  below the purpose. Mention class names only after stating the purpose.
+- **Capability name**: the docs filename, page H1, README H1, and nav label match the capability's descriptive name.
+  H1s use spaced words (`Code Mode`, not `CodeMode`). Allowlisted ClassName exceptions live in the parity test.
+- **Every page links its own source module** on GitHub. A page exposing a public class may end
+  with `## API reference` and `::: pydantic_ai_harness.<Class>` autodoc blocks.
+- **Experimental framing only on ACP.** ACP keeps its experimental warning and possible-removal notice.
+  Every other capability page carries the standard version-promise blockquote
+  ("While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, ...")
+  directly before its first `##` heading, linking the
   [version policy](../../../docs/harness/index.md#version-policy). Copy it verbatim from an existing page;
   don't improvise variants.
 - **Example style**: comments one line max; outputs elided (`#> ...`) rather than long canned
@@ -82,7 +109,9 @@ reminder lives here: a rename PR is not done until both indexes agree.
 
 Capabilities are grouped by what they give the agent, not by implementation detail:
 **Harnesses** (complete combined capabilities like `Coder`) · **Execution environments** (the
-workspace the agent acts in) · **Tools & native abilities** · **Web & research** ·
+workspace the agent acts in) · **Tools & native abilities** · **Integrations** (one third-party
+service each, like `GitHub` or `Slack`; also list a new one on `docs/harness/integrations.md`) ·
+**Web & research** ·
 **Reasoning, planning & delegation** · **Context management** (how the agent spends the context
 window — Code Mode lives here, not under execution: it changes *how* the agent executes, not
 *where*) · **Knowledge & memory** · **Control & safety** · **Self-extension** ·
@@ -98,6 +127,8 @@ A harness page (`Coder`, `Researcher`, …) must state near the top that it is a
 capability composing other capabilities** and show the blown-out equivalent `capabilities=[...]`
 list — the transparency promise is part of the product. Harness classes are named like the agent
 they create (`Coder`), not like capabilities; the word "preset" is not used.
+
+Update the implementation, docs page, and example together in the same PR when composition or defaults change.
 
 The blown-out equivalent — on the docs page and in the harness's `src/pydantic_ai_harness/examples/` counterpart — writes
 the harness's defaults out literally (instructions, command allowlists) instead of importing the

@@ -36,7 +36,8 @@ from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.usage import RequestUsage
 
 from ..._inline_snapshot import snapshot
-from ...conftest import IsDatetime, IsStr, RequestCapture, try_import
+from ...conftest import IsDatetime, IsList, IsStr, RequestCapture, try_import
+from ..citation_utils import IsCitationList
 
 with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
@@ -162,6 +163,7 @@ async def test_native_output_with_function_tools(allow_model_requests: None, goo
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='wlP6af6uB-rBz7IP3s-7kAc',
                 finish_reason='stop',
@@ -203,6 +205,7 @@ async def test_native_output_with_function_tools(allow_model_requests: None, goo
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='w1P6aZ3uJ9rTz7IPx-674Aw',
                 finish_reason='stop',
@@ -255,6 +258,7 @@ async def test_native_output_with_function_tools_stream(allow_model_requests: No
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='g1P6aZnMMZq5qtsPj9fyuQ8',
                 finish_reason='stop',
@@ -296,6 +300,7 @@ async def test_native_output_with_function_tools_stream(allow_model_requests: No
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='hVP6afiZEuitz7IPypuAsQY',
                 finish_reason='stop',
@@ -371,7 +376,8 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
 } \
 """,
                         provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={'thought_signature': IsStr(), 'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                 ],
                 usage=RequestUsage(
@@ -387,6 +393,7 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='hlP6ae3uJuqGz7IP-6e9iA0',
                 finish_reason='stop',
@@ -586,6 +593,7 @@ async def test_function_tools_with_builtin_tools(allow_model_requests: None, goo
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='iVP6aaqUGp-fz7IPrb-LgA0',
                 finish_reason='stop',
@@ -610,8 +618,10 @@ As for the weather in Tokyo, it is currently **cloudy** with a temperature of ap
 """,
                         provider_name='google',
                         provider_details={
-                            'thought_signature': 'ErwDCrkDAQw51seeQfRmL5VQKB0za3r0rcYB5VnGk/wP9IY25C1mUSd3YKB8PH3IC/C3tdufhZycWv4aJudl2LSVy0ZQXC8T74IPMVk87/VxBr+Pm+BMCFvBRcJQGNvZMgrQIKGbylDY9ZAXkMdFwEXdtIesDpRRhjUx9SfHsdkALn6fvhZb5Ea9VUMnPGCW82QJgfWU7x1WItV9TROPug+XE7eSq4/sGgnf4Gqg+cUWWxspAChvBUi3+hu1rnPGW5+cr+kufGWuaQLI+WMneegbNFSaWoT9AdJluX4hwNMHaLAXj2kyOjNKlUlo6hvoT/0ck+/pHf8+pr/CNCj6m7EbHZ1aKfMS9TlXfOP30XkUDlQ9GSE/XfAiZkuMzHUC1v5gQ4Fkp2fZV1SsQarNXPwU+G5vUBw2wZ4lyGgUAe76IcQfEyaFjVsjA0oHvgzcXeSKSHephYSUzw44E/FoIq60Sr0oaOXRv5wIrBmiKcZyxSaVSd7B92nE6pZsnHw6FwqVS5dShZhaCNJeQbxzAVbFuLK7QbOFg0CcKn3Pi8PaZLHi4Ej23HMXlduStmtS9jXwltMhGg19xOnzHGmM'
+                            'thought_signature': 'ErwDCrkDAQw51seeQfRmL5VQKB0za3r0rcYB5VnGk/wP9IY25C1mUSd3YKB8PH3IC/C3tdufhZycWv4aJudl2LSVy0ZQXC8T74IPMVk87/VxBr+Pm+BMCFvBRcJQGNvZMgrQIKGbylDY9ZAXkMdFwEXdtIesDpRRhjUx9SfHsdkALn6fvhZb5Ea9VUMnPGCW82QJgfWU7x1WItV9TROPug+XE7eSq4/sGgnf4Gqg+cUWWxspAChvBUi3+hu1rnPGW5+cr+kufGWuaQLI+WMneegbNFSaWoT9AdJluX4hwNMHaLAXj2kyOjNKlUlo6hvoT/0ck+/pHf8+pr/CNCj6m7EbHZ1aKfMS9TlXfOP30XkUDlQ9GSE/XfAiZkuMzHUC1v5gQ4Fkp2fZV1SsQarNXPwU+G5vUBw2wZ4lyGgUAe76IcQfEyaFjVsjA0oHvgzcXeSKSHephYSUzw44E/FoIq60Sr0oaOXRv5wIrBmiKcZyxSaVSd7B92nE6pZsnHw6FwqVS5dShZhaCNJeQbxzAVbFuLK7QbOFg0CcKn3Pi8PaZLHi4Ej23HMXlduStmtS9jXwltMhGg19xOnzHGmM',
+                            'citations': IsList(length=(1, ...)),
                         },
+                        citations=IsCitationList(),
                     ),
                     NativeToolCallPart(
                         tool_name='web_search',
@@ -646,6 +656,7 @@ As for the weather in Tokyo, it is currently **cloudy** with a temperature of ap
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='i1P6af7qHca0qtsPqaSfuAI',
                 finish_reason='stop',
@@ -704,6 +715,7 @@ async def test_native_output_with_function_and_builtin_tools(
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='jVP6aY3XK8ucz7IPnO2_sQY',
                 finish_reason='stop',
@@ -774,7 +786,8 @@ async def test_native_output_with_function_and_builtin_tools(
 } \
 """,
                         provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={'thought_signature': IsStr(), 'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                 ],
                 usage=RequestUsage(
@@ -796,6 +809,7 @@ async def test_native_output_with_function_and_builtin_tools(
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='jlP6abq1OuqGz7IP-6e9iA0',
                 finish_reason='stop',
@@ -870,7 +884,8 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
 } \
 """,
                         provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={'thought_signature': IsStr(), 'citations': IsList(length=(1, ...))},
+                        citations=IsCitationList(),
                     ),
                 ],
                 usage=RequestUsage(
@@ -886,6 +901,7 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='klP6aYiLELOLqtsP8sPnwAs',
                 finish_reason='stop',
@@ -950,6 +966,7 @@ async def test_tool_output_with_builtin_tools(allow_model_requests: None, google
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='lFP6aZiqNKbXz7IPz-j6gAc',
                 finish_reason='stop',
@@ -1014,6 +1031,7 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='l1P6af_FOMXVz7IPi8y54Aw',
                 finish_reason='stop',
@@ -1070,6 +1088,7 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='mVP6adOKCunUz7IP5vXVqQ0',
                 finish_reason='stop',
@@ -1152,6 +1171,7 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='nFP6aZ_4HPuU6dkP-uetwA0',
                 finish_reason='stop',

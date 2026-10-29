@@ -85,6 +85,8 @@ realtime = ["pydantic-ai-slim[realtime]=={{ version }}"]
 openai-realtime = ["pydantic-ai-slim[openai-realtime]=={{ version }}"]
 google-realtime = ["pydantic-ai-slim[google-realtime]=={{ version }}"]
 xai-realtime = ["pydantic-ai-slim[xai-realtime]=={{ version }}"]
+elevenlabs-agents-realtime = ["pydantic-ai-slim[elevenlabs-agents-realtime]=={{ version }}"]
+elevenlabs-realtime = ["pydantic-ai-slim[elevenlabs-realtime]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://pydantic.dev/docs/ai/"
@@ -148,15 +150,15 @@ conflicts = [
 constraint-dependencies = [
     "ray>=2.55.0",
     "authlib>=1.6.7",
-    # Security-driven floors for purely transitive deps. Each line lifts the
-    # minimum to the first patched release flagged by Dependabot so we don't
-    # have to wait for upstream packages to bump.
-    "urllib3>=2.7.0",
+    # Security-driven floors for the lock. Each line lifts the minimum to the
+    # first patched release flagged by Dependabot, without waiting for upstream
+    # packages to bump or raising the floors our published packages declare.
+    "urllib3>=2.8.0",
     "idna>=3.15",
-    "cryptography>=48.0.1",
+    "cryptography>=50.0.0",
     "lxml>=6.1.0",
-    "mako>=1.3.12",
-    "pillow>=12.3.0",
+    "mako>=1.4.2",
+    "pillow>=13.0.0",
     "pyarrow>=23.0.1",
     "pyasn1>=0.6.4",
     "pymdown-extensions>=10.21.3",
@@ -172,10 +174,24 @@ constraint-dependencies = [
     "starlette>=1.3.1",
     "aiohttp>=3.14.1",
     "python-multipart>=0.0.31",
-    "pyjwt>=2.13.0",
+    "pyjwt>=2.15.0",
     "torch>=2.13.0",
     "transformers>=5.5.0",
+    "mcp>=1.30.0",
+    "apprise>=1.11.0",
+    "pymongo>=4.18.2",
+    "multidict>=6.9.1",
+    "fsspec>=2026.6.0",
+    "datasets>=5.0.1",
+    "sentence-transformers>=5.6.0",
+    "oauthlib>=4.0.0",
+    "soupsieve>=2.9.0",
+    "certifi>=2026.10.19",
 ]
+# `gradio` (an examples dependency) caps `pillow<13`, even in its latest release, so without
+# this override the `pillow>=13.0.0` security floor above leaves `uv lock` unsatisfiable.
+# Remove once a `gradio` release allows Pillow 13.
+override-dependencies = ["pillow>=13.0.0"]
 # `browser-use` pins every one of its dependencies exactly (anyio, openai, anthropic, groq, pillow, ...),
 # so resolving `pydantic-ai-harness[browser-use]` here would hold the whole workspace to those versions.
 # The extra stays in the published metadata; this lock leaves it out, and the `harness browser-use`
@@ -208,24 +224,26 @@ genai-prices = false
 pydantic-ai-harness = false
 logfire = false
 logfire-api = false
-# Admit termflow-md 1.0.0 for CLAI2's live panel (`termflow.live`); later releases stay quarantined.
-# TODO: Remove after 2026-10-09 15:06 UTC.
-termflow-md = "2026-10-02T15:05:25Z"
-# Anthropic 1.12.1 adds `claude-haiku-5-5` to `ModelParam`.
-# TODO(dsfaccini): Remove after 2026-10-15T03:42:01.588842Z. https://github.com/pydantic/pydantic-ai/issues/9997
-# This admits the reviewed 1.12.1 artifacts through one second after the last upload; later artifacts remain quarantined.
-anthropic = "2026-10-08T03:42:01.588842Z"
-# OpenAI 3.26.0 is the first release with `client.decisions`, and the `openai` floor.
-# TODO(dsfaccini): Remove after 2026-10-13 21:32 UTC.
-openai = "2026-10-06T21:31:20Z"
-# google-genai 2.30.0 is the `google-genai` floor: it continues long decode itself.
-# TODO(dsfaccini): Remove after 2026-10-20 00:39 UTC.
-google-genai = "2026-10-13T00:38:20Z"
-# asyncpg 0.32.0 is the first release with cp315 wheels, so Python 3.15 CI installs it instead of compiling
-# from source. This admits its artifacts through one second after the last upload.
-# TODO(adtyavrdhn): Remove after 2026-10-13 20:33 UTC, then run `uv lock` and
+# certifi 2026.10.19 is the `certifi` floor above: it keeps out the compromised eMudhra
+# `emSign ECC Root CA - G3` and restores the unaffected emSign roots 2026.10.18 dropped.
+# TODO(dsfaccini): Remove after 2026-10-27 02:25 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
-asyncpg = "2026-10-06T20:32:41Z"
+certifi = "2026-10-20T02:25:00Z"
+# pillow 13.0.0 is the `pillow` floor above: it is the first release with the fixes.
+# TODO(dsfaccini): Remove after 2026-10-23 22:19 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+pillow = "2026-10-16T22:19:00Z"
+# boxlite 0.10.7 is the `boxlite` floor: 0.10.6 has no wheels for Python 3.13 or 3.14.
+# TODO(adtyavrdhn): Remove after 2026-10-25 01:35 UTC.
+boxlite = "2026-10-18T01:35:01Z"
+# prefect 3.9.0 is the `prefect` floor: it is the first release that imports on a current FastAPI.
+# TODO(DouweM): Remove after 2026-10-28 03:46 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+prefect = "2026-10-21T03:46:00Z"
+# boxd 0.2.20 is the `boxd` floor: it is the first release with `machines.fs`.
+# TODO(adtyavrdhn): Remove after 2026-11-03 23:56 UTC, then run `uv lock` and
+# `uv lock --script .github/scripts/pydantic-ai-runner`.
+boxd = "2026-10-27T23:56:00Z"
 
 [dependency-groups]
 dev = [
@@ -283,7 +301,8 @@ dev = [
     # Records and replays provider traffic: its pytest plugin owns `@pytest.mark.vcr` and the `vcr` fixture.
     "cassetter>=0.13.0",
     # Drives the deterministic realtime session simulator in `tests/realtime/simulation/`: randomized
-    # interleavings of client operations and provider events, shrunk to a minimal failing trace.
+    # interleavings of client operations and provider events, shrunk to a minimal failing trace. Also draws
+    # the message histories of the property tests in `tests/test_history_properties.py`.
     "hypothesis>=6.153.2",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
@@ -297,10 +316,12 @@ coverage = [
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@6c644106e03138abae01d8d60105d4a7ad4916a1",
 ]
 lint = [
-    "griffecli>=2.1.0,<3",
     "mypy>=1.11.2",
     "pyright>=1.1.414",
     "ruff>=0.14.14",
+]
+clai2-browser = [
+    "playwright>=1.45",
 ]
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
@@ -327,12 +348,16 @@ include = [
     "docs/**/*.py",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/durable_exec_contract.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
     ".github/scripts/test_check_api_compatibility.py",
+    ".github/scripts/pr_gates.py",
+    ".github/scripts/test_pr_gates.py",
     ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
     ".github/scripts/test_pydantic_ai_runner.py",
+    ".github/scripts/test_review_lifecycle.py",
     ".github/scripts/issue_pr_attention_monitor.py",
     ".github/scripts/test_issue_pr_attention_monitor.py",
     ".github/scripts/semantic_owner_router.py",
@@ -350,7 +375,9 @@ include = [
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
     ".github/scripts/test_ci_content_classifier.py",
+    ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
+    ".github/scripts/test_clai2_web_bundle.py",
 ]
 
 [tool.ruff.lint]
@@ -395,6 +422,7 @@ convention = "google"
 # these adds 100ms or more (measured with `python -X importtime` on top of what `tests/conftest.py` already imports);
 # import them inside the test or fixture that needs them. Enforced for `tests/` only, see `per-file-ignores`.
 banned-module-level-imports = [
+    "boxlite",
     "dbos",
     "e2b",
     "prefect",
@@ -426,7 +454,9 @@ quote-style = "single"
 ".github/scripts/check_api_compatibility.py" = ["D"]
 ".github/scripts/test_ci_duration.py" = ["D"]
 ".github/scripts/test_check_api_compatibility.py" = ["D"]
+".github/scripts/test_pr_gates.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
+".github/scripts/test_review_lifecycle.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
 ".github/scripts/test_semantic_owner_router.py" = ["D"]
 ".github/scripts/test_community_demand.py" = ["D"]
@@ -437,7 +467,9 @@ quote-style = "single"
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
+".github/scripts/test_ci_matrix.py" = ["D"]
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
+".github/scripts/test_clai2_web_bundle.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
 "!tests/**/*.py" = ["TID253"]
@@ -445,6 +477,7 @@ quote-style = "single"
 # workflow definitions; the cost is paid only where that dependency is what is being tested.
 "tests/durable_exec/**/*.py" = ["TID253"]
 "tests/**/*{temporal,dbos,prefect,durable}*.py" = ["TID253"]
+"tests/harness/boxlite_sandbox/*.py" = ["TID253"]
 "tests/harness/e2b_sandbox/*.py" = ["TID253"]
 "tests/harness/smol_sandbox/*.py" = ["TID253"]
 
@@ -466,6 +499,7 @@ include = [
     "src/pydantic_clai2",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/durable_exec_contract.py",
 ]
 # Pyright always skips paths under a dot directory, even ones named here or on its command line, so
 # `.github/scripts` is its own project: `.github/scripts/pyrightconfig.json` extends this one, and
@@ -475,6 +509,10 @@ venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
 executionEnvironments = [
+    # These two import `scripts/durable_exec_contract.py` by name. Pyright applies the first entry whose
+    # root contains a file, so they precede `tests`.
+    { root = "tests/durable_exec/test_durable_exec_contract_manifest.py", extraPaths = ["scripts", "examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = "tests/durable_exec/test_durable_exec_contract_touched.py", extraPaths = ["scripts", "examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = "tests", extraPaths = ["examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     # `scripts/typecheck_changed.py` reads `tomllib`, which is 3.11+. These two are
     # developer tooling rather than shipped code, and the script falls back to the full
@@ -499,11 +537,18 @@ strict = true
 anyio_mode = "auto"
 testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
+# Print every thread's stack once a test has run this long, so a shard that hangs until its job times out shows
+# where it hung. The test keeps running.
+faulthandler_timeout = 120
 markers = [
     "modal_live: runs against a real Modal control plane; needs credentials",
     "e2b_live: runs against a real E2B sandbox; needs credentials",
     "sprites_live: runs against a real Sprites control plane; needs credentials",
+    "daytona_live: runs against a real Daytona control plane; needs credentials",
+    "boxd_live: runs against a real boxd control plane; needs credentials",
     "smol_live: boots real smolvm VMs; needs a host that can run them",
+    "boxlite_live: boots real BoxLite VMs; needs a host that can run them",
+    "docker_live: starts real containers; needs a Docker daemon",
     "temporal: starts or connects to a local Temporal dev server",
     "subprocess(reason, conditional=False): launches a Python interpreter, which the cost guard otherwise fails; reason required. `conditional=True` skips the stale-marker check for a test that only launches one on some platforms or installs",
     "slow(reason): exempt from the per-test time budget (`PYTEST_TEST_BUDGET_SECONDS`); reason required",
@@ -592,6 +637,7 @@ include = [
     "pydantic_graph/**/*.py",
     "src/pydantic_ai_harness/pydantic_ai_harness/**/*.py",
     "tests/**/*.py",
+    "scripts/durable_exec_contract.py",
 ]
 omit = [
     "tests/example_modules/*.py",
@@ -601,6 +647,7 @@ omit = [
     "tests/kw_only_walker.py",  # pauses coverage while importing modules with excluded dependency guards
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
     "tests/harness/**/*_live.py",  # live sandbox tiers; run only with provider credentials
+    "tests/ui_roundtrip/*.py",  # need Node and the JS UI clients; run only in `ui-roundtrip.yml`
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:

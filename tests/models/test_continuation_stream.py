@@ -22,13 +22,15 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
+import anyio
 import httpx
 import pytest
 
-from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai import Agent, AgentRunResultEvent, PendingModelResponse
+from pydantic_ai.concurrency import ConcurrencyLimiter
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -37,12 +39,22 @@ from pydantic_ai.messages import (
     TextPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models._continuation import _ContinuationStreamedResponse, merge_mode, merge_responses
+from pydantic_ai.models._continuation import (
+    _ContinuationStreamedResponse,
+    cancel_suspended_job,
+    merge_mode,
+    merge_responses,
+)
+from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
+from ..continuation_utils import ScriptedContinuationModel, scripted_response
+
 _TIMESTAMP = datetime(2024, 1, 1, tzinfo=UTC)
+READINESS_WAIT_TIMEOUT = 5
 
 # The exact framework-protocol keys the `FallbackModel` side stamps and this module honors. Spelled out
 # here (rather than imported as module privates) since the test pins the wire contract itself.
@@ -182,7 +194,7 @@ async def _no_sleep(delay: float) -> None:  # pragma: no cover
 
 
 def _composite(
-    model: _FakeModel,
+    model: Model,
     *,
     max_generation_continuations: int = 10,
     max_background_polls: int = 1000,
@@ -760,34 +772,14 @@ async def test_close_stream_after_completion_cancels_job() -> None:
     assert len(model.cancelled) == 1
 
 
-async def test_aclose_reraises_unexpected_runtime_error() -> None:
-    """`aclose()` swallows only the "async generator is already running" `RuntimeError`; any other propagates.
-
-    This is a unit test rather than a VCR test because the defensive re-raise branch can't be reached
-    through the public API: it fires only if the inner segment generator's own `aclose()` raises an
-    unrelated `RuntimeError`, which no real provider stream produces. We pin it by assigning a stub
-    iterator directly onto the instance — legitimate here since we're exercising exactly that branch.
-    """
-
-    class _BoomIterator:
-        async def aclose(self) -> None:
-            raise RuntimeError('boom')
-
-    model = _FakeModel([])
-    stream = _composite(model)
-    stream._segment_iterator = _BoomIterator()  # type: ignore[assignment]
-
-    with pytest.raises(RuntimeError, match='boom'):
-        await stream.aclose()
-
-
 async def test_aclose_finalizes_usage_after_running_prefetch_unwinds() -> None:
-    """An in-flight prefetch can stamp usage while cancellation unwinds, so pricing must happen afterwards.
+    """Closing a continuation cancels an in-flight pull and finalizes usage after it unwinds.
 
-    This is a unit test rather than a VCR test because it deterministically creates the narrow teardown race
-    where the composite's segment generator is already running when `aclose()` is called.
+    This is a unit test rather than a VCR test because it deterministically creates the teardown race where the
+    composite's segment generator is already running when `aclose()` is called.
     """
     iterator_started = asyncio.Event()
+    limiter = ConcurrencyLimiter(max_running=1)
     response = _response(parts=['a'], provider_response_id='r1', state='complete', input_tokens=1, output_tokens=0)
 
     class _LateUsageStream(_FakeStream):
@@ -814,24 +806,101 @@ async def test_aclose_finalizes_usage_after_running_prefetch_unwinds() -> None:
     def finalize_response(response: ModelResponse) -> None:
         response.usage.cost = Decimal(response.usage.output_tokens)
 
-    stream = _composite(_LateUsageModel([_Segment(events=[], response=response)]), finalize_response=finalize_response)
+    stream = _composite(
+        ConcurrencyLimitedModel(
+            _LateUsageModel([_Segment(events=[], response=response)]),
+            limiter=limiter,
+        ),
+        finalize_response=finalize_response,
+    )
     iterator = stream.__aiter__()
     await anext(iterator)
 
-    async def prefetch_next() -> ModelResponseStreamEvent:
-        return await anext(iterator)
+    async def prefetch_next() -> ModelResponseStreamEvent | None:
+        try:
+            return await anext(iterator)
+        except StopAsyncIteration:
+            return None
 
     prefetch = asyncio.create_task(prefetch_next())
-    await iterator_started.wait()
+    await asyncio.wait_for(iterator_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
-    await stream.aclose()
-    assert response.usage.cost is None
-
-    prefetch.cancel()
-    with suppress(asyncio.CancelledError):
-        await prefetch
+    try:
+        assert limiter.running_count == 1
+        await stream.aclose()
+        assert limiter.running_count == 0
+        assert prefetch.done()
+        assert response.usage.cost == Decimal('2')
+        assert stream.get().state == 'incomplete'
+    finally:
+        prefetch.cancel()
+        with suppress(asyncio.CancelledError):
+            await prefetch
+        await stream.aclose()
 
     assert response.usage == RequestUsage(input_tokens=1, output_tokens=2, cost=Decimal('2'))
+
+
+async def test_aclose_does_not_cancel_suspended_job_when_cancelling_active_pull() -> None:
+    """Detaching during a continuation pull closes the stream without cancelling the suspended job."""
+    iterator_started = asyncio.Event()
+    suspended_response = _response(
+        parts=['a'], provider_response_id='r1', state='suspended', input_tokens=1, output_tokens=1
+    )
+
+    class _BlockedStream(_FakeStream):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            yield PartStartEvent(index=0, part=TextPart('b'))
+            iterator_started.set()
+            await asyncio.Event().wait()
+
+    class _ModelWithBlockedContinuation(_FakeModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: object | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            segment = self.segments.pop(0)
+            stream_type = _BlockedStream if segment.response.provider_response_id == 'r2' else _FakeStream
+            yield stream_type(model_request_parameters, segment.events, segment.response)
+
+    model = _ModelWithBlockedContinuation(
+        [
+            _Segment(events=_starts((0, 'a')), response=suspended_response),
+            _Segment(
+                events=[],
+                response=_response(
+                    parts=['b'], provider_response_id='r2', state='complete', input_tokens=1, output_tokens=1
+                ),
+            ),
+        ]
+    )
+    stream = _composite(model)
+    iterator = stream.__aiter__()
+    await anext(iterator)
+    await anext(iterator)
+
+    async def prefetch_next() -> ModelResponseStreamEvent | None:
+        try:
+            return await anext(iterator)
+        except StopAsyncIteration:
+            return None
+
+    prefetch = asyncio.create_task(prefetch_next())
+    await asyncio.wait_for(iterator_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+
+    try:
+        await stream.aclose()
+        assert prefetch.done()
+        assert model.cancelled == []
+    finally:
+        prefetch.cancel()
+        with suppress(asyncio.CancelledError):
+            await prefetch
+        await stream.aclose()
 
 
 async def test_exceeding_max_generation_continuations_raises() -> None:
@@ -907,8 +976,14 @@ async def test_replace_poll_chain_bounded_by_replace_ceiling() -> None:
     assert model.cancelled[0].provider_response_id == 'job1'
 
 
-async def test_model_change_replace_chain_counts_against_strict_ceiling() -> None:
+@pytest.mark.parametrize('polled', [False, True], ids=['continued', 'polled'])
+async def test_model_change_replace_chain_counts_against_strict_ceiling(
+    polled: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A model-change replace chain counts against `max_generation_continuations`, not the generous backstop.
+
+    Also when the model waits between segments: only a batch request, whose model bounds its own polls, is
+    counted as a poll under a new ID.
 
     A replace caused by a model change (or a `FallbackModel` directive) is *fresh* generation, not a
     passive re-poll of one background job, so it must not inherit the generous `max_background_polls`
@@ -952,6 +1027,12 @@ async def test_model_change_replace_chain_counts_against_strict_ceiling() -> Non
             ),
         ]
     )
+    if polled:
+
+        def poll_at_once(response: ModelResponse) -> float:
+            return 0.0
+
+        monkeypatch.setattr(model, 'continuation_delay', poll_at_once)
     # A generous replace ceiling that a same-id poll chain would sail past — but a model-change chain must
     # be bound by the strict `max_generation_continuations=2` instead and raise, naming the current job id.
     stream = _composite(model, max_generation_continuations=2, max_background_polls=1000)
@@ -989,6 +1070,52 @@ def test_replace_previous_marker_forces_replace_and_is_stripped() -> None:
 
     # A follow-up merge of the stripped result must not still see a replace directive.
     assert merge_mode(merged, ModelResponse(parts=[TextPart('more')], provider_response_id='r3')) == 'accumulate'
+
+
+class _AwaitingTeardownModel(_FakeModel):
+    """Awaits while closing each segment, as a real model does when it closes its connection."""
+
+    def __init__(self, segments: list[_Segment]) -> None:
+        super().__init__(segments)
+        self.teardowns_finished = 0
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: object | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as stream:
+            yield stream
+        await asyncio.sleep(0)
+        self.teardowns_finished += 1
+
+
+@pytest.mark.parametrize('close', ['aclose', 'release_primed_segment'])
+async def test_a_primed_segment_is_closed_inside_a_cancelled_scope(close: str) -> None:
+    """Closing a primed stream the consumer never iterated finishes closing its segment inside a cancelled scope.
+
+    Stream teardown can run inside a cancelled graph scope, where an unshielded await is cancelled again, so the
+    segment's connection would be left open.
+    """
+    model = _AwaitingTeardownModel(
+        [
+            _Segment(
+                events=_starts((0, 'a')),
+                response=_response(
+                    parts=['a'], provider_response_id='r1', state='complete', input_tokens=1, output_tokens=1
+                ),
+            )
+        ]
+    )
+    stream = _composite(model)
+    await stream.prime()
+    with anyio.CancelScope() as scope:
+        scope.cancel()
+        await getattr(stream, close)()
+    assert model.teardowns_finished == 1
 
 
 async def test_cancel_teardown_survives_scope_cancellation() -> None:
@@ -1127,8 +1254,19 @@ async def test_later_segment_error_cancels_suspended_job() -> None:
     assert model.cancelled[0].provider_response_id == 'r1'
 
 
-async def test_check_usage_error_cancels_suspended_job() -> None:
-    """A `check_usage` failure between segments cancels the still-suspended server-side job."""
+@pytest.mark.parametrize(
+    ('second_state', 'expected_cancelled'),
+    [('suspended', ['r2']), ('complete', [])],
+)
+async def test_check_usage_error_cancels_suspended_job(
+    second_state: Literal['suspended', 'complete'], expected_cancelled: list[str]
+) -> None:
+    """A `check_usage` failure between segments cancels the newest still-suspended job, and nothing once complete.
+
+    Mirrors the non-streaming continuation loop: the limit is checked on the merged response, so a trip
+    tears down the job that merge left suspended rather than the previous segment's, and a completed merge
+    has no live job to cancel.
+    """
 
     def _reject_second(usage: RequestUsage) -> None:
         if usage.output_tokens > 1:  # first segment alone is 1; the merge with segment 2 trips this
@@ -1145,7 +1283,7 @@ async def test_check_usage_error_cancels_suspended_job() -> None:
             _Segment(
                 events=_starts((0, 'b')),
                 response=_response(
-                    parts=['b'], provider_response_id='r2', state='complete', input_tokens=1, output_tokens=5
+                    parts=['b'], provider_response_id='r2', state=second_state, input_tokens=1, output_tokens=5
                 ),
             ),
         ]
@@ -1156,8 +1294,7 @@ async def test_check_usage_error_cancels_suspended_job() -> None:
         async for _ in stream:
             pass
 
-    assert len(model.cancelled) == 1
-    assert model.cancelled[0].provider_response_id == 'r1'
+    assert [response.provider_response_id for response in model.cancelled] == expected_cancelled
 
 
 async def test_cancel_during_between_segment_sleep_skips_next_request() -> None:
@@ -1307,3 +1444,201 @@ async def test_streamed_interruption_no_context_detach_error(caplog: pytest.LogC
                     pass
 
     assert not any('Failed to detach context' in record.getMessage() for record in caplog.records)
+
+
+async def test_a_repeated_cancellation_gives_up_on_a_hanging_suspended_job_cancel() -> None:
+    """One cancellation lets the provider cancel finish; a second one abandons a cancel that never finishes."""
+    started = asyncio.Event()
+
+    class HangingCancelModel(TestModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            started.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(cancel_suspended_job(HangingCancelModel(), ModelResponse(parts=[], state='suspended')))
+    await asyncio.wait_for(started.wait(), READINESS_WAIT_TIMEOUT)
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, READINESS_WAIT_TIMEOUT)
+
+
+async def test_a_failing_suspended_job_cancel_does_not_replace_the_error_that_aborted_the_run() -> None:
+    """A provider error from the teardown cancel is swallowed, so the run surfaces the error that aborted it."""
+
+    class FailingCancelModel(ScriptedContinuationModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            await super().cancel_suspended_response(response)
+            raise ModelHTTPError(status_code=404, model_name='scripted', body='job not found')
+
+    model = FailingCancelModel(
+        responses=[
+            scripted_response(
+                texts=['partial'], state='suspended', provider_response_id='job1', input_tokens=1, output_tokens=1
+            ),
+            ModelHTTPError(status_code=500, model_name='scripted', body='server error'),
+        ]
+    )
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await Agent(model).run('hi')
+    assert exc_info.value.status_code == 500
+    assert [response.provider_response_id for response in model.cancelled] == ['job1']
+
+    # A cancellation that interrupts the teardown still propagates once the failing cancel has finished.
+    started = asyncio.Event()
+
+    class SlowFailingCancelModel(TestModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            started.set()
+            await asyncio.sleep(0)
+            raise ModelHTTPError(status_code=404, model_name='test', body='job not found')
+
+    task = asyncio.create_task(
+        cancel_suspended_job(SlowFailingCancelModel(), ModelResponse(parts=[], state='suspended'))
+    )
+    await asyncio.wait_for(started.wait(), READINESS_WAIT_TIMEOUT)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, READINESS_WAIT_TIMEOUT)
+
+
+def _background_segments() -> list[_Segment]:
+    """A background job that's still queued on the first request, and done on the next."""
+    return [
+        _Segment(
+            events=_starts((0, 'partial')),
+            response=_response(
+                parts=['partial'],
+                provider_response_id='job1',
+                state='suspended',
+                input_tokens=1,
+                output_tokens=1,
+                provider_details={'background': True},
+            ),
+        ),
+        _Segment(
+            events=_starts((0, 'done')),
+            response=_response(
+                parts=['done'],
+                provider_response_id='job1',
+                state='complete',
+                input_tokens=1,
+                output_tokens=1,
+                provider_details={'background': True},
+            ),
+        ),
+    ]
+
+
+def _recording_sleep(delays: list[float]) -> Callable[[float], Awaitable[None]]:
+    """An agent graph sleep that records each delay instead of waiting."""
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    return sleep
+
+
+async def test_a_streamed_run_with_pending_output_ends_instead_of_waiting() -> None:
+    """With `PendingModelResponse` in the output type, a streamed run ends on a pending background job.
+
+    Running the agent again with the run's history checks on the same job straight away, rather than first waiting
+    out the poll interval, and finishes the run. A unit test: `FunctionModel` can't stream a suspended segment.
+    """
+    model = _FakeModel(_background_segments())
+    agent = Agent(model, output_type=[str, PendingModelResponse])
+    delays: list[float] = []
+
+    with Agent.using_sleep(_recording_sleep(delays)):
+        async with agent.run_stream('Hello') as result:
+            output = await result.get_output()
+        assert isinstance(output, PendingModelResponse)
+        assert output.response.state == 'suspended'
+        assert output.response.provider_response_id == 'job1'
+        assert (len(model.segments), model.cancelled) == (1, [])
+
+        async with agent.run_stream_events(message_history=result.all_messages()) as stream:
+            events = [event async for event in stream]
+    final = events[-1]
+    assert isinstance(final, AgentRunResultEvent)
+    assert final.result.output == 'done'
+    assert (model.segments, model.cancelled, delays) == ([], [], [])
+
+
+async def test_a_streamed_run_without_pending_output_waits_for_the_job() -> None:
+    model = _FakeModel(_background_segments())
+    delays: list[float] = []
+
+    with Agent.using_sleep(_recording_sleep(delays)):
+        async with Agent(model).run_stream('Hello') as result:
+            assert await result.get_output() == 'done'
+    assert (model.segments, delays) == ([], [0.5])
+
+
+@dataclass
+class _TextStream(StreamedResponse):
+    """Streams text through the parts manager, so the stream emits a `FinalResultEvent` as a provider stream does."""
+
+    _text: str
+    _response: ModelResponse
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        for event in self._parts_manager.handle_text_delta(vendor_part_id='text', content=self._text):
+            yield event
+        self.state = self._response.state
+
+    @property
+    def model_name(self) -> str:
+        return 'fake'
+
+    @property
+    def provider_name(self) -> str | None:
+        return 'fake'
+
+    @property
+    def provider_url(self) -> str | None:
+        return None
+
+    @property
+    def timestamp(self) -> datetime:
+        return _TIMESTAMP
+
+
+class _TextStreamModel(_FakeModel):
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: object | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        segment = self.segments.pop(0)
+        stream = _TextStream(model_request_parameters, segment.response.text or '', segment.response)
+        stream.provider_response_id = segment.response.provider_response_id
+        stream.provider_details = segment.response.provider_details
+        yield stream
+
+
+async def test_run_stream_ends_with_pending_output_after_streaming_partial_text() -> None:
+    """`run_stream` ends with `PendingModelResponse`, not the partial text a pending background job streamed.
+
+    The partial text triggers the stream's final result, so the run ends from `run_stream` itself rather than from the
+    graph's tool-handling node.
+    """
+    model = _TextStreamModel(_background_segments())
+    agent = Agent(model, output_type=[str, PendingModelResponse])
+
+    async with agent.run_stream('Hello') as result:
+        output = await result.get_output()
+    assert isinstance(output, PendingModelResponse)
+    assert output.response.text == 'partial'
+    last = result.all_messages()[-1]
+    assert isinstance(last, ModelResponse)
+    assert (last.state, last.provider_response_id) == ('suspended', 'job1')
+
+    async with agent.run_stream(message_history=result.all_messages()) as resumed:
+        assert await resumed.get_output() == 'done'
+    assert (model.segments, model.cancelled) == ([], [])

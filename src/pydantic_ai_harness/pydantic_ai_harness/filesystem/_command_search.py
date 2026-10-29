@@ -11,10 +11,9 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import Workspace
 
 from ._ripgrep import Record, Unreadable
+from ._workspace_search import MAX_OUTPUT_BYTES, MAX_RECORD_BYTES, SEARCH_TIMEOUT, realpath_snippet
 
 _T = TypeVar('_T')
-_MAX_OUTPUT_BYTES = 8 << 20
-_MAX_RECORD_BYTES = 1 << 20
 _STATUS = '__harness_posix_status='
 _UNREADABLE = '__harness_posix_unreadable='
 """Prefix of the NUL-terminated stderr record naming a file `grep` could not read."""
@@ -75,7 +74,7 @@ async def run_posix_search(
         enumeration = 'printf "%s\\0" ' + shlex.quote(target)
     # Carry the canonical path with each candidate, so a single search command can
     # authorize thousands of files without per-result sandbox round trips.
-    canonical = 'real=$(realpath -- "$file" && printf .) || continue; real=${real%.}; real=${real%?}; '
+    canonical = realpath_snippet('continue')
     if pattern is None:
         processing = "xargs -0 sh -c 'for file do " + canonical + 'printf "%s\\0%s\\0" "$file" "$real"; done\' sh'
     else:
@@ -109,14 +108,14 @@ async def run_posix_search(
         f'{{ {enumeration}; }} > "$list"; code=$?; '
         'if [ "$code" -eq 0 ]; then LC_ALL=C sort -z -o "$list" "$list"; code=$?; fi; '
         f'if [ "$code" -eq 0 ]; then {processing} < "$list"; code=$?; fi; rm -f -- "$list"; '
-        f'echo "{_STATUS}$code" >&2; }} | head -c {_MAX_OUTPUT_BYTES}'
+        f'echo "{_STATUS}$code" >&2; }} | head -c {MAX_OUTPUT_BYTES}'
     )
-    result = await workspace.run(script, shell=True, timeout=120)
+    result = await workspace.run(script, shell=True, timeout=SEARCH_TIMEOUT)
     stderr, _, status = result.stderr.rpartition(_STATUS)
     unreadable = [Unreadable(path, 'Permission denied') for path in re.findall(f'{_UNREADABLE}([^\0]*)\0', stderr)]
     stderr = re.sub(f'{_UNREADABLE}[^\0]*\0', '', stderr)
     output = result.stdout
-    cut = len(output.encode('utf-8', errors='surrogateescape')) >= _MAX_OUTPUT_BYTES
+    cut = len(output.encode('utf-8', errors='surrogateescape')) >= MAX_OUTPUT_BYTES
     # head closes the pipe at the cap; xargs can report its child dying of SIGPIPE.
     pipe_cut = cut and ('signal 13' in stderr or status.strip() == '141')
     if result.exit_code != 0 or not status or (status.strip() != '0' and not pipe_cut):
@@ -158,7 +157,7 @@ def _parse_records(output: str, *, listing: bool) -> tuple[list[Record], bool]:
                 break
             text = output[real_end + 1 : line_end]
             start = line_end + 1
-        if start - end > _MAX_RECORD_BYTES:
+        if start - end > MAX_RECORD_BYTES:
             # Drop only the oversized record; later records are still complete.
             incomplete = True
             continue

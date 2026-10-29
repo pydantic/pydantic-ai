@@ -5,8 +5,8 @@ import re
 import subprocess
 import sys
 import warnings
-from collections.abc import Sequence
-from dataclasses import replace
+from collections.abc import Callable, Sequence
+from dataclasses import fields, replace
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -24,15 +24,19 @@ from pydantic_ai import (
     BinaryAudio,
     BinaryContent,
     BinaryImage,
+    Citation,
+    ContentCitationAnchor,
     DeferredToolRequests,
     DeferredToolRequestsEvent,
     DeferredToolResults,
     DeferredToolResultsEvent,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     ImageUrl,
     InstructionPart,
     InstrumentationSettings,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -43,11 +47,14 @@ from pydantic_ai import (
     NativeToolReturnPart,
     PartDeltaEvent,
     RequestUsage,
-    RetryPromptPart,
+    RunUsage,
     SpeechPart,
     SpeechPartDelta,
+    SpeechTimestamp,
+    StructuredContent,
     TextContent,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
     ToolApproved,
@@ -61,6 +68,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
@@ -84,7 +92,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsNow, IsStr, message, message_part, try_import
+from .conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, message, message_part, try_import
 
 with try_import() as openai_import_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -181,6 +189,169 @@ def test_text_content():
     text_content = TextContent(content='Pydantic AI!', metadata={'foo': 'bar'})
     assert text_content.content == 'Pydantic AI!'
     assert text_content.metadata == {'foo': 'bar'}
+
+
+class _UIState(BaseModel):
+    url: str
+    cart_total: float
+
+
+@pytest.mark.parametrize(
+    'item, expected',
+    [
+        pytest.param(StructuredContent({'url': '/p/42', 'n': [1, None]}), '{"url":"/p/42","n":[1,null]}', id='json'),
+        pytest.param(
+            StructuredContent({'note': '</ui_state> & more'}, tag='ui_state'),
+            r'<ui_state>{"note":"\u003c/ui_state\u003e \u0026 more"}</ui_state>',
+            id='json-tag-escaped',
+        ),
+        pytest.param(
+            StructuredContent(_UIState(url='/p/42', cart_total=949.0), format='xml', tag='ui_state'),
+            '<ui_state>\n  <url>/p/42</url>\n  <cart_total>949.0</cart_total>\n</ui_state>',
+            id='xml',
+        ),
+        pytest.param(
+            StructuredContent([1, 2], tag='ids', description='The ids the user selected.'),
+            'The ids the user selected.\n<ids>[1,2]</ids>',
+            id='description',
+        ),
+        pytest.param(
+            StructuredContent([1, 2], format=lambda value: f'{len(value)} ids', tag='ids', description='Unused.'),
+            '2 ids',
+            id='function',
+        ),
+        pytest.param(StructuredContent({'a': 1}, content='given'), 'given', id='given-content'),
+    ],
+)
+def test_structured_content_renders_once(item: StructuredContent, expected: str):
+    """The text sent to text models is rendered when the item is created, and kept as given when it is passed in."""
+    assert item.content == expected
+
+
+def test_structured_content_subclass_renders_its_own_way():
+    """A subclass carries its rendering, so it doesn't have to be passed each time the item is created."""
+
+    class UIStateContent(StructuredContent):
+        value: _UIState
+
+        def render(self) -> str:
+            return f'<ui_state url="{self.value.url}" />'
+
+    assert UIStateContent(_UIState(url='/p/42', cart_total=1)).content == '<ui_state url="/p/42" />'
+
+
+@pytest.mark.parametrize(
+    'item',
+    [
+        pytest.param(lambda: StructuredContent({}, format='xml'), id='xml-without-tag'),
+        pytest.param(lambda: StructuredContent([1], format=lambda value: ''), id='function'),
+    ],
+)
+def test_structured_content_rejects_empty_text(item: Callable[[], StructuredContent]):
+    """An empty `content` is re-rendered on load, so storing one would change the text a reloaded history sends."""
+    with pytest.raises(ValueError, match='`StructuredContent` rendered to empty text'):
+        item()
+
+
+def test_structured_content_renders_again_when_replaced_without_content():
+    """Changing the value keeps the stored text, so replacing it renders again only when `content` is cleared."""
+    item = StructuredContent({'a': 1}, tag='t')
+    assert replace(item, value={'a': 2}).content == '<t>{"a":1}</t>'
+    assert replace(item, value={'a': 2}, content='').content == '<t>{"a":2}</t>'
+    # `format` isn't stored, so a non-default one has to be passed again.
+    xml = StructuredContent({'a': 1}, tag='t', format='xml')
+    assert replace(xml, value={'a': 2}, content='', format='xml').content == '<t>\n  <a>2</a>\n</t>'
+
+
+@pytest.mark.parametrize('tag', ['ui state', 'ui-state', 'UIState', 'System', '1st', 'x></ui_state><system'])
+def test_structured_content_rejects_a_tag_outside_the_vocabulary(tag: str):
+    """Tags are lowercase snake_case, so no casing of a framework tag (`<SYSTEM>`) gets through either."""
+    with pytest.raises(ValueError, match=r'`StructuredContent\.tag` must be lowercase letters, digits and `_`'):
+        StructuredContent({}, tag=tag)
+
+
+@pytest.mark.parametrize('tag', ['system', 'tool_result', 'context', 'retry_feedback'])
+def test_structured_content_rejects_a_framing_tag(tag: str):
+    """User content can't wear a tag the framework frames its own text in, such as its `<system>` voice."""
+    with pytest.raises(ValueError, match=rf"`StructuredContent\.tag` cannot be '{tag}', a tag the framework frames"):
+        StructuredContent({}, tag=tag)
+
+
+def test_structured_content_with_its_text_skips_the_tag_check():
+    """An item whose text is already fixed, as a stored one is, loads whatever its tag.
+
+    Otherwise a history stored with `tag='memory'` would stop loading once a later release frames its own text in
+    `<memory>`. The tag only matters when the text is rendered.
+    """
+    stored = {'kind': 'structured-content', 'value': {'a': 1}, 'content': '<system>{"a":1}</system>', 'tag': 'system'}
+    loaded = TypeAdapter[UserContent](UserContent).validate_python(stored)
+    assert isinstance(loaded, StructuredContent)
+    assert (loaded.tag, loaded.content) == ('system', '<system>{"a":1}</system>')
+
+
+def test_structured_content_round_trips_through_json():
+    """The stored text comes back byte-for-byte, so a reloaded history is sent exactly as before, and the value as JSON data.
+
+    The subclass and its `render` don't survive the round-trip; the text they produced does.
+    """
+
+    class UIStateContent(StructuredContent):
+        def render(self) -> str:
+            return 'custom'
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    [
+                        StructuredContent(_UIState(url='/p/42', cart_total=949.0), tag='ui_state'),
+                        UIStateContent({'a': 1}, metadata={'source': 'app'}),
+                        TextContent('plain'),
+                        'Why did the total jump?',
+                    ]
+                )
+            ]
+        )
+    ]
+    dumped = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    assert dumped[0]['parts'][0]['content'] == snapshot(
+        [
+            {
+                'content': '<ui_state>{"url":"/p/42","cart_total":949.0}</ui_state>',
+                'metadata': None,
+                'kind': 'structured-content',
+                'value': {'url': '/p/42', 'cart_total': 949.0},
+                'tag': 'ui_state',
+                'description': None,
+            },
+            {
+                'content': 'custom',
+                'metadata': {'source': 'app'},
+                'kind': 'structured-content',
+                'value': {'a': 1},
+                'tag': None,
+                'description': None,
+            },
+            {'content': 'plain', 'metadata': None, 'kind': 'text-content'},
+            'Why did the total jump?',
+        ]
+    )
+    [request] = ModelMessagesTypeAdapter.validate_python(dumped)
+    assert isinstance(request, ModelRequest)
+    [part] = request.parts
+    assert isinstance(part, UserPromptPart)
+    assert part.content == snapshot(
+        [
+            StructuredContent(
+                content='<ui_state>{"url":"/p/42","cart_total":949.0}</ui_state>',
+                value={'url': '/p/42', 'cart_total': 949.0},
+                tag='ui_state',
+            ),
+            StructuredContent(content='custom', value={'a': 1}, metadata={'source': 'app'}),
+            TextContent(content='plain'),
+            'Why did the total jump?',
+        ]
+    )
 
 
 @pytest.mark.parametrize(
@@ -668,8 +839,10 @@ def test_pre_usage_refactor_messages_deserializable():
         {
             'input_tokens': 13,
             'cache_write_tokens': 0,
+            'cache_write_1h_tokens': 0,
             'cache_read_tokens': 0,
             'output_tokens': 76,
+            'output_reasoning_tokens': 0,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
@@ -714,8 +887,10 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
         {
             'input_tokens': 5,
             'cache_write_tokens': 0,
+            'cache_write_1h_tokens': 0,
             'cache_read_tokens': 0,
             'output_tokens': 0,
+            'output_reasoning_tokens': 0,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
@@ -737,6 +912,33 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
     assert isinstance(loaded, ModelResponse)
     assert loaded.usage == usage
     assert loaded.usage.__dict__['future_tokens'] == 42
+
+
+def test_usage_reasoning_and_one_hour_cache_fields_load_from_older_payloads():
+    """Usage stored before `output_reasoning_tokens` and `cache_write_1h_tokens` were declared loads with them.
+
+    genai-prices already set both as attributes, so older payloads have them as extra keys when they were
+    non-zero and leave them out otherwise. Either way they now read as typed fields, and an absent count
+    equals an explicit zero.
+    """
+    with_counts, without_counts = ModelMessagesTypeAdapter.validate_python(
+        [
+            {
+                'parts': [],
+                'usage': {'output_tokens': 8, 'output_reasoning_tokens': 3, 'cache_write_1h_tokens': 4},
+                'kind': 'response',
+            },
+            {'parts': [], 'usage': {'output_tokens': 8}, 'kind': 'response'},
+        ]
+    )
+    assert isinstance(with_counts, ModelResponse)
+    assert isinstance(without_counts, ModelResponse)
+    assert (with_counts.usage.output_reasoning_tokens, with_counts.usage.cache_write_1h_tokens) == (3, 4)
+    assert (without_counts.usage.output_reasoning_tokens, without_counts.usage.cache_write_1h_tokens) == (0, 0)
+    assert getattr(without_counts.usage, 'cache_write_1h_tokens', 0) == 0
+
+    assert RunUsage(input_tokens=16) == RunUsage(input_tokens=16, output_reasoning_tokens=0)
+    assert {'output_reasoning_tokens', 'cache_write_1h_tokens'} <= {f.name for f in fields(RequestUsage)}
 
 
 async def test_legacy_vendor_message_history_replays_through_agent():
@@ -839,6 +1041,98 @@ def test_builtin_tool_call_part_has_content_empty(args: dict[str, object] | str 
     assert not part.has_content()
 
 
+def test_citation_message_history_round_trip() -> None:
+    """Citations survive a dump and load of message history, and dump to the documented wire format."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'Paris is the capital of France. [1]',
+                    citations=[
+                        Citation(
+                            sources=[
+                                WebCitationSource(
+                                    url='https://example.com/paris',
+                                    title='Paris',
+                                    excerpts=["Paris is France's capital city."],
+                                )
+                            ],
+                            anchor=MarkerCitationAnchor(start=32, end=35),
+                        ),
+                        Citation(
+                            sources=[
+                                DocumentCitationSource(
+                                    document_id='file-123',
+                                    title='report.pdf',
+                                    excerpts=['The report identifies Paris as the capital.'],
+                                )
+                            ]
+                        ),
+                    ],
+                )
+            ]
+        )
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages)
+
+    assert ModelMessagesTypeAdapter.validate_python(serialized) == messages
+    assert serialized[0]['parts'][0]['citations'] == snapshot(
+        [
+            {
+                'sources': [
+                    {
+                        'kind': 'web',
+                        'url': 'https://example.com/paris',
+                        'title': 'Paris',
+                        'excerpts': ["Paris is France's capital city."],
+                    }
+                ],
+                'anchor': {'start': 32, 'end': 35, 'kind': 'marker'},
+            },
+            {
+                'sources': [
+                    {
+                        'kind': 'document',
+                        'document_id': 'file-123',
+                        'title': 'report.pdf',
+                        'excerpts': ['The report identifies Paris as the capital.'],
+                    }
+                ],
+                'anchor': None,
+            },
+        ]
+    )
+
+
+def test_text_part_delta_replaces_citations() -> None:
+    """A citations delta replaces the part's citations, as it replaces their raw entries in `provider_details`."""
+    first = Citation(sources=[WebCitationSource(url='https://example.com/paris')])
+    second = Citation(sources=[DocumentCitationSource(document_id='file-123', title='report.pdf')])
+    part = TextPart('Answer', citations=[first], provider_details={'citations': ['first']})
+
+    delta = TextPartDelta(content_delta='', citations_delta=[second], provider_details={'citations': ['second']})
+
+    part = delta.apply(part)
+
+    assert part == TextPart('Answer', citations=[second], provider_details={'citations': ['second']})
+
+
+@pytest.mark.parametrize(
+    'build, match',
+    [
+        pytest.param(lambda: ContentCitationAnchor(start=-1, end=0), '0 <= start < end', id='negative-start'),
+        pytest.param(lambda: MarkerCitationAnchor(start=2, end=1), '0 <= start < end', id='end-before-start'),
+        pytest.param(lambda: ContentCitationAnchor(start=1, end=1), '0 <= start < end', id='empty-range'),
+        pytest.param(lambda: Citation(sources=[]), 'at least one source', id='no-sources'),
+        pytest.param(lambda: DocumentCitationSource(), 'at least one source field', id='empty-document-source'),
+    ],
+)
+def test_citation_invariants(build: Callable[[], object], match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        build()
+
+
 def test_file_part_serialization_roundtrip():
     # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
     messages: list[ModelMessage] = [
@@ -866,8 +1160,10 @@ def test_file_part_serialization_roundtrip():
                 'usage': {
                     'input_tokens': 0,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -880,6 +1176,7 @@ def test_file_part_serialization_roundtrip():
                 'kind': 'response',
                 'provider_name': None,
                 'provider_url': None,
+                'canonical_system': None,
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,
@@ -887,6 +1184,7 @@ def test_file_part_serialization_roundtrip():
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'history_digest': None,
                 'failed_attempts': None,
                 'workspace_ref': None,
             }
@@ -2680,10 +2978,15 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
-def test_args_as_json_str_valid_json_verbatim():
-    """args_as_json_str should return valid object JSON verbatim, preserving key order and whitespace."""
-    part = ToolCallPart(tool_name='test_tool', args='{"b":  1, "a": 2}')
-    assert part.args_as_json_str() == '{"b":  1, "a": 2}'
+def test_args_as_json_str_valid_json_canonical():
+    """args_as_json_str should render valid object JSON compactly, the same as the equivalent dict args.
+
+    Key order is preserved and non-ASCII text stays unescaped, so only insignificant whitespace (and
+    number spelling) changes.
+    """
+    part = ToolCallPart(tool_name='test_tool', args='{"b":  1, "a": [2, 3.50], "c": "Z\\u00fcrich ☕"}')
+    assert part.args_as_json_str() == snapshot('{"b":1,"a":[2,3.5],"c":"Zürich ☕"}')
+    assert part.args_as_json_str() == ToolCallPart(tool_name='test_tool', args=part.args_as_dict()).args_as_json_str()
 
 
 def test_args_as_json_str_dict_args():
@@ -2767,7 +3070,7 @@ class TestInstructionParts:
 
 def test_retry_prompt_strips_input_from_top_level_errors():
     """Top-level validation errors should not include `input` in model_response() since it duplicates the entire generated output."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {'type': 'missing', 'loc': ('required_field',), 'msg': 'Field required', 'input': {'wrong_field': 'value'}},
         ],
@@ -2779,7 +3082,7 @@ def test_retry_prompt_strips_input_from_top_level_errors():
 
 def test_retry_prompt_keeps_input_for_nested_errors():
     """Nested validation errors should keep `input` in model_response() to help the model locate the invalid part."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {'type': 'missing', 'loc': ('items', 0, 'sub_field'), 'msg': 'Field required', 'input': {'other': 'val'}},
         ],
@@ -2791,7 +3094,7 @@ def test_retry_prompt_keeps_input_for_nested_errors():
 
 def test_retry_prompt_mixed_top_level_and_nested_errors():
     """When both top-level and nested errors exist, only top-level input should be stripped."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {'type': 'missing', 'loc': ('root_field',), 'msg': 'Field required', 'input': {'root_key': 'root_val'}},
             {
@@ -2811,7 +3114,7 @@ def test_retry_prompt_mixed_top_level_and_nested_errors():
 
 def test_retry_prompt_strips_input_from_top_level_type_errors():
     """Top-level type/value errors also have input stripped, even though it's a small scalar value."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {
                 'type': 'int_parsing',
@@ -2828,7 +3131,7 @@ def test_retry_prompt_strips_input_from_top_level_type_errors():
 
 def test_retry_prompt_tool_call_keeps_input_at_top_level():
     """Tool-call retries (`tool_name` set) must preserve `input` so the model sees what args it sent."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         tool_name='evaluate_content',
         content=[
             {'type': 'missing', 'loc': ('content',), 'msg': 'Field required', 'input': {}},
@@ -2841,7 +3144,7 @@ def test_retry_prompt_tool_call_keeps_input_at_top_level():
 
 def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     """Tool-call retries preserve `input` for nested errors too, matching the existing NativeOutput nested behavior."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         tool_name='evaluate_content',
         content=[
             {
@@ -2860,7 +3163,7 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
 def test_retry_prompt_otel_message_parts_include_content():
     """Retry prompt parts honor `include_content` like every other message part, in both the
     tool-call and non-tool branches."""
-    non_tool = RetryPromptPart(
+    non_tool = legacy_retry_prompt_part(
         content=[
             {
                 'type': 'string_type',
@@ -2870,7 +3173,7 @@ def test_retry_prompt_otel_message_parts_include_content():
             },
         ],
     )
-    tool = RetryPromptPart(tool_name='my_tool', tool_call_id='call_1', content='Try again')
+    tool = legacy_retry_prompt_part(tool_name='my_tool', tool_call_id='call_1', content='Try again')
 
     with_content = InstrumentationSettings(include_content=True)
     assert non_tool.otel_message_parts(with_content) == snapshot(
@@ -3098,6 +3401,7 @@ def test_speech_part_serialization_roundtrip():
                             'identifier': '0ca623',
                         },
                         'interrupted_at_ms': None,
+                        'timestamps': None,
                         'id': 'item-1',
                         'provider_name': 'openai',
                         'provider_details': None,
@@ -3119,6 +3423,7 @@ def test_speech_part_serialization_roundtrip():
                         'transcript': 'Hi!',
                         'audio': None,
                         'interrupted_at_ms': 420,
+                        'timestamps': None,
                         'id': None,
                         'provider_name': None,
                         'provider_details': None,
@@ -3128,8 +3433,10 @@ def test_speech_part_serialization_roundtrip():
                 'usage': {
                     'input_tokens': 0,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -3142,6 +3449,7 @@ def test_speech_part_serialization_roundtrip():
                 'kind': 'response',
                 'provider_name': None,
                 'provider_url': None,
+                'canonical_system': None,
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,
@@ -3149,6 +3457,7 @@ def test_speech_part_serialization_roundtrip():
                 'conversation_id': None,
                 'metadata': None,
                 'workspace_ref': None,
+                'history_digest': None,
                 'failed_attempts': None,
                 'state': 'complete',
             },
@@ -3193,6 +3502,26 @@ def test_speech_part_delta_apply_not_retaining_audio():
     """A part with `audio=None` is not retaining audio, so an `audio_chunk` delta doesn't create it."""
     applied = SpeechPartDelta(audio_chunk=b'\x01').apply(SpeechPart(speaker='assistant', transcript='Hi'))
     assert applied == SpeechPart(speaker='assistant', transcript='Hi')
+
+
+def test_speech_part_timestamps_accumulate_round_trip_and_stay_out_of_model_requests():
+    """Timestamps add up on the part, survive serialization, and never reach a standard model."""
+    part = SpeechPartDelta(timestamps=[SpeechTimestamp(text='Hi', start_ms=50, duration_ms=200)]).apply(
+        SpeechPart(speaker='assistant', transcript='Hi there.')
+    )
+    part = SpeechPartDelta(
+        timestamps=[SpeechTimestamp(text='there.', start_ms=300, duration_ms=400, granularity='segment')]
+    ).apply(part)
+    part = SpeechPartDelta(transcript_delta='').apply(part)
+    assert part.timestamps == snapshot(
+        [
+            SpeechTimestamp(text='Hi', start_ms=50, duration_ms=200),
+            SpeechTimestamp(text='there.', start_ms=300, duration_ms=400, granularity='segment'),
+        ]
+    )
+    history: list[ModelMessage] = [ModelResponse(parts=[part])]
+    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history)) == history
+    assert TestModel().prepare_messages(history)[0].parts == [TextPart(content='Hi there.')]
 
 
 def test_speech_part_delta_apply_wrong_part_type():
@@ -3485,6 +3814,20 @@ def test_post_compaction_window_slices_at_the_latest_compaction_part():
     assert window[1] is messages[-1]
 
 
+def test_post_compaction_window_opens_at_the_turn_of_a_request_side_summary():
+    """A summary in a request opens the window at the start of its run of consecutive requests, which history
+    normalization merges into one and reorders, so the window is the same before and after."""
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('old context'),
+        ModelResponse(parts=[TextPart(content='old answer')]),
+        ModelRequest.user_text_prompt('kept context'),
+        ModelRequest(parts=[CompactionPart(content='summary')]),
+        ModelRequest.user_text_prompt('tail'),
+    ]
+
+    assert post_compaction_window(messages) == messages[2:]
+
+
 def test_post_compaction_window_accepts_a_minimal_sequence():
     """The runtime `Sequence` contract only requires integer `__getitem__`; the window must
     not depend on slice support that a minimal conforming implementation may lack."""
@@ -3592,7 +3935,9 @@ def test_user_prompt_part_content_items_must_be_user_content():
     assert UserPromptPart([image]).content == [image]
 
     # Every member of the union is accepted, so adding one cannot be forgotten here.
-    assert UserPromptPart(['hello', TextContent(content='hi'), ImageUrl('https://example.com/i.png'), CachePoint()])
+    assert UserPromptPart(
+        ['hello', StructuredContent({}), TextContent(content='hi'), ImageUrl('https://example.com/i.png'), CachePoint()]
+    )
 
 
 def test_user_content_types_matches_union():

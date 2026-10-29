@@ -156,7 +156,7 @@ Need deterministic, fast tests?
 | Scenario | Mode |
 |----------|------|
 | Need structured data and want maximum provider compatibility | `ToolOutput` (default) — works with all providers, supports streaming |
-| Want the provider to natively enforce JSON schema compliance | `NativeOutput` — OpenAI, Anthropic, Google only; limited streaming |
+| Want the provider to natively enforce JSON schema compliance | `NativeOutput` — OpenAI, Anthropic, Google only; limited streaming; Anthropic limits strict schema complexity per request (`ModelRequestRejectedError` before sending when over) |
 | Provider doesn't support tools or JSON mode | `PromptedOutput` — works everywhere as a fallback |
 | LLM returns non-JSON structured text (markdown, YAML, domain-specific) | `TextOutput` — custom parsing function |
 
@@ -192,9 +192,11 @@ Need deterministic, fast tests?
 | Crusoe | `crusoe:` | `crusoe:zai/GLM-5.2` |
 | Meta (Muse; Responses API) | `meta:` | `meta:muse-spark-1.3` |
 
-**Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For any other OpenAI-compatible endpoint, point `OpenAIChatModel` at it with `provider=OpenAIProvider(base_url=..., api_key=...)`. For anything that isn't OpenAI-compatible, subclass `Model`. For a backend that answers typed yes/no, pick-one and rubric questions rather than writing text, like TypeSafe's Jev, subclass `DecisionModel` from `pydantic_ai.models.decision` and implement `decide`; see the [Decision models guide](https://pydantic.dev/docs/ai/models/decision/).
+**Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For any other OpenAI-compatible endpoint, point `OpenAIChatModel` at it with `provider=OpenAICompatibleProvider('<service-name>', base_url=..., api_key=...)` from `pydantic_ai.providers.openai_compatible`; keep `OpenAIProvider(base_url=...)` for OpenAI itself or a transparent proxy to it. For anything that isn't OpenAI-compatible, subclass `Model`. For a backend that answers typed yes/no, pick-one and rubric questions rather than writing text, like TypeSafe's Jev, subclass `DecisionModel` from `pydantic_ai.models.decision` and implement `decide`; see the [Decision models guide](https://pydantic.dev/docs/ai/models/decision/).
 
 For GitHub Copilot device login, use `GitHubCopilotOAuthFlow(client_id=...)` from `pydantic_ai.providers.github_copilot`. Call `start()`, display the returned `verification_uri` and `user_code`, then await `wait_for_authorization()`. Pass its `access_token` to `GitHubCopilotProvider(api_key=...)`. The application must have device flow enabled; GitHub authorization does not establish Copilot entitlement or acceptance of that application's token. Browser opening, credential storage, and renewal stay application-owned. See the [Copilot provider guide](https://pydantic.dev/docs/ai/models/github-copilot/#device-login).
+
+To let the users of an open-source or local app run it on their own ChatGPT plan, use `OpenAIChatGPTOAuthFlow(app_name=..., host_id=...)` from `pydantic_ai.providers.openai_chatgpt`: open `authorization_url()` in the browser and await `exchange_code_from_callback()`, which listens on `http://127.0.0.1:1455/auth/callback`. Persist the returned credentials, including the issued `client_id` that later sign-ins pass back, and give them to `OpenAIChatGPTProvider` with an `OpenAIResponsesModel`. Credentials without plan usage (`plan_usage_granted` is `False`) are refused. See the [ChatGPT plan usage guide](https://pydantic.dev/docs/ai/models/openai-chatgpt/).
 
 ### Tool Decorator Comparison
 
@@ -216,11 +218,14 @@ For GitHub Copilot device login, use `GitHubCopilotOAuthFlow(client_id=...)` fro
 | `ImageGeneration` | Image generation — native when supported, direct fallback via an image model name or `ImageGenerator` | Yes |
 | `MCP` | MCP server — native when supported, direct connection | Yes |
 | `LocalWorkspace` | A `ctx.workspace` on this machine (host subprocesses and files, no isolation); `read_only=True` refuses commands and changes | Yes |
+| `FileUnderstanding` | Replaces files the model's profile rejects with descriptions written by `fallback_subagent_model` | Yes |
 | `PrepareTools` | Filters or modifies tool definitions per step | No |
 | `PrefixTools` | Wraps a capability and prefixes its tool names | Yes |
 | `NativeTool` | Registers a provider-native tool with the agent | Yes |
 | `Toolset` | Wraps an `AbstractToolset` | No |
 | `ProcessHistory` | Wraps a history processor function — a thin wrapper over the `before_model_request` hook | No |
+| `ModelFallback` | Attempts other models when a request fails or its response is rejected | Yes |
+| `BatchModelRequests` | Sends model requests through the OpenAI, Anthropic or Gemini batch API at batch prices; runs started together share batches | Yes |
 
 ### When to Use Each Agent Method
 

@@ -124,6 +124,8 @@ print(result.output)
 
 By default the tool caps returned text at 50,000 characters (`max_content_length`) and caps the
 downloaded response body at 50 MiB (`max_download_bytes`). Pass `None` for either to disable that limit.
+Unusually complex HTML may still exceed the tool's separate conversion limit; the tool then asks the model to try something else.
+HTML is converted to markdown in a worker thread, at most four pages at a time per event loop; further HTML responses wait for a free slot.
 
 !!! warning "Credentials in `headers`"
     Headers configured via `web_fetch_tool(headers=...)` are sent to whatever URL the model requests,

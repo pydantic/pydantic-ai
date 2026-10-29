@@ -20,6 +20,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import os
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -40,6 +41,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import ToolDefinition
 
@@ -74,6 +76,15 @@ INSTRUCTION = 'From now on, every suggestion must include explicit type annotati
 _CACHE_PREFIX = 'Stable harness state for the mid-conversation cache test.\n' + '\n'.join(
     f'Fact {i:04d}: workspace file {i % 37} has revision {i}, owner {i % 11}, and status verified.' for i in range(50)
 )
+
+
+def has_annotated_signature(text: str, function: str) -> bool:
+    """Whether `text` defines `function(a, b)` with both parameters and the return annotated.
+
+    `INSTRUCTION` asks for explicit type annotations, not particular types, and the model picks them (`int`, `float`,
+    a `TypeVar`), so a recording is checked for the annotations rather than for one spelling of them.
+    """
+    return re.search(rf'def {function}\(a: [^,]+, b: [^)]+\) -> [^:]+:', text) is not None
 
 
 @pytest.fixture
@@ -146,7 +157,7 @@ def message_history_with_paired_instruction() -> list[ModelMessage]:
 
     The pairing is what puts a native `system` entry directly behind the request's own user turn.
     Without one, the entry gets the `.` anchor instead (see `..._without_user_turn`), so these are
-    the histories where `_place_system_messages_before_generation` decides where it ends up.
+    the histories where `place_system_messages_before_generation` decides where it ends up.
     """
     history = message_history()
     history[-1] = ModelRequest(
@@ -162,12 +173,13 @@ class Case:
     id: str
     model: str
     expected_messages: list[dict[str, Any]]
+    expected_system: str = 'You are a code reviewer.'
 
 
 CASES = [
     Case(
         id='inline-system-supported',
-        model='claude-opus-4-8',
+        model='claude-opus-5-5',
         expected_messages=snapshot(
             [
                 {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
@@ -187,7 +199,9 @@ CASES = [
     ),
     Case(
         id='inline-system-unsupported',
-        model='claude-sonnet-4-6',
+        model='claude-sonnet-5',
+        # The standing prompt also says what the `<system>` tag means, on every request from the first.
+        expected_system=f'You are a code reviewer.\n\n{SYSTEM_VOICE_ANNOUNCEMENT}',
         expected_messages=snapshot(
             [
                 {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
@@ -229,11 +243,11 @@ async def test_mid_conversation_system_prompt(
     agent = Agent(AnthropicModel(case.model, provider=AnthropicProvider(api_key=anthropic_api_key)))
 
     result = await agent.run('Review it again.', message_history=message_history())
-    assert 'def add(a: int, b: int) -> int:' in result.output
+    assert has_annotated_signature(result.output, 'add')
 
     body = single_request_body(vcr)
     assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
-    assert body['system'] == 'You are a code reviewer.'
+    assert body['system'] == case.expected_system
     assert body['messages'] == case.expected_messages
 
 
@@ -264,12 +278,12 @@ async def test_mid_conversation_system_prompt_takes_cache_breakpoint(
     since mid-conversation system prompts started getting their own message.
     """
     agent = Agent(
-        AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)),
+        AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
         model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
     )
 
     result = await agent.run('Review it again.', message_history=message_history())
-    assert 'def add(a: int, b: int) -> int:' in result.output
+    assert has_annotated_signature(result.output, 'add')
 
     body = single_request_body(vcr)
     assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
@@ -303,14 +317,14 @@ async def test_leading_cache_point_survives_the_instruction_moving_out_of_the_us
     everything this turn and the instruction build on. The recording is the part that matters — Anthropic
     accepts `cache_control` on an assistant block in that position.
     """
-    agent = Agent(AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)))
+    agent = Agent(AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key)))
 
     history = message_history()
     history[-1] = ModelRequest(
         parts=[SystemPromptPart(content=INSTRUCTION), UserPromptPart(content=[CachePoint(), 'Review it again.'])]
     )
     result = await agent.run(message_history=history)
-    assert 'def add(a: int, b: int) -> int:' in result.output
+    assert has_annotated_signature(result.output, 'add')
 
     body = single_request_body(vcr)
     assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
@@ -355,10 +369,10 @@ async def test_mid_conversation_system_prompt_without_user_turn(
     don't: the model read the tagged text as "a stated preference from you rather than a
     higher-privilege instruction". Here it just complies.
     """
-    agent = Agent(AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)))
+    agent = Agent(AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key)))
 
     result = await agent.run(message_history=message_history())
-    assert 'def add(a: int, b: int) -> int:' in result.output
+    assert has_annotated_signature(result.output, 'add')
 
     body = single_request_body(vcr)
     assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
@@ -394,7 +408,7 @@ async def test_mid_conversation_system_prompt_before_another_request(
     Driven through `Model.request` rather than `Agent.run` precisely because the agent's history
     cleaning would merge the two requests.
     """
-    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -406,7 +420,7 @@ async def test_mid_conversation_system_prompt_before_another_request(
     )
     reply = response.parts[-1]
     assert isinstance(reply, TextPart)
-    assert 'def add(a: int, b: int) -> int:' in reply.content
+    assert has_annotated_signature(reply.content, 'add')
 
     body = single_request_body(vcr)
     assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
@@ -438,7 +452,7 @@ async def test_mid_conversation_system_prompt_kept_mid_history(
     re-render the whole conversation's instructions on every request, which is the cache churn the
     feature exists to avoid.
     """
-    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -451,7 +465,7 @@ async def test_mid_conversation_system_prompt_kept_mid_history(
     )
     reply = response.parts[-1]
     assert isinstance(reply, TextPart)
-    assert 'def mul(a: int, b: int) -> int:' in reply.content
+    assert has_annotated_signature(reply.content, 'mul')
 
     body = single_request_body(vcr)
     assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
@@ -482,7 +496,7 @@ async def test_mid_conversation_system_prompt_before_empty_response(
     is byte-identical to `..._kept_mid_history` apart from the response being empty, and that one
     leaves its entry where it is.
     """
-    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -495,7 +509,7 @@ async def test_mid_conversation_system_prompt_before_empty_response(
     )
     reply = response.parts[-1]
     assert isinstance(reply, TextPart)
-    assert 'def add(a: int, b: int) -> int:' in reply.content
+    assert has_annotated_signature(reply.content, 'add')
 
     body = single_request_body(vcr)
     assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
@@ -522,7 +536,7 @@ async def test_two_mid_conversation_system_prompts_keep_their_order(
     cases would then resolve backwards. Consecutive `system` entries are a placement the API takes:
     the group as a whole still precedes the generation, and the recording shows both obeyed.
     """
-    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -539,10 +553,8 @@ async def test_two_mid_conversation_system_prompts_keep_their_order(
     )
     reply = response.parts[-1]
     assert isinstance(reply, TextPart)
-    # Both instructions applied: the annotation on the parameter (the model is free to pick the
-    # type), and the complexity note. Asserting the exact signature would pin a choice neither
-    # instruction constrains.
-    assert 'def add(a: int' in reply.content
+    # Both instructions applied: the annotated signature and the complexity note.
+    assert has_annotated_signature(reply.content, 'add')
     assert 'O(1)' in reply.content
 
     body = single_request_body(vcr)
@@ -579,7 +591,7 @@ async def test_mid_conversation_system_prompt_anchor_keeps_tool_pair_intact(
     all: the entry ends up behind the tool result, which is a user turn. The recorded 200 is the
     assertion that matters; the shape below is what earned it.
     """
-    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -612,7 +624,7 @@ async def test_mid_conversation_system_prompt_anchor_keeps_tool_pair_intact(
     )
     reply = response.parts[-1]
     assert isinstance(reply, TextPart)
-    assert 'def add(a: int, b: int) -> int:' in reply.content
+    assert has_annotated_signature(reply.content, 'add')
 
     body = single_request_body(vcr)
     assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
@@ -702,7 +714,7 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
     await Agent(model).run('Review it again.', message_history=message_history())
 
     call_kwargs = foundry_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['system'] == 'You are a code reviewer.'
+    assert call_kwargs['system'] == f'You are a code reviewer.\n\n{SYSTEM_VOICE_ANNOUNCEMENT}'
     assert call_kwargs['messages'] == snapshot(
         [
             {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
@@ -764,7 +776,7 @@ async def test_mid_conversation_system_prompt_on_bedrock(
     )
 
 
-@pytest.mark.parametrize('model_name', ['claude-opus-4-8', 'claude-sonnet-5-5'])
+@pytest.mark.parametrize('model_name', ['claude-opus-5-5', 'claude-sonnet-5-5'])
 async def test_native_tool_availability_delta(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, model_name: str
 ):
@@ -1062,7 +1074,7 @@ def test_a_sliding_entry_leaves_its_cache_boundary_behind():
 def test_an_entry_a_later_instruction_follows_keeps_its_cache_boundary():
     """A `system` entry behind another doesn't slide, so its boundary is still exactly representable.
 
-    `_place_system_messages_before_generation` only hops *user* turns, and a second instruction isn't
+    `place_system_messages_before_generation` only hops *user* turns, and a second instruction isn't
     one. Nothing moves, so nothing has to be given up: the boundary stays on the entry that carries it.
     """
     assert _map(
@@ -1181,7 +1193,7 @@ async def test_inline_system_prompt_cache_prefix_is_reused(
     least as large — which is only true if a boundary on a `system`-role block is honored rather than
     quietly dropped.
     """
-    agent = Agent(AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)))
+    agent = Agent(AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key)))
     history: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart('Reply with OK.'), UserPromptPart(_CACHE_PREFIX)]),
         ModelResponse(parts=[TextPart('OK')]),

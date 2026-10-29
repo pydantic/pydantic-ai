@@ -29,6 +29,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler, on_event
 from pydantic_ai_harness.ask_user import AskUserAnsweredEvent, AskUserRequestedEvent
+from pydantic_clai2.config.settings_store import state_dir
 from pydantic_clai2.plugins import (
     ConversationChanged,
     NoSettings,
@@ -65,9 +66,7 @@ def hooks_base() -> Path:
 
 def state_directory() -> Path:
     """Where the AoE session to conversation mapping lives: `$XDG_STATE_HOME/pydantic-clai2/aoe`."""
-    root = os.environ.get('XDG_STATE_HOME', '')
-    state = Path(root) if os.path.isabs(root) else Path.home() / '.local' / 'state'
-    return state / 'pydantic-clai2' / 'aoe'
+    return state_dir() / 'aoe'
 
 
 def run_command(*argv: str) -> subprocess.CompletedProcess[str] | None:

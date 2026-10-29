@@ -9,16 +9,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, PendingModelResponse
+from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, HandleDeferredToolCalls, LocalWorkspace
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -39,6 +39,9 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents, SubAgentToolset
+
+from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
+from .._deferred_tools import deferring_agent, pending_agent
 
 
 @dataclass
@@ -148,7 +151,7 @@ def _delegate_returns(result: Any) -> list[str]:
         str(part.content)
         for message in result.all_messages()
         for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task'
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task' and part.outcome != 'retried'
     ]
 
 
@@ -243,7 +246,7 @@ class TestDelegation:
             part.content
             for message in result.all_messages()
             for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task'
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task' and part.outcome != 'retried'
         ]
         assert returns == ['WORKER RESULT']
 
@@ -320,7 +323,7 @@ class TestDelegation:
             part.content
             for message in result.all_messages()
             for part in message.parts
-            if isinstance(part, RetryPromptPart) and part.tool_name == 'delegate_task'
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried' and part.tool_name == 'delegate_task'
         ]
         assert any(
             "Unknown sub-agent 'ghost'" in str(r) and 'Available sub-agents: helper, worker' in str(r) for r in retries
@@ -522,9 +525,99 @@ class TestDelegation:
             part.content
             for message in result.all_messages()
             for part in message.parts
-            if isinstance(part, RetryPromptPart) and part.tool_name == 'delegate_task'
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried' and part.tool_name == 'delegate_task'
         ]
         assert any("Sub-agent 'boomer' failed" in str(r) for r in retries)
+
+    async def test_deferred_tool_requests_returns_steering(self) -> None:
+        # The parent cannot approve the child's tool call or resume the child run, and delegating
+        # again would stop the same way, so the delegation returns a steering message instead of
+        # the marker's repr, without a retry.
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('approver'),
+            capabilities=[SubAgents(agents=[SubAgent(deferring_agent('approver'))])],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'approver' ended with `DeferredToolRequests` because it needs tool approval or "
+                'deferred tool results, which a delegating agent cannot provide. Do the task another way, or '
+                'without this sub-agent.'
+            ]
+        )
+        assert not any(
+            isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+            for message in result.all_messages()
+            for part in message.parts
+        )
+
+    async def test_pending_model_response_returns_steering(self) -> None:
+        # Like `DeferredToolRequests`: the parent cannot check on the child's request later.
+        background, model = pending_agent('background')
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('background'),
+            capabilities=[SubAgents(agents=[SubAgent(background)])],
+        )
+        result = await parent.run('go')
+        # Nobody will check on the request later, so it's cancelled.
+        assert model.cancelled == ['job-1']
+        assert result.output == 'all done'
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'background' ended with `PendingModelResponse` because it needs the result of a model "
+                'request the provider is still processing, which a delegating agent cannot provide. Do the task '
+                'another way, or without this sub-agent.'
+            ]
+        )
+
+    async def test_a_failing_cancel_of_a_pending_request_still_returns_steering(self) -> None:
+        background, model = pending_agent('background', fail_cancel=True)
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('background'), capabilities=[SubAgents(agents=[SubAgent(background)])]
+        )
+        result = await parent.run('go')
+        assert model.cancelled == ['job-1']
+        assert _delegate_returns(result)[0].startswith("Sub-agent 'background' ended with `PendingModelResponse`")
+
+    async def test_a_batched_request_left_pending_is_cancelled(self) -> None:
+        # The child's run releases its batch request for a later run, which the parent can't make, so the
+        # delegation cancels it through the model that served it, which cancels the batch it was alone in.
+        model = SlowBatchTestModel(pending_checks=1000)
+        background = Agent(
+            model,
+            name='background',
+            output_type=[str, PendingModelResponse],
+            capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)],
+        )
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('background'), capabilities=[SubAgents(agents=[SubAgent(background)])]
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result)[0].startswith("Sub-agent 'background' ended with `PendingModelResponse`")
+        assert model.canceled == [model.created[0].id]
+
+    async def test_deferred_tool_calls_resolved_by_the_sub_agent_return_its_output(self) -> None:
+        def approve_all(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
+            return requests.build_results(approve_all=True)
+
+        approver = deferring_agent('approver', capabilities=[HandleDeferredToolCalls(handler=approve_all)])
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('approver'), capabilities=[SubAgents(agents=[SubAgent(approver)])]
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == ['approved and done']
+
+    async def test_deferred_tool_requests_with_on_failure_returns_steering(self) -> None:
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('approver'),
+            capabilities=[
+                SubAgents(agents=[SubAgent(deferring_agent('approver'), on_failure='steer: do it yourself')])
+            ],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        assert _delegate_returns(result) == ['steer: do it yourself']
 
     async def test_usage_not_shared_when_disabled(self) -> None:
         captured: dict[str, Any] = {}
@@ -685,7 +778,7 @@ class TestRunControls:
             part
             for message in result.all_messages()
             for part in message.parts
-            if isinstance(part, RetryPromptPart) and part.tool_name == 'delegate_task'
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried' and part.tool_name == 'delegate_task'
         ]
         assert retries == []
         assert _delegate_returns(result) == ['steer: use existing evidence']
@@ -759,12 +852,12 @@ def _crash(message: str = 'provider down') -> FunctionModel:
 
 
 def _delegate_retries(result: Any) -> list[str]:
-    """The `delegate_task` retry-prompt contents from a run result, in order."""
+    """The `delegate_task` retry contents from a run result, in order."""
     return [
         str(part.content)
         for message in result.all_messages()
         for part in message.parts
-        if isinstance(part, RetryPromptPart) and part.tool_name == 'delegate_task'
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried' and part.tool_name == 'delegate_task'
     ]
 
 
@@ -1039,7 +1132,7 @@ class TestIncludeSelf:
             str(part.content)
             for message in result.all_messages()
             for part in message.parts
-            if isinstance(part, RetryPromptPart)
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
         ]
         assert retries == ["Unknown sub-agent 'ghost'. Available sub-agents: self, worker."]
 

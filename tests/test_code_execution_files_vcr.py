@@ -17,7 +17,15 @@ from pydantic import JsonValue
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UploadedFile, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ThinkingPart,
+    UploadedFile,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool
 
@@ -56,7 +64,7 @@ async def test_anthropic_code_execution_files(
     )
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[
@@ -89,6 +97,68 @@ async def test_anthropic_code_execution_files(
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_anthropic_code_execution_files_behind_carried_thinking(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+):
+    """Anthropic accepts upload blocks on the synthesized `user` turn that carried reasoning creates.
+
+    Reasoning that can't ride the native reasoning channel is carried into a `user` turn of its own ahead
+    of the assistant turn it came from, and every user message that isn't only tool results gets the
+    `container_upload` blocks, so on a history opening with a `ModelResponse` the carried turn takes them
+    too. That keeps every user message byte-identical as history grows; what only the API can answer is
+    whether it takes an upload block next to the carried text, and whether the file still reaches the
+    fresh container this turn allocates.
+    """
+    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key, http_client=request_capture.client)
+    uploaded = await client.beta.files.upload(
+        file=('data.csv', _CSV_BYTES, 'text/csv'),
+        betas=['files-api-2025-04-14'],
+    )
+    # Unsigned and unattributed: the shape a storage round trip leaves behind, which is what sends the
+    # reasoning down the carried-turn path instead of the native one.
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='They uploaded a CSV, so the sum has to come from the file, not from memory.'),
+                TextPart(content='Ready when you are.'),
+            ]
+        )
+    ]
+
+    try:
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model,
+            capabilities=[
+                NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=uploaded.id, provider_name='anthropic')]))
+            ],
+        )
+
+        result = await agent.run(_PROMPT, message_history=history)
+    finally:
+        await client.beta.files.delete(uploaded.id, betas=['files-api-2025-04-14'])
+        await client.close()
+
+    body = request_capture.body('/v1/messages')
+    assert message_shape(body) == snapshot(
+        [('user', ['text', 'container_upload']), ('assistant', ['text']), ('user', ['text', 'container_upload'])]
+    )
+    # The first text block on the wire is the carried reasoning, in the turn the uploads also ride.
+    assert content_blocks(body, 'text')[0] == snapshot(
+        {
+            'text': """\
+<assistant_thinking>
+They uploaded a CSV, so the sum has to come from the file, not from memory.
+</assistant_thinking>\
+""",
+            'type': 'text',
+        }
+    )
+    # The file reached the fresh container: the sum can only come from reading it.
+    assert '100' in result.output
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_anthropic_code_execution_files_multi_turn(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ):
@@ -109,7 +179,7 @@ async def test_anthropic_code_execution_files_multi_turn(
     )
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[
@@ -186,7 +256,7 @@ async def test_anthropic_code_execution_files_fresh_container_multi_turn(
     )
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[
@@ -240,7 +310,7 @@ async def test_anthropic_code_execution_files_with_function_tool(
     )
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[
@@ -270,7 +340,7 @@ async def test_anthropic_code_execution_files_with_function_tool(
     assert message_shape(bodies[-1]) == snapshot(
         [
             ('user', ['text', 'container_upload']),
-            ('assistant', ['text', 'tool_use', 'server_tool_use']),
+            ('assistant', ['tool_use']),
             ('user', ['tool_result']),
         ]
     )
@@ -312,7 +382,7 @@ async def test_anthropic_code_execution_files_rejected_container_is_dropped_and_
     )
 
     try:
-        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
             model,
             capabilities=[

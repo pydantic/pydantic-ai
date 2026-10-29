@@ -4,13 +4,14 @@ import asyncio
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from uuid import uuid4
 from weakref import ref
 
 import logfire
 from anyio import move_on_after, run_process
 from opentelemetry.context import Context
-from opentelemetry.trace import Span, get_current_span
+from opentelemetry.trace import Span, SpanContext, get_current_span
 
 from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation, WrapRunHandler
@@ -41,6 +42,8 @@ class SessionTracing(AbstractCapability[None]):
     """The loop the session started on, while it is active."""
     _rotation: asyncio.TimerHandle | None = field(default=None, init=False)
     _roots: dict[str, Span] = field(default_factory=dict[str, Span], init=False)
+    _turns: dict[str, SpanContext] = field(default_factory=dict[str, SpanContext], init=False)
+    """Each conversation's latest run span, by `agent_session_id`."""
     _fallback_id: str = field(default_factory=lambda: str(uuid4()), init=False)
     # Bounded: a nested run's error that its parent handled never reaches a turn's end to be looked up.
     _run_errors: deque[Exception] = field(default_factory=lambda: deque[Exception](maxlen=16), init=False)
@@ -89,6 +92,19 @@ class SessionTracing(AbstractCapability[None]):
             # Roots also open on worker threads, such as for a UI record, so the timer is set from the loop.
             loop.call_soon_threadsafe(self._schedule_rotation)
         return self._roots[session_id]
+
+    def turn(self) -> tuple[SpanContext, SpanContext | None] | None:
+        """The current conversation's root and, once one ran under it, its latest run; `None` before a root opens.
+
+        Only reads: a root ended by `ROOT_LIFETIME` is still the trace of a run under way.
+        """
+        session_id = self.session_id() or self._fallback_id
+        root = self._roots.get(session_id) if self._loop is not None else None
+        if root is None:
+            return None
+        trace = root.get_span_context()
+        run = self._turns.get(session_id)
+        return trace, run if run is not None and run.trace_id == trace.trace_id else None
 
     def _schedule_rotation(self) -> None:
         if self._loop is not None and self._rotation is None:
@@ -144,6 +160,7 @@ class SessionTracing(AbstractCapability[None]):
                 span.set_attribute('reason', reason)
                 span.end()
         self._roots.clear()
+        self._turns.clear()
 
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost', wraps=(Instrumentation,))
@@ -164,23 +181,30 @@ class SessionTracing(AbstractCapability[None]):
                 return True
         return False
 
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        """Remember the conversation's run, whose span `Instrumentation` opened, as its latest turn."""
+        run = get_current_span().get_span_context()
+        session_id = self.session_id()
+        if run.is_valid and session_id is not None and ctx.conversation_id == session_id:
+            self._turns[session_id] = run
+
     async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         with parent_span(self.root()):
             try:
                 return await handler()
-            except Exception as error:
+            except Exception as exc:
                 # Every enabled copy of the plugin looks the error up at turn end, but `combine` keeps only the last
                 # copy's `wrap_run`, so this one tells them all.
                 for tracing in _live_tracings():
-                    tracing._run_errors.append(error)
+                    tracing._run_errors.append(exc)
                 raise
 
 
-async def git_email() -> str | None:
-    """Read the configured Git author email, without making telemetry depend on Git."""
+async def git_email(*, cwd: Path) -> str | None:
+    """Read the Git author email configured for `cwd`, without making telemetry depend on Git."""
     with move_on_after(2):
         try:
-            result = await run_process(['git', 'config', '--get', 'user.email'], check=False)
+            result = await run_process(['git', 'config', '--get', 'user.email'], cwd=cwd, check=False)
         except OSError:
             return None
         if result.returncode == 0:

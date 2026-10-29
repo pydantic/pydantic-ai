@@ -1,9 +1,10 @@
 import re
+from copy import deepcopy
 
 import pytest
 from pytest_mock import MockerFixture
 
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.amazon import amazon_model_profile
@@ -166,6 +167,11 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     anthropic_model_profile_mock.assert_called_with('claude-haiku-4-5')
     assert anthropic_profile is not None
     assert anthropic_profile.get('supports_json_schema_output', False) is True
+
+    anthropic_profile = provider.model_profile('anthropic/claude-sonnet-5.5')
+    anthropic_model_profile_mock.assert_called_with('claude-sonnet-5-5')
+    assert anthropic_profile is not None
+    assert anthropic_profile.get('thinking_always_enabled', False) is True
 
     mistral_profile = provider.model_profile('mistralai/mistral-large-2407')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
@@ -344,3 +350,73 @@ def test_openrouter_google_json_schema_transformer():
     # Removed fields
     assert '$schema' not in result
     assert 'title' not in result
+
+
+@pytest.mark.parametrize('definition', [True, False])
+def test_openrouter_google_boolean_defs(definition: bool):
+    """The legacy inliner keeps false rejecting when the reference has a sibling `not`."""
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'x': {'$ref': '#/$defs/X', 'not': {'type': 'string'}}},
+        '$defs': {'X': definition},
+    }
+    original = deepcopy(schema)
+    assert _OpenRouterGoogleJsonSchemaTransformer(schema).walk() == {
+        'type': 'object',
+        'properties': {'x': {'not': {'type': 'string'} if definition else {}}},
+    }
+    assert schema == original
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'anthropic/claude-sonnet-5.5',
+        'google/gemini-3.5-flash',
+        'google/gemini-3.5-flash-lite',
+        'google/gemini-3.6-flash',
+        'google/gemini-3.7-flash',
+        'google/gemini-3.8-flash',
+        'google/gemini-4-argon',
+        'moonshotai/kimi-k2.7-code',
+        'moonshotai/kimi-k2-thinking',
+        'openai/gpt-5.2-codex',
+        'openai/gpt-oss-120b',
+        'openai/gpt-oss-20b',
+        'openai/gpt-oss-safeguard-20b',
+        'qwen/qwen3.8-max-prime',
+        'qwen/qwen3.8-max-0902',
+        'qwen/qwen3.8-2.4t-a95b',
+        'qwen/qwen3-vl-30b-a3b-thinking',
+        'qwen/qwen3-next-80b-a3b-thinking',
+        'qwen/qwen3-235b-a22b-thinking-2507',
+        'x-ai/grok-4.20-multi-agent',
+        'x-ai/grok-build-0.1',
+        'z-ai/glm-5.3',
+        'z-ai/glm-5.3-flash',
+        'google/gemini-3.5-flash:batch',
+    ],
+)
+def test_openrouter_mandatory_reasoning_routes_are_always_on(model_name: str):
+    """OpenRouter rejects `effort='none'` on these routes, which its model list marks `reasoning.mandatory`."""
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('thinking_always_enabled', False) is True
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'anthropic/claude-sonnet-5',
+        'google/gemini-3.1-flash-lite',
+        'moonshotai/kimi-k3',
+        'openai/gpt-5.4',
+        'qwen/qwen3.8-27b',
+        'x-ai/grok-4.20',
+        'z-ai/glm-5.2',
+    ],
+)
+def test_openrouter_optional_reasoning_routes_are_not_always_on(model_name: str):
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('thinking_always_enabled', False) is False

@@ -22,7 +22,6 @@ from __future__ import annotations as _annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Literal
 
 import pytest
@@ -304,6 +303,7 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1',
+                    canonical_system='openai',
                     provider_details={'timestamp': IsDatetime()},
                     provider_response_id='123',
                     finish_reason='stop',
@@ -331,7 +331,7 @@ CASES = [
     Case(
         id='groq',
         build_model=_groq_model,
-        usage=snapshot(RunUsage(requests=1, cost=Decimal('0.00'))),
+        usage=snapshot(RunUsage(requests=1, unmeasured_requests=1)),
         messages=snapshot(
             [
                 ModelRequest(
@@ -348,7 +348,7 @@ CASES = [
                             tool_call_id=IsStr(),
                         )
                     ],
-                    usage=RequestUsage(cost=Decimal('0.00')),
+                    usage=RequestUsage(unmeasured_requests=1),
                     model_name='llama-3.3-70b-versatile',
                     timestamp=IsDatetime(),
                     provider_name='groq',

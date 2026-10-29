@@ -100,6 +100,7 @@ Available sub-agents:
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details=IsPartialDict({'finish_reason': 'completed', 'timestamp': IsDatetime()}),
                 provider_response_id='resp_0e58f8341a296874006a7f83c1b21081969141bc089fa42e84',
                 finish_reason='stop',
@@ -215,6 +216,7 @@ Available sub-agents:
                     ),
                     ToolCallPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         args=IsStr(
                             regex='\\{"handle":"01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0","offset":0,"limit":120\\}'
                         ),
@@ -228,6 +230,7 @@ Available sub-agents:
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details=IsPartialDict({'finish_reason': 'completed', 'timestamp': IsDatetime()}),
                 provider_response_id='resp_0e58f8341a296874006a7f84501d548196acac86c0fa44e665',
                 finish_reason='stop',
@@ -239,6 +242,7 @@ Available sub-agents:
                 parts=[
                     ToolReturnPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         content=IsStr(
                             regex="""\
 \\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 331\\ matching\\ line\\(s\\);\\ showing\\ 120\\]\\
@@ -388,6 +392,7 @@ Available sub-agents:
                 parts=[
                     ToolCallPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         args=IsStr(
                             regex='\\{"handle":"01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0","offset":120,"limit":140\\}'
                         ),
@@ -401,6 +406,7 @@ Available sub-agents:
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details=IsPartialDict({'finish_reason': 'completed', 'timestamp': IsDatetime()}),
                 provider_response_id='resp_0e58f8341a296874006a7f845bb5a0819693d55bb5431d3cff',
                 finish_reason='stop',
@@ -412,6 +418,7 @@ Available sub-agents:
                 parts=[
                     ToolReturnPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         content=IsStr(
                             regex="""\
 \\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 331\\ matching\\ line\\(s\\);\\ showing\\ 140\\]\\
@@ -581,6 +588,7 @@ Available sub-agents:
                 parts=[
                     ToolCallPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         args=IsStr(
                             regex='\\{"handle":"01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0","offset":260,"limit":71\\}'
                         ),
@@ -594,6 +602,7 @@ Available sub-agents:
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details=IsPartialDict({'finish_reason': 'completed', 'timestamp': IsDatetime()}),
                 provider_response_id='resp_0e58f8341a296874006a7f845f3fdc8196a12485e126e3140c',
                 finish_reason='stop',
@@ -605,6 +614,7 @@ Available sub-agents:
                 parts=[
                     ToolReturnPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         content=IsStr(
                             regex="""\
 \\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0':\\ 331\\ matching\\ line\\(s\\);\\ showing\\ 71\\]\\
@@ -730,6 +740,7 @@ Available sub-agents:
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details=IsPartialDict({'finish_reason': 'completed', 'timestamp': IsDatetime()}),
                 provider_response_id='resp_0e58f8341a296874006a7f8461704c81968b9c4059581c7f0b',
                 finish_reason='stop',
@@ -780,6 +791,7 @@ Available sub-agents:
                 parts=[
                     ToolCallPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         args=IsStr(
                             regex='\\{"handle":"01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_dmEMWZ9DEj1LpBAv20CBRl4f\\.0","pattern":"Stable\\ ABI","limit":50\\}'
                         ),
@@ -793,6 +805,7 @@ Available sub-agents:
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details=IsPartialDict({'finish_reason': 'completed', 'timestamp': IsDatetime()}),
                 provider_response_id='resp_0e58f8341a296874006a7f846e25b08196845460b1804c2e50',
                 finish_reason='stop',
@@ -804,6 +817,7 @@ Available sub-agents:
                 parts=[
                     ToolReturnPart(
                         tool_name='read_tool_result',
+                        tool_kind='tool_output_limits.read_tool_result',
                         content=IsStr(
                             regex="""\
 \\[handle\\ '01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_dmEMWZ9DEj1LpBAv20CBRl4f\\.0':\\ 1\\ matching\\ line\\(s\\);\\ showing\\ 1\\]\\
@@ -961,6 +975,7 @@ Frame handling improved but remains hazardous:
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details=IsPartialDict({'finish_reason': 'completed', 'timestamp': IsDatetime()}),
                 provider_response_id='resp_0e58f8341a296874006a7f8470c6c48196a3c2cd136ecc9f8a',
                 finish_reason='stop',

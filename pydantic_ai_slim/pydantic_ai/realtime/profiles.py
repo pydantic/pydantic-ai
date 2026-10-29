@@ -7,6 +7,7 @@ from typing import Literal
 
 from typing_extensions import TypeAliasType, TypedDict
 
+from ..messages import SpeechTimestampGranularity
 from ..native_tools import AbstractNativeTool
 
 AsyncToolCallMode = TypeAliasType('AsyncToolCallMode', Literal['never', 'optional', 'always'])
@@ -75,8 +76,27 @@ class RealtimeModelProfile(TypedDict, total=False):
     [`UserError`][pydantic_ai.exceptions.UserError] before connecting, rather than letting the provider
     fail the handshake (Gemini Live answers `1007 The requested combination of response modalities
     (TEXT) is not supported by the model`) or, worse, silently produce speech anyway (xAI)."""
+    supports_audio_output: bool
+    """Whether the model can generate speech, via
+    [`output_modality='audio'`][pydantic_ai.realtime.RealtimeModelSettings.output_modality].
+
+    Defaults to `True`. A realtime model that only writes text is a perception model rather than a voice
+    assistant: it takes in a live audio and video stream and answers in text, like Gemini's
+    `gemini-robotics-er-2-streaming-preview`, which a robot's controller reads rather than a person hears.
+    When `False`, [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] defaults `output_modality` to `'text'`
+    rather than `'audio'`, and rejects an explicit `output_modality='audio'` with a
+    [`UserError`][pydantic_ai.exceptions.UserError] before connecting (Gemini Live answers `1007 The
+    requested combination of response modalities (AUDIO) is not supported by the model`)."""
     supports_session_seeding: bool
     """Whether the model can seed a session with prior conversation (`message_history`)."""
+    supports_system_messages: bool
+    """Whether a [system prompt sent mid-session](../realtime/turns.md#system-prompts) goes to the model on its
+    protocol's channel for the operator's own text, which it takes as instructions rather than the user's words.
+
+    OpenAI `gpt-realtime` and Azure send a `system` message, and OpenAI GPT-Live, with a reply asked for, gives the
+    delegated backend a developer message. When `False` (the default), the prompt goes out `<system>`-tagged, the
+    way any text would: xAI Grok Voice and Eleven Realtime accept a `system` message, but their models don't act
+    on it. Set it with `profile=` for a model whose support differs from its provider's."""
     supports_webrtc: bool
     """Whether the model supports browser WebRTC signaling, ephemeral client secrets, and a server-side
     control-plane sideband via [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer],
@@ -92,7 +112,8 @@ class RealtimeModelProfile(TypedDict, total=False):
     supports_thinking: bool
     """Whether the model supports reasoning/thinking configuration via the
     [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting — OpenAI's `gpt-realtime-2*`
-    reasoning models, Gemini's native-audio models, xAI's `grok-voice-latest` and
+    reasoning models, the Gemini Live models except Vertex AI's `gemini-live-2.5-flash` and `gemini-3.8-live`
+    (its `gemini-3.8-live-extended-thinking` variant always thinks), xAI's `grok-voice-latest` and
     `grok-voice-think-*` models, and OpenAI GPT-Live, whose delegated backend does the reasoning. When
     `False` (the default), a `thinking` setting is silently ignored rather than sent to a model that
     would reject it."""
@@ -139,6 +160,11 @@ class RealtimeModelProfile(TypedDict, total=False):
     operation the session can invoke. The OpenAI-protocol providers (OpenAI, Azure OpenAI, xAI) emit
     them; Gemini Live does not — a UI that shows a "listening" indicator should read this flag rather
     than wait for events that will never arrive."""
+    output_speech_timestamp_granularity: SpeechTimestampGranularity | None
+    """How finely the model reports when its speech is heard, with the
+    [`output_speech_timestamps`][pydantic_ai.realtime.RealtimeModelSettings.output_speech_timestamps] setting on:
+    per `'word'`, per `'segment'` of one or more words, or `None` (the default) when it doesn't report it.
+    Azure AI Voice Live and ElevenLabs Agents report words."""
     synthesizes_turn_boundary: bool
     """Whether [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] is inferred
     by Pydantic AI rather than reported by the provider.
@@ -204,6 +230,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_output_truncation': False,
     'supports_text_output': True,
     'supports_session_seeding': False,
+    'supports_system_messages': False,
     'supports_webrtc': False,
     'supports_seeding_images': False,
     'supports_seeding_audio': False,
@@ -211,6 +238,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_tool_return_schema': False,
     'supported_native_tools': frozenset(),
     'emits_input_speech_events': False,
+    'output_speech_timestamp_granularity': None,
     'synthesizes_turn_boundary': False,
     'responses_are_requests': True,
     'response_usage_covers_context': True,

@@ -125,7 +125,7 @@ async def test_shell_runs_and_completes_a_plugin_login(tmp_path: Path, monkeypat
             completions.append({item.text for item in self.completer.get_completions(document, CompleteEvent())})  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType]
             return values.pop(0)
 
-    monkeypatch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
     store = SettingsStore(tmp_path / 'config.db')
     store.plugins_dir.mkdir(parents=True, exist_ok=True)
     (store.plugins_dir / 'claude_login.py').write_text(PLUGIN.replace('{MESSAGE}', 'Signed in to Claude Code.'))

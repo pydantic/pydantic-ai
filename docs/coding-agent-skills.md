@@ -8,12 +8,12 @@ If you're building Pydantic AI applications with a coding agent, you can install
 
 [Agent skills](https://agentskills.io) are packages of instructions and reference material that coding agents load on demand. With the skill installed, coding agents have access to Pydantic AI patterns, architecture guidance, and common task references covering [tools](tools.md), [capabilities](capabilities/overview.md), [structured output](output.md), [streaming](agent.md#streaming-events-and-final-output), [testing](testing.md), [multi-agent delegation](multi-agent-applications.md), [hooks](hooks.md), and [agent specs](agent-spec.md).
 
-When your coding agent creates a new Pydantic AI application, the skill has it set up [Pydantic Logfire](logfire.md) for observability (unless you already use another OpenTelemetry backend), so you can see every agent run, model request, and tool call from the first version. It also knows the [Pydantic AI Gateway](gateway.md), one key for models from several providers, and the `gateway/` model strings that use it.
+When your coding agent creates a new Pydantic AI application, the skill has it set up [Pydantic Logfire](logfire.md) for observability, so you can see every agent run, model request, and tool call from the first version. If your company sends production telemetry to another OpenTelemetry backend, production stays there, and the skill still offers you a personal Logfire project for [local development](logfire.md#local-development). It also knows the [Pydantic AI Gateway](gateway.md), one key for models from several providers, and the `gateway/` model strings that use it.
 
 For the rest of Logfire, such as instrumenting the rest of your application, querying traces, or running evals, the [`pydantic/skills`](https://github.com/pydantic/skills) repository has Logfire skills too: install the `logfire` plugin, or point your agent at [pydantic.dev/ai-setup.md](https://pydantic.dev/ai-setup.md) for the guided setup.
 
 !!! note
-    If you want to build agent skills for your Pydantic AI agent, see the [Agent Skills](capabilities/third-party.md#agent-skills) entry in the Third-party capabilities section on the Capabilities page.
+    If you want to give your Pydantic AI agent its own skills, see the Pydantic AI Harness [`Skills`](harness/skills.md) capability.
 
 ## Installation
 

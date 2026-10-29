@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -423,6 +424,7 @@ def test_var_args():
             'metadata': None,
             'timestamp': IsStr() & IsNow(iso_string=True, tz=UTC),  # type: ignore[reportUnknownMemberType]
             'outcome': 'success',
+            'retry': None,
             'part_kind': 'tool-return',
         }
     )
@@ -664,6 +666,17 @@ async def test_stream_text():
 async def test_speech_response_estimates_transcript_tokens() -> None:
     response = ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='hello spoken world')])
     assert _estimate_usage([response]) == RequestUsage(input_tokens=50, output_tokens=3)
+
+
+def test_a_request_side_compaction_summary_counts_as_text() -> None:
+    """A summary the application wrote is sent as text, so it counts; a provider's own opaque item doesn't."""
+    summary = ModelRequest(parts=[CompactionPart(content='three summary words')])
+    native = ModelResponse(
+        parts=[CompactionPart(content=None, provider_name='openai', provider_details={'encrypted_content': 'x'})]
+    )
+    # The model receives the summary framed, with its attribution line, so that is what's counted.
+    assert _estimate_usage([summary]) == RequestUsage(input_tokens=79, output_tokens=0)
+    assert _estimate_usage([native]) == RequestUsage(input_tokens=50, output_tokens=0)
 
 
 class Foo(BaseModel):

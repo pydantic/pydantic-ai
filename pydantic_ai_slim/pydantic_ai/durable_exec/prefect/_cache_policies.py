@@ -148,6 +148,11 @@ def _replace_run_context(
                     if (tool_name_path := value._tool_name_path)  # pyright: ignore[reportPrivateUsage]
                     else {}
                 ),
+                # A tool reading `deadline` or `remaining_time()` must not replay a result computed under
+                # a different time budget. A flow retry records the run's start time, so a retried run with
+                # the same `timeout=` has the same deadline and still hits. Projected only when set, so the
+                # keys of runs without a deadline are unchanged.
+                **({'deadline': value.deadline} if value.deadline is not None else {}),
             }
 
     return inputs
@@ -239,7 +244,8 @@ def _replace_toolset_tools(
         if _is_container(value):
             return _map_container(value, project)
         if _is_toolset_tool(value):
-            return {'toolset': value.toolset.id, 'tool_def': _cacheable_value(value.tool_def)}
+            # Keyed by the `id` chosen for the toolset, so a hostname-derived one leaves keys as they were.
+            return {'toolset': value.toolset._explicit_id, 'tool_def': _cacheable_value(value.tool_def)}  # pyright: ignore[reportPrivateUsage]
         if _is_tool_definition(value):
             return _cacheable_value(value)
         return value

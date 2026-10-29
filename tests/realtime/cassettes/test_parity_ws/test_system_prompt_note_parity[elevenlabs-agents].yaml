@@ -1,0 +1,662 @@
+version: 1
+interactions:
+- request:
+    method: GET
+    uri: https://api.elevenlabs.io/v1/convai/agents/agent_7901m52mec0veknvz7vfnm56aaym
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      host:
+      - api.elevenlabs.io
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-headers:
+      - "*"
+      access-control-allow-methods:
+      - POST, PATCH, OPTIONS, DELETE, GET, PUT
+      access-control-allow-origin:
+      - "*"
+      access-control-max-age:
+      - "600"
+      alt-svc:
+      - h3=":443"; ma=2592000
+      content-length:
+      - "14579"
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=1800;
+      vary:
+      - Accept-Language
+    body:
+      type: json
+      content:
+        agent_id: agent_7901m52mec0veknvz7vfnm56aaym
+        name: pydantic-ai-tests-weather
+        conversation_config:
+          asr:
+            quality: high
+            provider: scribe_realtime
+            user_input_audio_format: pcm_16000
+            keywords: []
+          turn:
+            turn_timeout: 30.0
+            initial_wait_time: null
+            silence_end_call_timeout: -1.0
+            mode: turn
+            turn_eagerness: normal
+            spelling_patience: auto
+            speculative_turn: true
+            retranscribe_on_turn_timeout: false
+            turn_model: turn_v3
+            interruption_ignore_terms: []
+            interruption_ignore_term_languages: []
+            merge_with_default_ignore_terms: false
+            transcribe_on_disabled_interruptions: false
+            soft_timeout_config:
+              timeout_seconds: -1.0
+              message: Hhmmmm...yeah.
+              additional_soft_timeout_messages: []
+              use_llm_generated_message: false
+              randomize_fillers: false
+              max_soft_timeouts_per_generation: 1
+              llm_generated_message_prompt_override: null
+              disable_until_first_user_message: false
+            noisy_environment_detection: false
+            noisy_environment_message: >-
+              Uhh ... sorry, I'm picking up some noise in the background. Could you move
+              somewhere quieter?
+          tts:
+            model_id: eleven_flash_v2
+            voice_id: cjVigY5qzO86Huf0OWal
+            supported_voices: []
+            expressive_mode: false
+            suggested_audio_tags: []
+            agent_output_audio_format: pcm_16000
+            optimize_streaming_latency: 3
+            stability: 0.5
+            speed: 1.0
+            similarity_boost: 0.75
+            clone_strength: 0.0
+            text_normalisation_type: system_prompt
+            pronunciation_dictionary_locators: []
+            enable_phoneme_tags: true
+            audio_effects: null
+          conversation:
+            text_only: false
+            max_duration_seconds: 600
+            max_duration_seconds_after_last_agent_message: null
+            client_events:
+            - audio
+            - interruption
+            - agent_response
+            - user_transcript
+            - agent_response_correction
+            - agent_tool_response
+            - context_usage
+            - mcp_tool_call
+            file_input:
+              enabled: true
+              max_files_in_memory: 10
+              max_files_per_conversation: 10
+            monitoring_enabled: false
+            monitoring_events:
+            - user_transcript
+            - agent_response
+            - agent_response_correction
+            dtmf_input_settings: null
+            background_sound:
+              source_type: null
+              source_id: null
+              volume: 0.15
+              crossfade_loop: true
+            compaction:
+              enabled: null
+              soft_trigger_fraction: null
+              tail_size: null
+              min_reclaimable_tokens: null
+            source_attribution: false
+          language_presets: {}
+          vad:
+            background_voice_detection: false
+          realtime_model: null
+          agent:
+            first_message: ""
+            language: en
+            hinglish_mode: false
+            dynamic_variables:
+              dynamic_variable_placeholders: {}
+            disable_first_message_interruptions: false
+            max_conversation_duration_message: ""
+            silence_end_call_message: ""
+            text_behavior_overrides:
+              whatsapp:
+                verbosity: null
+                output_format: null
+                interaction_budget: null
+                disable_max_duration: true
+            subagent_config:
+              agents: []
+              self_subagent: null
+            prompt:
+              prompt: You are a helpful assistant.
+              llm: gemini-2.5-flash
+              reasoning_effort: null
+              service_tier: standard
+              opener: null
+              thinking_budget: null
+              enable_reasoning_summary: false
+              temperature: 0.0
+              max_tokens: -1
+              tool_ids:
+              - tool_8101m52mebnafxpb65decy07bb09
+              tool_ids_strict: false
+              built_in_tools:
+                transfer_to_agent: null
+                update_state: null
+                memory_entry_search: null
+                run_subagent: null
+                flag_issue_for_review: null
+                end_call: null
+                language_detection: null
+                transfer_to_number: null
+                skip_turn: null
+                play_keypad_touch_tone: null
+                voicemail_detection: null
+                identity_challenge: null
+                transfer_to_genesys: null
+                transfer_to_genesys_chat: null
+                transfer_to_genesys_bot: null
+              rich_content:
+                enabled_components: []
+              enable_parallel_tool_calls: true
+              mcp_server_ids: []
+              native_mcp_server_ids: []
+              knowledge_base: []
+              custom_llm: null
+              bedrock_llm: null
+              speech_engine: null
+              ignore_default_personality: true
+              rag:
+                enabled: false
+                embedding_model: e5_mistral_7b_instruct
+                optional_rag_enabled: false
+                max_vector_distance: 0.6
+                max_documents_length: 50000
+                max_retrieved_rag_chunks_count: 20
+                num_candidates: null
+                query_rewrite_prompt_override: null
+                knowledge_base_tool_info: null
+                include_source_urls: false
+              timezone: null
+              backup_llm_config:
+                preference: default
+              cascade_timeout_seconds: 4.0
+              tools:
+              - type: client
+                name: get_weather
+                description: Look up the current weather for a city.
+                response_timeout_secs: 20
+                disable_interruptions: false
+                interruption_mode: allow
+                force_pre_tool_speech: false
+                pre_tool_speech: auto
+                assignments: []
+                tool_call_sound: null
+                tool_call_sound_behavior: auto
+                tool_error_handling_mode: auto
+                parameters:
+                  description: ""
+                  dynamic_variable: ""
+                  is_omitted: false
+                  type: object
+                  required:
+                  - city
+                  properties:
+                    city:
+                      type: string
+                      description: City name
+                      enum: null
+                      is_system_provided: false
+                      dynamic_variable: ""
+                      allowed_values: null
+                      allowed_values_dynamic_variable: ""
+                      constant_value: ""
+                      is_omitted: false
+                expects_response: true
+                dynamic_variables:
+                  dynamic_variable_placeholders: {}
+                execution_mode: immediate
+        metadata:
+          created_at_unix_secs: 1792163657
+          updated_at_unix_secs: 1792165105
+        platform_settings:
+          evaluation:
+            criteria: []
+          widget:
+            variant: full
+            placement: bottom-right
+            expandable: never
+            avatar:
+              type: orb
+              color_1: "#2792dc"
+              color_2: "#9ce6e6"
+            feedback_mode: none
+            end_feedback:
+              type: rating
+            bg_color: "#ffffff"
+            text_color: "#000000"
+            btn_color: "#000000"
+            btn_text_color: "#ffffff"
+            border_color: "#e1e1e1"
+            focus_color: "#000000"
+            border_radius: null
+            btn_radius: null
+            action_text: null
+            start_call_text: null
+            end_call_text: null
+            expand_text: null
+            listening_text: null
+            speaking_text: null
+            shareable_page_text: null
+            shareable_page_show_terms: true
+            terms_text: null
+            terms_html: null
+            terms_key: null
+            show_avatar_when_collapsed: false
+            disable_banner: false
+            override_link: null
+            markdown_link_allowed_hosts: []
+            markdown_link_include_www: true
+            markdown_link_allow_http: true
+            mic_muting_enabled: true
+            transcript_enabled: true
+            text_input_enabled: true
+            conversation_mode_toggle_enabled: false
+            default_expanded: false
+            always_expanded: false
+            dismissible: false
+            show_agent_status: false
+            show_conversation_id: true
+            strip_audio_tags: true
+            syntax_highlight_theme: null
+            text_contents:
+              main_label: null
+              start_call: null
+              start_chat: null
+              new_call: null
+              end_call: null
+              mute_microphone: null
+              change_language: null
+              collapse: null
+              expand: null
+              copied: null
+              accept_terms: null
+              dismiss_terms: null
+              listening_status: null
+              speaking_status: null
+              connecting_status: null
+              chatting_status: null
+              queue_waiting_status: null
+              queue_waiting_status_short: null
+              input_label: null
+              input_placeholder: null
+              input_placeholder_text_only: null
+              input_placeholder_new_conversation: null
+              user_ended_conversation: null
+              agent_ended_conversation: null
+              conversation_id: null
+              error_occurred: null
+              queue_timed_out: null
+              copy_id: null
+              initiate_feedback: null
+              request_follow_up_feedback: null
+              thanks_for_feedback: null
+              thanks_for_feedback_details: null
+              follow_up_feedback_placeholder: null
+              submit: null
+              go_back: null
+              send_message: null
+              text_mode: null
+              voice_mode: null
+              switched_to_text_mode: null
+              switched_to_voice_mode: null
+              copy: null
+              download: null
+              wrap: null
+              agent_working: null
+              agent_done: null
+              agent_error: null
+              attach_file: null
+              remove_file: null
+              file_upload_error: null
+              file_type_unsupported: null
+              file_too_large: null
+              file_limit_reached: null
+              typing_indicator: null
+              rich_content_unavailable: null
+            styles:
+              base: null
+              base_hover: null
+              base_active: null
+              base_border: null
+              base_subtle: null
+              base_primary: null
+              base_error: null
+              accent: null
+              accent_hover: null
+              accent_active: null
+              accent_border: null
+              accent_subtle: null
+              accent_primary: null
+              overlay_padding: null
+              button_radius: null
+              input_radius: null
+              bubble_radius: null
+              sheet_radius: null
+              compact_sheet_radius: null
+              dropdown_sheet_radius: null
+            show_resize_button: true
+            end_confirmation_enabled: false
+            mobile_fullscreen: true
+            language_selector: false
+            supports_text_only: true
+            custom_avatar_path: null
+            language_presets: {}
+            first_message_quick_replies: []
+          data_collection: {}
+          data_collection_scopes: {}
+          analysis_items:
+            evaluation_criteria: []
+            data_collection: []
+          overrides:
+            conversation_config_override:
+              asr:
+                keywords: false
+              turn:
+                soft_timeout_config:
+                  message: false
+                  additional_soft_timeout_messages: false
+                noisy_environment_message: false
+              tts:
+                model_id: true
+                voice_id: true
+                supported_voices: false
+                stability: true
+                speed: true
+                similarity_boost: true
+                clone_strength: false
+                pronunciation_dictionary_locators: false
+              conversation:
+                text_only: true
+                max_duration_seconds: false
+              agent:
+                first_message: true
+                language: true
+                max_conversation_duration_message: false
+                silence_end_call_message: false
+                prompt:
+                  prompt: true
+                  llm: true
+                  tool_ids: true
+                  tool_ids_strict: false
+                  native_mcp_server_ids: false
+                  knowledge_base: false
+            custom_llm_extra_body: true
+            enable_conversation_initiation_client_data_from_webhook: false
+            enable_starting_workflow_node_id_from_client: false
+            enable_procedure_ids_from_client: false
+          workspace_overrides:
+            conversation_initiation_client_data_webhook: null
+            webhooks:
+              post_call_webhook_id: null
+              events:
+              - transcript
+              transcript_format: json
+              exclude_transcript: false
+              send_audio: false
+            cloud_storage_export:
+              destination_id: null
+              events:
+              - transcript
+              transcript_format: json
+          testing:
+            attached_tests: []
+            referenced_tests_ids: []
+          archived: false
+          guardrails:
+            version: "1"
+            focus:
+              is_enabled: false
+            prompt_injection:
+              is_enabled: false
+            synthetic_voice:
+              is_enabled: false
+              trigger_action:
+                type: end_call
+            content:
+              execution_mode: streaming
+              config:
+                sexual:
+                  is_enabled: false
+                  threshold: medium
+                violence:
+                  is_enabled: false
+                  threshold: medium
+                harassment:
+                  is_enabled: false
+                  threshold: medium
+                self_harm:
+                  is_enabled: false
+                  threshold: medium
+                profanity:
+                  is_enabled: false
+                  threshold: medium
+                religion_or_politics:
+                  is_enabled: false
+                  threshold: medium
+                medical_and_legal_information:
+                  is_enabled: false
+                  threshold: medium
+              trigger_action:
+                type: end_call
+            moderation: null
+            custom:
+              config:
+                configs: []
+          summary_language: null
+          summary_schedule: null
+          auto_translate_transcript_to_app_language: null
+          auth:
+            enable_auth: false
+            allowlist: []
+            require_origin_header: false
+            shareable_token: null
+          call_limits:
+            agent_concurrency_limit: -1
+            daily_limit: 100000
+            bursting_enabled: true
+          queueing_config:
+            enabled: true
+            wait_timeout_seconds: 180
+            hold_audio: null
+          ban: null
+          smb_metadata: null
+          privacy:
+            record_voice: true
+            retention_days: -1
+            delete_transcript_and_pii: false
+            delete_audio: false
+            apply_to_existing_conversations: false
+            zero_retention_mode: false
+            nested_history_redaction: false
+            conversation_history_redaction:
+              enabled: false
+              entities: []
+              excluded_data_collection_ids: []
+            user_memory:
+              enabled: false
+              scale: balanced
+              accept_unverified_identities: false
+          trust_context: unknown
+          analysis_llm: gemini-2.5-flash
+          analysis_bedrock_llm: null
+          analysis_llm_billed: false
+          topic_discovery:
+            enabled: true
+          sentiment_analysis:
+            enabled: true
+          simulation_library:
+            enabled: false
+            test_ids: []
+          alerting: null
+          overview_dashboard_template_id: null
+          safety:
+            is_blocked_ivc: false
+            is_blocked_non_ivc: false
+            ignore_safety_evaluation: false
+        phone_numbers: []
+        whatsapp_accounts: []
+        workflow:
+          edges: {}
+          nodes:
+            start_node:
+              type: start
+              position:
+                x: 0.0
+                "y": 0.0
+              edge_order: []
+              parent_subgraph_id: null
+          subgraphs: {}
+          prevent_subagent_loops: false
+        access_info:
+          is_creator: true
+          creator_name: scrubbed
+          creator_email: scrubbed
+          role: admin
+          anonymous_access_level_override: null
+          access_source: creator
+        access_permissions:
+        - agent_archive
+        - agent_duplicate
+        - agent_edit_advanced_settings
+        - agent_edit_config
+        - agent_edit_conversation_metadata
+        - agent_edit_guardrails
+        - agent_edit_llm
+        - agent_edit_memories
+        - agent_edit_metadata
+        - agent_edit_procedures
+        - agent_edit_prompt
+        - agent_edit_task_config
+        - agent_edit_voice
+        - agent_edit_widget
+        - agent_edit_workflow
+        - agent_manage_analysis
+        - agent_manage_attached_knowledge_base
+        - agent_manage_attached_mcp_servers
+        - agent_manage_attached_pronunciation_dictionaries
+        - agent_manage_attached_tests
+        - agent_manage_attached_tools
+        - agent_manage_batch_calling
+        - agent_manage_branches
+        - agent_manage_channels
+        - agent_manage_experiments
+        - agent_manage_phone_numbers
+        - agent_manage_protected_branches
+        - agent_manage_traffic
+        - agent_manage_whatsapp
+        - agent_merge_branches
+        - agent_monitor_conversation
+        - agent_publish_version
+        - agent_rerun_conversation_analysis
+        - agent_run_tasks
+        - agent_run_tests
+        - agent_search_conversations
+        - agent_view_advanced_settings
+        - agent_view_analysis
+        - agent_view_analytics
+        - agent_view_batch_calling
+        - agent_view_channels
+        - agent_view_config
+        - agent_view_conversation_history
+        - agent_view_costs
+        - agent_view_experiments
+        - agent_view_guardrails
+        - agent_view_knowledge_base
+        - agent_view_llm
+        - agent_view_mcp_servers
+        - agent_view_memories
+        - agent_view_metadata
+        - agent_view_phone_numbers
+        - agent_view_procedures
+        - agent_view_prompt
+        - agent_view_pronunciation_dictionaries
+        - agent_view_tasks
+        - agent_view_tests
+        - agent_view_tools
+        - agent_view_version_history
+        - agent_view_voice
+        - agent_view_whatsapp
+        - agent_view_widget
+        - agent_view_workflow
+        - resource_delete
+        - resource_manage_access
+        tags: []
+        version_id: agtvrsn_3801m52ntm2qfyqb5sqwh6435gdh
+        branch_id: agtbrch_2401m52medbnfrjaernzdcab154p
+        main_branch_id: agtbrch_2401m52medbnfrjaernzdcab154p
+        procedures: {}
+        trust_context: unknown
+        default_hold_audio_url: >-
+          https://eleven-public-cdn-common.elevenlabs.io/convai/ambient-audio-assets/elevator1.mp3
+  recorded_at: 2026-10-26T18:39:56.515408+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=agent_7901m52mec0veknvz7vfnm56aaym
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      host:
+      - api.elevenlabs.io
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-headers:
+      - "*"
+      access-control-allow-methods:
+      - POST, PATCH, OPTIONS, DELETE, GET, PUT
+      access-control-allow-origin:
+      - "*"
+      access-control-max-age:
+      - "600"
+      alt-svc:
+      - h3=":443"; ma=2592000
+      content-length:
+      - "140"
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=1800;
+      vary:
+      - Accept-Language
+    body:
+      type: json
+      content:
+        signed_url: >-
+          wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_7901m52mec0veknvz7vfnm56aaym&conversation_signature=scrubbed
+  recorded_at: 2026-10-26T18:39:56.584515+00:00
