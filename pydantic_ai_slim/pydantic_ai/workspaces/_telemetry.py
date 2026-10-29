@@ -3,8 +3,8 @@
 A workspace has no `RunContext`: it is selected before the run's tracer is known and can outlive the
 run. The run publishes its tracer and content setting in a context variable instead, so they reach
 every tool, hook and task the run starts, the way `_instrumentation.ContentPolicy` carries a model
-request's tracer to the spans opened beneath it. A run without instrumentation publishes none, and
-nothing is traced outside a run, so nothing is emitted there.
+request's tracer to the spans opened beneath it. A run without instrumentation publishes none, and a
+call outside any run finds none, so neither emits anything.
 """
 
 from __future__ import annotations as _annotations
