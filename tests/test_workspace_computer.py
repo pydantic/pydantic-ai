@@ -66,6 +66,13 @@ def test_key_names_normalize_to_one_spelling(given: str, expected: tuple[str, ..
     assert PressKeys(keys=(given,)).keys == expected
 
 
+@pytest.mark.parametrize('key', ['Control_R', 'Shift_R', 'Alt_R', 'Super_R', 'Meta_R', 'ControlRight', 'AltRight'])
+def test_right_hand_modifiers_are_refused(key: str) -> None:
+    # Kept free to name keys of their own later, such as AltGr, rather than meaning the left-hand modifier forever.
+    with pytest.raises(ValidationError, match='is not a key'):
+        PressKeys(keys=(key,))
+
+
 def test_fields_an_action_does_not_have_are_refused() -> None:
     # Dropping one would act differently than asked: a `mouse_down` with a position would press at the pointer.
     adapter = TypeAdapter(list[ComputerToolAction])
