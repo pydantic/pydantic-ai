@@ -2474,12 +2474,13 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
     agent = Agent(_durability_fn_model, name='durability_simple', capabilities=[DBOSDurability()])
 
     @DBOS.workflow()
-    async def run_durable_agent() -> str:
+    async def run_durable_agent() -> tuple[str, str | None]:
         result = await agent.run('Hello DBOS')
-        return result.output
+        return result.output, result.response.model_id
 
     output = await run_durable_agent()
-    assert output == 'Echo: Hello DBOS'
+    # The response records the model the request went to, not the DBOS wrapper around it.
+    assert output == ('Echo: Hello DBOS', _durability_fn_model.model_id)
 
 
 async def test_dbos_durability_model_error_reaches_workflow_with_its_type(dbos: DBOS) -> None:

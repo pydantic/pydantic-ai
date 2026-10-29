@@ -403,9 +403,9 @@ fallback_durable_agent = Agent(
 @workflow.defn
 class FallbackDurableAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> str:
+    async def run(self, prompt: str) -> tuple[str, str | None]:
         result = await fallback_durable_agent.run(prompt)
-        return result.output
+        return result.output, result.response.model_id
 
 
 async def test_durability_fallback_attempts_run_as_activities(client: Client):
@@ -424,7 +424,8 @@ async def test_durability_fallback_attempts_run_as_activities(client: Client):
         )
         output = await wf.result()
         history = await wf.fetch_history()
-    assert output == 'from fallback'
+    # The response records the candidate that answered, which is what the workflow resumes a continuation on.
+    assert output == ('from fallback', 'fallback_target')
     # The failed attempt on the agent's model and the one on the fallback model.
     assert _scheduled_activity_count(history) == 2
 
