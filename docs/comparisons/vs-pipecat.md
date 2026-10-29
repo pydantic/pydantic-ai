@@ -11,7 +11,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | Python | Python |
 | License | BSD-2-Clause | MIT |
 | Model providers | Many (services) | [Many](../models/overview.md) |
-| Extensibility | Frame processors and services | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Frame processors and services | [Capabilities and toolsets](../extensibility.md); [80+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Durable execution | No | [Eight integrations](../durable_execution/overview.md) |
@@ -41,3 +41,10 @@ Our realtime support means speech-to-speech models: one persistent connection, a
 | Evals | Pipecat Evals: scripted and simulated scenarios, LLM judge | [Pydantic Evals](../evals.md) on the text hand-off; nothing realtime-specific yet |
 | Deployment | A Python process; Pipecat Cloud or self-host | Your process, your backend; [Hosting the backend](../realtime/deployment.md#hosting) covers long-lived sessions, routing, and draining |
 | The same agent without voice | Text-only bots over a WebSocket transport, still a pipeline and a worker | [`run()`, CLI, web chat, AG-UI, Vercel AI](../interfaces.md) |
+
+*Last checked: 2026-10-26*
+
+## Sources
+
+- [Pipecat documentation](https://docs.pipecat.ai/)
+- [Pipecat pipeline and frame processing](https://docs.pipecat.ai/pipecat/learn/pipeline)

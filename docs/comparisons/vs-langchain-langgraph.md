@@ -13,7 +13,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | Python | Python |
 | License | MIT | MIT |
 | Model providers | Many | [Many](../models/overview.md) |
-| Extensibility | Middleware, callbacks | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Middleware, callbacks | [Capabilities and toolsets](../extensibility.md); [80+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | `deepagents`, or your own on LangGraph | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry via LangSmith | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Durable execution | Yes | [Eight integrations](../durable_execution/overview.md) |
@@ -40,3 +40,10 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 **Do you have a graph library?** Yes. [`pydantic-graph`](../graph.md): typed nodes, edges from return
 types, and persistence for pausing and resuming. Reach for it when the control flow is a real state
 machine; plain Python and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) cover the rest.
+
+*Last checked: 2026-09-24*
+
+## Sources
+
+- [LangGraph overview](https://docs.langchain.com/oss/python/langgraph/overview)
+- [LangGraph durable execution](https://docs.langchain.com/oss/python/langgraph/durable-execution)

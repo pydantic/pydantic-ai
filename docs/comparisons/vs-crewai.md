@@ -11,7 +11,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | Python | Python |
 | License | MIT | MIT |
 | Model providers | Many | [Many](../models/overview.md) |
-| Extensibility | Tools on agents and crews | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Tools on agents and crews | [Capabilities and toolsets](../extensibility.md); [80+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Durable execution | Yes | [Eight integrations](../durable_execution/overview.md) |
@@ -32,3 +32,10 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
 | Code sandboxes | Yes | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
 | Browser use | Yes | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
+
+*Last checked: 2026-09-24*
+
+## Sources
+
+- [CrewAI introduction](https://docs.crewai.com/en/introduction)
+- [CrewAI crews](https://docs.crewai.com/en/concepts/crews)
