@@ -908,6 +908,7 @@ def record_uncaught_errors(
     *,
     include_content: bool,
     event_attributes: Callable[[Exception], Mapping[str, AttributeValue]] | None = None,
+    not_errors: tuple[type[Exception], ...] = (),
 ) -> Generator[None]:
     """Record exceptions leaving `span`'s scope the way `use_span` would have.
 
@@ -917,13 +918,16 @@ def record_uncaught_errors(
     the span's whole scope -- the scope `use_span` covered -- not just the call that may fail, so
     that failures while finalizing the span still mark it. `event_attributes` adds attributes to the
     exception event for an error, for what the event needs to say even when content is withheld.
+    An exception of a `not_errors` type is recorded but leaves the status unset, for an outcome the
+    caller expects, such as a missing file.
     """
     try:
         yield
     except Exception as error:
         attributes = event_attributes(error) if event_attributes else None
         record_exception(span, error, include_content=include_content, escaped=False, attributes=attributes)
-        set_error_status(span, error, include_content=include_content)
+        if not isinstance(error, not_errors):
+            set_error_status(span, error, include_content=include_content)
         raise
 
 

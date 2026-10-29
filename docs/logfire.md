@@ -510,18 +510,18 @@ Usage is recorded under `pydantic_ai.decision.usage.*` rather than `gen_ai.usage
 
 ### Workspace spans
 
-An instrumented run traces each call it makes on its [workspace](workspace.md): a `workspace {operation}` span for `working_dir`, `run`, `read_bytes`, `write_bytes`, `stat`, `list_dir`, `make_dir`, `remove`, `exists` and `realpath`, under the tool or hook that made the call. On a backend without native file access, such as Docker or SSH, file operations run as shell commands, and each command gets a `workspace run` span of its own under the file operation's span.
+An instrumented run traces each call it makes on its [workspace](workspace.md): a `workspace {operation}` span for `working_dir`, `run`, `read_bytes`, `write_bytes`, `stat`, `list_dir`, `make_dir`, `remove`, `exists` and `realpath`, under the tool or hook that made the call. On a backend without native file access, such as [Docker](harness/docker-sandbox.md) or [SSH](harness/ssh-workspace.md), file operations run as shell commands, and each command gets a `workspace run` span of its own under the file operation's span.
 
-The [Pydantic AI Harness](harness/index.md) sandboxes also trace their lifecycle: `workspace create` or `workspace attach` when the first call starts or reconnects to the sandbox, under that call's span, and `workspace destroy` from the capability's `destroy(ref)` when a tool or hook calls it. A command stopped after a timeout, cancellation or failure gets a `workspace stop` span under its `workspace run`. A provider SDK's own spans, such as Daytona's or E2B's HTTP requests, nest under these. Some SDKs mark an expected not-found answer as an error; the workspace span above them shows the outcome the caller got.
+The [Pydantic AI Harness](harness/index.md) sandboxes also trace their lifecycle: `workspace create` or `workspace attach` when the first call starts or reconnects to the sandbox, under that call's span, and `workspace destroy` from the capability's `destroy(ref)` when a tool or hook calls it. A command stopped after a timeout, cancellation or failure gets a `workspace stop` span under its `workspace run`. A provider SDK's own spans, such as [Daytona](harness/daytona-sandbox.md)'s or [E2B](harness/e2b-sandbox.md)'s HTTP requests, nest under these. Some SDKs mark an expected not-found answer as an error; the workspace span above them shows the outcome the caller got.
 
-The run's own instrumentation decides. Calls outside a run, such as those on [`result.workspace`][pydantic_ai.run.AgentRunResult.workspace] or a `destroy(ref)` after the run, are not traced.
+Whether a call is traced, and whether its paths and commands are recorded, follows the instrumentation of the run that makes it, not `Agent.instrument_all()`. Calls outside a run, such as those on [`result.workspace`][pydantic_ai.run.AgentRunResult.workspace] or a `destroy(ref)` after the run, are not traced.
 
 | Attribute | Value |
 |-----------|-------|
-| `pydantic_ai.workspace.provider`, `pydantic_ai.workspace.id` | The workspace the call reached, once it exists, as on the agent run span |
+| `pydantic_ai.workspace.provider`, `pydantic_ai.workspace.id` | On operation and lifecycle spans: the workspace the call reached, once it exists, as on the agent run span |
 | `process.exit.code` | On `workspace run`: the command's exit code. A non-zero exit is a result, not an error, so the span's status stays unset |
 | `process.command_args` or `process.command_line` | On `workspace run`: the command as an argument list, or as the shell string it was given. Only with `include_content=True`; the command's `env` is never recorded |
-| `pydantic_ai.workspace.command.step` | On a shell-filesystem `workspace run`: what the command does, such as `stat`, `read_chunk` or `write_chunk`. These commands carry file contents, so their text is never recorded |
+| `pydantic_ai.workspace.command.step` | On a shell-filesystem `workspace run`: what the command does, such as `stat`, `read_chunk` or `write_chunk`. These commands can carry file contents, so their text is never recorded |
 | `file.path` | On file operations: the absolute path. Only with `include_content=True` |
 | `file.size` | On `read_bytes` and `write_bytes`: the bytes read or written |
 

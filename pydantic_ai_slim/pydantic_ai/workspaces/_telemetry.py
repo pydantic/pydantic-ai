@@ -18,7 +18,7 @@ from typing import Literal, TypeAlias
 from opentelemetry.trace import INVALID_SPAN, NoOpTracer, Span, Tracer
 from opentelemetry.util.types import AttributeValue
 
-from .._instrumentation import record_exception, set_error_status
+from .._instrumentation import record_uncaught_errors
 from .protocol import WorkspaceBackend, WorkspaceCommand, WorkspaceRef
 
 __all__ = (
@@ -57,7 +57,7 @@ Step: TypeAlias = Literal[
     'commit',
     'cleanup',
     'stat',
-    'list',
+    'list_dir',
     'make_dir',
     'remove',
     'exists',
@@ -91,9 +91,11 @@ def publish_workspace_telemetry(tracer: Tracer, *, include_content: bool) -> Non
 @contextmanager
 def workspace_telemetry_scope(tracer: Tracer, *, include_content: bool) -> Generator[None]:
     """Publish workspace telemetry for the block only, for a durable unit that may run in its caller's context."""
-    tokens = _telemetry.set(None), _in_operation.set(False)
+    tokens = (
+        _telemetry.set(None if isinstance(tracer, NoOpTracer) else _Telemetry(tracer, include_content)),
+        _in_operation.set(False),
+    )
     try:
-        publish_workspace_telemetry(tracer, include_content=include_content)
         yield
     finally:
         _telemetry.reset(tokens[0])
@@ -107,6 +109,7 @@ def set_content(span: Span, key: str, value: AttributeValue) -> None:
 
 
 def set_command(span: Span, command: WorkspaceCommand) -> None:
+    """Record the command, as arguments or as the shell line, only when the run captures content."""
     if isinstance(command, str):
         set_content(span, 'process.command_line', command)
     else:
@@ -167,13 +170,11 @@ def _span(
         entry_ref = _ref(workspace)
         token = _in_operation.set(True)
         try:
-            yield span
-        except Exception as error:
-            record_exception(span, error, include_content=telemetry.include_content, escaped=False)
             # A missing file is often the answer the caller asked for (a status file not written yet), not a failure.
-            if not isinstance(error, FileNotFoundError):
-                set_error_status(span, error, include_content=telemetry.include_content)
-            raise
+            with record_uncaught_errors(
+                span, include_content=telemetry.include_content, not_errors=(FileNotFoundError,)
+            ):
+                yield span
         finally:
             _in_operation.reset(token)
             # A sandbox this operation created has its ref only now.

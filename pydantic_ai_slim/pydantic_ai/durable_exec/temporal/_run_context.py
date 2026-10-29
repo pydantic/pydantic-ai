@@ -76,9 +76,9 @@ def deserialize_run_context(
     deps: Any,
     agent: AbstractAgent[Any, Any] | None,
 ) -> RunContext[Any]:
-    """Deserialize a run context inside a Temporal activity and attach the agent instance.
+    """Deserialize a run context inside a Temporal activity, attach the agent instance, and trace its workspace calls.
 
-    See [`DurableRunContext.restore`][pydantic_ai.durable_exec.DurableRunContext.restore].
+    Workspace calls in the activity are traced as `_publish_workspace_telemetry` describes. See [`DurableRunContext.restore`][pydantic_ai.durable_exec.DurableRunContext.restore].
     """
     ctx = run_context_type.restore(serialized, deps=deps, agent=agent, engine_spec=TEMPORAL_ENGINE_SPEC)
     if agent is not None:

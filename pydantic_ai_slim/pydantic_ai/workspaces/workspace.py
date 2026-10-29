@@ -282,7 +282,7 @@ class _ShellFilesystem(SupportsFilesystem):
                 f'&& size=$(wc -c < "$file") && printf "%s\\n" "$size" && '
                 f'if [ "$size" -le {_SHELL_READ_CHUNK_BYTES} ]; then base64 < "$file"; '
                 'else printf "PAGED\\n"; trap - EXIT HUP INT TERM; fi',
-                'list',
+                'list_dir',
             )
             completed = True
             size, separator, encoded = result.stdout.partition('\n')

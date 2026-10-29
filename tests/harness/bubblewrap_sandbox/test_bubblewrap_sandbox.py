@@ -689,6 +689,39 @@ async def test_capability_keeps_the_wrapped_policy_and_declines_foreign_refs(tmp
         await agent.run('go', workspace=WorkspaceRef(provider='local', id=str(tmp_path / 'elsewhere')))
 
 
+async def test_a_traced_command_shows_the_callers_command_not_the_launcher(
+    tools: FakeRemoteTools, tmp_path: Path
+) -> None:
+    """The wrapped workspace only sees the `bwrap` launcher, whose arguments carry the call's `env` values."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    agent = Agent(
+        TestModel(call_tools=['greet']),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(tracer_provider=provider))],
+    )
+
+    @agent.tool
+    async def greet(ctx: RunContext[Any]) -> str:
+        result = await ctx.workspace.run(['printf', '%s', 'hi'], env={'TOKEN': 'SENTINEL-env'})
+        await ctx.workspace.write_text('notes.txt', 'hello')
+        return result.stdout
+
+    await agent.run('go', workspace=BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path))))
+
+    spans = exporter.get_finished_spans()
+    runs = [
+        span for span in spans if span.name == 'workspace run' and 'process.command_args' in (span.attributes or {})
+    ]
+    assert [(span.attributes or {})['process.command_args'] for span in runs] == [('printf', '%s', 'hi')]
+    # A file operation runs as sandboxed shell commands: one span each, inside the operation's.
+    assert {span.name for span in spans if span.name.startswith('workspace ')} == {
+        'workspace run',
+        'workspace write_bytes',
+    }
+    assert not any('SENTINEL-env' in str(span.attributes) for span in spans)
+
+
 @pytest.mark.skipif(not BWRAP_WORKS, reason='needs a working `bwrap` (Linux with user namespaces)')
 class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
     @pytest.fixture
@@ -875,36 +908,3 @@ class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
                 await anyio.sleep(0.1)
 
         assert await workspace.read_text('out') == 'alive\n'
-
-
-async def test_a_traced_command_shows_the_callers_command_not_the_launcher(
-    tools: FakeRemoteTools, tmp_path: Path
-) -> None:
-    """The wrapped workspace only sees the `bwrap` launcher, whose arguments carry the call's `env` values."""
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    agent = Agent(
-        TestModel(call_tools=['greet']),
-        capabilities=[Instrumentation(settings=InstrumentationSettings(tracer_provider=provider))],
-    )
-
-    @agent.tool
-    async def greet(ctx: RunContext[Any]) -> str:
-        result = await ctx.workspace.run(['printf', '%s', 'hi'], env={'TOKEN': 'SENTINEL-env'})
-        await ctx.workspace.write_text('notes.txt', 'hello')
-        return result.stdout
-
-    await agent.run('go', workspace=BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path))))
-
-    spans = exporter.get_finished_spans()
-    runs = [
-        span for span in spans if span.name == 'workspace run' and 'process.command_args' in (span.attributes or {})
-    ]
-    assert [(span.attributes or {})['process.command_args'] for span in runs] == [('printf', '%s', 'hi')]
-    # A file operation runs as sandboxed shell commands: one span each, inside the operation's.
-    assert {span.name for span in spans if span.name.startswith('workspace ')} == {
-        'workspace run',
-        'workspace write_bytes',
-    }
-    assert not any('SENTINEL-env' in str(span.attributes) for span in spans)

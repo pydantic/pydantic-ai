@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, TypeGuard, TypeVar
 
@@ -195,8 +194,15 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
                     # Retrying cannot repair persisted request bytes or worker-side decoding.
                     return permanent_error('invalid-request', exc)
 
+                ctx = operation_run_context(params)
+                assert ctx is not None, 'every installed operation carries a run context'
                 try:
-                    with self._runtime.activate(context), _workspace_telemetry(params):
+                    # The task's workspace calls trace with the tracer and content setting its run context was
+                    # rebuilt with, the same ones its tools trace with.
+                    with (
+                        self._runtime.activate(context),
+                        workspace_telemetry_scope(ctx.tracer, include_content=ctx.trace_include_content),
+                    ):
                         value = await operation.handler(params)
                 except RenderProtocolError as exc:
                     return permanent_error('invalid-result', exc)
@@ -281,13 +287,3 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
         for toolset in agent.toolsets:
             toolset.apply(visit)
         return found[0] if len(found) == 1 else None
-
-
-def _workspace_telemetry(params: object) -> AbstractContextManager[None]:
-    """Trace the task's workspace calls with the tracer and content setting its run context was rebuilt with.
-
-    The same ones its tools trace with, so a task's workspace and tool spans agree on content.
-    """
-    ctx = operation_run_context(params)
-    assert ctx is not None, 'every installed operation carries a run context'
-    return workspace_telemetry_scope(ctx.tracer, include_content=ctx.trace_include_content)
