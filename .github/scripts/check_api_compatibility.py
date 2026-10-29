@@ -212,6 +212,8 @@ def literal_member_changes(message: str) -> tuple[set[str], set[str]] | None:
 def collection_entry_changes(message: str) -> tuple[list[str], list[str]] | None:
     """Return the entries a value change adds and removes, if both sides are `dict` or `set` literals of one kind.
 
+    Both sides can also be the same comprehension over a tuple or list literal, whose items are then the entries.
+
     An entry whose value changed counts as removed, with its new value added.
     """
     _, _, values = message.partition(_ATTRIBUTE_VALUE_CHANGED)
