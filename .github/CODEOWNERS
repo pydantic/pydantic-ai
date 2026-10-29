@@ -1,17 +1,18 @@
 # Changes to these paths need an approving review from a code owner who is not the PR's author.
 # The `main` ruleset enforces it and dismisses the approval when a later push changes the diff.
 # `.github/workflows/AGENTS.md` ("Code owners") explains the scopes.
+# Owners are named rather than the `pydantic-ai-admin`/`-maintain` teams, which also hold repo admins outside the Pydantic AI team.
 
 # Dependencies, at any depth
-pyproject.toml            @pydantic/pydantic-ai-admin @pydantic/pydantic-ai-maintain
-uv.lock                   @pydantic/pydantic-ai-admin @pydantic/pydantic-ai-maintain
+pyproject.toml            @DouweM @adtyavrdhn @dsfaccini @mpfaffenberger
+uv.lock                   @DouweM @adtyavrdhn @dsfaccini @mpfaffenberger
 
 # CI config
-/.github/workflows/       @pydantic/pydantic-ai-admin @pydantic/pydantic-ai-maintain
-/.github/actions/         @pydantic/pydantic-ai-admin @pydantic/pydantic-ai-maintain
-/.github/scripts/         @pydantic/pydantic-ai-admin @pydantic/pydantic-ai-maintain
-/.pre-commit-config.yaml  @pydantic/pydantic-ai-admin @pydantic/pydantic-ai-maintain
-/Makefile                 @pydantic/pydantic-ai-admin @pydantic/pydantic-ai-maintain
+/.github/workflows/       @DouweM @adtyavrdhn @dsfaccini @mpfaffenberger
+/.github/actions/         @DouweM @adtyavrdhn @dsfaccini @mpfaffenberger
+/.github/scripts/         @DouweM @adtyavrdhn @dsfaccini @mpfaffenberger
+/.pre-commit-config.yaml  @DouweM @adtyavrdhn @dsfaccini @mpfaffenberger
+/Makefile                 @DouweM @adtyavrdhn @dsfaccini @mpfaffenberger
 
 # This file. Unowned, a PR could drop an owner and the next PR change that path unreviewed.
-/.github/CODEOWNERS       @pydantic/pydantic-ai-admin @pydantic/pydantic-ai-maintain
+/.github/CODEOWNERS       @DouweM @adtyavrdhn @dsfaccini @mpfaffenberger
