@@ -582,7 +582,7 @@ class TestCompactOnCacheExpiry:
         result = await _agent(cold, *caching, CompactOnCacheExpiry(max_fraction=None), **kwargs).run(
             'next', message_history=_idle(history, case.retention + margin)
         )
-        # The 5 newest of the 8 tool results stay, as in Claude Code's idle clearing.
+        # The 5 newest of the 8 tool results stay.
         assert len(_cleared(cold.sent[0])) == TOOL_STEPS - 5
         # The edit persists into the run's history, so the next turn doesn't clear (or move the prefix) again.
         assert _cleared(result.all_messages()) == _cleared(cold.sent[0])

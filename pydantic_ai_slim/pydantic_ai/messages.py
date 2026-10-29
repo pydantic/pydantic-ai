@@ -7044,7 +7044,7 @@ CompactionReason: TypeAlias = Literal['threshold', 'cache_expiry', 'manual', 'mo
 
 - `'threshold'`: the history grew past a size threshold.
 - `'cache_expiry'`: the provider's prompt cache has expired, so the next request pays to write it anyway, or is
-  about to, so compacting now still reads it.
+  about to expire, so compacting now can still read it.
 - `'manual'`: the user or the application asked for it, like a `/compact` command.
 - `'model_switch'`: the model serving the next request can't use the history's existing compaction.
 - `'context_overflow'`: the model rejected the request for exceeding its context window, so it's compacted and
