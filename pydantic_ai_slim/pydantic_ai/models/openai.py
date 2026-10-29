@@ -4597,7 +4597,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> str | None:
         """The response to compare this request against for prompt cache diagnostics, if they should be requested.
 
-        That is the most recent response from this provider. OpenAI rejects an ID that doesn't start with `resp` with
+        That is the most recent response from this provider, unless a later compaction satisfies `_is_compaction_boundary`.
+        OpenAI rejects an ID that doesn't start with `resp` with
         a 400, so a response from an endpoint that issues other IDs is skipped. So is one from the `/compact`
         endpoint: like `previous_response_id`, it's a boundary, and a request after it starts a new prefix anyway.
         """
