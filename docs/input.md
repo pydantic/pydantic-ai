@@ -268,7 +268,7 @@ Use [`UploadedFile`][pydantic_ai.messages.UploadedFile] to reference files that 
 
 ### Provider Name Requirement
 
-When using [`UploadedFile`][pydantic_ai.messages.UploadedFile] you must set the `provider_name`. Uploaded files are specific to the system they are uploaded to and are not transferable across providers. Trying to use a message that contains an `UploadedFile` with a different provider will result in an error.
+When using [`UploadedFile`][pydantic_ai.messages.UploadedFile] you must set the `provider_name`. Uploaded files are specific to the system they are uploaded to and are not transferable across providers. Trying to use a message that contains an `UploadedFile` with a different provider will result in an error. Within one provider name, Pydantic AI doesn't track which endpoint or account a file was uploaded to: send it to a model whose client can read it.
 
 !!! tip "Getting the provider name"
     Use [`model.system`][pydantic_ai.models.Model.system] to get the correct provider name dynamically. This ensures your code works correctly even if the provider name changes. All examples below demonstrate this pattern.
