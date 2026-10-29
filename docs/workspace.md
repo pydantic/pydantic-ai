@@ -542,9 +542,8 @@ machine's screen beside a local workspace.
   `ctx.workspace.screenshot()` and `ctx.workspace.act(...)`.
 - Optional on the display: [`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom], to capture part of it at full
   resolution; [`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot], to capture all of it
-  smaller for a model with a screenshot limit;
-  [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition]; and
-  [`SupportsStartCount`][pydantic_ai.workspaces.SupportsStartCount], to say when the screen restarted.
+  smaller for a model with a screenshot limit; and
+  [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition].
 - Refuse what the display can't do exactly with
   [`WorkspaceUnsupportedActionError`][pydantic_ai.workspaces.WorkspaceUnsupportedActionError], including action
   kinds added later; [`WorkspaceBackendSuite`][pydantic_ai.workspaces.conformance.WorkspaceBackendSuite] checks this.

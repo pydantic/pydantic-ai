@@ -375,22 +375,6 @@ _SCREEN = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
             'Before it ran, this call was changed to: [...]. Ran 1 action.',
             id='changed-before-it-ran',
         ),
-        # The windows the model saw are gone, and an action it asked for may have been held back.
-        pytest.param(
-            ['The display restarted since your last screenshot, so the windows that were open are gone.', _SCREEN],
-            {'performed': 0, 'restarted': True},
-            _SCREEN.data_uri,
-            'The display restarted since your last screenshot, so the windows that were open are gone.',
-            id='restarted',
-        ),
-        # Fewer actions ran than the call asked for, without an error: the rest were held back.
-        pytest.param(
-            ['No action ran.', _SCREEN],
-            {'performed': 0},
-            _SCREEN.data_uri,
-            'No action ran.',
-            id='held-back',
-        ),
     ],
 )
 async def test_a_result_goes_out_as_a_computer_call_output_and_a_note_when_the_screenshot_does_not_tell(
