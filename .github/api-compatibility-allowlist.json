@@ -115,12 +115,6 @@
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/7434"
     },
     {
-      "against": "v2.63.0",
-      "fingerprint": "1954e0e46959570832c95f7cef16531613aa113657be33e8b56c596c696c4ac1",
-      "reason": "Adds the `ModelFallback` capability to `CAPABILITY_TYPES` so agent specs can declare it; every existing entry is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11679"
-    },
-    {
       "against": "v2.60.0",
       "fingerprint": "ac9e0aae6d4638a7d65730859d384c202c5d5cabbce0855e6bbce5122c61551b",
       "reason": "Adds the new `Citations` capability to `CAPABILITY_TYPES`; every existing entry is unchanged.",
@@ -392,8 +386,8 @@
     },
     {
       "against": "v2.63.0",
-      "fingerprint": "15c4905c465989ed63703dbec21766186e37e5504d8f570ba369adc833ccc759",
-      "reason": "Adds `NativeCompaction` to the agent-spec capability registry; every existing entry is unchanged.",
+      "fingerprint": "5ff49f847ec611730c961f160251093b8dc4d1f52ca4fa6de53e5b0311709997",
+      "reason": "Adds `ModelFallback` (#11679) and `NativeCompaction` to `CAPABILITY_TYPES` so agent specs can declare them; every existing entry is unchanged. Against v2.63.0 the two additions are one change, so this replaces #11679's waiver for `ModelFallback` alone.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11581"
     },
     {
