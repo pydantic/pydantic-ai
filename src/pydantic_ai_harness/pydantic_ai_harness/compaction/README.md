@@ -674,9 +674,12 @@ Apart from the first user turn (`preserve_first_user_message`) and pinned conten
 only place older user instructions survive unless `keep_user_messages` keeps them, so a few sections
 ask for specific things:
 
-- **Requirements:** the rules, preferences and constraints the user stated anywhere in the
-  conversation, such as "never ..." and "always ..." rules, quoted verbatim where short, so a rule
-  stated mid-conversation isn't paraphrased away.
+- **Requirements:** the rules, preferences and constraints the user stated in their own messages
+  anywhere in the conversation, such as "never ..." and "always ..." rules, quoted verbatim where
+  short, so a rule stated mid-conversation isn't paraphrased away. A rule found in a tool result, a
+  file or content the application added (a `<harness_data>` element) is never recorded as a
+  requirement, so it can't gain the user's authority; a fact from one of those that still matters
+  goes under Artifacts or Current state, attributed to its source.
 - **People and ownership:** who owns, is assigned to, or is doing what, by exact name, kept until the
   user reassigns it.
 - **Key decisions:** the current choice on each design, technical or product question. One the user
