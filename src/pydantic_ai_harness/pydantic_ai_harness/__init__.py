@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from .macroscope import Macroscope
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
+    from .opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
     from .ordinal import Ordinal
     from .pgtask import PGTaskDurability
     from .planning import Planning
@@ -135,6 +136,8 @@ __all__ = [
     'Memory',
     'ModalSandbox',
     'ModalSandboxBackend',
+    'OpenSandbox',
+    'OpenSandboxBackend',
     'Ordinal',
     'OutputBlocked',
     'OutputGuardrail',
@@ -214,6 +217,7 @@ _CAPABILITY_EXPORTS = {
     'ManagedPrompt': 'logfire',
     'Memory': 'memory',
     'ModalSandbox': 'modal_sandbox',
+    'OpenSandbox': 'opensandbox_sandbox',
     'Ordinal': 'ordinal',
     'PGTaskDurability': 'pgtask',
     'Planning': 'planning',
@@ -260,6 +264,7 @@ _CONSTANT_EXPORTS = {
     'E2BSandboxBackend': 'e2b_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'ModalSandboxBackend': 'modal_sandbox',
+    'OpenSandboxBackend': 'opensandbox_sandbox',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
     'SmolSandboxBackend': 'smol_sandbox',
     'SpritesSandboxBackend': 'sprites_sandbox',

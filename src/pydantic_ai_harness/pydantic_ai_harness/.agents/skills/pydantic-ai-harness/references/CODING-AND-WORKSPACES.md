@@ -3,7 +3,7 @@
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
 `Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
-`SpritesSandbox` / `DaytonaSandbox` / `BoxdSandbox` for an isolated cloud machine, or `SmolSandbox` / `BoxLiteSandbox` / `DockerSandbox` for a microVM or container on this machine. Core workspace semantics (refs, `workspace=`
+`SpritesSandbox` / `DaytonaSandbox` / `BoxdSandbox` for an isolated cloud machine, or `SmolSandbox` / `BoxLiteSandbox` / `DockerSandbox` for a microVM or container on this machine, or `OpenSandbox` for a sandbox on your own OpenSandbox server. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 `building-pydantic-ai-agents` skill's WORKSPACES.md reference; this file covers the harness side.
 
@@ -17,6 +17,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | Isolation on this machine with Docker or Podman | `DockerSandbox(image='python:3.13-slim')`: a local container |
+| Sandboxes on your own server, on Docker or Kubernetes | `OpenSandbox(image='python:3.13-slim')`: an [OpenSandbox](https://open-sandbox.ai) sandbox |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
 
@@ -449,6 +450,23 @@ Python up to 3.14.
 - New containers get `--pids-limit 2048`; a `--pids-limit` in `docker_args` replaces it (`-1` removes it).
 - With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
   With Podman, `run()` returns when the command exits.
+
+### OpenSandbox
+
+`OpenSandbox(*, image=None, connection=None, resource=None, sandbox_timeout=None, working_dir='/workspace', env=None)`
+(backend `OpenSandboxBackend`, extra `[opensandbox]`) runs commands and file operations in a sandbox on
+your own OpenSandbox server, which runs it as a Docker container or a Kubernetes pod.
+
+- The server is found through `OPEN_SANDBOX_DOMAIN` (default `localhost:8080`) and `OPEN_SANDBOX_API_KEY` if it
+  needs one, or `connection=ConnectionConfig(...)`; on Kubernetes without the ingress gateway,
+  `ConnectionConfig(use_server_proxy=True)`. It needs execd 1.1.1 or later (the server's `execd_image`).
+- The first operation creates the sandbox; the image needs a POSIX `sh`. Without `image` the capability only
+  attaches and destroys by ref. The ref is `WorkspaceRef(provider='opensandbox', id=<sandbox id>)`; the sandbox
+  outlives the run: `await OpenSandbox().destroy(ref)`, or `sandbox_timeout=` to have the server delete it
+  after that many idle seconds (renewed by use; a single command must finish within it).
+- `resource={'cpu': '500m', 'memory': '1Gi'}` sizes a new sandbox (default one CPU, 2 GiB).
+- Each command takes about 0.2 s and file operations run as commands, so large files are slow (seconds per MiB).
+- Network access is the server's egress policy, not a capability option. asyncio only.
 
 ## Remote hosts and bubblewrap
 

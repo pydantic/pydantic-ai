@@ -5447,6 +5447,24 @@ wheels = [
 ]
 
 [[package]]
+name = "opensandbox"
+version = "1.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "attrs" },
+    { name = "httpcore" },
+    { name = "httpx" },
+    { name = "httpx-sse" },
+    { name = "opentelemetry-api" },
+    { name = "pydantic" },
+    { name = "python-dateutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/77/36/79ff65e79725e10dd540af000e9148bc26428d0494bb954f406e5da79c74/opensandbox-1.1.1.tar.gz", hash = "sha256:2c62b338ed30c99d37fe88116f9e82f08e8e5c9ec8574dfef38d1ea5801f4b5e", size = 299154, upload-time = "2026-10-09T14:34:36.335Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/38/c18410a5466904ff9beef867e51d177e7f9a3240413f4412fb126481aee1/opensandbox-1.1.1-py3-none-any.whl", hash = "sha256:98eb0d7b57fdeabbbb5202d5e3a5261741f68fe47a631f0ec483b1566eb5fef8", size = 668271, upload-time = "2026-10-09T14:34:35.143Z" },
+]
+
+[[package]]
 name = "opentelemetry-api"
 version = "1.44.0"
 source = { registry = "https://pypi.org/simple" }
@@ -6947,6 +6965,9 @@ mongodb = [
 notion = [
     { name = "pydantic-ai-slim", extra = ["mcp"] },
 ]
+opensandbox = [
+    { name = "opensandbox" },
+]
 ordinal = [
     { name = "pydantic-ai-slim", extra = ["mcp"] },
 ]
@@ -7025,6 +7046,7 @@ requires-dist = [
     { name = "jupyter-client", marker = "extra == 'ipython'", specifier = ">=8.6.3" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
+    { name = "opensandbox", marker = "extra == 'opensandbox'", specifier = ">=1.1.1,<2" },
     { name = "pgtask", marker = "extra == 'pgtask'", specifier = ">=0.2.0,<1" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.61.0" },
     { name = "pydantic-ai-slim", editable = "pydantic_ai_slim" },
@@ -7063,7 +7085,7 @@ requires-dist = [
     { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "boxd", "boxlite", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "pgtask", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "repair-tool-arguments", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
+provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "boxd", "boxlite", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "opensandbox", "ordinal", "pgtask", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "repair-tool-arguments", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-slim"
