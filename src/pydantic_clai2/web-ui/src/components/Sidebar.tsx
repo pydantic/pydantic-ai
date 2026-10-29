@@ -112,7 +112,7 @@ function Glyph({ state, pid }: { state: Status; pid: number | null }) {
   if (state === null) return <span className="state" />
   const label = state === 'busy' && pid !== null ? `Running in clai2 pid ${pid}` : LABELS[state]
   if (state === 'running' || state === 'queued') {
-    return <span className={`spinner row-spinner ${state}`} role="img" aria-label={label} title={label} />
+    return <span className={`spinner row-spinner ${state === 'queued' ? 'with-queue' : ''}`} role="img" aria-label={label} title={label} />
   }
   return <span className={`state ${state}`} role="img" aria-label={label} title={label} />
 }
@@ -217,6 +217,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
       setAnswered(query)
       if (!query && !archived) keep('clai-sidebar-cache', found)
     } catch (error) {
+      // An Enter waiting on this search's results is dropped with them, so a later refresh opens nothing by itself.
+      if (openFirst.current === query) openFirst.current = null
       if (error instanceof ApiError && error.status === 404) setUnsaved(true)
       else onError(error instanceof Error ? error.message : String(error))
     }
@@ -341,14 +343,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     const chip = section.kind === 'project' ? (section.branches ? session.branch : null) : session.projectName
     const siblings = section.rows.filter((other) => other.branch === session.branch && !other.archived)
     const begun = started.current.get(session.id)
-    const time =
-      state === 'asking' ? (
-        <span className="needs-input">Needs input</span>
-      ) : working && begun !== undefined ? (
-        short(Math.max(0, (now - begun) / 1000))
-      ) : (
-        ago(session.updated_at)
-      )
+    const time = working && begun !== undefined ? short(Math.max(0, (now - begun) / 1000)) : ago(session.updated_at)
     return (
       <div
         key={session.id}
@@ -386,7 +381,12 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
             <span className="session-title">{session.title}</span>
             {chip && <span className="session-chip">{chip}</span>}
             {twins.has(session.id) && <span className="session-chip mono">#{session.id.slice(0, 6)}</span>}
-            <span className="session-time">{time}</span>
+            {/* The pill stays on hover, which hides the time to make room for the menu button. */}
+            {state === 'asking' ? (
+              <span className="needs-input">Needs input</span>
+            ) : (
+              <span className="session-time">{time}</span>
+            )}
           </button>
         )}
         <button

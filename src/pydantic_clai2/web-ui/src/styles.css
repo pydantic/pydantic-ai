@@ -473,6 +473,7 @@ pre {
 }
 
 .needs-input {
+  flex: none;
   padding: 0 6px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--amber) 22%, transparent);
@@ -550,7 +551,7 @@ pre {
 }
 
 /* A running session with input queued behind its turn: the spinner, ringed. */
-.spinner.row-spinner.queued {
+.spinner.row-spinner.with-queue {
   outline: 1.5px solid color-mix(in srgb, var(--accent) 40%, transparent);
   outline-offset: 1.5px;
 }

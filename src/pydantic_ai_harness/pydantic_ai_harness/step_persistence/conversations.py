@@ -114,7 +114,9 @@ def ensure_inactive(summary: ConversationSummary) -> None:
             return
     else:
         started = _process_started(summary.owner_pid)
-        if started is not None and started > summary.updated_at + _CLOCK_SLACK:
+        # A naive time, as an application may save, is taken as UTC, as the store's own times are.
+        saved = summary.updated_at if summary.updated_at.tzinfo else summary.updated_at.replace(tzinfo=UTC)
+        if started is not None and started > saved + _CLOCK_SLACK:
             return
         ensure_posix_inactive(pid=summary.owner_pid)
         return

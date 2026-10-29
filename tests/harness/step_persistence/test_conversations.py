@@ -234,16 +234,24 @@ def test_live_owner_is_not_a_recovery_point(monkeypatch: pytest.MonkeyPatch) -> 
 @pytest.mark.skipif(sys.platform != 'linux', reason='Process start times come from Linux `/proc`.')
 def test_a_pid_reused_since_the_save_is_not_busy() -> None:
     """A turn saved before its recorded PID's process started belongs to a process that has gone."""
-    parent = os.getppid()
-    started = _process_started(parent)
-    assert started is not None
-    running = ConversationSummary(workspace='/a', outcome='running', owner_pid=parent, updated_at=started)
+    running = ConversationSummary(
+        workspace='/a', outcome='running', owner_pid=os.getpid(), updated_at=datetime.now(UTC)
+    )
     with pytest.raises(ConversationConflict, match='busy'):
         ensure_inactive(running)
-    ensure_inactive(replace(running, updated_at=started - timedelta(minutes=1)))
+    # No test process has run for a day, so this PID belongs to another process than the one that saved.
+    ensure_inactive(replace(running, updated_at=datetime.now(UTC) - timedelta(days=1)))
+    # A naive time is taken as UTC.
+    ensure_inactive(replace(running, updated_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)))
+    with pytest.raises(ConversationConflict, match='busy'):
+        ensure_inactive(replace(running, updated_at=datetime.now(UTC).replace(tzinfo=None)))
 
 
 def test_process_start_time_from_proc(tmp_path: Path) -> None:
+    """Parsing a `/proc` record whose command name holds parentheses, which no real test process has.
+
+    It reaches into the private helper because the public `ensure_inactive` reads only the real `/proc`.
+    """
     # The command name, in parentheses, may hold spaces and parentheses of its own.
     (tmp_path / '42').mkdir()
     fields = ' '.join(['S', *['0'] * 18, '250'])
