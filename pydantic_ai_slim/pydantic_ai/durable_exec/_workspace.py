@@ -14,10 +14,13 @@ original type, so a hook can catch them and the engine only retries infrastructu
 
 from __future__ import annotations
 
+import dataclasses
+import weakref
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
+    Annotated,
     Any,
     Literal,
     Never,
@@ -27,7 +30,7 @@ from typing import (
 )
 
 import anyio
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from pydantic_ai._run_context import get_current_run_context
@@ -41,6 +44,8 @@ from pydantic_ai.workspaces import (
     FileEntry,
     Point,
     Region,
+    SupportsDisplay,
+    SupportsStartCount,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -73,9 +78,6 @@ _BYTES_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64')
 # would get their own field, not `data`), since engines that pickle results skip the check.
 _JOURNAL_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64', extra='forbid')
 
-# A `computer` call is one journaled step per method below, so a display fact added later, such as which screen a
-# screenshot came from, rides on an existing call's result as a field left out at its default: a new method would
-# add a step that histories recorded before it don't have, and replaying them would fail.
 WorkspaceMethod: TypeAlias = Literal[
     'ensure',
     'run',
@@ -147,6 +149,8 @@ class WorkspaceCallResult:
     point: Point | None = None
     ref: WorkspaceRef | None = None
     error: WorkspaceCallError | None = None
+    starts: Annotated[int, Field(exclude_if=lambda value: value == 0)] = 0
+    """For a display call, error or not: how many times the display started during it, when the display counts."""
 
 
 @pydantic_dataclass(frozen=True, kw_only=True, config=_JOURNAL_CONFIG)
@@ -217,6 +221,16 @@ class WorkspaceCall:
             case 'cursor_position':
                 return WorkspaceCallResult(point=await workspace.cursor_position())
         assert_never(self.method)
+
+
+def _counting_display(workspace: Workspace) -> SupportsStartCount | None:
+    backend = workspace.backend
+    display = backend.display if isinstance(backend, SupportsDisplay) else None
+    return display if isinstance(display, SupportsStartCount) else None
+
+
+_reported_starts: weakref.WeakKeyDictionary[Workspace, int] = weakref.WeakKeyDictionary()
+"""For each workspace whose display counts its starts, the count its last journaled display call reported."""
 
 
 @dataclass(frozen=True)
@@ -330,12 +344,25 @@ def raise_error(error: WorkspaceCallError) -> Never:
 
 async def execute_call(workspace: Workspace, call: WorkspaceCall) -> WorkspaceCallResult:
     """Run a call inside a durable unit; anything outside the error table fails the unit, so the engine retries it."""
+    display = _counting_display(workspace) if call.method in WORKSPACE_CALL_POLICIES else None
+    if display is not None:
+        _reported_starts.setdefault(workspace, display.starts)
     try:
-        return await call.execute(workspace)
+        result = await call.execute(workspace)
     except Exception as error:
         if (data := error_as_data(error)) is None:
             raise
-        return WorkspaceCallResult(error=data)
+        result = WorkspaceCallResult(error=data)
+    if display is None:
+        return result
+    # The starts since the last journaled call, not the display's count: a unit on another worker rebuilds the backend,
+    # and with it the count, so only these add up across units. A start during a unit that failed journaled nothing;
+    # the retry reports it only because `SupportsStartCount` asks the display, which may be a new object, to count a
+    # start no call has completed on. An error carries them too: an action refused because the display restarted is
+    # how workflow code learns of the restart.
+    starts = display.starts - _reported_starts[workspace]
+    _reported_starts[workspace] = display.starts
+    return dataclasses.replace(result, starts=starts)
 
 
 class DurableWorkspace(WrapperWorkspace):
@@ -352,6 +379,12 @@ class DurableWorkspace(WrapperWorkspace):
         self._ref: WorkspaceRef | None = None
         self._working_dir: str | None = None
         self._ensure_lock = anyio.Lock()
+        self._display_starts = 0
+
+    @property
+    def display_starts(self) -> int:
+        """How many times the display started during this workspace's display calls from workflow code."""
+        return self._display_starts
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -500,6 +533,7 @@ class DurableWorkspace(WrapperWorkspace):
                 f'The {call.method} call did not finish, so it may or may not have taken effect '
                 f'({type(error).__name__}).'
             ) from error
+        self._display_starts += result.starts
         if result.error is not None:
             raise_error(result.error)
         return result

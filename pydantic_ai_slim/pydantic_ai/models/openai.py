@@ -7796,16 +7796,20 @@ def _tool_calls_by_id(messages: list[ModelMessage]) -> dict[str, ToolCallPart]:
     }
 
 
-def _needs_summary(metadata: Any) -> bool:
+def _needs_summary(metadata: Any, call: ToolCallPart | None) -> bool:
     """Whether a `computer` result needs its text beside the screenshot: the image alone would say the call ran.
 
-    A result without metadata, such as one a UI rebuilt, may describe a failure. A call that failed or was changed
-    before it ran says so in its text.
+    A result without metadata, such as one a UI rebuilt, may describe a failure. A call that failed, was changed
+    before it ran, met a display that restarted, or ran fewer actions than it asked without an error says so in its
+    text.
     """
     if not isinstance(metadata, dict):
         return True
     result = cast(ComputerResult, metadata)
-    return 'error' in result or bool(result.get('changed'))
+    if 'error' in result or result.get('changed') or result.get('restarted'):
+        return True
+    asked: Any = call.args_as_dict().get('actions') if call else None
+    return isinstance(asked, list) and result.get('performed', 0) < len(cast(list[Any], asked))
 
 
 def _map_computer_call_output(
@@ -7833,7 +7837,7 @@ def _map_computer_call_output(
     if part.outcome == 'success' and (safety_checks := details.get(SAFETY_CHECKS)):
         output['acknowledged_safety_checks'] = safety_checks
     items: list[responses.ResponseInputItemParam] = [output]
-    if image is None or part.outcome != 'success' or _needs_summary(part.metadata):
+    if image is None or part.outcome != 'success' or _needs_summary(part.metadata, call):
         # The output can only carry an image: say what didn't run, or why the image is blank.
         texts = [item for item in part.content_items() if isinstance(item, str)]
         note = ' '.join(texts) if texts else part.model_response_str(wrap_if_error=False)

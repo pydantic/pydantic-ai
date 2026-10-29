@@ -103,10 +103,12 @@ async def test_a_failed_action_is_not_retried_and_the_next_call_starts_the_displ
 
 
 class Screen:
-    """An environment's X server as the start script sees it: up or down."""
+    """An environment's X server as the start script sees it: up or down, and its starts numbered there."""
 
-    def __init__(self, *, up: bool = False) -> None:
+    def __init__(self, *, generation: int = 0, up: bool = False) -> None:
+        self.generation = generation
         self.up = up
+        self.unshown: int | None = None
         self.driver = FakeDriver()
 
     def display(self) -> ManagedDisplay:
@@ -115,29 +117,55 @@ class Screen:
         async def start() -> FakeDriver:
             if not self.up:
                 self.up = True
-                display.started_fresh()
+                self.generation += 1
+                self.unshown = self.generation
+            if self.unshown is not None:
+                display.started_fresh(self.unshown)
             return await self.driver.start()
 
-        display = ManagedDisplay(start)
+        async def shown(generation: int) -> None:
+            if self.unshown == generation:
+                self.unshown = None
+
+        display = ManagedDisplay(start, shown=shown)
         return display
 
 
-async def test_an_action_does_not_run_on_a_display_that_started_for_it() -> None:
+async def test_an_action_does_not_run_on_a_display_that_restarted_for_it() -> None:
     """A backend rebuilt for one action finds the display down: the screen the action was meant for is gone."""
-    screen = Screen()
+    screen = Screen(generation=1)
     display = screen.display()
-    with pytest.raises(WorkspaceError, match='The display was not running and started for this action'):
+    with pytest.raises(WorkspaceError, match='The display restarted before this action'):
         await display.act(Click(x=1, y=1))
     assert screen.driver.acted == []
     await display.act(Click(x=2, y=2))
     # The next action uses the display that started, without starting it again.
-    assert (screen.driver.acted, screen.driver.starts) == ([Click(x=2, y=2)], 1)
+    assert (screen.driver.acted, screen.driver.starts, display.starts) == ([Click(x=2, y=2)], 1, 1)
 
 
-async def test_an_action_runs_on_a_display_that_was_already_up() -> None:
-    screen = Screen(up=True)
-    await screen.display().act(Click(x=1, y=1))
-    assert screen.driver.acted == [Click(x=1, y=1)]
+async def test_the_first_action_on_a_screen_that_never_ran_runs() -> None:
+    screen = Screen()
+    display = screen.display()
+    await display.act(Click(x=1, y=1))
+    assert (screen.driver.acted, display.starts) == ([Click(x=1, y=1)], 1)
+
+
+async def test_a_start_no_call_completed_on_is_counted_by_the_next_display_object() -> None:
+    """A durable engine retries a failed unit on a new backend, which finds the X server the failed one started."""
+    screen = Screen(generation=1)
+    failed = screen.display()
+    # The look and its one retry both fail, so the unit fails outside the error table and journals nothing.
+    screen.driver.failures = [WorkspaceError('the connection dropped'), WorkspaceError('it dropped again')]
+    with pytest.raises(WorkspaceError):
+        await failed.display_size()
+    assert failed.starts == 1
+
+    retry = screen.display()
+    assert await retry.display_size() == (1280, 800)
+    assert retry.starts == 1
+    later = screen.display()
+    await later.display_size()
+    assert later.starts == 0
 
 
 async def test_a_refused_action_keeps_the_display() -> None:

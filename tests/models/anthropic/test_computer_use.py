@@ -56,7 +56,7 @@ with try_import() as imports_successful:
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
     from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.models.anthropic._computer import map_computer_member
+    from pydantic_ai.models.anthropic._computer import COMPUTER_HELD_BACK, map_computer_member
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -611,6 +611,8 @@ _PNG = BinaryImage(data=b'png', media_type='image/png')
 _FAILED = 'Action 2 of 2 (type) failed: no keyboard. Screenshot attached (1280x800).'
 _REFUSED = 'Typing is not allowed here; nothing ran.'
 _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
+_HELD = 'The display restarted since your last screenshot, so the windows that were open are gone. No action ran.'
+_RESTARTED = 'Ran 2 actions. The display restarted since your last screenshot, so the windows that were open are gone.'
 
 
 @pytest.mark.parametrize(
@@ -654,6 +656,35 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
             {'performed': 1, 'error': 'no keyboard'},
             [['OK', 'image'], ['no keyboard']],
             id='recorded-counts',
+        ),
+        # The display restarted: the summary saying so goes with the screen, and no call is said to have failed.
+        pytest.param(
+            _CLICK_TYPE,
+            [1, 1],
+            [_HELD, _PNG],
+            {'performed': 0, 'restarted': True},
+            [[_HELD, 'image'], [COMPUTER_HELD_BACK]],
+            id='held-before-any-ran',
+        ),
+        pytest.param(
+            _CLICK_TYPE,
+            [1, 1],
+            [_HELD, _PNG],
+            {'performed': 1, 'restarted': True},
+            [[_HELD, 'image'], [COMPUTER_HELD_BACK]],
+            id='held-after-one-ran',
+        ),
+        pytest.param(
+            _CLICK_TYPE,
+            [1, 1],
+            [_RESTARTED, _PNG],
+            {'performed': 2, 'restarted': True},
+            [['OK'], [_RESTARTED, 'image']],
+            id='restarted-after-all-ran',
+        ),
+        # A capability that doesn't set `restarted`: fewer ran than asked, with no error.
+        pytest.param(
+            _CLICK_TYPE, [1, 1], [_HELD, _PNG], {'performed': 0}, [[_HELD, 'image'], [COMPUTER_HELD_BACK]], id='held'
         ),
     ],
 )

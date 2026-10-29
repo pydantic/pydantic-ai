@@ -270,7 +270,7 @@ async def test_workspace_calls_from_workflow_code_are_activities_and_replay_disp
 async def test_an_action_is_one_attempt_with_its_own_timeouts_and_a_look_is_retried(client: Client) -> None:
     """Each workspace call is an activity under its method's policy, on top of the configured retries."""
     provider.reset()
-    provider.lose_next_action = provider.fail_next_screenshot = True
+    provider.restart_display = provider.lose_next_action = provider.fail_next_screenshot = True
     # Long enough not to cap the action's own timeout.
     _, history = await _execute(client, 'display_faults', timeout=timedelta(minutes=5))
     calls = [
