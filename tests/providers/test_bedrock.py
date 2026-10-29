@@ -791,14 +791,14 @@ def test_strict_true_strips_unsupported_regex_patterns():
         # `python-re`, since Pydantic's default Rust regex engine rejects lookaround and backreferences.
         model_config = ConfigDict(regex_engine='python-re')
 
-        lookahead: str = Field(pattern=r'\d+(?=USD)')
-        negative_lookahead: str = Field(pattern=r'\d+(?!USD)')
-        lookbehind: str = Field(pattern=r'(?<=USD)\d+')
-        negative_lookbehind: str = Field(pattern=r'(?<!USD)\d+')
-        backreference: str = Field(pattern=r'^(a)\1$')
-        named_backreference: str = Field(pattern=r'^(?P<x>a)(?P=x)$')
-        escaped: str = Field(pattern=r'^\(?=\\1$')
-        plain: str = Field(pattern=r'^[A-Z]{3}$')
+        lookahead: Annotated[str, Field(pattern=r'\d+(?=USD)')]
+        negative_lookahead: Annotated[str, Field(pattern=r'\d+(?!USD)')]
+        lookbehind: Annotated[str, Field(pattern=r'(?<=USD)\d+')]
+        negative_lookbehind: Annotated[str, Field(pattern=r'(?<!USD)\d+')]
+        backreference: Annotated[str, Field(pattern=r'^(a)\1$')]
+        named_backreference: Annotated[str, Field(pattern=r'^(?P<x>a)(?P=x)$')]
+        escaped: Annotated[str, Field(pattern=r'^\(?=\\1$')]
+        plain: Annotated[str, Field(pattern=r'^[A-Z]{3}$')]
 
     transformer = BedrockJsonSchemaTransformer(Codes.model_json_schema(), strict=True)
     transformed = transformer.walk()
