@@ -14,7 +14,7 @@ from functools import partial
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Literal, get_type_hints
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import anyio
 import httpx2
@@ -2926,7 +2926,9 @@ async def test_rejected_request_overflows_to_http_when_retry_capacity_is_busy(
                 await agent.run('rejected')
             assert error.value.status_code == 503
         else:
-            assert (await agent.run('rejected')).output == 'from HTTP'
+            result = await agent.run('rejected')
+            assert result.output == 'from HTTP'
+            assert (result.response.provider_details or {}).get('transport') is None
         rejected.set()
 
     async def second() -> None:
@@ -2955,13 +2957,7 @@ async def test_context_closed_after_its_loop_stops_drops_the_socket(
     allow_model_requests: None, sockets: SocketHarness, monkeypatch: pytest.MonkeyPatch
 ):
     socket = sockets.pending[0]
-    closed_on: list[asyncio.AbstractEventLoop] = []
-    original_close = ScriptedSocket.close
-
-    async def close(self: ScriptedSocket, *, code: int = 1000, reason: str = '') -> None:
-        closed_on.append(asyncio.get_running_loop())
-        await original_close(self, code=code, reason=reason)
-
+    close = AsyncMock()
     monkeypatch.setattr(ScriptedSocket, 'close', close)
     model = websocket_model()
     stack = AsyncExitStack()
@@ -2972,7 +2968,7 @@ async def test_context_closed_after_its_loop_stops_drops_the_socket(
 
     await anyio.to_thread.run_sync(lambda: asyncio.run(enter()))
     await stack.aclose()
-    assert closed_on == []
+    close.assert_not_awaited()
     assert socket.close_count == 0
     assert not model._websocket.states  # pyright: ignore[reportPrivateUsage]
 

@@ -4160,7 +4160,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _provider_url=self._provider.base_url,
             _provider_timestamp=provider_timestamp,
             _history=history,
-            _is_websocket=self._websocket_stream is not None,
+            # A retry can overflow to HTTP after this request copy reserved a socket lane.
+            _is_websocket=self._websocket_stream is not None and isinstance(response, type(self._websocket_stream)),
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
             _process_provider_details=self._process_provider_details,
         )

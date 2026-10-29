@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from inline_snapshot import snapshot
@@ -360,9 +361,7 @@ async def test_batch_requires_a_static_api_key() -> None:
 
 
 async def test_batch_keeps_azure_ad_token_provider_support() -> None:
-    def token() -> str:
-        raise AssertionError('Encoding a batch must not resolve the token.')
-
+    token = Mock(return_value='unused-token')
     client = AsyncAzureOpenAI(
         azure_endpoint='https://example.openai.azure.com',
         api_version='2024-10-21',
@@ -374,6 +373,7 @@ async def test_batch_keeps_azure_ad_token_provider_support() -> None:
         profile=OpenAIModelProfile(openai_supports_batch_api=True),
     )
     assert openai_batch._batch_client(model) is client  # pyright: ignore[reportPrivateUsage]
+    token.assert_not_called()
 
 
 async def test_batch_rejects_a_workload_identity() -> None:
