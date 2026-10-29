@@ -1178,6 +1178,7 @@
     "RunContext.trace_include_content": {
       "engines": [
         "durable_exec",
+        "render",
         "temporal"
       ],
       "kinds": [
@@ -1189,7 +1190,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.serialize_run_context",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::_publish_workspace_telemetry"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::_publish_workspace_telemetry",
+        "src/pydantic_ai_harness/pydantic_ai_harness/render/_operation_backend.py::_workspace_telemetry"
       ]
     },
     "RunContext.tracer": {
@@ -1204,7 +1206,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
-        "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::RenderRunContext.serialize_run_context"
+        "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::RenderRunContext.serialize_run_context",
+        "src/pydantic_ai_harness/pydantic_ai_harness/render/_operation_backend.py::_workspace_telemetry"
       ]
     },
     "RunContext.usage": {
@@ -6658,6 +6661,17 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::<module>"
+      ]
+    },
+    "workspace_telemetry_scope": {
+      "engines": [
+        "render"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "src/pydantic_ai_harness/pydantic_ai_harness/render/_operation_backend.py::<module>"
       ]
     }
   },
