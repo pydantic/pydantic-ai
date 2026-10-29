@@ -216,7 +216,7 @@ DESKTOP_DOCKERFILE = """\
 FROM debian:bookworm-slim
 RUN apt-get update \\
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
-        xvfb xdotool x11-xserver-utils scrot fluxbox tint2 xterm firefox-esr \\
+        xvfb xdotool x11-xserver-utils x11-utils scrot fluxbox tint2 xterm firefox-esr \\
         fonts-dejavu-core fonts-wqy-microhei fonts-noto-color-emoji ca-certificates \\
     && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /usr/lib/firefox-esr/distribution /root/.fluxbox /root/.config/tint2 \\
@@ -256,13 +256,16 @@ _START_DESKTOP = (
     f"echo 'the X server did not start:' >&2; tail -n 5 {_PID_DIR}/xvfb.log >&2; exit 1; fi; "
     'sleep 0.1; i=$((i+1)); done; '
     f'echo {STARTED}; setsid tint2 >/dev/null 2>&1 & fi; '
-    'setsid fluxbox >/dev/null 2>&1 &'
+    'setsid fluxbox >/dev/null 2>&1 & wm=$!; i=0; '
+    'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
+    '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done'
 )
 """Starts an X display of the size `$1` names, such as `1280x800`, and its panel, unless one is running, and a window
 manager.
 
 It gives up as soon as the X server exits, or after 10 seconds. A second `fluxbox` exits when one is already running,
-so starting it every time recovers one that died or never started.
+so starting it every time recovers one that died or never started. It then waits up to 10 seconds for the window
+manager, as `xprop` sees it, so a first click focuses and raises the window it lands on.
 """
 
 

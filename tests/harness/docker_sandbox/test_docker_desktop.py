@@ -85,7 +85,26 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(docker: Fake
     await workspace.act(Click(x=3, y=4))
 
     assert docker.xvfb_starts == 1
-    assert docker.xdotool_calls[-1] == ':1 mousemove 3 4 click --repeat 1 1'
+    # First letting go of modifiers an earlier action may have left down.
+    assert docker.xdotool_calls[-1] == (
+        ':1 keyup Shift_L Shift_R Control_L Control_R Alt_L Alt_R Super_L Super_R ISO_Level3_Shift '
+        'mousemove 3 4 click --repeat 1 1'
+    )
+
+
+async def test_the_display_waits_for_the_window_manager(docker: FakeDocker, container_dir: Path) -> None:
+    docker.remove_display()
+    # A window manager that takes a moment to manage the screen, and `xprop` reporting it once it does.
+    bin_dir = docker.bin_dir
+    (bin_dir / 'fluxbox').write_text(f'#!/bin/sh\nsleep 0.3; touch {bin_dir}/wm-up; exec sleep 2\n')
+    (bin_dir / 'xprop').write_text(
+        f'#!/bin/sh\n[ -e {bin_dir}/wm-up ] && echo "_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x1"\n'
+    )
+    for name in ('fluxbox', 'xprop'):
+        (bin_dir / name).chmod(0o755)
+
+    await Workspace(_desktop(container_dir, image='my-desktop')).display_size()
+    assert (bin_dir / 'wm-up').exists()
 
 
 async def test_screenshots_zoom_scaling_and_the_pointer_come_from_the_display(
@@ -136,7 +155,9 @@ async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, con
 async def test_an_action_that_fails_on_a_running_display_says_why(docker: FakeDocker, container_dir: Path) -> None:
     workspace = Workspace(_desktop(container_dir, image='my-desktop'))
     await workspace.display_size()
-    (docker.bin_dir / 'xdotool').write_text('#!/bin/sh\n[ "$1" != mousemove ] || { echo BadWindow >&2; exit 1; }\n')
+    (docker.bin_dir / 'xdotool').write_text(
+        '#!/bin/sh\ncase " $* " in *" mousemove "*) echo BadWindow >&2; exit 1 ;; esac\n'
+    )
 
     with pytest.raises(WorkspaceError, match='BadWindow'):
         await workspace.act(Click(x=1, y=1))

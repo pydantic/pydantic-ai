@@ -154,13 +154,16 @@ class ManagedDisplay:
     async def act(self, action: ComputerAction) -> None:
         starts = self._starts
 
-        async def act(driver: DisplayDriver) -> None:
+        async def act(driver: DisplayDriver) -> bool:
             if self._starts != starts:
-                # The display was down and started for this action: the windows it was meant for are gone.
-                raise WorkspaceError('The display restarted before this action, so it did not run.')
+                return False
             await driver.act(action)
+            return True
 
-        await self._call(act, observe=False)
+        if not await self._call(act, observe=False):
+            # The display was down and started for this action: the windows it was meant for are gone. Refused outside
+            # the call, so the display that just started stays and the next action doesn't start it again.
+            raise WorkspaceError('The display restarted before this action, so it did not run.')
 
     async def zoom(self, region: Region) -> bytes:
         return await self._call(lambda driver: driver.zoom(region), observe=True)

@@ -99,11 +99,10 @@ _PRESS_MAPPED = (
     'while [ "$1" != -- ]; do '
     'while case "$mods" in *" $code "*) true;; *) false;; esac; do code=$((code - 1)); done; '
     'map="$map -e \'keycode $code = $1 $1\'"; code=$((code - 1)); shift; done; shift; '
-    'eval xmodmap "$map" && sleep 0.2 && xdotool key "$@"'
+    'eval xmodmap "$map" && sleep 0.2 && xdotool "$@"'
 )
-"""Runs as `sh -c PRESS_MAPPED sh <keysym>... -- <xdotool key arguments>...`: maps each keysym before `--` to a
-keycode of its own, counting down from 255 past the modifier keys, then runs `xdotool key` with the arguments after
-`--`.
+"""Runs as `sh -c PRESS_MAPPED sh <keysym>... -- <xdotool arguments>...`: maps each keysym before `--` to a keycode of
+its own, counting down from 255 past the modifier keys, then runs `xdotool` with the arguments after `--`.
 
 `xdotool` alone types a character that has no key by remapping one spare keycode for each keystroke, and an
 application that reads the keymap after the keystroke, such as Chrome, then sees a later character, or none when
@@ -119,6 +118,16 @@ _TYPING_DELAY_MS = '12'
 
 _LEVEL_SHIFTS = ('Shift_L', 'ISO_Level3_Shift')
 """The modifiers `xdotool` presses to reach a character on a key's other levels, released after a failed typing."""
+
+_RELEASE_MODIFIERS = (
+    'keyup',
+    *('Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R', 'Super_L', 'Super_R', 'ISO_Level3_Shift'),
+)
+"""Starts every `xdotool` chain that acts: lets go of modifiers an earlier action left down, such as one stopped
+between pressing and releasing, which would otherwise change what follows (a stuck Shift types `a` as `A`).
+
+Mouse buttons stay, since `MouseDown` holds one across actions, and so does Caps Lock, which the model may have
+turned on."""
 
 _SCROLL_TICK_DELAY_MS = '20'
 """Milliseconds between scroll wheel clicks, instead of `xdotool`'s 100 ms between clicks."""
@@ -162,9 +171,9 @@ def _character(character: str) -> str:
 
 
 def _press(keysyms: Sequence[str], args: list[str]) -> list[str]:
-    """`xdotool key` with `args`, after mapping the characters outside ASCII among `keysyms` to keys of their own."""
+    """`xdotool` with `args`, after mapping the characters outside ASCII among `keysyms` to keys of their own."""
     mapped = [keysym for keysym in dict.fromkeys(keysyms) if _OUTSIDE_ASCII.fullmatch(keysym)]
-    return ['sh', '-c', _PRESS_MAPPED, 'sh', *mapped, '--', *args] if mapped else ['xdotool', 'key', *args]
+    return ['sh', '-c', _PRESS_MAPPED, 'sh', *mapped, '--', *args] if mapped else ['xdotool', *args]
 
 
 def _drag_moves(path: Sequence[Point]) -> list[str]:
@@ -267,7 +276,8 @@ class X11Computer:
         """Run one `xdotool` command chain with `hold` held down; if it fails or is cancelled, let go of everything."""
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
-        await self._input(['xdotool', *(['keydown', *keysyms] if keysyms else []), *args, *keyup], [*release, *keyup])
+        keydown = ['keydown', *keysyms] if keysyms else []
+        await self._input(['xdotool', *_RELEASE_MODIFIERS, *keydown, *args, *keyup], [*release, *keyup])
 
     async def _input(self, command: list[str], release: list[str]) -> None:
         """Run an input command; if it fails or is cancelled, let go of what it may hold with `xdotool <release>`."""
@@ -341,12 +351,14 @@ class X11Computer:
                 for keysyms in _typing(text):
                     # A cancel can land between a key's press and release, and X then repeats the key without end.
                     release = ['keyup', *_LEVEL_SHIFTS, *dict.fromkeys(keysyms)]
-                    await self._input(_press(keysyms, ['--delay', _TYPING_DELAY_MS, '--', *keysyms]), release)
+                    command = [*_RELEASE_MODIFIERS, 'key', '--delay', _TYPING_DELAY_MS, '--', *keysyms]
+                    await self._input(_press(keysyms, command), release)
             case PressKeys(keys=keys, repeat=repeat):
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.
                 release = ['keyup', *reversed(keysyms)]
-                await self._input(_press(keysyms, ['--repeat', str(repeat), '--', '+'.join(keysyms)]), release)
+                command = [*_RELEASE_MODIFIERS, 'key', '--repeat', str(repeat), '--', '+'.join(keysyms)]
+                await self._input(_press(keysyms, command), release)
             case HoldKeys(keys=keys, seconds=seconds):
                 await self._xdotool(['sleep', str(seconds)], hold=keys)
             case _:
