@@ -102,12 +102,17 @@ async def test_a_virtual_screen_starts_once_and_every_command_runs_on_it(
         await _stop(desktop)
 
     [xvfb] = _lines(fake_x, 'Xvfb')
-    assert xvfb == 'Xvfb -displayfd 1 -screen 0 1024x768x24 -nolisten tcp -noreset'
+    # The cookie file it reads is gone once the screen stops.
+    cookie = xvfb.split()[4]
+    assert xvfb == f'Xvfb -displayfd 1 -auth {cookie} -screen 0 1024x768x24 -nolisten tcp -noreset'
+    assert not Path(cookie).exists()
     # Apps started from the window manager's menu get the workspace's environment, not this process's.
     assert _lines(fake_x, 'fluxbox') == ['fluxbox :7 unset']
     # The kernel stops both if this process dies.
     assert _lines(fake_x, 'setpriv') == ['setpriv --pdeathsig KILL'] * 2
     assert all(line.startswith('xdotool :7 ') for line in _lines(fake_x, 'xdotool'))
+    # Each action first lets go of modifiers an earlier one left down.
+    assert any(line.startswith('xdotool :7 keyup Shift_L ') for line in _lines(fake_x, 'xdotool'))
 
 
 def _in_new_event_loop(function: Callable[[], Awaitable[T]]) -> T:
@@ -257,6 +262,9 @@ async def test_the_real_screen_is_the_session_this_process_runs_in(
     assert output.stdout == ':0 /run/user/1000/gdm/Xauthority\n'
     assert await backend.display.display_size() == (1280, 800)
     assert _lines(fake_x, 'Xvfb') == []
+    # Modifiers you hold stay held: an action doesn't let go of them first.
+    await backend.display.act(Click(x=1, y=2))
+    assert _lines(fake_x, 'xdotool')[-1] == 'xdotool :0 mousemove 1 2 click --repeat 1 1'
 
 
 @linux_only
@@ -310,3 +318,19 @@ def test_workspaces_on_one_screen_name_it_alike(tmp_path: Path, monkeypatch: pyt
     assert _backend(private).display.screen_key == _backend(private).display.screen_key
     assert _backend(private).display.screen_key != _backend(LocalDesktop[None](first)).display.screen_key
     assert _backend(private).display.screen_key != session[0].display.screen_key
+
+
+@linux_only
+@pytest.mark.skipif(
+    shutil.which('Xvfb') is None or shutil.which('fluxbox') is None, reason='needs a real Xvfb and fluxbox'
+)
+async def test_only_the_agent_can_connect_to_its_screen(tmp_path: Path):
+    desktop = LocalDesktop[None](tmp_path)
+    backend = _backend(desktop)
+    try:
+        assert await backend.display.display_size() == (1280, 800)
+        # A client on the same machine without the screen's cookie file is refused.
+        refused = await backend.run('XAUTHORITY=/nonexistent xdotool getdisplaygeometry', shell=True)
+        assert refused.exit_code != 0
+    finally:
+        await _stop(desktop)

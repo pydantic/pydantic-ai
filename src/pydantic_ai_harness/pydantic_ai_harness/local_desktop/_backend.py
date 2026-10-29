@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import functools
 import os
+import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -42,10 +44,25 @@ def _starting_thread() -> ThreadPoolExecutor:
     return ThreadPoolExecutor(max_workers=1, thread_name_prefix='pydantic-ai-screen')
 
 
+def _write_cookie() -> str:
+    """Write a new random cookie to a file only this user can read, in Xauthority format, and return its path.
+
+    The entry names no address or display, so it serves whichever display Xvfb picks.
+    """
+    name, cookie = b'MIT-MAGIC-COOKIE-1', secrets.token_bytes(16)
+    entry = b'\xff\xff' + b''.join(len(field).to_bytes(2, 'big') + field for field in (b'', b'', name, cookie))
+    descriptor, path = tempfile.mkstemp(prefix='pydantic-ai-screen-')
+    with os.fdopen(descriptor, 'wb') as file:
+        file.write(entry)
+    return path
+
+
 class VirtualScreen:
     """An invisible X screen (Xvfb) with a window manager, started on first use and restarted if it stops.
 
-    It stops when this process exits. Its processes aren't tied to an event loop, so each `run_sync` can use it.
+    It stops when this process exits. Its processes aren't tied to an event loop, so each `run_sync` can use it. Only
+    programs given its cookie file, as `XAUTHORITY`, can connect, which keeps the screen private to the agent on a
+    machine others use too.
     """
 
     def __init__(self, size: tuple[int, int]):
@@ -54,8 +71,14 @@ class VirtualScreen:
         self._display: str | None = None
         # Xvfb, then the window managers started on it.
         self._processes: list[subprocess.Popen[bytes]] = []
+        self._cookie: str | None = None
         self.starts = 0
         """How many times the screen started, each time without the windows it had."""
+
+    @property
+    def cookie_file(self) -> str | None:
+        """The file a program needs as `XAUTHORITY` to connect to the screen, while it's running."""
+        return self._cookie
 
     async def display(self) -> str:
         """The screen's `DISPLAY`, such as `:3`, once it's running."""
@@ -79,10 +102,12 @@ class VirtualScreen:
                 f'A virtual screen needs {", ".join(missing)}; on Debian or Ubuntu: `apt install {_PACKAGES}`.'
             )
         width, height = self._size
+        self._cookie = await anyio.to_thread.run_sync(_write_cookie)
         # Xvfb picks a free display and prints its number once it's ready. `-noreset` keeps the pointer and the key
         # mapping between commands, which a server with no other client resets as each one disconnects.
         xvfb = await self._open(
-            ['Xvfb', '-displayfd', '1', '-screen', '0', f'{width}x{height}x24', '-nolisten', 'tcp', '-noreset'],
+            ['Xvfb', '-displayfd', '1', '-auth', self._cookie, '-screen', '0', f'{width}x{height}x24']
+            + ['-nolisten', 'tcp', '-noreset'],
             stdout=subprocess.PIPE,
         )
         assert xvfb.stdout is not None
@@ -97,10 +122,11 @@ class VirtualScreen:
 
     async def _start_window_manager(self, display: str) -> None:
         # Without a window manager, clicking a window doesn't focus or raise it.
-        window_manager = await self._open(['fluxbox'], env={'DISPLAY': display})
+        env = self._env(display)
+        window_manager = await self._open(['fluxbox'], env=env)
         with anyio.move_on_after(_START_TIMEOUT):
             while window_manager.poll() is None:
-                if await _has_window_manager(display):
+                if await _has_window_manager(env):
                     return
                 await anyio.sleep(0.05)
         raise WorkspaceUnavailableError('The virtual screen did not start: its window manager did not start.')
@@ -123,9 +149,13 @@ class VirtualScreen:
         self._processes.append(process)
         return process
 
+    def _env(self, display: str) -> dict[str, str]:
+        return {'DISPLAY': display, **({'XAUTHORITY': self._cookie} if self._cookie else {})}
+
     async def stop(self) -> None:
         """Stop the screen and its window manager; the next `display()` starts a new one."""
         processes, self._processes, self._display = self._processes, [], None
+        cookie, self._cookie = self._cookie, None
         for process in processes:
             process.kill()
         # Shielded, as this also runs when a start is cancelled.
@@ -134,10 +164,16 @@ class VirtualScreen:
                 await anyio.to_thread.run_sync(process.wait)
                 if process.stdout is not None:
                     process.stdout.close()
+            if cookie is not None:
+                await anyio.to_thread.run_sync(functools.partial(Path(cookie).unlink, missing_ok=True))
 
 
-async def _has_window_manager(display: str) -> bool:
-    result = await anyio.run_process(['xprop', '-display', display, '-root', '_NET_SUPPORTING_WM_CHECK'], check=False)
+async def _has_window_manager(env: dict[str, str]) -> bool:
+    result = await anyio.run_process(
+        ['xprop', '-display', env['DISPLAY'], '-root', '_NET_SUPPORTING_WM_CHECK'],
+        check=False,
+        env={**os.environ, **env},
+    )
     return b'window id' in result.stdout
 
 
@@ -199,7 +235,7 @@ class LocalDesktopBackend(LocalWorkspaceBackend):
         if self._screen.starts != self._screen_starts:
             self._screen_starts = self._screen.starts
             self._display.started_fresh()
-        return {'DISPLAY': display}
+        return {'DISPLAY': display, 'XAUTHORITY': self._screen.cookie_file or ''}
 
     async def run(
         self,
@@ -217,8 +253,9 @@ class LocalDesktopBackend(LocalWorkspaceBackend):
 
     async def _start_display(self) -> X11Computer:
         await self._display_env()  # says why there's no screen, starting a virtual one
-        # `run` gives every display command the screen's `DISPLAY`, starting the screen again if it stopped.
-        return X11Computer(self)
+        # `run` gives every display command the screen's `DISPLAY`, starting the screen again if it stopped. On your
+        # screen, modifiers you hold stay held.
+        return X11Computer(self, release_modifiers=self._screen is not None)
 
     @property
     def display(self) -> ManagedDisplay:

@@ -284,10 +284,14 @@ class X11Computer:
 
     The backend's commands must already have the running X server's `DISPLAY`. Needs `xdotool`, `xmodmap`, `scrot`,
     `base64`, and `mktemp` in the environment.
+
+    Each action first lets go of modifier keys left down; `release_modifiers=False` skips that, for a screen someone
+    is using, whose held keys it would let go of.
     """
 
-    def __init__(self, backend: SupportsCommands):
+    def __init__(self, backend: SupportsCommands, *, release_modifiers: bool = True):
         self._backend = backend
+        self._release_modifiers = _RELEASE_MODIFIERS if release_modifiers else ()
 
     async def _run(self, command: list[str] | str) -> CommandResult:
         result = await self._backend.run(command, shell=isinstance(command, str), env=_LOCALE, timeout=_COMMAND_TIMEOUT)
@@ -304,7 +308,7 @@ class X11Computer:
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
         keydown = ['keydown', *keysyms] if keysyms else []
-        await self._input(['xdotool', *_RELEASE_MODIFIERS, *keydown, *args, *keyup], [*release, *keyup])
+        await self._input(['xdotool', *self._release_modifiers, *keydown, *args, *keyup], [*release, *keyup])
 
     async def _input(self, command: list[str], release: list[str]) -> None:
         """Run an input command; if it fails or is cancelled, let go of what it may hold with `xdotool <release>`."""
@@ -379,13 +383,13 @@ class X11Computer:
                 for keysyms in _typing(text):
                     # A cancel can land between a key's press and release, and X then repeats the key without end.
                     release = ['keyup', *_LEVEL_SHIFTS, *dict.fromkeys(keysyms)]
-                    command = [*_RELEASE_MODIFIERS, 'key', '--delay', _TYPING_DELAY_MS, '--', *keysyms]
+                    command = [*self._release_modifiers, 'key', '--delay', _TYPING_DELAY_MS, '--', *keysyms]
                     await self._input(_press(keysyms, command), release)
             case PressKeys(keys=keys, repeat=repeat):
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.
                 release = ['keyup', *reversed(keysyms)]
-                command = [*_RELEASE_MODIFIERS, 'key', '--repeat', str(repeat), '--', '+'.join(keysyms)]
+                command = [*self._release_modifiers, 'key', '--repeat', str(repeat), '--', '+'.join(keysyms)]
                 await self._input(_press(keysyms, command), release)
             case HoldKeys(keys=keys, seconds=seconds):
                 await self._xdotool(['sleep', str(seconds)], hold=keys)
