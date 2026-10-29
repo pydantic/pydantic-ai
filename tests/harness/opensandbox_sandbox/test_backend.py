@@ -6,8 +6,10 @@ Each test pins one behavior of OpenSandbox the backend has to handle; the confor
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 import signal
+import types
 import uuid
 from pathlib import Path
 from typing import Any
@@ -27,7 +29,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
+from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBackend, _backend
 
 from .fake_opensandbox import DOMAIN, FakeOpenSandbox, wait_until_gone
 
@@ -38,6 +40,13 @@ _MODULE = 'pydantic_ai_harness.opensandbox_sandbox._backend'
 
 def _create(server: FakeOpenSandbox, working_dir: str, **kwargs: Any) -> OpenSandboxBackend:
     return OpenSandboxBackend(image='fake-image', connection=server.connection, working_dir=working_dir, **kwargs)
+
+
+@pytest.fixture
+def fast_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Advance the backend's clock a second on every read, so its two-second wait for a kill to show ends at once."""
+    ticks = itertools.count()
+    monkeypatch.setattr(_backend, 'time', types.SimpleNamespace(monotonic=lambda: float(next(ticks))))
 
 
 async def _wait_for(path: Path) -> None:
@@ -81,6 +90,13 @@ class TestCommands:
             group.cancel_scope.cancel()
         await wait_until_gone(*map(int, pids.read_text(encoding='utf-8').split()))
 
+    async def test_a_background_child_holding_the_output_open_does_not_hold_up_the_result(
+        self, server: FakeOpenSandbox, working_dir: str
+    ) -> None:
+        """execd reports the exit once the command exits, as the test server does."""
+        result = await _create(server, working_dir).run(['sh', '-c', 'sleep 300 & echo started'])
+        assert (result.exit_code, result.stdout) == (0, 'started\n')
+
     async def test_a_signal_death_reports_128_plus_the_signal(self, server: FakeOpenSandbox, working_dir: str) -> None:
         result = await _create(server, working_dir).run(['sh', '-c', f'kill -{signal.SIGTERM.value} $$'])
         assert result.exit_code == 128 + signal.SIGTERM.value
@@ -97,6 +113,7 @@ class TestCommands:
         with pytest.raises(WorkspaceUnavailableError, match=r'execd older than 1\.1\.1'):
             await _create(server, working_dir).run(['true'])
 
+    @pytest.mark.usefixtures('fast_clock')
     async def test_a_command_that_kills_its_wrapper_cannot_run(self, server: FakeOpenSandbox, working_dir: str) -> None:
         """Only a dying sandbox normally kills the wrapper; on a live one the command's result is lost."""
         with pytest.raises(WorkspaceError, match='could not run the command'):
@@ -188,6 +205,18 @@ class TestLifecycle:
             await task
         assert backend.ref is not None and list(server.sandboxes) == [backend.ref.id]
 
+    async def test_a_create_cancelled_by_task_cancel_whose_response_is_lost_still_records_the_sandbox(
+        self, server: FakeOpenSandbox, working_dir: str
+    ) -> None:
+        """The cancellation is raised instead of the create's error, so the lookup cannot wait for that error."""
+        server.lose_create_response = True
+        backend = _create(server, working_dir)
+        task = asyncio.ensure_future(backend.run(['true']))
+        server.during_create = task.cancel
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert backend.ref is not None and list(server.sandboxes) == [backend.ref.id]
+
     async def test_attaching_to_a_sandbox_being_deleted_is_unavailable(
         self, server: FakeOpenSandbox, working_dir: str
     ) -> None:
@@ -244,9 +273,10 @@ class TestLifecycle:
 
 
 class TestWorkingDir:
-    async def test_none_uses_the_images_own(self, server: FakeOpenSandbox) -> None:
+    async def test_none_uses_the_images_own(self, server: FakeOpenSandbox, working_dir: str) -> None:
+        server.image_working_dir = working_dir
         backend = OpenSandboxBackend(image='fake-image', connection=server.connection, working_dir=None)
-        assert await backend.working_dir() == '/'
+        assert await backend.working_dir() == str(Path(working_dir).resolve())
 
     async def test_one_that_cannot_be_created_is_an_error(self, server: FakeOpenSandbox, working_dir: str) -> None:
         Path(working_dir, 'file').touch()
@@ -279,6 +309,7 @@ class TestServerErrors:
         with pytest.raises(SandboxApiException):
             await OpenSandbox[None](connection=server.connection).destroy(backend.ref)
 
+    @pytest.mark.usefixtures('fast_clock')
     async def test_a_broken_stream_on_a_running_sandbox_stays_transient(
         self, server: FakeOpenSandbox, working_dir: str
     ) -> None:
@@ -342,12 +373,18 @@ class TestSandboxTimeout:
         await attached.run(['true'])
         assert [sandbox_id for sandbox_id, _ in server.renewals] == [created.ref.id]
 
-    async def test_use_renews_it_once_half_has_passed(self, server: FakeOpenSandbox, working_dir: str) -> None:
-        backend = _create(server, working_dir, sandbox_timeout=2)
+    async def test_use_renews_it_once_half_has_passed(
+        self, server: FakeOpenSandbox, working_dir: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        now = 0.0
+        monkeypatch.setattr(_backend, 'time', types.SimpleNamespace(monotonic=lambda: now))
+        backend = _create(server, working_dir, sandbox_timeout=600)
         await backend.run(['true'])
+        now = 300.0
         await backend.run(['true'])
         assert server.renewals == []
-        await anyio.sleep(1.1)  # past half the timeout; only ever more renewals if the machine is slow
+        now = 301.0
+        await backend.run(['true'])
         await backend.run(['true'])
         assert len(server.renewals) == 1
 

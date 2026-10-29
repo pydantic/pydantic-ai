@@ -312,33 +312,33 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         tag = secrets.token_hex(16)
 
         async def create() -> Sandbox:
-            sandbox = await Sandbox.create(
-                image,
-                timeout=timeout,
-                ready_timeout=_CREATE_READY_TIMEOUT,
-                resource=self._resource,
-                metadata={_CREATE_TAG: tag},
-                connection_config=self._connection,
-            )
-            # Recorded here, inside the task a cancelled caller waits for, so the sandbox and its transport
-            # are kept even when that caller then raises its cancellation instead of the result.
+            # Recorded here, inside the task a cancelled caller waits for, so the sandbox, or the ref of one whose
+            # create failed, is kept even when that caller then raises its cancellation instead of the outcome.
+            try:
+                sandbox = await Sandbox.create(
+                    image,
+                    timeout=timeout,
+                    ready_timeout=_CREATE_READY_TIMEOUT,
+                    resource=self._resource,
+                    metadata={_CREATE_TAG: tag},
+                    connection_config=self._connection,
+                )
+            except SandboxApiException as error:
+                if (refused := _refusal(error, f'Could not create an OpenSandbox sandbox from {image!r}')) is not None:
+                    raise refused from error
+                await self._find_created(tag)
+                raise
+            except SandboxException:
+                await self._find_created(tag)
+                raise
             self._sandbox = sandbox
             self._ref = WorkspaceRef(provider=PROVIDER, id=sandbox.id)
             # Logged at creation, so the sandbox can be found whatever ends the run before its ref is stored.
             logger.info('Created OpenSandbox sandbox %s', sandbox.id)
             return sandbox
 
-        try:
-            # A cancelled create leaves the sandbox running, so it finishes and is recorded first.
-            return await run_to_completion(create)
-        except SandboxApiException as error:
-            if (refused := _refusal(error, f'Could not create an OpenSandbox sandbox from {image!r}')) is not None:
-                raise refused from error
-            await self._find_created(tag)
-            raise
-        except SandboxException:
-            await self._find_created(tag)
-            raise
+        # A cancelled create leaves the sandbox running, so it finishes and is recorded first.
+        return await run_to_completion(create)
 
     async def _find_created(self, tag: str) -> None:
         """Record the ref of a sandbox whose create failed after the server made it, so it can be destroyed.
@@ -391,7 +391,8 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     async def _enter_working_dir(self, sandbox: Sandbox) -> str:
         if self._working_dir is None:
-            result = await self._exec(sandbox, ['pwd', '-P'], {}, None, '/')
+            # No `cwd`: execd then starts the command in the image's working directory.
+            result = await self._exec(sandbox, ['pwd', '-P'], {}, None, None)
         else:
             script = 'mkdir -p "$1" && cd "$1" && pwd -P'
             result = await self._exec(sandbox, ['sh', '-c', script, 'sh', self._working_dir], {}, None, '/')
@@ -426,7 +427,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
             return await self._exec(sandbox, argv, {**self._env, **(env or {})}, timeout, self._resolved_working_dir)
 
     async def _exec(
-        self, sandbox: Sandbox, argv: list[str], env: Mapping[str, str], timeout: float | None, cwd: str
+        self, sandbox: Sandbox, argv: list[str], env: Mapping[str, str], timeout: float | None, cwd: str | None
     ) -> CommandResult:
         tag = secrets.token_hex(8)
         stdout: list[str] = []

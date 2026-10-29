@@ -111,6 +111,8 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         """The key the server requires; `None` runs it without authentication, as a local server may."""
         self.strip_newlines = False
         """Send output lines without their newline, as execd before 1.1.1 does."""
+        self.image_working_dir = '/'
+        """Where a command sent with no `cwd` starts, as execd starts it in the image's working directory."""
         self.connection = ConnectionConfig(domain=DOMAIN, api_key=API_KEY, transport=self)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
@@ -233,8 +235,8 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
                 raise AssertionError(f'unexpected execd request {request.url.path}')
 
     async def _command(self, sandbox: FakeSandbox, body: dict[str, Any]) -> httpx.Response:
-        cwd = body.get('cwd')
-        if cwd is not None and not os.path.isdir(cwd):
+        cwd = body.get('cwd') or self.image_working_dir
+        if not os.path.isdir(cwd):
             return _error(400, 'INVALID_REQUEST_BODY', f'working directory does not exist: {cwd}')
         process = await asyncio.create_subprocess_exec(
             '/bin/bash',
@@ -330,7 +332,11 @@ class _EventStream(httpx.AsyncByteStream):
             )
 
     async def _wait(self) -> None:
-        self._queue.put_nowait(('exit', await self._process.wait()))
+        # Not `Process.wait()`, which before Python 3.14 also waits for a background child to close the pipes:
+        # `returncode` is set as soon as the command itself exits.
+        while self._process.returncode is None:
+            await asyncio.sleep(0.005)
+        self._queue.put_nowait(('exit', self._process.returncode))
 
     async def _read(self, kind: str, pipe: asyncio.StreamReader) -> None:
         # Output as it arrives, a partial line included, as execd sends it.
@@ -366,9 +372,9 @@ class OwnedTransport(httpx.AsyncBaseTransport):
 async def reap(server: FakeOpenSandbox) -> None:
     """Kill every command still running and wait for each, so no test leaves host processes or pipes behind."""
     for process in server.processes:
-        if process.returncode is None:
-            with suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
+        # The whole group, even once its leader has exited: a background child may still hold the pipes open.
+        with suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
         # Reads what is left in its pipes, so a pipe paused on a full buffer reaches its end and closes.
         await process.communicate()
 

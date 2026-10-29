@@ -63,7 +63,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
     to the agent's other workspace capabilities.
     """
 
-    connection: ConnectionConfig | None = None
+    connection: ConnectionConfig | None = field(default=None, repr=False)
     """The `opensandbox.config.ConnectionConfig` for your server. When `None`, each run reads
     `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`. On Kubernetes without the ingress gateway, pass
     `ConnectionConfig(use_server_proxy=True)`."""
