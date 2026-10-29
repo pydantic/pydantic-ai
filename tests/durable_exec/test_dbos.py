@@ -8,6 +8,7 @@ import sys
 import time
 import uuid
 import warnings
+from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
@@ -140,7 +141,7 @@ try:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    from .responses_websocket import responses_reply, websocket_model
+    from .responses_websocket import ScriptedSocket, responses_reply, text_events, websocket_model
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
@@ -266,10 +267,7 @@ async def round_trip_workspace(ctx: RunContext[None]) -> str:
 async def test_dbos_agent_model_steps_use_http_for_responses_websocket(
     allow_model_requests: None, dbos: DBOS, monkeypatch: pytest.MonkeyPatch, stream: bool
 ) -> None:
-    """A model step serves one request, so `openai_transport='websocket'` does nothing in it.
-
-    The deprecated wrapper has no durability capability, so its run holds the model's socket open like any run.
-    """
+    """A workflow run does not implicitly own a socket across its model steps."""
     pytest.importorskip('websockets')
     connect = AsyncMock()
     monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', connect)
@@ -280,16 +278,34 @@ async def test_dbos_agent_model_steps_use_http_for_responses_websocket(
     connect.assert_not_called()
 
 
+async def test_dbos_model_run_scope_outside_workflow_forwards_socket_ownership(
+    allow_model_requests: None, dbos: DBOS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip('websockets')
+    socket = ScriptedSocket()
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', AsyncMock(return_value=socket))
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        model = websocket_model(client)
+        wrapped = DBOSModel(
+            model,
+            step_name_prefix='outside_websocket_scope',
+            step_config={},
+            get_event_stream_handler=lambda: None,
+        )
+        async with wrapped._run_scope():  # pyright: ignore[reportPrivateUsage]
+            response = await model.request([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters())
+            assert response.text == 'ready'
+            assert socket.close_count == 0
+    assert len(socket.sent) == 1
+    assert socket.close_count == 1
+
+
 @pytest.mark.parametrize('stream', [False, True])
 async def test_dbos_workflow_agent_scope_owns_responses_websocket(
     allow_model_requests: None, dbos: DBOS, monkeypatch: pytest.MonkeyPatch, stream: bool
 ) -> None:
     """A workflow-owned agent outlives its steps, which can borrow its loop-local socket."""
     pytest.importorskip('websockets')
-    from collections import deque
-
-    from tests.models.test_openai_responses_ws import ScriptedSocket, text_events
-
     socket = ScriptedSocket(
         responses=deque(
             [

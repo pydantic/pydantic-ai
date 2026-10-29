@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Callable
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from typing import Any
 
 from prefect import task
@@ -103,6 +103,12 @@ class PrefectModel(WrapperModel):
 
     def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
         return reject_serving_wrapper(self, wrap, 'PrefectAgent', 'PrefectDurability')
+
+    def _run_scope(self) -> AbstractAsyncContextManager[None]:
+        # The flow's run must not create resources shared across durable tasks implicitly.
+        if FlowRunContext.get() is not None:
+            return nullcontext()
+        return super()._run_scope()
 
     async def request(
         self,

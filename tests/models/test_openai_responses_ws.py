@@ -2877,8 +2877,15 @@ async def test_early_rejection_retry_budget(
     assert socket.close_count == 1
 
 
+@pytest.mark.parametrize('max_retries', [1, 2])
+@pytest.mark.parametrize('http_rejection', [False, True])
 async def test_rejected_request_overflows_to_http_when_retry_capacity_is_busy(
-    allow_model_requests: None, sockets: SocketHarness, http: HTTPResponses, monkeypatch: pytest.MonkeyPatch
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    http: HTTPResponses,
+    monkeypatch: pytest.MonkeyPatch,
+    max_retries: int,
+    http_rejection: bool,
 ):
     monkeypatch.setattr('pydantic_ai.models._openai_responses_websocket.ACTIVE_RESPONSE_LIMIT', 1)
     socket = sockets.pending[0]
@@ -2893,19 +2900,33 @@ async def test_rejected_request_overflows_to_http_when_retry_capacity_is_busy(
     rejected = anyio.Event()
 
     async def sleep(delay: float) -> None:
-        assert delay == 0.5
+        if not backoff.is_set():
+            assert delay == 0.5
         backoff.set()
         await retry_ready.wait()
 
     monkeypatch.setattr(anyio, 'sleep', sleep)
-    agent = Agent(websocket_model(http.provider(), settings=OpenAIResponsesModelSettings(max_retries=1)))
+    agent = Agent(websocket_model(http.provider(), settings=OpenAIResponsesModelSettings(max_retries=max_retries)))
+    if http_rejection:
+        http.replies.append(
+            httpx2.Response(
+                503,
+                headers={'retry-after-ms': '1'},
+                json={'error': {'type': 'server_error', 'message': 'HTTP retry later'}},
+            )
+        )
     http_events = text_events('from HTTP', 'resp_http')
     body = ''.join(f'event: {e["type"]}\ndata: {FRAME_ADAPTER.dump_json(e).decode()}\n\n' for e in http_events)
     http.replies.append(httpx2.Response(200, content=body.encode(), headers={'content-type': 'text/event-stream'}))
     outputs: list[str] = []
 
     async def first() -> None:
-        assert (await agent.run('rejected')).output == 'from HTTP'
+        if http_rejection and max_retries == 1:
+            with pytest.raises(ModelHTTPError) as error:
+                await agent.run('rejected')
+            assert error.value.status_code == 503
+        else:
+            assert (await agent.run('rejected')).output == 'from HTTP'
         rejected.set()
 
     async def second() -> None:
@@ -2926,7 +2947,7 @@ async def test_rejected_request_overflows_to_http_when_retry_capacity_is_busy(
 
     assert outputs == ['sibling finished']
     assert len(socket.sent) == 2
-    assert len(http.requests) == 1
+    assert len(http.requests) == (2 if http_rejection and max_retries == 2 else 1)
     assert socket.close_count == 1
 
 

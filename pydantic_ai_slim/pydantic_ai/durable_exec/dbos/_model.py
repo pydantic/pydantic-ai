@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Callable
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from typing import Any
 
 from dbos import DBOS
@@ -97,6 +97,12 @@ class DBOSModel(WrapperModel):
 
     def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
         return reject_serving_wrapper(self, wrap, 'DBOSAgent', 'DBOSDurability')
+
+    def _run_scope(self) -> AbstractAsyncContextManager[None]:
+        # The workflow's run must not create resources shared across durable steps implicitly.
+        if DBOS.workflow_id is not None and DBOS.step_id is None:
+            return nullcontext()
+        return super()._run_scope()
 
     async def request(
         self,

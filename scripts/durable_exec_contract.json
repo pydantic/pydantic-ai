@@ -4462,6 +4462,19 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._refresh_http_client"
       ]
     },
+    "Model._run_scope": {
+      "engines": [
+        "dbos",
+        "prefect"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::DBOSModel._run_scope",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel._run_scope"
+      ]
+    },
     "Model._with_serving_wrapper": {
       "engines": [
         "dbos",
@@ -5244,6 +5257,20 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._refresh_http_client"
+      ]
+    },
+    "WrapperModel._run_scope": {
+      "engines": [
+        "dbos",
+        "prefect"
+      ],
+      "kinds": [
+        "attribute_read",
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::DBOSModel._run_scope",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel._run_scope"
       ]
     },
     "WrapperModel.accepts_stateless_artifacts": {
