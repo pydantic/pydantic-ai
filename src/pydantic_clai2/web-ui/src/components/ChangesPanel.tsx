@@ -98,13 +98,13 @@ export function ChangesPanel({
   owner: string
   /** Whether to ask: off while a turn runs, so the panel asks again as it ends. */
   active: boolean
-  /** Changes once the session has saved a turn, which ends after the page hears the turn end; the panel asks again. */
+  /** Changes whenever the session list does, including once the session has saved a turn; the panel then asks again. */
   saved: number
   onClose: () => void
 }) {
   const [scope, setScope] = useState<ChangeScope>(() => {
-    const saved = localStorage.getItem('clai-changes-scope')
-    return SCOPES.find((entry) => entry.scope === saved)?.scope ?? 'session'
+    const stored = localStorage.getItem('clai-changes-scope')
+    return SCOPES.find((entry) => entry.scope === stored)?.scope ?? 'session'
   })
   useEffect(() => localStorage.setItem('clai-changes-scope', scope), [scope])
   const { changes, error, refresh } = useChanges(session, scope, owner, active, true, saved)

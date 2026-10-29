@@ -97,7 +97,7 @@ async def test_changes_panel_lists_the_files_of_two_turns(page: Page, changes_ui
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Changes')
     await expect(page.locator('.session.opening')).to_have_count(0)
     composer = page.get_by_role('combobox', name='Message CLAI')
-    # Open while the turns run, the panel and the header's count each ask again once the session has saved each turn.
+    # Opened before the turns, the panel and the header's count each ask again once the session has saved each turn.
     await page.get_by_role('button', name=re.compile(r'^Changes')).click()
     panel = page.get_by_role('complementary', name='Changes')
     files = panel.get_by_role('list', name='Changed files').get_by_role('listitem')
