@@ -154,8 +154,9 @@ says which a model reports.
 
 The timestamps are also recorded on the [`SpeechPart`][pydantic_ai.messages.SpeechPart] in
 [history](history.md), as its `timestamps`. When the user barges in, those starting at or after where
-playback stopped are dropped, along with the speech they timed. Only
-[Azure AI Voice Live](azure.md#speech-timestamps) reports them so far; on other models, the setting emits an
+playback stopped are dropped, along with the speech they timed.
+[Azure AI Voice Live](azure.md#speech-timestamps) and [ElevenLabs Agents](elevenlabs.md#speech-timestamps) report
+them; on other models, the setting emits an
 [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] when the session opens.
 
 ## Input transcription
