@@ -1775,6 +1775,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                     cost=Decimal('0.0006375'),
                 ),
                 model_name=IsStr(),
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -1826,6 +1827,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                     cost=Decimal('0.0005225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -1928,6 +1930,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                     cost=Decimal('0.0006375'),
                 ),
                 model_name=IsStr(),
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -1979,6 +1982,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                     cost=Decimal('0.0005225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -2051,6 +2055,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                     cost=Decimal('0.0002875'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -2101,6 +2106,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                     cost=Decimal('0.0003875'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -2143,6 +2149,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                     cost=Decimal('0.00039'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -2477,12 +2484,13 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
     agent = Agent(_durability_fn_model, name='durability_simple', capabilities=[DBOSDurability()])
 
     @DBOS.workflow()
-    async def run_durable_agent() -> str:
+    async def run_durable_agent() -> tuple[str, str | None]:
         result = await agent.run('Hello DBOS')
-        return result.output
+        return result.output, result.response.model_id
 
     output = await run_durable_agent()
-    assert output == 'Echo: Hello DBOS'
+    # The response records the model the request went to, not the DBOS wrapper around it.
+    assert output == ('Echo: Hello DBOS', _durability_fn_model.model_id)
 
 
 async def test_dbos_durability_model_error_reaches_workflow_with_its_type(dbos: DBOS) -> None:

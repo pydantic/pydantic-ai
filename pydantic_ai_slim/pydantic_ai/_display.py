@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import os
 import platform
 import re
 import shutil
 import sys
+import sysconfig
 from collections.abc import Sequence
+from functools import cache
 from importlib import metadata
 from itertools import zip_longest
+from pathlib import PurePath
 from textwrap import wrap
 from threading import Lock
+from types import FrameType
 from typing import IO, Protocol, cast, get_args
 
 _banner_displayed = False
@@ -207,6 +212,73 @@ def _agent_signal_matches(signal: str) -> bool:
         return any(name.startswith(prefix) for name in os.environ)
     name, _, value = signal.partition('=')
     return os.environ.get(name) == value if value else name in os.environ
+
+
+_OWN_PACKAGES = frozenset({'pydantic_ai', 'pydantic_graph'})
+"""Packages whose frames sit between whoever started a run and the code deciding about a banner."""
+
+_INSTALLED_PACKAGE_DIRS = frozenset({'site-packages', 'dist-packages'})
+
+_UI_ADAPTER_PACKAGE = 'pydantic_ai.ui.'
+
+_TASK_RUNNER_PACKAGES = frozenset({'anyio', 'trio'})
+"""Installed packages that start a task through a coroutine of their own, wrapping the one it runs."""
+
+_COROUTINE_FLAGS = inspect.CO_COROUTINE | inspect.CO_ITERABLE_COROUTINE | inspect.CO_ASYNC_GENERATOR
+
+
+def started_by_installed_package(frame: FrameType | None) -> bool:
+    """Whether the code that started an agent run is an installed package, rather than the user's own.
+
+    A library or platform built on Pydantic AI (an Airflow provider, a CLI installed with `uv tool`)
+    runs agents on its users' behalf, and its users didn't ask for our banner: it would land in their
+    logs or inside the tool's own UI. The user's own script, notebook or app runs from a source tree,
+    while an installed package runs from `site-packages`, so the first frame outside Pydantic AI and
+    the standard library says which of the two started the run.
+
+    Where a chain of coroutines ends in a frame that isn't one, an event loop is stepping a task, and
+    the frames below belong to whatever drives the loop (`uvicorn`, `ipykernel`), not to whoever
+    started the run, unless Pydantic AI's own sync methods drive it. `anyio` and `trio` start a task
+    through a coroutine of their own, so their frames mark the same boundary. A run whose starter
+    lies past such a boundary is not attributed to a package: it keeps the banner, as before. So does
+    a run a UI adapter streams: the web framework pulling the stream is installed, but the app that
+    handed it the adapter's response is the user's.
+
+    Args:
+        frame: The frame to start looking outwards from, inside Pydantic AI.
+    """
+    stdlib_dirs = _stdlib_dirs()
+    below_event_loop = False
+    in_coroutine = False
+    while frame is not None:
+        is_coroutine = bool(frame.f_code.co_flags & _COROUTINE_FLAGS)
+        if in_coroutine and not is_coroutine:
+            below_event_loop = True
+        in_coroutine = is_coroutine
+        filename = frame.f_code.co_filename
+        module = frame.f_globals.get('__name__')
+        package = module.partition('.')[0] if isinstance(module, str) else None
+        if isinstance(module, str) and module.startswith(_UI_ADAPTER_PACKAGE):
+            return False
+        if package in _OWN_PACKAGES:
+            # `run_sync()` and friends drive the loop themselves, so their caller started the run.
+            below_event_loop = False
+        elif package in _TASK_RUNNER_PACKAGES:
+            below_event_loop = True
+        # Checked before the standard library, which a system Python's `site-packages` sits inside.
+        elif not _INSTALLED_PACKAGE_DIRS.isdisjoint(PurePath(filename).parts):
+            return not below_event_loop
+        elif not filename.startswith(stdlib_dirs):
+            return False
+        frame = frame.f_back
+    return False
+
+
+@cache
+def _stdlib_dirs() -> tuple[str, ...]:
+    """Where the standard library lives, whose frames (`asyncio`, `contextlib`) are passed over like ours."""
+    paths = sysconfig.get_paths()
+    return tuple(os.path.join(paths[key], '') for key in ('stdlib', 'platstdlib'))
 
 
 def _banner_suppressed() -> bool:

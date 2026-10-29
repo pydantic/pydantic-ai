@@ -1,12 +1,6 @@
 {
   "allowed_breakages": [
     {
-      "against": "v2.63.0",
-      "fingerprint": "cf0479efa812dfd585f24d22e56af4addbb563ec8a37eec8453ef8676397a959",
-      "reason": "Adds the new `OutputModeFallback` capability to `CAPABILITY_TYPES` (alongside `ModelFallback` from #11679, which shares this change's fingerprint); every existing entry is unchanged.",
-      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11781"
-    },
-    {
       "against": "v2.62.0",
       "fingerprint": "78216eb81400af46f893b51ddc502505de40494f0e809618b9157955c6e33186",
       "reason": "`SignInRequired` was renamed to `SignInRequiredError` (#11326); the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",
@@ -575,6 +569,10 @@
     {
       "path": "src/pydantic_clai2/pydantic_clai2/config/__init__.py",
       "symbol": "STRING_SETTINGS"
+    },
+    {
+      "path": "pydantic_ai_slim/pydantic_ai/capabilities/__init__.py",
+      "symbol": "CAPABILITY_TYPES"
     }
   ]
 }
