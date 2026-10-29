@@ -59,7 +59,12 @@ async def dbos(tmp_path_factory: pytest.TempPathFactory) -> AsyncGenerator[DBOS]
 
 # Function tools run inline in the workflow, so only a step may reach the environment.
 provider = InMemoryProvider(in_unit=lambda: DBOS.step_id is not None)
-agents = scenario_agents(DBOSDurability, prefix='dbos_', provider=provider)
+agents = scenario_agents(
+    DBOSDurability,
+    prefix='dbos_',
+    provider=provider,
+    retrying=lambda: DBOSDurability(mcp_step_config={'retries_allowed': True, 'interval_seconds': 0.01}),
+)
 
 
 @DBOS.workflow()

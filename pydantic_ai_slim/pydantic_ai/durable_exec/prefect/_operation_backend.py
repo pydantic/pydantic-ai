@@ -5,7 +5,12 @@ from collections.abc import Awaitable, Callable
 from prefect import task
 from prefect.context import FlowRunContext
 
-from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOperationId, EventStreamHandlerId
+from pydantic_ai.durable_exec._operation import (
+    CapabilityOperationId,
+    DurableOperationId,
+    EventStreamHandlerId,
+    StepPolicy,
+)
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend, RoleBasedOperationConfig
 from pydantic_ai.durable_exec._workspace import WORKSPACE_OPERATION_ID
 from pydantic_ai.tools import RunContext
@@ -20,6 +25,14 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
     def __init__(self, *, config: PrefectOperationConfig, event_sequence_key: str) -> None:
         super().__init__(namer=PrefectOperationNamer(), config=config)
         self._event_sequence_key = event_sequence_key
+
+    def apply_policy(self, config: TaskConfig, policy: StepPolicy) -> TaskConfig:
+        config = TaskConfig(**config)
+        if not policy.repeatable:
+            config['retries'] = 0
+        if policy.timeout is not None:
+            config['timeout_seconds'] = policy.timeout
+        return config
 
     async def execute(
         self,
