@@ -99,10 +99,12 @@ class Provider(ABC, Generic[InterfaceClient]):
 
     @property
     def canonical_system(self) -> str:
-        """The API family this provider speaks, whose replayed signed data and features it shares.
+        """The service behind this provider, whose replayed signed data and provider-native features it shares.
 
-        Code that decides by API family rather than by provider, such as which model IDs a
-        provider-native tool takes, reads this instead of `name`, so a renamed subclass keeps working.
+        Code that decides by service rather than by provider, such as which model IDs a provider-native
+        tool takes, reads this instead of `name`, so a renamed subclass keeps working. It doesn't group
+        providers by wire protocol: `AzureProvider`, and an `OpenAIProvider` subclass for another service,
+        each have their own.
         For replay, it's the system whose keys and format verify the stateless signed or encrypted data
         this provider returns. That data is encrypted reasoning, thinking and thought signatures, redacted thinking and OpenAI
         compaction items. A model sends it back only to a provider whose `canonical_system` matches, or
