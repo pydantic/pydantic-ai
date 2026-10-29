@@ -192,6 +192,15 @@ class AnthropicModelProfile(ModelProfile, total=False):
     guide](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
     """
 
+    anthropic_accepts_file_and_container_ids: bool
+    """Whether the API accepts Anthropic Files API file IDs and code execution container IDs. Default: `True`.
+
+    `AnthropicModel` sets it to `False` on the Bedrock, Vertex AI and Foundry clients. There, an
+    [`UploadedFile`][pydantic_ai.messages.UploadedFile] from Anthropic raises a `UserError`, a
+    [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]'s Anthropic files aren't uploaded to its
+    container, and no container from earlier in the history, including a paused turn's, is sent.
+    """
+
     anthropic_enforces_strict_schema_limits: bool
     """Whether the API rejects a request whose strict schemas exceed Anthropic's explicit complexity limits. Default: `False`.
 
@@ -212,6 +221,19 @@ class AnthropicModelProfile(ModelProfile, total=False):
     `AsyncAnthropic` client, and not for the Bedrock, Vertex AI and Microsoft Foundry clients, whose platforms batch
     through jobs of their own. Message Batches are sent through an `AsyncAnthropic` client, so setting this for another
     client class raises a `UserError` when a request is batched.
+    """
+
+    anthropic_count_tokens_accepts_server_tools: bool
+    """Whether the `count_tokens` endpoint accepts the web search, web fetch, code execution, tool search and advisor
+    tools. Default: `False`.
+
+    When True, `AnthropicModel.count_tokens` sends those tools, and the advisor's history blocks, as the real request
+    does, so the count matches its `input_tokens`. Without them, the count leaves out their definitions, and the
+    Anthropic API rejects a count whose function tools are all deferred with a 400. When the provider's profile doesn't
+    set it, `AnthropicModel` turns it on for the `AsyncAnthropic` client and leaves it off for the Bedrock, Vertex AI
+    and Foundry clients, whose count endpoints haven't been verified to accept them. Of the endpoints an
+    `AsyncAnthropic` client reaches, the Anthropic API's and Pydantic AI Gateway's are verified: set it to `False` if
+    your client's `base_url` points at a proxy whose count endpoint rejects server tools.
     """
 
 

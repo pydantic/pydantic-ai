@@ -2,22 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Final, overload
 
 import anyio
+from typing_extensions import TypeIs
 
 from pydantic_ai.exceptions import CallDeferred
 from pydantic_ai.framing import close_tag, neutralize_tags, open_tag
 from pydantic_ai.messages import TextContent, ToolReturn, UserContent
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._callable import takes_context
 from pydantic_ai_harness.ask_user._events import AskUserAnsweredEvent, AskUserRequestedEvent
 from pydantic_ai_harness.ask_user._types import (
     TOOL_NAME,
     Answerer,
+    AnyAnswerer,
     AskUserRequest,
     AskUserResponse,
     AskUserResult,
+    ContextAnswerer,
     Questions,
     check_response,
 )
@@ -72,12 +76,26 @@ def ask_user_result(request: AskUserRequest, response: AskUserResponse) -> AskUs
     return ToolReturn(return_value=answers, content=content) if content else answers
 
 
+def _takes_context(answerer: AnyAnswerer[AgentDepsT]) -> TypeIs[ContextAnswerer[AgentDepsT]]:
+    return takes_context(answerer) is True
+
+
 class AskUserToolset(FunctionToolset[AgentDepsT]):
     """Registers `ask_user_question` bound to one answerer, or deferring every call when there is none."""
 
-    def __init__(self, *, answerer: Answerer | None, timeout: float | None = None) -> None:
+    @overload
+    def __init__(self, *, answerer: Answerer | None, timeout: float | None = None) -> None: ...
+
+    @overload
+    def __init__(self, *, answerer: ContextAnswerer[AgentDepsT], timeout: float | None = None) -> None: ...
+
+    def __init__(self, *, answerer: AnyAnswerer[AgentDepsT] | None, timeout: float | None = None) -> None:
         super().__init__()
-        self._answerer = answerer
+        self._answerer: ContextAnswerer[AgentDepsT] | None
+        if answerer is None or _takes_context(answerer):
+            self._answerer = answerer
+        else:
+            self._answerer = lambda ctx, request: answerer(request)
         self._timeout = timeout
         self.add_function(self.ask_user_question, name=TOOL_NAME)
 
@@ -104,7 +122,7 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
         response = AskUserResponse(cancelled=True)  # What observers see if the answerer times out or fails.
         try:
             with anyio.move_on_after(self._timeout) as scope:
-                response = await self._answerer(request)
+                response = await self._answerer(ctx, request)
         except Exception:
             await ctx.emit(AskUserAnsweredEvent(request_id=request.id, response=response, failed=True))
             raise

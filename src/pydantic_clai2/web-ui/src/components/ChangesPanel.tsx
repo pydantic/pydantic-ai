@@ -27,10 +27,17 @@ const PREVIEW_LINES = 60
 
 export const CHANGES_KEY = 'E'
 
-/** The files `session` changed in `scope`, asked again whenever `active` turns on, such as when a turn ends. An answer
- * stays until the next arrives, but only for the session `owner` it was asked for. Without `diffs`, files come with
- * their counts alone, as for the header's count. */
-export function useChanges(session: SessionApi, scope: ChangeScope, owner: string, active: boolean, diffs = true) {
+/** The files `session` changed in `scope`, asked again whenever `active` turns on, such as when a turn ends, and when
+ * `saved` changes, as it does once the session has saved the turn. An answer stays until the next arrives, but only for
+ * the session `owner` it was asked for. Without `diffs`, files come with their counts alone, as for the header's count. */
+export function useChanges(
+  session: SessionApi,
+  scope: ChangeScope,
+  owner: string,
+  active: boolean,
+  diffs = true,
+  saved = 0,
+) {
   const [found, setFound] = useState<{ owner: string; scope: ChangeScope; changes: Changes | null; error: string | null }>()
   const [version, setVersion] = useState(0)
   useEffect(() => {
@@ -44,7 +51,7 @@ export function useChanges(session: SessionApi, scope: ChangeScope, owner: strin
     return () => {
       current = false
     }
-  }, [session, scope, owner, active, diffs, version])
+  }, [session, scope, owner, active, diffs, version, saved])
   const refresh = useCallback(() => setVersion((value) => value + 1), [])
   const mine = found?.owner === owner && found.scope === scope ? found : undefined
   return { changes: mine?.changes ?? null, error: mine?.error ?? null, refresh }
@@ -83,6 +90,7 @@ export function ChangesPanel({
   session,
   owner,
   active,
+  saved,
   onClose,
 }: {
   session: SessionApi
@@ -90,14 +98,16 @@ export function ChangesPanel({
   owner: string
   /** Whether to ask: off while a turn runs, so the panel asks again as it ends. */
   active: boolean
+  /** Changes whenever the session list does, including once the session has saved a turn; the panel then asks again. */
+  saved: number
   onClose: () => void
 }) {
   const [scope, setScope] = useState<ChangeScope>(() => {
-    const saved = localStorage.getItem('clai-changes-scope')
-    return SCOPES.find((entry) => entry.scope === saved)?.scope ?? 'session'
+    const stored = localStorage.getItem('clai-changes-scope')
+    return SCOPES.find((entry) => entry.scope === stored)?.scope ?? 'session'
   })
   useEffect(() => localStorage.setItem('clai-changes-scope', scope), [scope])
-  const { changes, error, refresh } = useChanges(session, scope, owner, active)
+  const { changes, error, refresh } = useChanges(session, scope, owner, active, true, saved)
   // Paths opened or closed by hand; the rest follow their size.
   const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(() => new Map())
   const files = changes?.files ?? []
