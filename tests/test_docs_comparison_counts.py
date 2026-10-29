@@ -52,5 +52,5 @@ def test_comparison_page_counts(page: Path):
     asserted_count(harness, COUNTS['Harness capabilities'], f'{page}: Harness capabilities')
 
     for realtime in re.finditer(r'(?P<count>\w+) providers', text, re.IGNORECASE):
-        if realtime.group('count').lower() in NUMBER_WORDS:
+        if realtime.group('count').lower() in NUMBER_WORDS or realtime.group('count').isdigit():
             asserted_count(realtime, COUNTS['realtime providers'], f'{page}: realtime providers')
