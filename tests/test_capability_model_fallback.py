@@ -40,6 +40,7 @@ from pydantic_ai import (
     exceptions,
     messages as _messages,
 )
+from pydantic_ai._fallback import SpecModelError
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -53,7 +54,6 @@ from pydantic_ai.capabilities import (
     WrapModelRequestHandler,
     WrapperCapability,
 )
-from pydantic_ai.capabilities.model_fallback import _SpecFallbackError  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.exceptions import (
     FallbackExceptionGroup,
     ModelAPIError,
@@ -2220,7 +2220,7 @@ def test_spec_fallback_on_names_every_public_model_api_error():
         for name in exceptions.__all__
         if isinstance(cls := getattr(exceptions, name), type) and issubclass(cls, ModelAPIError)
     }
-    assert set(get_args(_SpecFallbackError)) == public_errors
+    assert set(get_args(SpecModelError)) == public_errors
 
 
 @pytest.mark.parametrize(

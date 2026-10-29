@@ -25,6 +25,8 @@ agent = Agent(capabilities=[ModelFallback('{{ openai:medium }}', '{{ anthropic:m
 
 A model that was already attempted in the step is skipped, whichever capability attempted it, so listing the agent's own model among the candidates doesn't cause a duplicate request.
 
+`ModelFallback` never attempts the same model twice. To retry a model on a transient failure, like a rate limit or a dropped connection, before falling back from it, add [`RetryOnModelErrors`](retry-on-model-errors.md) too: each model in the chain is then retried before the request moves on to the next one. See [Retry or fall back](retry-on-model-errors.md#retry-or-fall-back).
+
 ## When to fall back
 
 By default, `ModelFallback` moves on when a request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], the error a model raises when the provider's API fails, such as a 4xx or 5xx response. The `fallback_on` parameter takes the same forms as [`FallbackModel`'s](../models/overview.md#fallback-model):
@@ -96,7 +98,7 @@ for attempt in result.response.failed_attempts or []:
 When every model has failed or been rejected, `ModelFallback` raises [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] with every exception, plus a [`ResponseRejected`][pydantic_ai.models.fallback.ResponseRejected] counting any rejected responses.
 
 !!! note
-    Provider SDKs often retry failed requests themselves before raising, which delays falling back. Set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0` on the agent, or on each candidate model but the last. As with `FallbackModel`, a candidate's own `settings` apply only to that candidate, and settings on the agent or run apply to every candidate. See [The layers](../retries.md#the-layers) in the retries guide for the full retry map.
+    Provider SDKs often retry failed requests themselves before raising, which delays falling back. Set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0` on the agent, or on each candidate model but the last, and add [`RetryOnModelErrors`](retry-on-model-errors.md) to retry each model in a way you control. As with `FallbackModel`, a candidate's own `settings` apply only to that candidate, and settings on the agent or run apply to every candidate. See [The layers](../retries.md#the-layers) in the retries guide for the full retry map.
 
 A run that reaches its `timeout=` stops with [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] wherever it is, including in the middle of a candidate's request: the remaining candidates aren't attempted. Likewise, a request that exceeds the run's [usage limits](../agent.md#usage-limits) raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] whatever `fallback_on` says, as another model wouldn't change that.
 
@@ -136,7 +138,7 @@ Each model attempted is an *attempt* within the same request step, not a new ste
 
 ## Failed attempts and telemetry
 
-Failed attempts are recorded the same way [`FallbackModel` records them](../models/overview.md#failed-attempts-and-usage). The response that answers lists every attempt `ModelFallback` moved on from in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts], and when every model fails, the [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] lists them in `attempts`. A rejected response's tokens and cost are counted once, in the run's [`RunUsage`][pydantic_ai.usage.RunUsage], whichever of the two you use.
+Failed attempts are recorded the same way [`FallbackModel` records them](../models/overview.md#failed-attempts-and-usage). The response that answers lists every attempt `ModelFallback` moved on from in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts], along with any attempt [`RetryOnModelErrors`](retry-on-model-errors.md) retried, which has a [`kind`][pydantic_ai.messages.ModelRequestAttempt.kind] of `'retry'` rather than `'fallback'`, and when every model fails, the [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] lists them in `attempts`. A rejected response's tokens and cost are counted once, in the run's [`RunUsage`][pydantic_ai.usage.RunUsage], whichever of the two you use.
 
 When the agent is [instrumented](../logfire.md), the model request (`chat`) span is named after the model that answered and describes it, with its usage. Each failed attempt gets its own `model request attempt <model name>` child span with an ERROR status: an error is recorded on it as an exception, and a rejected response carries its usage, cost and finish reason. The span names the model it tried in its `gen_ai.request.model` and `gen_ai.provider.name` attributes, and its zero-based position among the request's attempts in `pydantic_ai.model_request.attempt`. When every model fails, the `chat` span is named after the last model attempted. See [Failed attempts and usage](../models/overview.md#failed-attempts-and-usage) for how these spans relate to the ones the tried model opens itself.
 

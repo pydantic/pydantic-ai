@@ -269,6 +269,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     'ResolveModelId': Anonymous('returns `None` to let a later capability resolve; chaining is the feature'),
     'SelectModel': Anonymous('receives the lower-precedence model; chaining is designed'),
     'ModelFallback': Anonymous('each instance walks its own chain; the innermost handles a failure first'),
+    'RetryOnModelErrors': Anonymous(
+        'each instance retries its own `retry_on`; all count the same attempts at a model against their `max_attempts`'
+    ),
     'BatchModelRequests': Anonymous(
         'each instance is its own batching pool; a model already batched is not batched again'
     ),

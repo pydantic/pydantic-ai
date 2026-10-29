@@ -20,13 +20,14 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, assert_never
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeGuard, assert_never, cast, get_args
 
 from opentelemetry.trace import Span, Tracer
 
+from . import exceptions as _exceptions
 from ._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
 from ._utils import PeekableAsyncStream, await_maybe, get_first_param_type, is_str_dict
-from .exceptions import FallbackExceptionGroup, UserError
+from .exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     ModelMessage,
@@ -47,6 +48,9 @@ __all__ = (
     'ResponseHandler',
     'FallbackOn',
     'FallbackPredicates',
+    'SpecModelError',
+    'spec_list',
+    'spec_error_types',
     'FallbackChain',
     'AttemptLog',
     'request_stream_until_first_event',
@@ -101,6 +105,61 @@ FallbackOn = (
 and [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]."""
 
 
+SpecModelError = Literal[
+    'ModelAPIError',
+    'ModelHTTPError',
+    'ModelRateLimitError',
+    'ModelQuotaExceededError',
+    'ModelUnavailableError',
+    'ModelOverloadedError',
+    'ModelServerError',
+    'ModelConnectionError',
+    'ModelTimeoutError',
+    'ModelRequestRejectedError',
+    'ModelContextWindowExceededError',
+    'ModelAuthenticationError',
+    'ModelNotFoundError',
+    'ModelRequestTimeout',
+]
+"""The exceptions an agent spec can name in `ModelFallback`'s `fallback_on` and `RetryOnModelErrors`' `retry_on`.
+
+Every public `ModelAPIError` class.
+"""
+
+_SPEC_MODEL_ERRORS: dict[str, type[ModelAPIError]] = {
+    name: getattr(_exceptions, name) for name in get_args(SpecModelError)
+}
+
+
+def spec_list(value: object, *, owner: str, param: str) -> Sequence[object]:
+    """A spec argument given as one name or a list of them, as a list.
+
+    Anything else, like a mapping, whose keys iterating would silently take as the names, is rejected.
+    """
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, Sequence):
+        return cast(Sequence[object], value)
+    raise UserError(f'`{owner}` `{param}` in an agent spec must be a name or a list of names, got {value!r}.')
+
+
+def spec_error_types(value: object, *, owner: str, param: str) -> tuple[type[ModelAPIError], ...]:
+    """The `ModelAPIError` classes a spec argument names, one name or a list of them."""
+    # Spec arguments reach here unvalidated: the annotations are what the published spec schema
+    # advertises, not something that rejects other values on the way in.
+    given = spec_list(value, owner=owner, param=param)
+    error_types = tuple(
+        _SPEC_MODEL_ERRORS[name] for name in given if isinstance(name, str) and name in _SPEC_MODEL_ERRORS
+    )
+    if len(error_types) != len(given):
+        unknown = [name for name in given if not (isinstance(name, str) and name in _SPEC_MODEL_ERRORS)]
+        raise UserError(
+            f'`{owner}` `{param}` in an agent spec takes names of `ModelAPIError` classes, '
+            f'got {unknown!r}. Valid names: {", ".join(_SPEC_MODEL_ERRORS)}.'
+        )
+    return error_types
+
+
 class ResponseRejected(Exception):
     """Raised within a `FallbackExceptionGroup` when model responses are rejected by a response handler."""
 
@@ -130,11 +189,13 @@ class FallbackPredicates:
     response_handlers: list[ResponseHandler]
 
     @classmethod
-    def parse(cls, fallback_on: FallbackOn, *, owner: str) -> FallbackPredicates:
-        """Parse the `fallback_on` argument into exception and response handlers.
+    def parse(
+        cls, fallback_on: FallbackOn, *, owner: str, param: str = 'fallback_on', default: str = '(ModelAPIError,)'
+    ) -> FallbackPredicates:
+        """Parse the `fallback_on` argument, or another argument of the same form, into exception and response handlers.
 
-        `owner` names the class in the error raised for an empty `fallback_on`, so the message
-        points at whichever entry point the user actually called.
+        `owner` and `param` name the class and argument in the error raised for an empty value, so the message
+        points at whichever entry point the user actually called, and `default` is the value it suggests instead.
         """
         predicates = cls(exception_handlers=[], response_handlers=[])
         if _is_exception_type(fallback_on):
@@ -158,8 +219,8 @@ class FallbackPredicates:
 
         if not predicates.exception_handlers and not predicates.response_handlers:
             raise UserError(
-                f'`{owner}` created with an empty `fallback_on`: all exceptions will propagate and all responses '
-                'will be accepted. Use `fallback_on=(ModelAPIError,)` for the default behavior.'
+                f'`{owner}` created with an empty `{param}`: all exceptions will propagate and all responses '
+                f'will be accepted. Use `{param}={default}` for the default behavior.'
             )
         return predicates
 
@@ -172,8 +233,8 @@ class FallbackPredicates:
         else:
             self.exception_handlers.append(handler)
 
-    async def should_fallback(self, value: Exception | ModelResponse) -> bool:
-        """Check if any handler wants to trigger fallback."""
+    async def matches(self, value: Exception | ModelResponse) -> bool:
+        """Check if any handler matches `value`, an error or a response."""
         handlers = self.exception_handlers if isinstance(value, Exception) else self.response_handlers
         for handler in handlers:
             # pyright can't narrow handler's param type from the isinstance check on value
@@ -226,18 +287,20 @@ class AttemptLog:
         parent: Span | None,
         tracer: Tracer | None,
         rejected_status: str = 'Response rejected',
+        kind: Literal['retry', 'fallback'] = 'fallback',
     ) -> None:
         """Record that the attempt at `model` started at `start` failed with `failure`, an error or a rejected response.
 
         `parent` is the request's `chat` span and `tracer` the one it was opened with; without both, only the
         record is kept. `rejected_status` is the span's status for a rejected response (see `record_attempt_span`).
+        `kind` says whether the request moved on from the attempt to the same model or another one.
         """
         # A nested `FallbackModel` recorded the attempts it made itself, and their usage was billed too.
         if isinstance(failure, ModelResponse):
             self.attempts.extend(failure.failed_attempts or [])
         elif isinstance(failure, FallbackExceptionGroup):
             self.attempts.extend(failure.attempts)
-        attempt = failed_attempt(model, failure, start=start, duration=start.elapsed())
+        attempt = failed_attempt(model, failure, start=start, duration=start.elapsed(), kind=kind)
         self.attempts.append(attempt)
         if parent is not None and tracer is not None:
             record_attempt_span(
@@ -279,7 +342,7 @@ class FallbackChain:
 
     async def falls_back(self, failure: Exception | ModelResponse) -> bool:
         """Whether `fallback_on` moves on from `failure`, an error or a response, noting it for the group if so."""
-        if not await self.predicates.should_fallback(failure):
+        if not await self.predicates.matches(failure):
             return False
         if isinstance(failure, Exception):
             self.exceptions.append(failure)
@@ -297,10 +360,10 @@ class FallbackChain:
             warn_response_handlers_not_applied(self.owner)
 
 
-def warn_response_handlers_not_applied(owner: str) -> None:
-    """Warn that `owner`'s response handlers can't judge a streamed response, which is accepted as is."""
+def warn_response_handlers_not_applied(owner: str, param: str = 'fallback_on') -> None:
+    """Warn that `owner`'s response handlers in `param` can't judge a streamed response, which is accepted as is."""
     warnings.warn(
-        f'`{owner}` response handlers in `fallback_on` are not applied to streamed requests, '
+        f'`{owner}` response handlers in `{param}` are not applied to streamed requests, '
         'so the streamed response is accepted as is. A request is streamed whenever something consumes '
         "the run's events, such as `run_stream()`, `run_stream_events()`, `iter()` with `node.stream()`, "
         'an `event_stream_handler`, or an event listener or hook.',

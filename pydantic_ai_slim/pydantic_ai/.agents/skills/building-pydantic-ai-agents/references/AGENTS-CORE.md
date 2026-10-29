@@ -329,6 +329,8 @@ agent = Agent(
 
 In a YAML/JSON agent spec, declare it as `- ModelFallback: [anthropic:claude-opus-5-5]`, or `- ModelFallback: {models: [...], fallback_on: [ModelRateLimitError, ModelUnavailableError]}`. A spec's `fallback_on` takes only names of `ModelAPIError` classes from `pydantic_ai.exceptions`; handlers need Python. Model names resolve lazily, so `ResolveModelId` aliases work there too.
 
+To retry the *same* model on transient failures (rate limits, unavailable/overloaded models, 5xx, connection errors and transport timeouts), add the `RetryOnModelErrors` capability, e.g. `RetryOnModelErrors(max_attempts=4)`, and set `model_settings={'max_retries': 0}` so the provider SDK doesn't retry underneath it. It waits the error's `retry_after` or an exponential, jittered backoff from `initial_delay` up to `max_delay`, gives up (raising the error) when the wait would exceed `max_delay` or the run's deadline, and never retries an error with an `x-should-retry: false` header. `retry_on` takes the same forms as `fallback_on`. With `ModelFallback` too, in either order, each model is retried up to `max_attempts` times before falling back, and `failed_attempts` lists retries (`kind='retry'`) and fallbacks (`kind='fallback'`) in one list. A stream is retried only before its first event reaches the consumer. Spec form: `- RetryOnModelErrors: {retry_on: [ModelRateLimitError], max_attempts: 5}`.
+
 Good defaults:
 
 - primary expensive/strong model, cheaper fallback for resilience

@@ -72,6 +72,7 @@ from pydantic_ai.capabilities import (
     PrepareTools,
     ProcessEventStream,
     ResolveModelId,
+    RetryOnModelErrors,
     SelectModel,
     SetToolMetadata,
     Toolset,
@@ -471,6 +472,65 @@ async def test_durability_exhausted_fallback_fails_the_workflow(client: Client):
             )
     cause = _workflow_failure_cause(exc_info.value)
     assert cause.type == FallbackExceptionGroup.__name__
+
+
+# --- Durability with the `RetryOnModelErrors` capability ---
+
+
+def _unavailable_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelHTTPError.for_category(
+        ModelUnavailableError, status_code=503, model_name='unavailable', headers={'retry-after-ms': '10'}
+    )
+
+
+retry_durable_agent = Agent(
+    FunctionModel(_unavailable_model_fn, model_name='unavailable'),
+    name='durability_retry_agent',
+    capabilities=[
+        RetryOnModelErrors(max_attempts=2),
+        ModelFallback('fallback_target'),
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            models={'fallback_target': FunctionModel(_fallback_target_fn, model_name='fallback_target')},
+        ),
+    ],
+)
+
+
+@workflow.defn
+class RetryDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> tuple[str, list[tuple[str, str, float | None]]]:
+        result = await retry_durable_agent.run(prompt)
+        attempts = result.response.failed_attempts or []
+        return result.output, [(attempt.model_name, attempt.kind, attempt.retry_after) for attempt in attempts]
+
+
+async def test_durability_retry_waits_on_a_durable_timer(client: Client):
+    """Each retry is an activity of its own, and the wait before it is a workflow timer, not a sleep in workflow code.
+
+    Once the model's attempts are used up, `ModelFallback` moves on to the next model, without a wait.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RetryDurableAgentWorkflow],
+        plugins=[AgentPlugin(retry_durable_agent)],
+    ):
+        wf = await client.start_workflow(
+            RetryDurableAgentWorkflow.run,
+            args=['hello'],
+            id=RetryDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        output = await wf.result()
+        history = await wf.fetch_history()
+    assert output == (
+        'from fallback',
+        [('unavailable', 'retry', 0.01), ('unavailable', 'fallback', 0.01)],
+    )
+    assert _scheduled_activity_count(history) == 3
+    assert len([e for e in history.events if e.HasField('timer_started_event_attributes')]) == 1
 
 
 _backup_streamed: list[str] = []
