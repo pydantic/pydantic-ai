@@ -23,6 +23,7 @@ from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
     discover_instruction_files,
     find_dir_context_file,
+    find_instruction_paths,
     render_context_file,
     render_context_file_path,
     render_context_files,
@@ -41,6 +42,10 @@ _ASSET_ROOTS_HINT = (
 _POINTER_NOTE = (
     'A directory you just accessed has an instruction file, not loaded here. Its path is in the '
     '`<context-file>` tag that follows. Read the file if it is relevant to your task.'
+)
+_UNTRUSTED_NOTE = (
+    'This repo has instruction files that are not loaded here, because the operator does not control '
+    "this workspace's files: {paths}. Read them with your file tools if they are relevant to your task."
 )
 _DEFAULT_TRAVERSAL_TOOL_NAMES = frozenset({'list_directory', 'read_file'})
 _DEFAULT_TRAVERSAL_PATH_ARG = 'path'
@@ -66,7 +71,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        up to `home_dir`, deduped, ancestor-first. These are read once at run start
        and injected as system instructions via `get_instructions`, so they stay in
        the cached prefix, stable within a run; a change between runs of a
-       conversation is appended rather than rewritten.
+       conversation is appended rather than rewritten. In an untrusted workspace
+       (`ctx.workspace.trusted` is `False`) the files are not read: the
+       instructions name them, and the model reads them with its file tools.
 
     2. Asset inventory (`expose_inventory_tool`, off by default): a tool that
        reports where the repo's CE assets live (`.claude`/`.agents`/`.codex`/
@@ -145,6 +152,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     _context_files: list[ContextFile] | None = field(default=None, init=False, repr=False, compare=False)
     """Walk-up result for this run, loaded once in `before_run` via `ctx.workspace`."""
 
+    _untrusted_paths: list[Path] | None = field(default=None, init=False, repr=False, compare=False)
+    """The walk-up's files in an untrusted workspace, named in the instructions instead of loaded."""
+
     _seen_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
     """Run-scoped set of directories already surfaced by Strategy 3."""
 
@@ -173,12 +183,16 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         """
         run = replace_no_init(self)
         run._context_files = None
+        run._untrusted_paths = None
         run._seen_dirs = set()
         run._cached_working_dir = None
         return run
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Fail without a workspace, and load walk-up instruction files so `get_instructions` is sync."""
+        """Fail without a workspace, and load walk-up instruction files so `get_instructions` is sync.
+
+        In an untrusted workspace, only find which files exist.
+        """
         require_workspace(ctx.workspace, 'RepoContext', ctx.messages)
         if not self.autoload_instructions:
             return
@@ -187,7 +201,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         home = None
         if self.home_dir is not None:
             home = Path(await workspace.resolve(workspace_path(Path(self.home_dir))))
-        self._context_files = await discover_instruction_files(workspace, working_dir, home, self.filenames)
+        if workspace.trusted:
+            self._context_files = await discover_instruction_files(workspace, working_dir, home, self.filenames)
+        else:
+            self._untrusted_paths = await find_instruction_paths(workspace, working_dir, home, self.filenames)
 
     def get_instructions(self) -> str | Callable[[RunContext[AgentDepsT]], str | None] | None:
         """Cache-stable instructions resolved after `before_run` loads workspace files."""
@@ -212,6 +229,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if self._context_files:
             assert self._cached_working_dir is not None, '`before_run` resolves it before loading files'
             parts.append(render_context_files(self._context_files, relative_to=self._cached_working_dir))
+        if self._untrusted_paths:
+            paths = ', '.join(f'`{self._label(path)}`' for path in self._untrusted_paths)
+            parts.append(_UNTRUSTED_NOTE.format(paths=paths))
         if self.expose_inventory_tool:
             parts.append(self._inventory_hint())
         return '\n\n'.join(parts) or None

@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
 from pydantic_ai_harness.memory._file import FileStore
@@ -108,7 +109,11 @@ class Memory(AbstractCapability[AgentDepsT]):
     """Static or per-run tenant namespace, never exposed as a tool argument."""
 
     inject_memory: bool = True
-    """Inject stored memory when true; otherwise inject static tool guidance only."""
+    """Inject stored memory when true; otherwise inject static tool guidance only.
+
+    A `FileStore` in an untrusted workspace (`trusted=False`) is never injected: the operator doesn't control
+    its files, so they reach the model only when it reads them with a tool.
+    """
 
     max_tokens: int = 2_000
     """Approximate total token ceiling for the complete injected memory section."""
@@ -290,6 +295,17 @@ class Memory(AbstractCapability[AgentDepsT]):
             max_tokens=self.max_tokens,
         )
 
+    def _injected_store(self, ctx: RunContext[AgentDepsT]) -> tuple[MemoryStore, str] | None:
+        """The run's store and scope when its memory is injected; not for a `FileStore` in an untrusted workspace."""
+        if not self.inject_memory:
+            return None
+        store, scope = self.resolve_scope(ctx)
+        if isinstance(store, FileStore):
+            files = store.workspace or ctx.workspace
+            if isinstance(files, Workspace) and not files.trusted:
+                return None
+        return store, scope
+
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -303,9 +319,10 @@ class Memory(AbstractCapability[AgentDepsT]):
         text reads as a new message from the user. If compaction later in the run drops the snapshot the run
         started with, the same snapshot is enqueued again, without reading the store again.
         """
-        if not self.inject_memory:
+        injected = self._injected_store(ctx)
+        if injected is None:
             return request_context
-        store, scope = self.resolve_scope(ctx)
+        store, scope = injected
         metadata = snapshot_metadata(scope, self.id)
         scope_hash = metadata['scope']
         # Compaction replaces what came before its boundary, so a snapshot there is no longer seen by the model.

@@ -508,7 +508,8 @@ every activity reattaches to that environment.
 ## RepoContext
 
 Loads `CLAUDE.md`/`AGENTS.md` into instructions at run start (stable within a run; a change between
-runs of a conversation is appended rather than rewritten). With `expose_inventory_tool=True` it
+runs of a conversation is appended rather than rewritten). In an untrusted workspace (`trusted=False`) it
+names the files instead, and the model reads them with its file tools. With `expose_inventory_tool=True` it
 exposes `inventory_agent_context()` (locates `.claude`/`.agents`/`.codex`/`.grok` skills, agents,
 hooks), which is left out when `FileSystem` is on the agent and its asset roots are inside the working
 directory (the defaults are; `unless_tool_kind=READ_FILE_KIND`).

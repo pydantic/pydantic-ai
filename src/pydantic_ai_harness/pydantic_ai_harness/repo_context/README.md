@@ -117,6 +117,13 @@ the same weight as the instructions you write yourself. That is what the strateg
 is for, and it means the working directory and `home_dir` should hold only
 instruction files you would put in your own instructions.
 
+In an [untrusted workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/#untrusted-workspaces)
+(`trusted=False`), walk-up files are not loaded. The instructions name the ones
+that exist, by their configured names, and the model reads them with its file
+tools, so their contents reach it as tool output. Files above the working
+directory, found by walking up to `home_dir`, can be read only if
+`FileSystem(root_dir=...)` contains them.
+
 Nested files are different: the model chooses which directories to read, and
 those can include vendored code or a checkout someone else wrote. Their contents
 and paths reach the model as a user message, not as instructions. The

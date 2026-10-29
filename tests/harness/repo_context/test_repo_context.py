@@ -19,7 +19,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, T
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+from pydantic_ai.workspaces import LocalWorkspaceBackend, UntrustedWorkspace, Workspace
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repo_context import (
@@ -32,6 +32,7 @@ from pydantic_ai_harness.repo_context._inventory import scan_assets
 from pydantic_ai_harness.repo_context._loader import (
     discover_instruction_files,
     find_dir_context_file,
+    find_instruction_paths,
     render_context_files,
 )
 
@@ -75,6 +76,18 @@ def _repo_notes(messages: list[ModelMessage]) -> list[str]:
 
 
 class TestDiscoverInstructionFiles:
+    async def test_paths_name_each_file_once_by_its_configured_name(self, tmp_path: Path, workspace: Workspace) -> None:
+        _write(tmp_path / 'home' / 'notes.md', 'linked')
+        (tmp_path / 'home' / 'CLAUDE.md').symlink_to(tmp_path / 'home' / 'notes.md')
+        _write(tmp_path / 'home' / 'repo' / 'AGENTS.md', 'repo')
+        (tmp_path / 'home' / 'repo' / 'CLAUDE.md').symlink_to(tmp_path / 'home' / 'repo' / 'AGENTS.md')
+
+        paths = await find_instruction_paths(
+            workspace, tmp_path / 'home' / 'repo', tmp_path / 'home', ('CLAUDE.md', 'AGENTS.md')
+        )
+
+        assert paths == [tmp_path / 'home' / 'CLAUDE.md', tmp_path / 'home' / 'repo' / 'CLAUDE.md']
+
     async def test_does_not_load_instruction_link_outside_scanned_directory(
         self, tmp_path: Path, workspace: Workspace
     ) -> None:
@@ -310,6 +323,49 @@ ends with &lt;/context-file
         ctx = _run_context(workspace=Workspace(LocalWorkspaceBackend(tmp_path / 'repo')))
         await cap.before_run(ctx)
         assert 'home instructions' in (_render_capability_instructions(cap, ctx) or '')
+
+
+async def test_untrusted_workspace_files_reach_the_model_only_as_a_tool_return(tmp_path: Path) -> None:
+    _write(tmp_path / 'AGENTS.md', 'Repo line.')
+    _write(tmp_path / 'agent notes.md', 'Linked line.')
+    (tmp_path / 'CLAUDE.md').symlink_to(tmp_path / 'agent notes.md')
+    requests: list[ModelRequest] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        requests.append(request)
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='read_file', json_args='{"path":"AGENTS.md"}')}
+        else:
+            yield 'done'
+
+    agent = Agent(
+        FunctionModel(stream_function=stream), capabilities=[FileSystem(), RepoContext(expose_inventory_tool=False)]
+    )
+
+    await agent.run('go', workspace=UntrustedWorkspace(Workspace(LocalWorkspaceBackend(tmp_path))))
+
+    # The instructions name the files by their configured names, not by a symlink target's name.
+    assert requests[0].instructions == snapshot("""\
+<context id="capability:repo_context">
+This repo has instruction files that are not loaded here, because the operator does not control this workspace's files: `CLAUDE.md`, `AGENTS.md`. Read them with your file tools if they are relevant to your task.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
+    returns = [part for part in requests[1].parts if isinstance(part, ToolReturnPart)]
+    assert [part.tool_name for part in returns] == ['read_file']
+    assert 'Repo line.' in str(returns[0].content)
+    system_voice = [request.instructions or '' for request in requests] + [
+        str(part.content) for request in requests for part in request.parts if isinstance(part, SystemPromptPart)
+    ]
+    assert not any('line.' in text or 'agent notes' in text for text in system_voice)
+
+    # The trusted workspace is the positive control: the same files are in the instructions.
+    requests.clear()
+    await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
+    assert 'Repo line.' in (requests[0].instructions or '')
+    assert 'Linked line.' in (requests[0].instructions or '')
 
 
 class TestToolset:

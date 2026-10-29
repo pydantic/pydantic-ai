@@ -54,7 +54,9 @@ from pydantic_ai.workspaces import (
     CommandResult,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
+    UntrustedWorkspace,
     Workspace,
+    WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
     WorkspaceReadOnlyError,
@@ -1123,6 +1125,30 @@ class TestSearchMemory:
 
 
 class TestInjection:
+    async def test_files_in_an_untrusted_workspace_are_not_injected(self, tmp_path: Path) -> None:
+        for directory, fact in ((tmp_path / 'run' / 'memory', 'run fact'), (tmp_path / 'own', 'own fact')):
+            (directory / 'main').mkdir(parents=True)
+            (directory / 'main' / 'MEMORY.md').write_text(f'- a {fact}', encoding='utf-8')
+        run = LocalWorkspaceBackend(tmp_path / 'run')
+        own = LocalWorkspaceBackend(tmp_path / 'own')
+        seen: list[str] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(_user_text(messages) + _latest_instructions(messages))
+            return ModelResponse(parts=[TextPart('done')])
+
+        async def run_with(store: FileStore, workspace: WorkspaceBackend) -> str:
+            await Agent(FunctionModel(model), capabilities=[Memory(store=store, guidance='')]).run(
+                'go', workspace=workspace
+            )
+            return seen[-1]
+
+        assert 'run fact' in await run_with(FileStore('memory'), run)
+        assert 'fact' not in await run_with(FileStore('memory'), UntrustedWorkspace(Workspace(run)))
+        assert 'fact' not in await run_with(FileStore('.', workspace=UntrustedWorkspace(Workspace(own))), run)
+        # A trusted store of its own is injected whatever the run's workspace is.
+        assert 'own fact' in await run_with(FileStore('.', workspace=own), UntrustedWorkspace(Workspace(run)))
+
     async def test_heading_is_omitted_by_default(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- a durable fact')

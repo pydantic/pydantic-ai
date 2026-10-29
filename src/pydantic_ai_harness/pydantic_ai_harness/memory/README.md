@@ -76,6 +76,8 @@ Snapshots are recognized by the metadata on their `TextContent`, `{'origin': 'py
 
 When combining it with compaction, list compaction before `Memory`, so `Memory` sees the history compaction leaves. If compaction drops the snapshot a run started with, `Memory` enqueues that same snapshot again on the same request, without reading the store again. It lands at the end of the request being sent, after its tool results, which is the one place every compaction keeps, native compaction included; on a later run's first request it records the current memory again if needed.
 
+A `FileStore` whose files are in an [untrusted workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/#untrusted-workspaces) (`trusted=False`) is not injected: its files reach the model only when it reads them with a tool. A store with a trusted `workspace=` of its own is injected as usual.
+
 Set `inject_memory=False` to keep memory out of the conversation entirely. The tools remain available, and the model can fetch memory only when it needs it. Snapshots that earlier runs added stay in the history:
 
 ```python
