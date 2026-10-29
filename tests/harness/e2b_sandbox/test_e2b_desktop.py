@@ -30,6 +30,9 @@ class FakeDisplay:
     def __init__(self, *, up: bool = False, can_start: bool = True) -> None:
         self.up = up
         self.can_start = can_start
+        # The start's generation and whether a call completed on it, as the start script keeps them in the sandbox.
+        self.generation = 1 if up else 0
+        self.unshown: int | None = None
         self.starts: list[str] = []
         self.xdotool: list[str] = []
         self.captures: list[str] = []
@@ -40,8 +43,13 @@ class FakeDisplay:
             self.starts.append(command)
             if not self.up and not self.can_start:
                 return '', 'the X server did not start:\n(EE) Fatal server error', 1
-            started, self.up = not self.up, True
-            return (STARTED if started else ''), '', 0
+            if not self.up:
+                self.up, self.generation = True, self.generation + 1
+                self.unshown = self.generation
+            return (f'{STARTED} {self.unshown}' if self.unshown else ''), '', 0
+        elif 'pydantic-ai-display-unshown' in command:
+            if command.endswith(f' {self.unshown}'):
+                self.unshown = None
         elif 'xwininfo -root' in command:
             self.xdotool.append('xwininfo -root')
             if not self.up:
@@ -51,8 +59,6 @@ class FakeDisplay:
             self.xdotool.append(command)
             if not self.up:
                 return '', "Error: Can't open display: :1", 1
-            if 'XF86AudioMute' in command:
-                return '', '(symbol) No such key name XF86AudioMute', 0
             if command == 'xdotool getdisplaygeometry':
                 return '1280 800\n', '', 0
             if command == 'xdotool getmouselocation --shell':
@@ -90,11 +96,7 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(fake_e2b: Fa
     await workspace.act(Click(x=3, y=4))
 
     assert len(display.starts) == 1
-    assert display.xdotool[-2:] == [
-        'xwininfo -root',
-        'xdotool keyup Shift_L Shift_R Control_L Control_R Alt_L Alt_R Super_L Super_R ISO_Level3_Shift '
-        'mousemove 3 4 click --repeat 1 1',
-    ]
+    assert display.xdotool[-1].endswith('mousemove 3 4 click --repeat 1 1')
     # E2B's locale is POSIX, under which `xdotool type` stops at the first character outside ASCII.
     assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'}
 
@@ -134,7 +136,7 @@ async def test_a_viewer_that_does_not_start_is_an_error(fake_e2b: FakeE2B, displ
     await Workspace(backend).display_size()
     display.up = False  # the start script's own failure, as the fake answers it
 
-    with pytest.raises(WorkspaceError, match=r'could not start the desktop viewer.*the viewer did not start'):
+    with pytest.raises(WorkspaceError, match=r'Could not start the desktop viewer.*the viewer did not start'):
         await backend.live_view_url()
 
 

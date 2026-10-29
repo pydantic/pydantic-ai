@@ -252,7 +252,8 @@ def start_x_server(log: str, *, then: str = '') -> str:
         # belongs to another process. A running X server's lock stays, whichever server it is, such as `Xvnc`.
         f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
         f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
-        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{log} & xvfb=$!; i=0; '
+        # `-noreset`: Xvfb otherwise resets when its last client leaves, dropping the keys `xmodmap` mapped for typing.
+        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -noreset >/dev/null 2>{log} & xvfb=$!; i=0; '
         'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
         'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
         f"echo 'the X server did not start:' >&2; tail -n 5 {log} >&2; exit 1; fi; "

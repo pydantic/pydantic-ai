@@ -155,8 +155,9 @@ _START_DESKTOP = start_x_server(_XVFB_LOG) + (
 """Starts an X display of the size `$1` names, such as `1280x800`, unless one is running, and the XFCE desktop.
 
 XFCE starts unless its session is running, so starting it every time recovers one that died, and the script waits up
-to 10 seconds for its desktop window, so the first screenshot isn't black; a template without XFCE gets a display with no window manager. Output goes to
-files, not the command's stream, which E2B keeps open while a background child holds it.
+to 10 seconds for its desktop window, so the first screenshot isn't black; a template without XFCE gets a display with
+no window manager. Output goes to files, not the command's stream, which E2B keeps open while a background child holds
+it.
 """
 
 
@@ -363,7 +364,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
                 self,
                 self._desktop_size,
                 _START_DESKTOP,
-                lambda: f'E2B sandbox {self._ref and self._ref.id}',
+                lambda: f'E2B sandbox {self.ref.id if self.ref else "(not created)"}',
                 screen_key=lambda: self.ref,
             )
         )
@@ -830,7 +831,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         result = await self.run(['sh', '-c', _START_VIEWER], timeout=30)
         if result.exit_code != 0:
             raise WorkspaceError(
-                f'could not start the desktop viewer: the template needs x11vnc and noVNC in /opt/noVNC '
+                f'Could not start the desktop viewer: the template needs x11vnc and noVNC in /opt/noVNC '
                 f'({(result.stderr or result.stdout).strip()})'
             )
         sandbox = await self.get_sandbox()
