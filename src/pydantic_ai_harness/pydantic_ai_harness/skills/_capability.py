@@ -6,7 +6,7 @@ import warnings
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import get_args, overload
+from typing import Any, get_args, overload
 
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability
@@ -212,6 +212,36 @@ class Skills(AbstractCapability[AgentDepsT]):
                 scanner,
             ),
         )
+
+    @classmethod
+    def from_spec(
+        cls,
+        directories: str | Sequence[str],
+        *,
+        include: Sequence[str] | None = None,
+        exclude: Sequence[str] | None = None,
+        missing_directories: MissingDirectories = 'error',
+        duplicate_names: DuplicateNames = 'error',
+        unknown_names: UnknownNames = 'error',
+        **kwargs: Any,
+    ) -> Skills[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, it would read
+        `__init__`, whose `Collection[str]` selectors and `workspace` backend have no JSON schema
+        and would drop the long form, leaving only `Skills: <directories>`. `**kwargs` reaches
+        `__init__` unchanged, so a spec that set anything else still loads.
+        """
+        options: dict[str, Any] = {
+            'include': include,
+            'exclude': exclude,
+            'missing_directories': missing_directories,
+            'duplicate_names': duplicate_names,
+            'unknown_names': unknown_names,
+            **kwargs,
+        }
+        # One dict, because `__init__`'s overloads reject an `include` and `exclude` that are both optional.
+        return cls(directories, **options)
 
     def __repr__(self) -> str:
         """Show only the `Skills` configuration that callers control."""
