@@ -31,7 +31,7 @@ def event_ctx(ctx: RunContext[AgentDepsT], capability: str) -> RunContext[AgentD
         tool = tools.get(name)
         if tool is None or tool.tool_def.capability_id not in ctx.capabilities:
             raise UserError(
-                f'The `{name}` tool emits capability events, which Pydantic AI accepts only from '
+                f'The {name!r} tool emits capability events, which Pydantic AI accepts only from '
                 f'tools a capability contributes. Pass `capabilities=[{capability}()]` rather than its '
                 'toolset in `toolsets=`.'
             )

@@ -114,6 +114,12 @@ beyond the project directory without spelling out absolute paths. `root_dir`
 must contain the working directory. To work in a subdirectory, set it on the
 workspace instead (`LocalWorkspace('./repo')`).
 
+[`PrefixTools`](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) renames the tools so the model can tell two
+`FileSystem`s apart (`FileSystem().prefix_tools('wiki')` offers `wiki_read_file`), but it
+doesn't scope them to a folder. Every `FileSystem` in a run works in the run's one
+workspace, under a `root_dir` that contains its working directory, so two prefixed
+`FileSystem`s reach the same files.
+
 `list_directory`, `find_files`, `search_files`, `list_files`, and `grep` return
 paths relative to the working directory, even when searching a subdirectory.
 These paths can be passed directly to read/write tools. Files outside the
