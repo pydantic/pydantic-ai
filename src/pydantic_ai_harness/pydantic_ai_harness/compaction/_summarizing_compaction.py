@@ -142,7 +142,10 @@ Summaries are now a `CompactionPart`; this only recognizes ones in histories sav
 
 # Anchored-incremental update instruction (opencode mechanism): the previous summary is fed
 # back as an anchor to update in place rather than a summary to re-summarize, which avoids
-# summary-of-summary decay.  Wording is minimal/neutral and flagged pending the eval-rig pass.
+# summary-of-summary decay.  It is added to custom prompts too, so it names no sections.  The
+# requirement-or-decision sentence is there for drift: "the newer conversation wins" let later turns
+# overwrite what the summary had established, and CompactBench drift resistance on the incremental
+# path fell from 0.956 to 0.704 (#11438, #11650).  Change it only against that benchmark.
 _INCREMENTAL_UPDATE_INSTRUCTION = (
     'An anchored summary from earlier compaction is provided below in <previous-summary>. '
     'Update it using the conversation above: preserve still-true details, remove details the '

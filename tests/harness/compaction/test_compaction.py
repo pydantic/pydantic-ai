@@ -5175,9 +5175,6 @@ class TestStructuralFeaturesThroughAgent:
             'changes it; a passing remark or a later unrelated turn does not replace it.'
         )
         for prompt in prompts:
-            assert '## Requirements\n' in prompt
-            assert '## People and ownership\n' in prompt
-            assert '## Plan and next steps\n' in prompt
             assert requirements in prompt
             assert ownership in prompt
             assert replaces in prompt
