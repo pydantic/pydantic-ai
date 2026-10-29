@@ -1,4 +1,4 @@
-"""Anthropic's `computer_toolset_20260801`, sent for a tool of the `computer` kind."""
+"""Anthropic's computer use tools, sent for a tool of the `computer` kind."""
 
 from __future__ import annotations as _annotations
 
@@ -56,7 +56,7 @@ with try_import() as imports_successful:
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
     from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.models.anthropic._computer import map_computer_member
+    from pydantic_ai.models.anthropic._computer import COMPUTER_HELD_BACK, map_computer_member
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -611,6 +611,8 @@ _PNG = BinaryImage(data=b'png', media_type='image/png')
 _FAILED = 'Action 2 of 2 (type) failed: no keyboard. Screenshot attached (1280x800).'
 _REFUSED = 'Typing is not allowed here; nothing ran.'
 _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
+_HELD = 'The display restarted since your last screenshot, so the windows that were open are gone. No action ran.'
+_RESTARTED = 'Ran 2 actions. The display restarted since your last screenshot, so the windows that were open are gone.'
 
 
 @pytest.mark.parametrize(
@@ -619,28 +621,28 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
         # As `keep_screenshots` leaves it: the summary, then the note in place of the screenshot.
         pytest.param(
             _CLICK_TYPE,
-            None,
+            [1, 1],
             ['Ran 2 actions.', '[Older screenshot removed.]'],
             None,
             [['OK'], ['Ran 2 actions. [Older screenshot removed.]']],
             id='screenshot-dropped',
         ),
         # Not these calls' outcome: each call gets the text rather than `OK`, which would say its own call ran.
-        pytest.param(_CLICK_TYPE, None, [_REFUSED], None, [[_REFUSED], [_REFUSED]], id='a-guardrail-refusal'),
+        pytest.param(_CLICK_TYPE, [1, 1], [_REFUSED], None, [[_REFUSED], [_REFUSED]], id='a-guardrail-refusal'),
         pytest.param(
             _CLICK_TYPE,
-            None,
+            [1, 1],
             [_CHANGED, _PNG],
             {'performed': 1, 'changed': True},
             [[_CHANGED], [_CHANGED, 'image']],
             id='changed-before-it-ran',
         ),
         # As a UI rebuilds it: the metadata that says which calls ran is gone, the summary still says.
-        pytest.param(_CLICK_TYPE, None, [_FAILED, _PNG], None, [['OK'], [_FAILED, 'image']], id='no-metadata'),
+        pytest.param(_CLICK_TYPE, [1, 1], [_FAILED, _PNG], None, [['OK'], [_FAILED, 'image']], id='no-metadata'),
         # What a zoom returned answers its own call; the screen goes with the last.
         pytest.param(
             [{'id': 'toolu_1', 'name': 'zoom', 'input': {'region': [0, 0, 4, 4]}}, _CLICK_TYPE[0] | {'id': 'toolu_2'}],
-            None,
+            [1, 1],
             ['Ran 2 actions.', _PNG, _PNG],
             {'performed': 2},
             [['OK', 'image'], ['OK', 'image']],
@@ -655,21 +657,52 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
             [['OK', 'image'], ['no keyboard']],
             id='recorded-counts',
         ),
+        # The display restarted: the summary saying so goes with the screen, and no call is said to have failed.
+        pytest.param(
+            _CLICK_TYPE,
+            [1, 1],
+            [_HELD, _PNG],
+            {'performed': 0, 'restarted': True},
+            [[_HELD, 'image'], [COMPUTER_HELD_BACK]],
+            id='held-before-any-ran',
+        ),
+        pytest.param(
+            _CLICK_TYPE,
+            [1, 1],
+            [_HELD, _PNG],
+            {'performed': 1, 'restarted': True},
+            [[_HELD, 'image'], [COMPUTER_HELD_BACK]],
+            id='held-after-one-ran',
+        ),
+        pytest.param(
+            _CLICK_TYPE,
+            [1, 1],
+            [_RESTARTED, _PNG],
+            {'performed': 2, 'restarted': True},
+            [['OK'], [_RESTARTED, 'image']],
+            id='restarted-after-all-ran',
+        ),
+        # A capability that doesn't set `restarted`: fewer ran than asked, with no error.
+        pytest.param(
+            _CLICK_TYPE, [1, 1], [_HELD, _PNG], {'performed': 0}, [[_HELD, 'image'], [COMPUTER_HELD_BACK]], id='held'
+        ),
     ],
 )
 async def test_a_result_answers_each_member_call(
     allow_model_requests: None,
     blocks: list[dict[str, Any]],
-    counts: list[int] | None,
+    counts: list[int],
     content: list[Any],
     metadata: dict[str, Any] | None,
     results: list[list[str]],
 ) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    details: dict[str, Any] = {'computer_blocks': blocks, 'computer_tool': 'computer_toolset_20260801'}
-    if counts is not None:
-        details['computer_action_counts'] = counts
+    details: dict[str, Any] = {
+        'computer_blocks': blocks,
+        'computer_tool': 'computer_toolset_20260801',
+        'computer_action_counts': counts,
+    }
     call = ToolCallPart(
         'computer', {'actions': []}, tool_call_id='toolu_1', provider_name='anthropic', provider_details=details
     )

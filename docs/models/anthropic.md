@@ -896,7 +896,7 @@ The response's usage, and so its cost, stays the sum of the passes either way.
 Computer use is provided by the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. Its
 `computer` tool is sent as the computer use tool each Claude model was trained on:
 
-| Models | Claude API and Claude Models on Google Cloud | Bedrock and Foundry |
+| Models | Claude API and Google Cloud | Bedrock and Foundry |
 |---|---|---|
 | Claude Opus 4.8 and Claude 5 | `computer_toolset_20260801` | `computer_20251124` (on Foundry, not the 5.5 models) |
 | Claude Opus 4.7, 4.6 and 4.5, Sonnet 4.6 | `computer_20251124` | `computer_20251124` |
