@@ -9,6 +9,8 @@ Pydantic AI is open source under the MIT license. When it becomes part of a crit
 
 Commercial support gives your team direct access to Pydantic AI engineers for production incidents, architecture, provider changes, and upgrades. Enterprise plans include 24/7 priority support, setup assistance, and an SLA matched to your operating model. Your agreement can also define how we coordinate when a vulnerability affects a covered release line.
 
+For what Pydantic AI sends outside your infrastructure, which models and clouds it runs on, and how teams control and audit agents, see [Pydantic AI for Enterprise](enterprise.md).
+
 <EnterpriseSupportCta
   product="ai"
   href="https://pydantic.dev/contact"

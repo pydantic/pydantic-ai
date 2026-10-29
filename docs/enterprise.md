@@ -4,7 +4,7 @@ description: "Adopt Pydantic AI in an enterprise: agents run in your own process
 
 # Pydantic AI for Enterprise
 
-Pydantic AI is open source, with [commercial enterprise support from Pydantic](enterprise-support.md). Agents run in your own process against the models you choose, from [Azure OpenAI](models/azure.md), [Amazon Bedrock](models/bedrock.md) and [Google Vertex AI](models/google-cloud.md) to models you host yourself, and the library sends no usage telemetry.
+Pydantic AI is an open-source Python agent framework from Pydantic, the company behind the Pydantic validation library, with [commercial enterprise support from Pydantic](enterprise-support.md). Agents run in your own process against the models you choose, from [Azure OpenAI](models/azure.md), [Amazon Bedrock](models/bedrock.md) and [Google Vertex AI](models/google-cloud.md) to models you host yourself, and the library sends no usage telemetry.
 
 This page answers the questions security, platform and procurement teams ask before adopting it, each with the short answer and a link to the page that covers it in full. [Going to Production](production.md) covers the engineering side: crash recovery, cost limits, testing and deployment.
 
@@ -23,8 +23,8 @@ This page answers the questions security, platform and procurement teams ask bef
 [Pydantic AI](index.md), [Pydantic AI Harness](harness/index.md), [Pydantic Evals](evals.md) and [Pydantic Graph](graph.md) are Python packages that run in your own process: there is no Pydantic-hosted agent runtime. The library sends no usage telemetry; it connects to the model providers, [MCP servers](mcp/client.md) and tools you configure.
 
 - **Durable execution** runs on an engine you operate, such as [Temporal, DBOS or Prefect](durable_execution/overview.md), or on that engine's own cloud.
-- **Traces** go where you send them. [Pydantic Logfire](logfire.md) is an optional hosted service and [any OpenTelemetry backend](logfire.md#otel-without-logfire) works instead. [`include_content=False`](logfire.md#excluding-prompts-and-completions) keeps prompts, completions and tool arguments out of the spans.
-- **The [Pydantic AI Gateway](gateway.md)** is an optional hosted service: one key for models across providers, with spending caps. Calling providers directly works without it.
+- **Traces** go where you send them. [Pydantic Logfire](logfire.md) is optional, and runs as a cloud service, a dedicated deployment or [self-hosted](https://pydantic.dev/docs/logfire/reference/self-hosted/overview/) on your own Kubernetes; [any OpenTelemetry backend](logfire.md#otel-without-logfire) works instead. [`include_content=False`](logfire.md#excluding-prompts-and-completions) keeps prompts, completions and tool arguments out of the spans.
+- **The [Pydantic AI Gateway](gateway.md)** is optional: one key for models across providers, with spending caps, on Logfire Cloud or in self-hosted Logfire. Calling providers directly works without it.
 - **Model prices** for cost estimates ship with each release; [`update_in_background()`][pydantic_ai.prices.update_in_background] downloads newer ones only when you call it.
 
 ## Can we run on-prem or air-gapped models? {#self-hosted-models}
@@ -35,7 +35,7 @@ Yes. Point an agent at a model server inside your network and prompts and output
 - [vLLM](models/compatible-apis.md#vllm), with the `vllm:` prefix;
 - any other OpenAI-compatible server through [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider], as [Other endpoints](models/compatible-apis.md#other-endpoints) explains, or any other API through a [custom model](models/overview.md#custom-models).
 
-For an air-gapped deployment, install the packages from your own package mirror and point agents at a model server inside the network.
+For an air-gapped deployment, install the packages from your own package mirror and point agents at a model server inside the network. A few optional integrations download files on first use, such as `tiktoken` encodings and [Sentence Transformers](embeddings.md#sentence-transformers-local) models; mirror those too.
 
 ## Can we use our cloud's models? {#cloud}
 
@@ -45,19 +45,19 @@ Pydantic AI runs on [Azure OpenAI and Microsoft Foundry](models/azure.md), [Amaz
 
 - **Approval**: mark a tool [`requires_approval=True`](deferred-tools.md#human-in-the-loop-tool-approval) and the run ends with the pending call; it resumes, days later if need be, once a person approves or denies it. [Going to Production](production.md#approval) shows the full flow, and [`ToolCallJudge`](harness/tool-call-judge.md) (Harness) puts a second model in front of a call instead.
 - **Guardrails**: [guardrails](harness/guardrails.md) (Harness) check the prompt, each tool call and result, and the final output, and can block, redact secrets and PII, or ask for approval. The [prompt injection defender](harness/prompt-injection-defender.md) screens tool results.
-- **Least privilege**: give each caller only the tools it may use, and run model-written code in a [sandbox](harness/index.md#capabilities); [How do I limit what the agent can touch?](production.md#safety) covers both.
+- **Least privilege**: give each caller only the tools it may use, and run model-written code in a [sandbox](harness/index.md#execution-environments); [How do I limit what the agent can touch?](production.md#safety) covers both.
 
 ## Can we audit what an agent did? {#audit}
 
-Pydantic AI [instruments](logfire.md) every run, model request and tool call as an OpenTelemetry trace, following the [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), with token usage and estimated cost. Send the traces to [Logfire](logfire.md) or to the [OpenTelemetry backend](logfire.md#using-opentelemetry) you already run, and keep them as long as your retention policy says. The [message history](message-history.md) of each run is plain data you can store next to the trace.
+Pydantic AI [instruments](logfire.md) every run, model request and tool call as an OpenTelemetry trace, following the [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), with token usage and estimated cost. Send the traces to [Logfire](logfire.md) or to the [OpenTelemetry backend](logfire.md#using-opentelemetry) you already run, and keep them as long as your retention policy says. Logfire is SOC 2 Type 2 audited and supports HIPAA workloads; see the [Pydantic Trust Center](https://pydantic.dev/security). The [message history](message-history.md) of each run is plain data you can store next to the trace.
 
 ## How do we standardize across teams? {#governance}
 
 - **[Agent specs](agent-spec.md)** keep an agent's model, instructions and capabilities in a YAML or JSON file, so its configuration is reviewed and versioned apart from application code.
 - **[Capabilities](capabilities/overview.md)** bundle tools, instructions, hooks and model settings into one reusable unit: a platform team writes the company's policies once and every team's agents add them with one line.
-- **[Pydantic AI Harness](harness/index.md)** provides ready-made capabilities, such as [guardrails](harness/guardrails.md), [spend limits](harness/spend.md) per tenant or month, and [managed prompts](harness/managed-prompt.md) rolled out from Logfire without a redeploy.
+- **[Pydantic AI Harness](harness/index.md)** provides ready-made capabilities (it releases as 0.x, under [its own version policy](harness/index.md#version-policy)), such as [guardrails](harness/guardrails.md), [spend limits](harness/spend.md) per tenant or month, and [managed prompts](harness/managed-prompt.md) rolled out from Logfire without a redeploy.
 - **The [Gateway](gateway.md)** sets spending caps per project, user and API key before a request reaches a provider.
 
 ## Who do we call when it breaks? {#support}
 
-[Enterprise support](enterprise-support.md) gives your team direct access to Pydantic AI engineers for production incidents, architecture reviews, upgrades and coordinated vulnerability response, with 24/7 priority support and an SLA defined in your agreement. See [pydantic.dev/enterprise](https://pydantic.dev/enterprise) or [contact us](https://pydantic.dev/contact). Pydantic AI follows a [version policy](version-policy.md) for its releases, and the open-source license, docs, issue tracker and [community help](help.md) remain open to everyone.
+[Enterprise support](enterprise-support.md) gives your team direct access to Pydantic AI engineers, with an SLA defined in your agreement; that page lists what it covers. Pydantic AI follows a [version policy](version-policy.md), vulnerabilities are reported through its [security policy](https://github.com/pydantic/pydantic-ai/security/policy), and the docs, issue tracker and [community help](help.md) stay open to everyone. Open-source projects that run on it are listed on [Built with Pydantic AI](built-with.md).
