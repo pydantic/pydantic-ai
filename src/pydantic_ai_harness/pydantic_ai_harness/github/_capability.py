@@ -69,7 +69,7 @@ class GitHub(AbstractCapability[AgentDepsT]):
 
     def __post_init__(self) -> None:
         if self.client is not None and (
-            self.auth is not None or self.url != GITHUB_MCP_URL or self.toolsets is not None or self.lockdown
+            self.auth or self.url != GITHUB_MCP_URL or self.toolsets is not None or self.lockdown
         ):
             raise UserError(
                 '`client` owns the connection, so it cannot be combined with `auth`, `url`, `toolsets`, or `lockdown`.'
