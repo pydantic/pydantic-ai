@@ -42,6 +42,11 @@ class FakeDisplay:
                 return '', 'the X server did not start:\n(EE) Fatal server error', 1
             started, self.up = not self.up, True
             return (STARTED if started else ''), '', 0
+        elif 'xwininfo -root' in command:
+            self.xdotool.append('xwininfo -root')
+            if not self.up:
+                return '', 'xwininfo: error: unable to open display ":1"', 1
+            return '  Width: 1280\n  Height: 800\n', '', 0
         elif command.startswith('xdotool '):
             self.xdotool.append(command)
             if not self.up:
@@ -86,7 +91,7 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(fake_e2b: Fa
 
     assert len(display.starts) == 1
     assert display.xdotool[-2:] == [
-        'xdotool getdisplaygeometry',
+        'xwininfo -root',
         'xdotool keyup Shift_L Shift_R Control_L Control_R Alt_L Alt_R Super_L Super_R ISO_Level3_Shift '
         'mousemove 3 4 click --repeat 1 1',
     ]
