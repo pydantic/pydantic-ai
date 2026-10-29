@@ -370,7 +370,7 @@ Pydantic AI and provider API clients have their own retry logic. When using Pref
 
 This prevents requests from being retried multiple times at different layers. The layers *multiply*: see [Retry multiplication](../retries.md#retry-multiplication) for the arithmetic.
 
-If you don't pass `run_id` or `conversation_id` to [`Agent.run()`][pydantic_ai.agent.Agent.run] in a flow, the defaults are derived from the flow run rather than generated at random, so a flow retry gives each agent run the same IDs as the attempt before it.
+If you don't pass `run_id` or `conversation_id` to [`Agent.run()`][pydantic_ai.agent.Agent.run] in a flow, `PrefectDurability` derives the defaults from the flow run and projected inputs. Distinct projected inputs keep their IDs across retries; identical repeated inputs also depend on their call order, as described below.
 
 With [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability], the default `run_id` has the form `<flow run id>:<input digest>`. The digest covers the agent's name, prompt, message history, dependencies and static metadata, using the same value projection as [task caching](#caching-and-idempotency). Runs with different projected inputs keep their IDs even when concurrent branches reach them in a different order on retry. Repeated calls with identical projected inputs get an ordinal suffix (`:1`, `:2`, and so on); their IDs still depend on the order of those identical calls.
 

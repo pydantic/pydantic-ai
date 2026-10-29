@@ -19,7 +19,7 @@ async def test_legacy_default_run_id_hook(provided: str | None, container: str) 
     class LegacyCapability(AbstractCapability[object]):
         def get_default_run_id(self) -> str | None:
             calls.append('leaf')
-            return provided
+            return 'child-run-id' if container == 'wrapper_override' else provided
 
     class LegacyWrapper(WrapperCapability[object]):
         def get_default_run_id(self) -> str | None:
@@ -54,5 +54,20 @@ def test_combined_default_run_id_override(provided: str | None) -> None:
         def get_default_run_id(self) -> str | None:
             return provided
 
-    capability = LegacyCombined([AbstractCapability[object]()])
+    class ChildCapability(AbstractCapability[object]):
+        def get_default_run_id(self) -> str:
+            return 'child-run-id'
+
+    capability = LegacyCombined([ChildCapability()])
     assert capability._get_default_run_id_for_inputs({}) == provided  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize('provided', [None, 'legacy-run-id'])
+def test_public_default_run_id_container_delegation(provided: str | None) -> None:
+    class LegacyCapability(AbstractCapability[object]):
+        def get_default_run_id(self) -> str | None:
+            return provided
+
+    capability = LegacyCapability()
+    assert WrapperCapability(capability).get_default_run_id() == provided
+    assert CombinedCapability([capability, AbstractCapability()]).get_default_run_id() == provided

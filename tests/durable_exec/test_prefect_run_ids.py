@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import uuid
 
 import pytest
 
@@ -172,3 +173,24 @@ async def test_prefect_legacy_default_run_id_override(provided: str | None) -> N
         assert result.run_id == provided
     else:
         assert ':' not in result.run_id
+
+
+async def test_prefect_legacy_default_run_id_override_delegates_to_super() -> None:
+    """An existing override can retain the public hook's counter-based policy."""
+
+    class LegacyPrefect(PrefectDurability[object]):
+        def get_default_run_id(self) -> str | None:
+            return super().get_default_run_id()
+
+    agent = Agent(TestModel(), name='delegating_default_id', capabilities=[LegacyPrefect()])
+    outside = await agent.run('outside')
+    assert uuid.UUID(outside.run_id).version == 7
+
+    @flow
+    async def delegated() -> None:
+        first = await agent.run('first')
+        second = await agent.run('second')
+        assert first.run_id.endswith(':0')
+        assert second.run_id == first.run_id.removesuffix(':0') + ':1'
+
+    await delegated()
