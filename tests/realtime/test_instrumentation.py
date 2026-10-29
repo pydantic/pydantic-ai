@@ -91,6 +91,9 @@ from ..conftest import try_import
 from ..realtime_connections import InferredConnection
 from .test_session import FakeRealtimeModel, make_tool_manager
 
+with try_import() as openai_live_installed:
+    from pydantic_ai.realtime.openai_live import OpenAILiveModelSettings
+
 with try_import() as mcp_installed:
     from fastmcp import FastMCP
 
@@ -794,6 +797,37 @@ async def test_request_config_respects_include_model_request_parameters() -> Non
             {'type': 'function', 'name': 'get_weather', 'parameters': {'type': 'object', 'properties': {}}}
         ]
         # The spec-standard setting is still emitted when the serialized blobs are gated off.
+        assert attributes['gen_ai.request.max_tokens'] == 4096
+
+
+@pytest.mark.skipif(not openai_live_installed(), reason='openai not installed')
+async def test_request_config_omits_model_settings_without_content() -> None:
+    # Provider settings can carry prompt text (GPT-Live's spoken-behavior instructions, Gemini's
+    # `google_config_overrides`, ...), so with `include_content=False` the serialized `model_settings`
+    # blob is left off. The spec-standard `gen_ai.request.max_tokens` still goes out, like the classic path.
+    settings, exporter = _settings(include_content=False)
+    conn = _Connection([ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'), ResponseDone()])
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        model_request_parameters=ModelRequestParameters(function_tools=[ToolDefinition(name='get_weather')]),
+        model_settings=OpenAILiveModelSettings(
+            max_tokens=4096, openai_live_instructions='You are Ada, a secret persona.'
+        ),
+    )
+    async with session:
+        _ = [e async for e in session]
+
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    for name in ('invoke_agent agent', 'chat gpt-realtime'):
+        attributes = spans[name].attributes
+        assert attributes is not None
+        assert 'model_settings' not in attributes
+        assert 'model_settings' not in json.loads(str(attributes['logfire.json_schema']))['properties']
+        assert 'secret persona' not in json.dumps(dict(attributes))
+        assert 'model_request_parameters' in attributes
         assert attributes['gen_ai.request.max_tokens'] == 4096
 
 

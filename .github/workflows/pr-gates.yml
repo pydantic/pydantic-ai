@@ -1,0 +1,49 @@
+name: PR Gates
+
+# Read-only compatibility gate, evaluated with the pull request copy of the script.
+# `.github/workflows/AGENTS.md` documents this gate and its trust boundary.
+# The logic and tests live in `.github/scripts/pr_gates.py`.
+#
+# No `paths:` filter: a required check that never runs stays pending and blocks the merge, so
+# every listed PR event runs the compatibility gate.
+
+on:
+  pull_request:
+    # `labeled` and `unlabeled` change the verdict. `edited` is the only event fired when the base
+    # branch changes, which changes the diff the gate judges.
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  # A required check has to report on the merge group's commit, or the queue stalls. The gate
+  # judges the PR's own diff and labels, settled on its head before it could be enqueued, so it
+  # skips here, and a job skipped by `if:` reports success.
+  merge_group:
+    types: [checks_requested]
+
+permissions: {}
+
+jobs:
+  compatibility-waiver:
+    name: 'Gate: compatibility waiver labeled'
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/pr_gates.py
+            .github/scripts/check_api_compatibility.py
+          sparse-checkout-cone-mode: false
+      - name: Install pinned script dependencies
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+      - name: Require `compatibility impact` on a PR that adds an API compatibility waiver
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_STATE: ${{ github.event.pull_request.state }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 .github/scripts/pr_gates.py compatibility-waiver

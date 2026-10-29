@@ -47,6 +47,7 @@ from pydantic_ai import (
     ToolDefinition,
     capture_run_messages,
 )
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, Capability, Instrumentation, ToolSearch, Toolset
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -75,7 +76,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied, ToolSelector
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied
 from pydantic_ai.toolsets._tool_search import (
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
     ToolSearchToolset,
@@ -4794,21 +4795,8 @@ class TestDynamicCatalog:
         ]
         assert run_code_returns == [3, 'Sunny in Paris.']
 
-    @pytest.mark.parametrize(
-        ('tool_search', 'selector'),
-        [
-            pytest.param(ToolSearch[object](strategy='keywords'), ['add', 'forecast'], id='other-deferred-tool-native'),
-            pytest.param(ToolSearch[object](strategy='bm25'), 'all', id='no-local-search'),
-        ],
-    )
-    async def test_deferred_tool_stays_declared_when_only_native_search_can_find_it(
-        self, tool_search: ToolSearch[object], selector: ToolSelector[object]
-    ) -> None:
-        """A deferred tool is declared for the native search when the local `search_tools` can't find it.
-
-        That's when another deferred tool stays native (which keeps the native search on the wire and drops
-        `search_tools`), or when the strategy has no local search at all.
-        """
+    async def test_deferred_tool_stays_declared_when_only_native_search_can_find_it(self) -> None:
+        """A deferred tool is declared for the native search when the strategy has no local search at all."""
         declared: list[list[tuple[str, bool]]] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4822,12 +4810,37 @@ class TestDynamicCatalog:
                 Tool(_forecast, name='forecast', defer_loading=True),
                 Tool(_forecast, name='native_forecast', defer_loading=True),
             ],
-            capabilities=[tool_search, CodeMode[object](tools=selector, dynamic_catalog=True)],
+            capabilities=[ToolSearch[object](strategy='bm25'), CodeMode[object](dynamic_catalog=True)],
         )
         await agent.run('Weather in Paris?')
 
         [tools] = declared
         assert ('forecast', True) in tools
+
+    async def test_mixed_corpus_is_searched_locally(self) -> None:
+        """When the selector sandboxes part of the Tool Search corpus, `search_tools` searches all of it.
+
+        The sandboxed tool stays off the wire, and the deferred tool kept native leaves the native search's
+        corpus, so the native search isn't sent and can't take `search_tools` off the wire.
+        """
+        declared: list[list[tuple[str, str | None]]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            declared.append([(t.name, t.with_native) for t in info.model_request_parameters.function_tools])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model_fn),
+            tools=[
+                Tool(add),
+                Tool(_forecast, name='forecast', defer_loading=True),
+                Tool(_forecast, name='native_forecast', defer_loading=True),
+            ],
+            capabilities=[ToolSearch[object](), CodeMode[object](tools=['add', 'forecast'])],
+        )
+        await agent.run('Weather in Paris?')
+
+        assert declared == snapshot([[('native_forecast', None), ('search_tools', None), ('run_code', None)]])
 
     async def test_catalog_keeps_the_wrapped_toolsets_instruction_ids(self) -> None:
         """The catalog is `CodeModeToolset`'s own block; the wrapped toolsets' instructions keep their ids."""
@@ -5353,3 +5366,42 @@ class TestCodeModeOSAccessInTemporal:
         mount = MountDir(virtual_path='/work', host_path=str(tmp_path))
         code = "from pathlib import Path\nPath('/work/data.txt').read_text()"
         assert await self._run(code, handler, mount) == 'hello-from-host'
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    """Runtime-only fields (`os_access`, `repl_store`, a sandbox factory) must not erase the whole schema entry."""
+    definitions = AgentSpec.model_json_schema_with_capabilities([CodeMode])['$defs']
+    assert sorted(definitions['spec_params_CodeMode']['properties']) == snapshot(
+        [
+            'defer_loading',
+            'description',
+            'dynamic_catalog',
+            'eager',
+            'id',
+            'max_retries',
+            'max_tool_calls',
+            'monty_sandbox',
+            'resource_limits',
+            'speculate',
+            'tools',
+        ]
+    )
+
+
+def test_from_spec_forwards_the_spec_fields() -> None:
+    code_mode = CodeMode[None].from_spec(
+        tools=['add'], max_tool_calls=5, resource_limits={'max_duration_secs': 2.0}, speculate='declared', id='code'
+    )
+    assert (
+        code_mode.tools,
+        code_mode.max_tool_calls,
+        code_mode.resource_limits,
+        code_mode.speculate,
+        code_mode.id,
+    ) == (
+        ['add'],
+        5,
+        {'max_duration_secs': 2.0},
+        'declared',
+        'code',
+    )

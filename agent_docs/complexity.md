@@ -94,7 +94,7 @@ The function was already over the limit, and the change made it worse. Keep the 
 
 **Shape**: resolves many inputs across layers, such as run, override, spec, agent, capability and default, or a constructor that normalizes many optional parameters.
 
-**Fix**: resolve each layer or phase in its own named function, as `_merge_retries_with_spec` and `_layer_model_settings` in `agent/__init__.py` do. Replace a chain of ternaries over the same layers with one resolver.
+**Fix**: resolve each layer or phase in its own named function, as `_merge_retries_with_spec` and `_resolve_layered_model_settings` in `agent/__init__.py` do. Replace a chain of ternaries over the same layers with one resolver.
 
 ### check-chain
 
