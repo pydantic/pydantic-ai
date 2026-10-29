@@ -767,6 +767,8 @@ async def test_switching_sessions_focuses_the_composer(page: Page, web_ui: WebUI
     await expect(current).to_have_count(1)
     await sidebar.get_by_text('Browser Gamma', exact=True).click()
     await expect(current).to_have_text('Browser Gamma')
+    # The row is selected at once; Gamma has shown once no row is still opening.
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     await sidebar.get_by_text('Browser Beta', exact=True).click()
     await expect(current).to_have_text('Browser Beta')
     await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
@@ -941,6 +943,7 @@ async def test_a_session_another_clai_runs_shows_until_forked(page: Page, web_ui
     # This CLAI does not follow sessions' folders, so it continues only those of the session it shows: Beta's.
     await sidebar.get_by_text('Browser Beta', exact=True).click()
     await expect(page.locator('.session.current .session-title')).to_have_text('Browser Beta')
+    await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     async with page.expect_response(f'**/api/sessions/{web_ui.busy}') as shown:
         await sidebar.get_by_text('Browser Busy', exact=True).click()
     assert (await shown.value).ok
