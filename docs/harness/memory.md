@@ -9,6 +9,8 @@ Give an agent a persistent notebook that it can update, search, and reuse across
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model gets four tools, write_memory, read_memory, delete_memory and search_memory, over a notebook of Markdown files kept in a store such as FileStore, SqliteMemoryStore or PostgresMemoryStore. Your code picks the namespace, such as the user ID from the run dependencies, so the model cannot reach another user's files, and writes are compare-and-swap. On the first request of a run, Memory adds a <memory> block with an excerpt of MEMORY.md and the names of the other files next to the user's prompt, only when memory changed, within max_tokens.](../img/harness/memory.svg)
+
 ## Notebook model
 
 Memory gives each agent a notebook made of Markdown files:

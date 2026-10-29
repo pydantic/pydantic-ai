@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="678" viewBox="0 0 880 678" role="img" aria-labelledby="t d">
+<title id="t">Repair Tool Arguments: fix malformed JSON before validation</title>
+<desc id="d">RepairToolArguments runs in the before_tool_validate hook, after the model makes a tool call and before Pydantic AI validates its arguments. Malformed JSON such as {&#x27;path&#x27;: &#x27;a.py&#x27;, &#x27;limit&#x27;: 10, with single quotes, a trailing comma and a missing brace is repaired by json-repair into valid JSON, which then goes through normal schema validation. Valid arguments pass through unchanged.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="677" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Repair Tool Arguments: fix malformed JSON before validation</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">When a model sends broken JSON tool arguments, json-repair fixes the syntax so the call can be validated instead of</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">failing and retrying.</text>
+<text letter-spacing="1.3" x="32" y="130" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">WHERE IT RUNS IN THE AGENT LOOP</text>
+<rect x="32" y="188" width="128" height="44" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="96" y="204.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">messages</text>
+<text x="96" y="223.2" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">history + new parts</text>
+<rect x="212" y="192" width="96" height="36" rx="18" fill="#092224"/>
+<text x="260" y="215" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="360" y="188" width="128" height="44" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="424" y="204.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tool call</text>
+<text x="424" y="223.2" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">name + JSON args</text>
+<rect x="540" y="188" width="128" height="44" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="604" y="204.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">validate args</text>
+<text x="604" y="223.2" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">against the schema</text>
+<rect x="720" y="188" width="128" height="44" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="784" y="204.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">your tool</text>
+<text x="784" y="223.2" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">runs the function</text>
+<line x1="163" y1="210" x2="209" y2="210" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="311" y1="210" x2="357" y2="210" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="491" y1="210" x2="537" y2="210" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="671" y1="210" x2="717" y2="210" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<path d="M 784 234 L 784 248 Q 784 258 774 258 L 106 258 Q 96 258 96 248 L 96 236" stroke="#55726A" stroke-width="1.6" fill="none" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<text x="110" y="276" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tool result goes into the next request</text>
+<line x1="514" y1="210" x2="514" y2="168" stroke="#B417B7" stroke-width="1.2"/>
+<circle cx="514" cy="210" r="4.5" fill="#E520E9" stroke="#FFFFFF" stroke-width="1.5"/>
+<rect x="434.9" y="144" width="158.3" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="514" y="160.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">before_tool_validate</text>
+<line x1="32" y1="306" x2="848" y2="306" stroke="#E6EAEA" stroke-width="1"/>
+<text letter-spacing="1.3" x="32" y="332" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">REPAIR THE SYNTAX, THEN VALIDATE AS USUAL</text>
+<text x="32" y="358" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">arguments from the model</text>
+<rect x="32" y="372" width="240" height="42" rx="10" fill="#092224"/>
+<text x="46" y="396" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">{</tspan><tspan fill="#FFD4E5">&#x27;path&#x27;</tspan><tspan fill="#FBFFEA">: </tspan><tspan fill="#FFD4E5">&#x27;a.py&#x27;</tspan><tspan fill="#FBFFEA">, </tspan><tspan fill="#FFD4E5">&#x27;limit&#x27;</tspan><tspan fill="#FBFFEA">: </tspan><tspan fill="#B9A3FF">10</tspan><tspan fill="#FBFFEA">,</tspan></text>
+<line x1="275" y1="393" x2="305" y2="393" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="308" y="368" width="122" height="50" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="369" y="397" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">json-repair</text>
+<line x1="433" y1="393" x2="463" y2="393" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<text x="466" y="358" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">repaired</text>
+<rect x="466" y="372" width="236" height="42" rx="10" fill="#092224"/>
+<text x="480" y="396" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">{</tspan><tspan fill="#FFD4E5">&quot;path&quot;</tspan><tspan fill="#FBFFEA">: </tspan><tspan fill="#FFD4E5">&quot;a.py&quot;</tspan><tspan fill="#FBFFEA">, </tspan><tspan fill="#FFD4E5">&quot;limit&quot;</tspan><tspan fill="#FBFFEA">: </tspan><tspan fill="#B9A3FF">10</tspan><tspan fill="#FBFFEA">}</tspan></text>
+<line x1="705" y1="393" x2="735" y2="393" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="738" y="368" width="110" height="50" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="793" y="397" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">validate args</text>
+<rect x="32" y="444" width="816" height="34" rx="8" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1.3"/>
+<text x="44" y="465.5" font-size="12.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">valid JSON</text>
+<text x="194" y="465.5" font-size="12.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">passes through unchanged, with no repair span</text>
+<rect x="32" y="486" width="816" height="34" rx="8" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1.3"/>
+<text x="44" y="507.5" font-size="12.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">repair fails</text>
+<text x="194" y="507.5" font-size="12.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">on ValueError or RecursionError the original arguments go to validation</text>
+<rect x="32" y="528" width="816" height="34" rx="8" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1.3"/>
+<text x="44" y="549.5" font-size="12.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">still invalid</text>
+<text x="194" y="549.5" font-size="12.5" fill="#092224" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">missing fields and wrong types fail validation and retry as usual</text>
+<text x="32" y="590" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Each repair attempt emits a repair_tool_arguments span that holds no argument content. The capability has no options and applies to</text>
+<text x="32" y="607.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">every tool on the agent.</text>
+<rect x="32" y="630.5" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="641.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="630.5" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="641.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by Repair Tool Arguments</text>
+<rect x="331" y="630.5" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="351" y="641.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">your agent and tools</text>
+</svg>

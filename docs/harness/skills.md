@@ -17,6 +17,8 @@ the `load_capability` tool to receive that skill's instructions.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![At the start of every run, Skills reads each SKILL.md in the configured libraries from the run's workspace, such as .agents/skills/code-review/SKILL.md, and puts a catalog of skill names and descriptions in the model's instructions. When a skill is useful, the model calls load_capability with its name and gets back a "# Skill: code-review" heading, the skill's directory and the Markdown body of SKILL.md.](../img/harness/skills.svg)
+
 ## Installation
 
 Install the `skills` extra for YAML frontmatter support:

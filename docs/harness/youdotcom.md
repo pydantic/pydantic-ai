@@ -15,6 +15,8 @@ single lookup cannot settle.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls tools from two capabilities. YouSearch adds web_search, which returns the top ten hits with excerpts, and get_page, which returns one page as markdown capped at 10,000 characters. YouResearch adds answer, research and finance_research, which return cited answers. Each tool calls one method of the You.com API. Every tool returns a ToolReturn: the text goes to the model and the sources entry of its metadata holds YouSource records for your app. Authentication, billing and permission errors stop the run; other failures come back as a retry.](../img/harness/youdotcom.svg)
+
 ## The problem
 
 Some search tools return only a title and a snippet, so the agent has to fetch
