@@ -425,16 +425,17 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     ) -> str:
         """Run a shell command and return its output.
 
-        Foreground waits up to `timeout` seconds (at most 270) and returns the
-        combined stdout/stderr inline (the last 16 KB, marked when earlier output
-        is cut), then the PID, the log and status file paths, and the exit status.
-        A command that finished needs no further reads: do not open its log or
-        status file. Chain related commands in one call (`cmd1; cmd2`). Background
-        returns the handles immediately. For a background command, one still
-        running at the timeout, or cut output, read the log or the JSON status file
-        (`exit_code` is null until the command exits) in a later shell call, e.g.
-        with `tail`, and stop the process with `kill` and the returned PID; no
-        notification arrives when it finishes.
+        Foreground (the default) waits up to `timeout` seconds (at most 270) and
+        returns the command's combined stdout/stderr inline (the last ~16 KB; any
+        earlier output is marked as truncated), then the PID, log path, status file
+        and exit status. A command that finished in the foreground needs no further
+        reads: do not open its log or status file. Chain related commands in one
+        call (e.g. `cmd1; cmd2`); read files with `read_file`, not `cat`, since long
+        output is truncated. Background mode returns the handles
+        immediately; only for background jobs, a foreground command still running
+        at its timeout, or truncated long output, read the log or status file (e.g.
+        `tail` in a later shell call) and stop the process with `kill` and the
+        returned PID. No notification arrives when a background job finishes.
 
         Args:
             ctx: The current agent run context.

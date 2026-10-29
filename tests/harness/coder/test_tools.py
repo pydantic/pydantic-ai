@@ -204,11 +204,14 @@ class TestCoder:
         parts = model.last_model_request_parameters.instruction_parts or []
         guidance = next(part.content for part in parts if 'Zen of Python' in part.content)
         default = guidance.removesuffix('\n' + extra_instructions) if extra_instructions else guidance
-        assert len(default.split()) < 230
+        assert len(default.split()) < 500
         assert all(principle in default for principle in ('DRY', 'YAGNI', 'SOLID'))
         assert 'delete any scratch files you created' in default
-        assert 'Batch independent reads and searches into one shell call' in default
-        assert 'once the relevant tests pass, broaden or repeat testing only when new changes' in default
+        assert 'in full with `read_file` rather than batched `cat` in the shell' in default
+        assert 'batch independent searches into one\nshell call' in default
+        assert 'once the relevant tests pass, broaden or\nrepeat testing only when new changes' in default
+        assert 'measure the result against that target before finishing' in default
+        assert 'first\nassume your model of the problem is wrong' in default
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)
 
@@ -235,8 +238,10 @@ class TestCoder:
         assert model.last_model_request_parameters is not None
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
         tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
-        assert ('from the project directory are already in your' in text) is repo_context
-        rule = 'Do not spawn sub-agents with `delegate_task` unless the user or applicable AGENTS.md instructions'
+        assert ('instruction files (AGENTS.md, CLAUDE.md) in the project directory are' in text) is repo_context
+        rule = (
+            'spawn sub-agents with `delegate_task` unless the user or applicable AGENTS.md\ninstructions explicitly ask'
+        )
         assert (rule in text) is sub_agents
         assert ('delegate_task' in tools) is sub_agents
 
