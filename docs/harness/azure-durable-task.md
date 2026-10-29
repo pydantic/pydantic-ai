@@ -1,15 +1,17 @@
+---
+title: Azure Durable Task
+description: Make a Pydantic AI agent durable with Azure Durable Task Scheduler -- model requests and tool calls run as activities, so an orchestration resumes after a worker restart.
+---
+
 # Azure Durable Task
 
 `AzureDurableTaskDurability` lets agents survive worker restarts with
 [Durable Task](https://github.com/microsoft/durabletask-python) and Azure Durable Task Scheduler.
-You write the orchestrator; the capability registers model requests, tool operations and durable
-capability operations as activities. Azure Durable Functions also uses Durable Task, but this
+You write the orchestrator; model requests, tool calls and durable capability operations run as
+activities, and completed results come from orchestration history when the orchestrator replays.
+Outside an orchestration, the agent runs normally. Streamed model responses are buffered inside
+the activity, not streamed to the client. Azure Durable Functions also uses Durable Task, but this
 capability does not register orchestrators or activities with Azure Functions.
-
-Completed activity results come from orchestration history during replay. Outside an orchestration,
-the agent runs normally. Parallel tools remain parallel. Streaming is buffered at activity boundaries,
-not streamed to the client. The integration adds no telemetry beyond normal Pydantic AI instrumentation;
-use that instrumentation and the scheduler's orchestration history to observe runs.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/)
 
@@ -67,107 +69,63 @@ with durability.register(worker), worker, TaskHubGrpcClient(
     print(state.get_output())
 ```
 
-`Agent` binds a copy of its capabilities: retrieve the bound capability with `from_agent`.
-Its `register(worker)` context manager owns the activity runtime, not the worker. Enter it before
-starting the worker and exit after the worker stops and drains. It registers activities only.
-Use native SDK clients, including `AsyncTaskHubGrpcClient`, to start, inspect and signal orchestrations.
-Workers and clients can run in separate processes; clients do not need the agent definition.
+Call `yield from run_durable(ctx, lambda: agent.run(...))` wherever the agent belongs in your orchestrator.
+`Agent` binds a copy of its capabilities, so get the bound one with `from_agent`. Enter its
+`register(worker)` before starting the worker and leave it after the worker stops; it registers
+the agent's activities and runs them. Register orchestrators and use clients with the SDK as usual.
+Clients can run in other processes and don't need the agent.
 
-The orchestrator chooses its JSON-compatible output. For a Pydantic output model, return
-`result.output.model_dump(mode='json')` and validate it on the client if needed.
-There is no client-side reconstruction of `AgentRunResult`.
+The orchestrator returns JSON-compatible output. For a Pydantic output model, return
+`result.output.model_dump(mode='json')`.
 
 ## Deploy to Azure Durable Task Scheduler
 
-The `azure-durable-task` extra includes `azure-identity`. Use the Azure-managed SDK classes
-with the same orchestrator pattern; TLS is enabled by default:
+Swap the emulator worker and client for the Azure-managed ones; the orchestrator and `register(worker)` stay the same.
+The `azure-durable-task` extra installs them and `azure-identity`:
 
 ```python {test="skip - requires Azure credentials and a deployed scheduler"}
-from collections.abc import Generator
-
 from azure.identity import DefaultAzureCredential
-from durabletask import task
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
-from pydantic_ai import Agent
-from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
-
-agent = Agent('{{ openai:medium }}', name='support', capabilities=[AzureDurableTaskDurability()])
-
-
-def support(ctx: task.OrchestrationContext, prompt: str) -> Generator[task.Task[object], object, str]:
-    result = yield from run_durable(ctx, lambda: agent.run(prompt))
-    return result.output
-
-
-with DefaultAzureCredential() as credential:
-    worker = DurableTaskSchedulerWorker(
-        host_address='<scheduler>.<region>.durabletask.io', taskhub='<hub>', token_credential=credential
-    )
-    worker.add_orchestrator(support)
-    durability = AzureDurableTaskDurability.from_agent(agent)
-    assert durability is not None
-    with durability.register(worker), worker, DurableTaskSchedulerClient(
-        host_address='<scheduler>.<region>.durabletask.io', taskhub='<hub>', token_credential=credential
-    ) as client:
-        worker.start()
-        instance_id = client.schedule_new_orchestration(support, input='Explain durable execution.')
-        state = client.wait_for_orchestration_completion(instance_id, timeout=60)
-        assert state is not None
-        state.raise_if_failed()
-        print(state.get_output())
+credential = DefaultAzureCredential()
+endpoint = '<scheduler>.<region>.durabletask.io'
+worker = DurableTaskSchedulerWorker(host_address=endpoint, taskhub='<hub>', token_credential=credential)
+client = DurableTaskSchedulerClient(host_address=endpoint, taskhub='<hub>', token_credential=credential)
 ```
 
-Any Azure `TokenCredential` works: `DefaultAzureCredential` for development and managed identity,
-`ManagedIdentityCredential(client_id=...)` for user-assigned identity, or `ClientSecretCredential`
-and `ChainedTokenCredential`. Grant the identity the
+Grant the worker's identity the
 [Durable Task Data Contributor](https://learn.microsoft.com/en-us/azure/durable-task/scheduler/durable-task-scheduler-dashboard#assign-dashboard-access-roles-azure)
-role on the scheduler or task hub.
-
-Use the same `taskhub` on workers and clients and separate hubs per environment.
-Workers can run on Container Apps, AKS or VMs. The dashboard shows your orchestrator names,
-registered activities, custom status and external events.
+role on the scheduler or task hub. Use the same `taskhub` on workers and clients, and a separate hub per environment.
 
 ## Replay and side effects
 
-Activities execute **at least once**: a worker can fail after an effect but before recording its
-result. Make tools and event handlers idempotent; `ctx.run_id` and `ctx.tool_call_id` can help
-construct application idempotency keys. Keep agent names, toolset IDs, activity names and
-orchestrator control flow compatible with in-flight histories.
+Every time an activity finishes, the SDK runs your orchestrator again from the start and replays
+completed results from history. This shapes how you write agents for it:
 
-Default run IDs have the form `<instance_id>:<agent_name>:<uuid>`. The UUID comes from the SDK's
-replay-safe `context.new_uuid()`, so repeated agent runs have distinct IDs without process-local state.
-Default conversation IDs are UUID5 values derived from run IDs, matching the other durability engines.
-
-Orchestrator-side hooks, instruction functions, output validators and inline tools run again on
-replay. Keep them deterministic and free of network, filesystem and thread I/O. Put I/O in tools
-or a capability's `@durable_operation` method. Changing an in-flight orchestration's agent, tools or
-activity names is not migrated, and the capability does not roll long runs over with
-`continue_as_new`.
-
-### Persisted activity names
-
-The scheduler has been observed to accept names of 1-100 ASCII characters: letters, digits, underscores, periods,
-backticks, plus signs, hyphens and colons. The engine preserves the journal naming structure.
-Underscores pass through unchanged. Hyphens become `--`; every disallowed character becomes
-`-xHEX-`, using its uppercase Unicode code point with a terminating hyphen. For example, `<agent>`
-becomes `-x3C-agent-x3E-`. Escaping the marker and terminating each code point makes the mapping
-unambiguous, including non-BMP characters and literal escape-like names.
-Names exceeding 100 characters retain their first 83 escaped characters, followed by `-`
-and the first 16 hex digits of SHA-256 of the original journal name. Registration rejects
-invalid or duplicate generated names with [`UserError`][pydantic_ai.exceptions.UserError], including a hash collision.
-
-This mapping is persisted compatibility data. Do not change it for in-flight histories;
-drain old instances or explicitly migrate them first. User-written orchestrator names are
-separate SDK registrations and must also meet the scheduler's requirements.
+- **Activities run at least once.** A worker can fail after a tool's side effect but before its
+  result is recorded. Make tools and event handlers idempotent; `ctx.run_id` and `ctx.tool_call_id`
+  make good idempotency keys.
+- **Orchestrator-side code runs on every replay.** Hooks, instruction functions, output validators and
+  inline tools must be deterministic and do no network, file or thread I/O. Put I/O in tools or a
+  capability's `@durable_operation` method.
+- **Names are persisted.** Activity names come from the agent's `name`, toolset IDs and tool names.
+  Don't rename them while orchestrations that use them are still running.
+- **Replay cost grows with run length.** Each replay re-runs the agent up to its latest step, so
+  orchestrator CPU grows with the square of the number of model and tool steps. Keep very long
+  conversations in separate orchestrations.
+- **Instrumented runs repeat spans.** Pydantic AI spans created in orchestrator code are emitted again
+  on every replay, so one run shows its agent run and model request spans several times.
+- **Activity errors change type.** An exception raised in a model request or tool reaches the
+  orchestrator as `durabletask.task.TaskFailedError`. [`UserError`][pydantic_ai.exceptions.UserError] keeps its type.
+- **Activities on a worker share one event loop.** A blocking call in an async tool or event handler
+  stalls every other activity on that worker.
 
 ## Dependencies
 
-Dependencies must be JSON-serializable. Pass them to `agent.run(deps=...)`;
-activities serialize and reconstruct them against the agent's `deps_type`.
-Dataclasses, Pydantic models and JSON values are supported. Create clients and connections inside
-the tool or `@durable_operation` that uses them.
+Dependencies must be JSON-serializable: dataclasses, Pydantic models and JSON values. Activities rebuild
+them from the agent's `deps_type`. Create clients and connections inside the tool or `@durable_operation`
+that uses them.
 
 ```python
 from collections.abc import Generator
@@ -206,22 +164,19 @@ def support(
     return result.output
 ```
 
-Activities receive serialized run metadata, usage, limits and tool-call state. The worker attaches
-its agent and restores workspaces from references. Live fields such as `ctx.messages`, `ctx.prompt`
-and the tool manager are unavailable. Reading an unavailable field raises `UserError`.
-Activities cannot emit run events or enqueue messages.
+Inside activities, live run fields such as `ctx.messages` and `ctx.prompt` are unavailable and raise
+`UserError`, and tools cannot emit run events.
 
 ## Approvals and deferred calls
 
-Approvals belong to your orchestrator. Include [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] in the output type, wait for
-an external event, then resume with the complete message history, cumulative usage and
-[`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults]. Waiting holds no activity resource open.
-
-This approval loop uses one event per pause, with decisions keyed by the original tool-call IDs:
+Approvals belong to your orchestrator. Include [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests]
+in the output type, wait for an external event, then resume with the message history, usage and
+[`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults]. No activity runs while the orchestration waits.
 
 ```python {title="azure_durable_task_approval.py"}
 from collections.abc import Generator
 
+from durabletask.client import TaskHubGrpcClient
 from durabletask.task import OrchestrationContext, Task
 from pydantic import TypeAdapter
 
@@ -265,41 +220,30 @@ def review(ctx: OrchestrationContext, prompt: str) -> Generator[Task[object], ob
         )
     ctx.set_custom_status(None)
     return result.output
+
+
+def submit_review(client: TaskHubGrpcClient, instance_id: str, event: str, decisions: dict[str, bool]) -> None:
+    """Send the decisions for the review the reviewer saw, if it is still pending."""
+    state = client.get_orchestration_state(instance_id)
+    pending = state.get_custom_status() if state is not None else None
+    if not isinstance(pending, dict) or pending.get('event') != event:
+        raise UserError('This review is no longer pending.')
+    client.raise_orchestration_event(instance_id, event, data=decisions)
 ```
 
-Register `review` with the worker alongside the bound capability's activities.
-Read the SDK state's custom status and present `requests` to the reviewer. Retain that exact
-`event` with the review, then call `client.raise_orchestration_event(instance_id, event, data=decisions)`,
-where `decisions` maps every pending approval ID to `True` (approve) or `False` (deny).
-Resume with the full history and cumulative usage; keep `conversation_id` for correlation, but
-let each run receive its own default run ID.
+The orchestrator publishes the pending `requests` and a fresh `event` name in its custom status.
+Show the requests to the reviewer, then call `submit_review` with the `event` they saw and a decision
+for every approval: `True` to approve, `False` to deny. A new event name per pause means a late
+decision can't answer a later review. Durable Task matches event names case-insensitively, so keep
+tool-call IDs in the payload, as the example does, not in event names.
 
-Durable Task matches event names case-insensitively, but tool-call IDs are case-sensitive.
-The pattern keeps IDs as payload keys, so `call_X` and `call_x` remain distinct. For separate events
-per call, derive event names from `tool_call_id.encode().hex()`, not the original ID.
-External event names must also satisfy the 1-100-character rule. The example uses a replay-safe
-UUID per pause, keeping names within that limit; a per-call hex name may need a bounded hash
-for long IDs, with collision checking or payload IDs retained for disambiguation.
-
-Do not substitute the latest event name when submitting an earlier review. Check that the reviewed
-event is still pending before sending. The per-pause event name keeps a late event from satisfying
-a later wait, including a race after the client's state check.
-Authenticate and authorize your review UI/API; payload validation does not identify the sender.
-
-For argument overrides, denial messages and externally executed calls (including [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]),
-see [Deferred Tools](../deferred-tools.md#human-in-the-loop-tool-approval) and
-[external tool execution](../deferred-tools.md#external-tool-execution). Resolve externally executed
-calls through `DeferredToolResults.calls` rather than `approvals`. Use SDK durable timers for
-review deadlines, not wall-clock sleeps in the orchestrator.
+For argument overrides, denial messages and externally executed calls, see
+[Deferred Tools](../deferred-tools.md#human-in-the-loop-tool-approval) and
+[external tool execution](../deferred-tools.md#external-tool-execution).
 
 ## Retries and inline tools
 
-Pass native `durabletask.task.RetryPolicy` values as `model_options`, `tool_options`,
-`event_options` and `capability_options` to configure activity failures by role.
-`ModelRetry`, [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] are recorded control flow, not SDK failures.
-Codec failures and `UserError` configuration errors are recorded and raised outside native retries.
-Other activity exceptions remain eligible for retries. Serialization failure after a tool side effect
-does not undo that effect.
+Pass native `durabletask.task.RetryPolicy` values to set activity retries per role:
 
 ```python
 from datetime import timedelta
@@ -314,29 +258,24 @@ durability = AzureDurableTaskDurability(
 )
 ```
 
-Like Render, `resolve_tool_options(operation_id, tool, tool_name)` returns a native policy,
-`None` to keep `tool_options`, or `False` to execute a function tool inline.
-The resolver receives `tool=None` for toolset registration and a concrete tool with its original
-name for function-tool invocations. Returning `False` at registration keeps the shared activity.
-Function tools can also opt out with `metadata={'azure_durable_task': False}`; inline tools must
-be deterministic and I/O-free. MCP and dynamic tools cannot opt out.
-Do not put native policies in JSON tool metadata.
-Discovery and MCP instructions inherit their bound tool-role policy; per-tool overrides apply
-to calls and argument validation.
-`models=` adds named worker-side models; `event_stream_handler=` runs the handler as activities.
+`event_options` and `capability_options` cover event handler activities and other capabilities'
+`@durable_operation` methods. [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] and deferred calls
+are agent control flow, not activity failures. `UserError` and serialization failures are not retried.
 
-## Existing orchestrators
+`resolve_tool_options(operation_id, tool, tool_name)` sets a policy per tool: return a `RetryPolicy`,
+`None` to keep `tool_options`, or `False` to run a function tool inline in the orchestrator. A function
+tool can also opt out with `metadata={'azure_durable_task': False}`. Inline tools must be deterministic
+and do no I/O. MCP and dynamic tools always run as activities.
 
-The local example is also the integration path for existing native SDK orchestrators: register
-your orchestrator normally, enter the bound capability's `register(worker)` scope, and use
-`yield from run_durable(ctx, lambda: agent.run(...))` wherever the agent belongs.
-`run_durable` supports parallel operations and asyncio timers using the durable orchestration clock.
-It does not start a worker, register an orchestrator, manage approvals or wrap the SDK client.
+`name=` sets the activity name prefix (the agent's `name` by default), `models=` registers extra models
+by ID for `agent.run(model=...)`, and `event_stream_handler=` runs a handler as activities.
 
 ## Known limitation
 
-`durabletask` 1.12.0 does not close a suspended orchestrator generator when a dispatch ends, so
-bridge cleanup runs late and workers may log `Task was destroyed but it is pending!` on replay.
-This is fixed upstream in [microsoft/durabletask-python#300](https://github.com/microsoft/durabletask-python/pull/300)
+`durabletask` 1.12.0 doesn't close the orchestrator generator a dispatch leaves suspended, so the
+agent run inside it isn't cleaned up when the dispatch ends. Agent runs stay reachable after garbage
+collection too, so each dispatch leaves its run, including its message history and open spans, in
+worker memory, and its `finally` blocks don't run. This is fixed upstream in
+[microsoft/durabletask-python#300](https://github.com/microsoft/durabletask-python/pull/300)
 and [microsoft/durabletask-python#303](https://github.com/microsoft/durabletask-python/pull/303);
-the minimum pin will move to the release that includes them.
+the minimum `durabletask` version will move to the release that includes them.

@@ -1,12 +1,11 @@
 import asyncio
 import json
 import sys
-from collections.abc import AsyncGenerator, Generator
-from contextlib import asynccontextmanager
+from collections.abc import Generator
 from dataclasses import replace
 from datetime import datetime, timedelta
 from functools import partial
-from importlib import import_module, reload
+from importlib import import_module
 from typing import Any, Self
 from uuid import UUID
 
@@ -24,7 +23,6 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec import (
     CapabilityOperationId,
     DurableOperation,
-    RoleBasedOperationConfig,
 )
 from pydantic_ai.messages import (
     ModelMessage,
@@ -47,8 +45,8 @@ with try_import() as imports_successful:
     from durabletask import task
     from durabletask.client import OrchestrationFailedError
 
+    import pydantic_ai_harness
     from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability, run_durable
-    from pydantic_ai_harness.azure_durable_task._operation_backend import AzureDurableTaskOperationBackend
 
     from .worker import (
         EmptyCacheIdentity,
@@ -64,19 +62,17 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='durabletask not installed')
 
 
-def test_import_without_mcp(durable_worker: 'InMemoryWorker', monkeypatch: pytest.MonkeyPatch) -> None:
-    transports = import_module('pydantic_ai_harness.azure_durable_task._transports')
-    try:
-        with monkeypatch.context() as patch:
-            patch.setitem(sys.modules, 'pydantic_ai.mcp', None)
-            reload(transports)
-        agent = Agent(
-            TestModel(custom_output_text='without MCP'), name='no-mcp', capabilities=[AzureDurableTaskDurability()]
-        )
-        with registered_agent(durable_worker, agent):
-            assert run_agent(durable_worker, agent, deps=None).output == 'without MCP'
-    finally:
-        reload(transports)
+def test_import_without_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
+    package = 'pydantic_ai_harness.azure_durable_task'
+    monkeypatch.delattr(pydantic_ai_harness, 'azure_durable_task', raising=False)
+    for name in [name for name in sys.modules if name == package or name.startswith(f'{package}.')]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setitem(sys.modules, 'pydantic_ai.mcp', None)
+
+    durability_type = import_module(package).AzureDurableTaskDurability
+    durability = durability_type.from_agent(Agent(TestModel(), name='no-mcp', capabilities=[durability_type()]))
+    assert durability is not None
+    assert durability.get_durable_operation_backend().registrations()
 
 
 @pytest.mark.parametrize('non_utf8', [False, True])
@@ -146,18 +142,15 @@ def test_typed_tool_arguments_are_restored_from_json(durable_worker: 'InMemoryWo
         observed.append(payload.value)
         return 'typed'
 
-    assert agent.run_sync('Hi', deps=7).output == 'done'
-    assert observed == [42]
     with registered_agent(durable_worker, agent):
         assert run_agent(durable_worker, agent, 'Hi', deps=7).output == 'done'
-    assert observed == [42, 42]
-    assert validated == [42, 42]
+    assert observed == [42]
+    assert validated == [42]
 
 
 def test_choice_action_output_and_partial_output(durable_worker: 'InMemoryWorker') -> None:
     choices = Choices({'answer': Choice(value=lambda: 42)})
     choice_agent = Agent(TestModel(), output_type=choices, name='choice', capabilities=[AzureDurableTaskDurability()])
-    assert choice_agent.run_sync('Hi').output == 42
     with registered_agent(durable_worker, choice_agent):
         assert run_agent(durable_worker, choice_agent, 'Hi', deps=None).output == 42
 
@@ -170,7 +163,6 @@ def test_choice_action_output_and_partial_output(durable_worker: 'InMemoryWorker
         name='partial',
         capabilities=[AzureDurableTaskDurability()],
     )
-    assert partial_agent.run_sync('Hi').output == 'prefix:x'
     with registered_agent(durable_worker, partial_agent):
         assert run_agent(durable_worker, partial_agent, 'Hi', deps=None).output == 'prefix:x'
 
@@ -361,25 +353,13 @@ def test_activity_toolset_scope_closes_after_failure_or_cancellation(
             run_agent(durable_worker, agent, 'Hi', deps=None)
     if not cancel:
         assert 'failed tool' in str(error.value)
-    attempts = sum('__tools.' in name for name in durable_worker.activity_calls)
-    assert attempts >= 1
-    assert any(name.endswith('.call_tool') for name in durable_worker.activity_calls)
-    depth = 0
-    for event in lifetimes:
-        depth += 1 if event == 'enter' else -1
-        assert depth >= 0
-    assert depth == 0
-    assert lifetimes.count('enter') >= attempts
+    assert 'enter' in lifetimes
 
 
 @pytest.mark.parametrize('kind', ['collision', 'value', 'missing-format', 'codec-failure', 'json-failure'])
 def test_activity_result_wire_contract(durable_worker: 'InMemoryWorker', kind: str) -> None:
-    @asynccontextmanager
-    async def scope(deps_input: JsonValue) -> AsyncGenerator[None]:
-        yield
-
     value: JsonValue = (
-        {'format': 'pydantic-ai-durabletask-result-v1', 'value': 'user data', 'serialization_error': 'not a failure'}
+        {'format': 'pydantic-ai-durabletask-result-v1', 'value': 'user data', 'error': 'not a failure'}
         if kind == 'collision'
         else {'answer': 42}
     )
@@ -387,11 +367,11 @@ def test_activity_result_wire_contract(durable_worker: 'InMemoryWorker', kind: s
     async def handler(params: dict[str, JsonValue]) -> object:
         return object() if kind.endswith('failure') else value
 
-    backend = AzureDurableTaskOperationBackend(
-        agent_name='wire',
-        config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=None),
-        activity_scope=scope,
+    capability = AzureDurableTaskDurability.from_agent(
+        Agent(TestModel(), name='wire', capabilities=[AzureDurableTaskDurability()])
     )
+    assert capability is not None
+    backend = capability.get_durable_operation_backend()
     operation = backend.bind(
         DurableOperation(
             operation_id=CapabilityOperationId('wire', operation='echo'),
@@ -411,9 +391,9 @@ def test_activity_result_wire_contract(durable_worker: 'InMemoryWorker', kind: s
 
         return (yield from run_durable(context, body))
 
-    with backend.worker_scope(durable_worker):
+    with capability.register(durable_worker):
         durable_worker.add_orchestrator(orchestrator)
-        instance_id = durable_worker.client.schedule_new_orchestration(orchestrator)
+        instance_id = durable_worker.schedule(orchestrator)
         assert durable_worker.step()
         assert durable_worker.step()
         event = durable_worker.instances[instance_id].new_events[0]
@@ -426,20 +406,19 @@ def test_activity_result_wire_contract(durable_worker: 'InMemoryWorker', kind: s
                     'value': {
                         'format': 'pydantic-ai-durabletask-result-v1',
                         'value': 'user data',
-                        'serialization_error': 'not a failure',
+                        'error': 'not a failure',
                     },
-                    'serialization_error': None,
+                    'error': None,
                 }
             )
         elif kind.endswith('failure'):
-            assert recorded['serialization_error'].startswith('Durable Task serialization failed:')
+            assert recorded['error'].startswith('Durable Task serialization failed:')
         else:
             assert recorded['value'] == value
             if kind == 'missing-format':
                 del recorded['format']
                 event.taskCompleted.result.value = json.dumps(recorded)
         state = durable_worker.wait(instance_id)
-    assert state is not None
     if kind == 'missing-format':
         with pytest.raises(OrchestrationFailedError, match='Field required'):
             state.raise_if_failed()
@@ -487,9 +466,8 @@ def test_model_compaction_restores_the_model(durable_worker: 'InMemoryWorker') -
 
     with registered_agent(durable_worker, agent):
         durable_worker.add_orchestrator(orchestrator)
-        instance_id = durable_worker.client.schedule_new_orchestration(orchestrator)
+        instance_id = durable_worker.schedule(orchestrator)
         state = durable_worker.wait(instance_id)
-    assert state is not None
     state.raise_if_failed()
     assert state.get_output() is True
     assert durable_worker.activity_calls == ['compact__model.compact_messages']

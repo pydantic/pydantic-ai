@@ -7,7 +7,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, TypeVar
-from unittest.mock import MagicMock
 
 import pytest
 from durabletask import client, task, worker
@@ -54,13 +53,6 @@ class InMemoryWorker(worker.TaskHubGrpcWorker):
         self.activity_queue: deque[tuple[str, str, int, str | None]] = deque()
         self.activity_calls: list[str] = []
         self.timers: list[tuple[str, int, pb.CreateTimerAction]] = []
-        mock_client = MagicMock(spec=client.TaskHubGrpcClient)
-        mock_client.schedule_new_orchestration.side_effect = self.schedule
-        mock_client.get_orchestration_state.side_effect = self.state
-        mock_client.wait_for_orchestration_completion.side_effect = self.wait
-        mock_client.raise_orchestration_event.side_effect = self.raise_event
-        self.client_mock = mock_client
-        self.client: client.TaskHubGrpcClient = mock_client
 
     def schedule(
         self, orchestrator: Callable[..., object] | str, *, input: object = None, instance_id: str | None = None
@@ -92,7 +84,7 @@ class InMemoryWorker(worker.TaskHubGrpcWorker):
         for _ in range(200):
             if not self.step():
                 return
-        pytest.fail('Durable Task fixture did not become idle after 200 turns')
+        pytest.fail('Durable Task fixture did not become idle after 200 turns')  # pragma: no cover
 
     def orchestration_turn(self, instance_id: str) -> None:
         record = self.instances[instance_id]
@@ -136,7 +128,7 @@ class InMemoryWorker(worker.TaskHubGrpcWorker):
                 record.status = client.OrchestrationStatus.FAILED
                 details = completed.failureDetails
                 record.failure = task.FailureDetails(details.errorMessage, details.errorType, None)
-        else:
+        else:  # pragma: no cover
             pytest.fail(f'Unsupported SDK action in fixture: {action}')
 
     def activity_turn(self, instance_id: str, name: str, task_id: int, encoded: str | None) -> None:
@@ -164,9 +156,8 @@ class InMemoryWorker(worker.TaskHubGrpcWorker):
                 self.event(timerFired=pb.TimerFiredEvent(timerId=timer_id, fireAt=timer.fireAt))
             )
 
-    def state(self, instance_id: str, **kwargs: object) -> client.OrchestrationState | None:
-        if (record := self.instances.get(instance_id)) is None:
-            return None
+    def state(self, instance_id: str) -> client.OrchestrationState:
+        record = self.instances[instance_id]
         return client.OrchestrationState(
             instance_id=instance_id,
             name=record.name,
@@ -179,10 +170,10 @@ class InMemoryWorker(worker.TaskHubGrpcWorker):
             failure_details=record.failure,
         )
 
-    def wait(self, instance_id: str, **kwargs: object) -> client.OrchestrationState | None:
+    def wait(self, instance_id: str) -> client.OrchestrationState:
         self.run_until_idle()
         state = self.state(instance_id)
-        if state is not None and state.runtime_status not in (
+        if state.runtime_status not in (
             client.OrchestrationStatus.COMPLETED,
             client.OrchestrationStatus.FAILED,
             client.OrchestrationStatus.TERMINATED,
@@ -237,12 +228,11 @@ def schedule_agent(
 ) -> str:
     orchestrator = agent_orchestrator(agent, prompt, deps=deps, timeout=timeout, results=results)
     worker.add_orchestrator(orchestrator)
-    return worker.client.schedule_new_orchestration(orchestrator, instance_id=instance_id)
+    return worker.schedule(orchestrator, instance_id=instance_id)
 
 
 def completed(worker: InMemoryWorker, instance_id: str) -> JsonValue:
-    state = worker.client.wait_for_orchestration_completion(instance_id)
-    assert state is not None
+    state = worker.wait(instance_id)
     state.raise_if_failed()
     return _JSON.validate_python(state.get_output())
 

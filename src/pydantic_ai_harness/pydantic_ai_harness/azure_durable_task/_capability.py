@@ -36,7 +36,7 @@ from ._operation_backend import (
     AzureDurableTaskOperationBackend,
     SerializationFailure,
 )
-from ._run_context import ContextSnapshot, restore_context
+from ._run_context import ActivityRunContext, ContextSnapshot
 
 ToolOptionsResolver = Callable[
     [DurableOperationId, object | None, str],
@@ -196,8 +196,8 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
                 self._activity_deps.reset(deps_token)
 
     def _restore_context(self, snapshot: ContextSnapshot) -> RunContext[AgentDepsT]:
-        return restore_context(
-            snapshot, deps=self._activity_deps.get(), agent=self._agent, engine_spec=self.engine_spec
+        return ActivityRunContext.restore(
+            snapshot.context, deps=self._activity_deps.get(), agent=self._agent, engine_spec=self.engine_spec
         )
 
     def get_default_run_id(self) -> str | None:

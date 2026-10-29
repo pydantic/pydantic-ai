@@ -32,6 +32,7 @@ with try_import() as imports_successful:
         InMemoryWorker,
         completed,
         registered_agent,
+        run_agent,
         schedule_agent,
     )
 
@@ -54,14 +55,13 @@ def test_durable_timer_never_precedes_asyncio_deadline(durable_worker: InMemoryW
         return (yield from run_durable(context, body))
 
     durable_worker.add_orchestrator(orchestrator)
-    instance_id = durable_worker.client.schedule_new_orchestration(orchestrator)
+    instance_id = durable_worker.schedule(orchestrator)
     durable_worker.run_until_idle()
     assert len(durable_worker.timers) == 1
     deadline = durable_worker.timers[0][2].fireAt.ToDatetime().replace(tzinfo=UTC).timestamp()
     assert deadline >= deadlines[0]
     durable_worker.fire_timers()
     state = durable_worker.wait(instance_id)
-    assert state is not None
     state.raise_if_failed()
     assert state.get_output() >= deadlines[0]
     assert durable_worker.timers == []
@@ -92,7 +92,7 @@ def test_first_completed_is_delivered_before_its_sibling(durable_worker: InMemor
 
     with registered_agent(durable_worker, fast), registered_agent(durable_worker, slow):
         durable_worker.add_orchestrator(orchestrator)
-        instance_id = durable_worker.client.schedule_new_orchestration(orchestrator)
+        instance_id = durable_worker.schedule(orchestrator)
         assert durable_worker.step()
         assert len(durable_worker.activity_queue) == 2
         assert durable_worker.step()
@@ -101,7 +101,6 @@ def test_first_completed_is_delivered_before_its_sibling(durable_worker: InMemor
         if timeout:
             durable_worker.fire_timers()
         state = durable_worker.wait(instance_id)
-    assert state is not None
     state.raise_if_failed()
     assert state.get_output() == ['fast', 'slow']
 
@@ -123,12 +122,11 @@ def test_task_group_receives_failure_before_the_other_activity_finishes(durable_
 
     with registered_agent(durable_worker, fast), registered_agent(durable_worker, slow):
         durable_worker.add_orchestrator(orchestrator)
-        instance_id = durable_worker.client.schedule_new_orchestration(orchestrator)
+        instance_id = durable_worker.schedule(orchestrator)
         assert durable_worker.step()
         assert durable_worker.step()
         assert durable_worker.step()
         state = durable_worker.state(instance_id)
-        assert state is not None
         assert state.runtime_status == OrchestrationStatus.FAILED
         assert durable_worker.activity_calls == ['failed__model.request']
 
@@ -160,9 +158,8 @@ def test_owned_loop_closes_async_generators(durable_worker: InMemoryWorker, reta
         return (yield from run_durable(context, body))
 
     durable_worker.add_orchestrator(orchestrator)
-    instance_id = durable_worker.client.schedule_new_orchestration(orchestrator)
+    instance_id = durable_worker.schedule(orchestrator)
     state = durable_worker.wait(instance_id)
-    assert state is not None
     state.raise_if_failed()
     assert state.get_output() == 'done'
     assert cleanup == ['start', 'end']
@@ -171,11 +168,19 @@ def test_owned_loop_closes_async_generators(durable_worker: InMemoryWorker, reta
             asyncio.run(anext(retained[0]))
 
 
-@pytest.mark.parametrize('from_callback', [False, True])
-def test_generator_cleanup_can_run_under_an_outer_event_loop(from_callback: bool) -> None:
+@pytest.fixture
+def orchestration_context(durable_worker: InMemoryWorker) -> MagicMock:
     context = MagicMock(spec=task.OrchestrationContext)
-    context.current_utc_datetime = datetime(2026, 1, 1)
+    context.instance_id = 'instance'
+    context.current_utc_datetime = durable_worker.now
     context.call_activity.return_value = task.CompletableTask[object]()
+    return context
+
+
+@pytest.mark.parametrize('from_callback', [False, True])
+def test_generator_cleanup_can_run_under_an_outer_event_loop(
+    orchestration_context: MagicMock, from_callback: bool
+) -> None:
     agent = Agent(TestModel(), name='closed', capabilities=[AzureDurableTaskDurability()])
     cleanup: list[str] = []
 
@@ -186,7 +191,7 @@ def test_generator_cleanup_can_run_under_an_outer_event_loop(from_callback: bool
             await asyncio.sleep(0)
             cleanup.append('closed')
 
-    generator = run_durable(context, body)
+    generator = run_durable(orchestration_context, body)
     next(generator)
 
     async def close() -> None:
@@ -208,10 +213,7 @@ def test_generator_cleanup_can_run_under_an_outer_event_loop(from_callback: bool
     assert cleanup == ['closed']
 
 
-def test_cleanup_cannot_wait_for_more_durable_work() -> None:
-    context = MagicMock(spec=task.OrchestrationContext)
-    context.current_utc_datetime = datetime(2026, 1, 1)
-    context.call_activity.return_value = task.CompletableTask[object]()
+def test_cleanup_cannot_wait_for_more_durable_work(orchestration_context: MagicMock) -> None:
     agent = Agent(TestModel(), name='cleanup', capabilities=[AzureDurableTaskDurability()])
     cleaned: list[str] = []
 
@@ -224,19 +226,18 @@ def test_cleanup_cannot_wait_for_more_durable_work() -> None:
             finally:
                 cleaned.append('cancelled')
 
-    generator = run_durable(context, body)
+    generator = run_durable(orchestration_context, body)
     next(generator)
     with pytest.raises(UserError, match='cleanup awaited durable work'):
         generator.close()
     assert cleaned == ['cancelled']
 
 
-def test_running_loop_is_rejected_before_creating_the_body() -> None:
-    context = MagicMock(spec=task.OrchestrationContext)
+def test_running_loop_is_rejected_before_creating_the_body(orchestration_context: MagicMock) -> None:
     body = MagicMock(side_effect=partial(asyncio.sleep, 0))
 
     async def check() -> None:
-        generator = run_durable(context, body)
+        generator = run_durable(orchestration_context, body)
         with pytest.raises(UserError, match='not a running event loop'):
             next(generator)
 
@@ -244,11 +245,7 @@ def test_running_loop_is_rejected_before_creating_the_body() -> None:
     body.assert_not_called()
 
 
-def test_external_generator_failure_drains_agent_scope() -> None:
-    context = MagicMock(spec=task.OrchestrationContext)
-    context.instance_id = 'interrupted'
-    context.current_utc_datetime = datetime(2026, 1, 1)
-    context.call_activity.return_value = task.CompletableTask[object]()
+def test_external_generator_failure_drains_agent_scope(orchestration_context: MagicMock) -> None:
     agent = Agent(TestModel(), name='interrupted', capabilities=[AzureDurableTaskDurability()])
     exited: list[bool] = []
 
@@ -258,43 +255,39 @@ def test_external_generator_failure_drains_agent_scope() -> None:
         finally:
             exited.append(True)
 
-    generator = run_durable(context, body)
+    generator = run_durable(orchestration_context, body)
     next(generator)
     with pytest.raises(RuntimeError, match='caller interrupted'):
         generator.throw(RuntimeError('caller interrupted'))
     assert exited == [True]
 
 
-@pytest.mark.parametrize('durable', [True, False])
-def test_deadlines_and_cancelled_callbacks(durable_worker: InMemoryWorker, durable: bool) -> None:
+def test_run_deadline_uses_the_orchestration_clock(durable_worker: InMemoryWorker) -> None:
+    deadlines: list[datetime | None] = []
     agent = Agent(TestModel(custom_output_text='done'), name='deadline', capabilities=[AzureDurableTaskDurability()])
 
     @agent.tool
     def check_deadline(ctx: RunContext[object]) -> str:
-        assert ctx.deadline is not None
-        if durable:
-            assert ctx.deadline == datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)
+        deadlines.append(ctx.deadline)
         return 'deadline preserved'
 
-    if not durable:
-        assert agent.run_sync('Hi', timeout=30).output == 'done'
-        return
-
-    def orchestrator(context: task.OrchestrationContext, payload: object) -> Generator[task.Task[object], object, str]:
-        async def body() -> str:
-            asyncio.get_running_loop().call_soon(pytest.fail, 'Cancelled callback ran').cancel()
-            await agent.run('Hi', timeout=30)
-            return (await agent.run('Again', timeout=30)).output
-
-        return (yield from run_durable(context, body))
-
     with registered_agent(durable_worker, agent):
-        durable_worker.add_orchestrator(orchestrator)
-        instance_id = durable_worker.client.schedule_new_orchestration(orchestrator)
-        state = durable_worker.wait(instance_id)
-    assert state is not None
-    state.raise_if_failed()
-    assert state.get_output() == 'done'
+        assert run_agent(durable_worker, agent, 'Hi', deps=None, timeout=30).output == 'done'
+    assert deadlines == [datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)]
+
+
+def test_cancelled_callbacks_do_not_run(orchestration_context: MagicMock) -> None:
+    errors: list[dict[str, object]] = []
+
+    async def body() -> None:
+        loop = asyncio.get_running_loop()
+        loop.set_exception_handler(lambda loop, context: errors.append(context))
+        loop.call_soon(pytest.fail, 'Cancelled callback ran').cancel()
+        await asyncio.sleep(0)
+
+    with pytest.raises(StopIteration):
+        next(run_durable(orchestration_context, body))
+    assert errors == []
 
 
 def test_threadsafe_callback_is_not_scheduled_before_rejection(durable_worker: InMemoryWorker) -> None:
@@ -312,13 +305,6 @@ def test_threadsafe_callback_is_not_scheduled_before_rejection(durable_worker: I
         with pytest.raises(OrchestrationFailedError, match='Threads and external I/O'):
             completed(durable_worker, handle)
     assert scheduled == []
-
-
-@pytest.fixture
-def orchestration_context(durable_worker: InMemoryWorker) -> MagicMock:
-    context = MagicMock(spec=task.OrchestrationContext)
-    context.current_utc_datetime = durable_worker.now
-    return context
 
 
 @pytest.mark.parametrize('finish_background', [False, True])

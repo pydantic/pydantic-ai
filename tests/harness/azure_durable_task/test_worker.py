@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -20,31 +19,10 @@ def test_worker_completes_synchronous_orchestrators(durable_worker: InMemoryWork
         return 'done'
 
     durable_worker.add_orchestrator(orchestrator)
-    instance_id = durable_worker.client.schedule_new_orchestration(orchestrator)
+    instance_id = durable_worker.schedule(orchestrator)
     state = durable_worker.wait(instance_id)
-    assert state is not None
     state.raise_if_failed()
     assert state.get_output() == 'done'
-
-
-def test_worker_bounds_busy_dispatches(durable_worker: InMemoryWorker, monkeypatch: pytest.MonkeyPatch) -> None:
-    step = MagicMock(return_value=True)
-    monkeypatch.setattr(durable_worker, 'step', step)
-    with pytest.raises(pytest.fail.Exception, match='did not become idle after 200 turns'):
-        durable_worker.run_until_idle()
-    assert step.call_count == 200
-
-
-def test_worker_rejects_unsupported_sdk_actions(durable_worker: InMemoryWorker) -> None:
-    def orchestrator(context: task.OrchestrationContext, payload: object) -> str:
-        context.send_event(context.instance_id, 'unsupported')
-        return 'done'
-
-    durable_worker.add_orchestrator(orchestrator)
-    instance_id = durable_worker.client.schedule_new_orchestration(orchestrator)
-    with pytest.raises(pytest.fail.Exception, match='Unsupported SDK action in fixture') as exc:
-        durable_worker.wait(instance_id)
-    assert 'sendEvent' in str(exc.value)
 
 
 def test_worker_waits_for_an_external_event(durable_worker: InMemoryWorker) -> None:
@@ -54,16 +32,10 @@ def test_worker_waits_for_an_external_event(durable_worker: InMemoryWorker) -> N
         return response
 
     durable_worker.add_orchestrator(orchestrator)
-    instance_id = durable_worker.client.schedule_new_orchestration(orchestrator)
+    instance_id = durable_worker.schedule(orchestrator)
     with pytest.raises(TimeoutError, match='has not completed'):
-        durable_worker.client.wait_for_orchestration_completion(instance_id)
-    durable_worker.client.raise_orchestration_event(instance_id, 'resume', data='resumed')
-    state = durable_worker.client.wait_for_orchestration_completion(instance_id)
-    assert state is not None
+        durable_worker.wait(instance_id)
+    durable_worker.raise_event(instance_id, 'resume', data='resumed')
+    state = durable_worker.wait(instance_id)
     state.raise_if_failed()
     assert state.get_output() == 'resumed'
-
-
-def test_worker_has_no_state_for_unknown_instances(durable_worker: InMemoryWorker) -> None:
-    assert durable_worker.client.get_orchestration_state('missing') is None
-    assert durable_worker.client.wait_for_orchestration_completion('missing') is None

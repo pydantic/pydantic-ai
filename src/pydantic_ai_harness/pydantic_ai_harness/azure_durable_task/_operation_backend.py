@@ -5,12 +5,12 @@ import re
 from collections.abc import Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager
 from dataclasses import dataclass
-from typing import Annotated, Generic, Literal, TypeVar, cast
+from typing import Generic, Literal, TypeVar, cast
 
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 from durabletask import task
 from durabletask.worker import TaskHubGrpcWorker
-from pydantic import Field, JsonValue, TypeAdapter, ValidationError
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai.durable_exec import (
@@ -45,8 +45,6 @@ INPUT = TypeAdapter(ActivityInput)
 _JSON = TypeAdapter[JsonValue](JsonValue)
 _RESULT_FORMAT: Literal['pydantic-ai-durabletask-result-v1'] = 'pydantic-ai-durabletask-result-v1'
 _ESCAPED_NAME_CHARACTER = re.compile(r'-|[^a-zA-Z0-9_.`+:-]')
-_ACTIVITY_NAME = re.compile(r'[a-zA-Z0-9_.`+:-]{1,100}')
-_NAME_RULE = '1-100 ASCII characters: letters, digits, underscores, periods, backticks, plus signs, hyphens or colons'
 _DEFAULT_CONFIG = object()
 
 
@@ -68,16 +66,14 @@ class SerializationFailure(UserError):
 class _ActivityResult:
     format: Literal['pydantic-ai-durabletask-result-v1']
     value: JsonValue = None
-    serialization_error: str | None = None
-    user_error: Annotated[str | None, Field(exclude_if=lambda error: error is None)] = None
+    error: str | None = None
 
 
 _RESULT = TypeAdapter(_ActivityResult)
 
 
-def _serialization_failure(error: Exception) -> object:
-    message = str(error if isinstance(error, SerializationFailure) else SerializationFailure(error))
-    return _RESULT.dump_python(_ActivityResult(format=_RESULT_FORMAT, serialization_error=message), mode='json')
+def _failure(error: UserError) -> object:
+    return _RESULT.dump_python(_ActivityResult(format=_RESULT_FORMAT, error=str(error)), mode='json')
 
 
 class _BoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[ParamsT, WireT, ResultT]):
@@ -114,10 +110,8 @@ class _BoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[Pa
         )
         result = await loop.wait(pending)
         recorded = _RESULT.validate_python(result)
-        if recorded.serialization_error is not None:
-            raise UserError(recorded.serialization_error)
-        if recorded.user_error is not None:
-            raise UserError(recorded.user_error)
+        if recorded.error is not None:
+            raise UserError(recorded.error)
         return self.operation.result_codec.load(recorded.value)
 
 
@@ -154,12 +148,10 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
         name: str,
         config: task.RetryPolicy | None,
     ) -> tuple[BoundDurableOperation[ParamsT, WireT, ResultT], Sequence[Callable[..., object]]]:
-        if _ACTIVITY_NAME.fullmatch(name) is None:
-            raise UserError(f'Azure Durable Task activity name {name!r} must use {_NAME_RULE}.')
-        if name in self._activity_names:
+        if name in self._activity_names:  # pragma: no cover - needs a SHA-256 prefix collision
             raise UserError(
                 f'Azure Durable Task activity name {name!r} is not unique after escaping. '
-                f'Choose distinct agent, model and toolset identities; names must use {_NAME_RULE}.'
+                'Choose distinct agent, model and toolset identities.'
             )
         self._activity_names.add(name)
 
@@ -167,7 +159,7 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
             try:
                 wire = INPUT.validate_python(payload)
             except ValidationError as exc:
-                return _serialization_failure(exc)
+                return _failure(SerializationFailure(exc))
             try:
                 async with self._activity_scope(wire.deps_input):
                     with durable_unit_scope():
@@ -175,19 +167,17 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
                             # JSON erases the wire type; its transport validates it on load.
                             params = operation.parameter_transport.load(cast(WireT, payload), runtime=self)
                         except ValidationError as exc:
-                            return _serialization_failure(exc)
+                            return _failure(SerializationFailure(exc))
                         result = await operation.handler(params)
                         try:
                             value = _JSON.validate_python(operation.result_codec.dump(result))
                         except (ValidationError, PydanticSerializationError, UnicodeDecodeError) as exc:
-                            return _serialization_failure(exc)
+                            return _failure(SerializationFailure(exc))
                         return _RESULT.dump_python(_ActivityResult(format=_RESULT_FORMAT, value=value), mode='json')
-            except SerializationFailure as exc:
-                # SDK RetryPolicy retries every activity exception. Raise recorded codec
-                # failures in orchestration code instead, outside its retry boundary.
-                return _serialization_failure(exc)
             except UserError as exc:
-                return _RESULT.dump_python(_ActivityResult(format=_RESULT_FORMAT, user_error=str(exc)), mode='json')
+                # SDK RetryPolicy retries every activity exception. Raise recorded codec and
+                # configuration failures in orchestration code instead, outside its retry boundary.
+                return _failure(exc)
 
         def activity(context: task.ActivityContext, payload: object) -> object:
             if self._portal is None:

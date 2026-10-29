@@ -80,8 +80,6 @@ ParamsT = TypeVar('ParamsT')
 WireT = TypeVar('WireT', bound=_HasContext)
 RestoreContext = Callable[[ContextSnapshot], RunContext[Any]]
 
-_JSON = TypeAdapter[JsonValue](JsonValue)
-
 
 class _Transport(ParameterTransport[ParamsT, JsonValue], Generic[ParamsT, WireT]):
     def __init__(
@@ -97,10 +95,10 @@ class _Transport(ParameterTransport[ParamsT, JsonValue], Generic[ParamsT, WireT]
     def dump(self, params: ParamsT) -> JsonValue:
         wire = self._dump(params)
         payload = ActivityInput(
-            parameters=_JSON.validate_python(self._adapter.dump_python(wire, mode='json', round_trip=True)),
+            parameters=self._adapter.dump_python(wire, mode='json', round_trip=True),
             deps_input=wire.context.deps_input if wire.context is not None else None,
         )
-        return _JSON.validate_python(INPUT.dump_python(payload, mode='json'))
+        return INPUT.dump_python(payload, mode='json')
 
     def load(self, payload: JsonValue, *, runtime: object) -> ParamsT:
         return self._load(self._adapter.validate_python(INPUT.validate_python(payload).parameters))

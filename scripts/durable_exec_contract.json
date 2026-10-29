@@ -1637,7 +1637,6 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_workflow.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::<module>",
-        "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_run_context.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_capability.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::<module>"
       ]
