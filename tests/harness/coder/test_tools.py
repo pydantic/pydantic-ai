@@ -235,7 +235,7 @@ class TestCoder:
         assert model.last_model_request_parameters is not None
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
         tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
-        assert ('are already in your context' in text) is repo_context
+        assert ('from the project directory are already in your' in text) is repo_context
         rule = 'Do not use `delegate_task` unless the user or applicable AGENTS.md/skill instructions explicitly ask'
         assert (rule in text) is sub_agents
         assert ('delegate_task' in tools) is sub_agents

@@ -34,8 +34,8 @@ readiness is verified; shut them down when no longer needed.
 """
 
 REPO_INSTRUCTIONS = """\
-`AGENTS.md` and `CLAUDE.md` from the project directory and its parent directories
-are already in your context, so don't search for or re-read them.\
+`AGENTS.md` and `CLAUDE.md` from the project directory are already in your
+context, so don't re-read them.\
 """
 """Added with `RepoContext`, which loads those files: models otherwise spend shell calls looking for them."""
 
