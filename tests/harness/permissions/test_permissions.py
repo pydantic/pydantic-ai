@@ -28,6 +28,7 @@ from pydantic_ai_harness.permissions import (
     PermissionMode,
     PermissionRequest,
     Permissions,
+    RememberedApproval,
     ask_permissions,
     permission_requests,
 )
@@ -272,7 +273,7 @@ class TestPermissions:
 
     async def test_a_caller_owned_memory(self, tmp_path: Path) -> None:
         """`remembered` belongs to the caller, who can read, share, or clear it."""
-        remembered: set[tuple[str | None, str, str]] = set()
+        remembered: set[RememberedApproval] = set()
         person = _Person(PermissionDecision(approved=True, remember=True))
         command = ('run_command', {'command': 'echo hi'})
         agent = Agent[None, str](
@@ -288,7 +289,7 @@ class TestPermissions:
 
         await agent.run('go', conversation_id='c')
 
-        assert remembered == {('c', 'run_command', 'echo hi')}
+        assert remembered == {RememberedApproval('c', 'run_command', 'echo hi')}
         assert len(person.asked) == 1
 
     async def test_remember_has_no_effect_inside_durable_execution(self, tmp_path: Path) -> None:
@@ -298,7 +299,7 @@ class TestPermissions:
             in_durable_context = True
 
         DBOSDurability.__module__ = 'pydantic_ai.durable_exec.dbos'
-        remembered: set[tuple[str | None, str, str]] = set()
+        remembered: set[RememberedApproval] = set()
         person = _Person(PermissionDecision(approved=True, remember=True), PermissionDecision(approved=True))
         command = ('run_command', {'command': 'echo hi'})
         agent = Agent[None, str](

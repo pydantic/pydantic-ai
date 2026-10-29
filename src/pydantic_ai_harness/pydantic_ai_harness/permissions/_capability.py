@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Awaitable, Callable, MutableSet, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from pydantic import BaseModel, ValidationError
 
@@ -74,6 +74,19 @@ class _AnsweredMetadata(BaseModel):
     permissions: _Answered
 
 
+class RememberedApproval(NamedTuple):
+    """A call approved with `remember=True`: the same tool on the same subject runs without asking in its conversation."""
+
+    conversation_id: str | None
+    """The conversation the approval holds for."""
+
+    tool_name: str
+    """The tool approved."""
+
+    subject: str
+    """The command, or the path written, approved."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class PermissionRequest:
     """A call `Permissions` holds until a person approves it."""
@@ -137,10 +150,10 @@ class Permissions(AbstractCapability[AgentDepsT]):
     ask_commands: Sequence[str] = DEFAULT_ASK_COMMANDS
     """Regular expressions for the commands `'auto'` asks about, searched for anywhere in the command."""
 
-    remembered: MutableSet[tuple[str | None, str, str]] = field(
-        default_factory=set[tuple[str | None, str, str]], repr=False, compare=False
+    remembered: MutableSet[RememberedApproval] = field(
+        default_factory=set[RememberedApproval], repr=False, compare=False
     )
-    """Calls approved with `remember=True`, as `(conversation_id, tool_name, subject)`, which run without asking.
+    """Calls approved with `remember=True`, which run without asking.
 
     The caller owns it: pass one to share it, bound it, or drop it with the conversation it is for. It is
     in-process memory, so inside a durable workflow or flow it is neither read nor written: every call asks.
@@ -177,7 +190,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
         if asked is None:
             return args
         # In-process memory would not survive a replay or a move to another worker.
-        key = None if in_durable_context(ctx) else (ctx.conversation_id, call.tool_name, asked.subject)
+        key = (
+            None if in_durable_context(ctx) else RememberedApproval(ctx.conversation_id, call.tool_name, asked.subject)
+        )
         if ctx.tool_call_approved:
             if key is not None and _remember(ctx.tool_call_metadata):
                 self.remembered.add(key)
