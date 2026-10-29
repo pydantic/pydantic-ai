@@ -32,7 +32,15 @@ import daytona
 import pytest
 from pytest_examples import CodeExample
 
-from pydantic_ai.workspaces import WorkspaceTimeoutError, WorkspaceUnavailableError
+from pydantic_ai.workspaces import (
+    Click,
+    PressKeys,
+    TypeText,
+    WorkspaceBackend,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
+from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
 from pydantic_ai_harness.daytona_sandbox._backend import _close_client  # pyright: ignore[reportPrivateUsage]
@@ -288,6 +296,43 @@ async def test_commands_get_a_usable_environment(client: daytona.AsyncDaytona) -
 
         result = await backend.run('echo "$FOO"; echo "$PATH"', shell=True, env={'FOO': '1'}, timeout=60)
         assert result.stdout.splitlines() == ['1', path]
+
+
+class TestLiveDaytonaDesktop(WorkspaceBackendSuite):
+    """Runs the workspace rules, the display ones included, against a sandbox started with a desktop."""
+
+    @pytest.fixture(scope='class')
+    @classmethod
+    async def backend(cls) -> AsyncIterator[WorkspaceBackend]:
+        backend = DaytonaSandboxBackend(auto_stop_interval=LIVE_AUTO_STOP_INTERVAL, desktop=True)
+        try:
+            yield backend
+        finally:
+            try:
+                if backend.ref is not None:
+                    await DaytonaSandbox().destroy(backend.ref)
+            finally:
+                await backend.aclose()
+
+    async def test_keys_and_text_reach_the_focused_window(self, backend: WorkspaceBackend) -> None:
+        """Validates the key mapping the fake assumes: a shifted symbol is shift and its key on Daytona's display."""
+        assert isinstance(backend, DaytonaSandboxBackend)
+        display = backend.display
+        assert display is not None
+        assert await display.display_size() == (1280, 800)
+        await backend.run(
+            'setsid xfce4-terminal --geometry 60x10+100+100 -x sh -c "touch ready; cat > typed.txt" >/dev/null 2>&1 &',
+            shell=True,
+        )
+        await backend.run('until [ -e ready ]; do sleep 0.1; done; sleep 1', shell=True, timeout=30)
+
+        await display.act(Click(x=300, y=180))
+        await display.act(TypeText(text='hello, desktop'))
+        await display.act(PressKeys(keys=('!',)))
+        await display.act(PressKeys(keys=('enter',)))
+
+        typed = await backend.run('until [ -s typed.txt ]; do sleep 0.1; done; cat typed.txt', shell=True, timeout=30)
+        assert typed.stdout == 'hello, desktop!\n'
 
 
 # The README's Python blocks are the same as this page's.

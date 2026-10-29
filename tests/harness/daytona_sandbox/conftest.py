@@ -14,7 +14,13 @@ _HAS_DAYTONA = importlib.util.find_spec('daytona') is not None
 collect_ignore = (
     []
     if _HAS_DAYTONA
-    else ['test_backend.py', 'test_conformance.py', 'test_daytona_live.py', 'test_daytona_sandbox.py']
+    else [
+        'test_backend.py',
+        'test_conformance.py',
+        'test_daytona_desktop.py',
+        'test_daytona_live.py',
+        'test_daytona_sandbox.py',
+    ]
 )
 
 # CI stops the live job after 15 minutes, before a `finally` can delete what it started.

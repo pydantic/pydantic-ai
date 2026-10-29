@@ -40,6 +40,8 @@ Each run leaves its container running; see [Clean up](docker-sandbox.md#clean-up
 usage limit, returns no ref to clean up with: remove its desktop in an `on_run_error` hook, as shown for
 [E2B](e2b-sandbox.md#clean-up).
 
+[`DaytonaSandbox(desktop=True)`](daytona-sandbox.md#give-the-agent-a-desktop) gives the agent a desktop in a Daytona cloud sandbox instead.
+
 To give your own sandbox a display, implement [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]; see
 [Controlling a display](../workspace.md#controlling-a-display). On a [read-only](../workspace.md#read-only-access)
 workspace the agent can take screenshots but not act.

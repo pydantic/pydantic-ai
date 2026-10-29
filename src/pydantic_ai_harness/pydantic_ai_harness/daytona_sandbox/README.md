@@ -87,6 +87,37 @@ A command's output is collected once it exits, so `run()` returns then even if a
 
 See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
 
+## Give the agent a desktop
+
+Pass `desktop=True` for a sandbox with a graphical display, which [`ComputerUse`](../computer_use/) lets the agent see and control:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox
+
+agent = Agent('anthropic:claude-sonnet-5-5', capabilities=[DaytonaSandbox(desktop=True), ComputerUse()])
+
+
+async def main():
+    result = await agent.run('Open a terminal and find out which Python version is installed.')
+    print(result.output)
+```
+
+Daytona's default snapshot has an XFCE desktop with a terminal, started on first use. The display is 1280x800; pass a size, such as `desktop=(1440, 900)`, for another, at least 1024x768. The size applies to a new sandbox. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/). The agent keeps the sandbox's shell and files too, so `Coder` and `ComputerUse` can work in the same sandbox.
+
+Daytona's desktop can't press F13 to F24, print screen, pause, scroll lock, the menu key or media keys, or the side mouse buttons, or type emoji; the agent is told when it asks for one. On Daytona's Tier 1 and 2, a sandbox reaches only package registries, GitHub and AI APIs, even with `allow_internet_access=True`, so the agent's browser can't open other websites; see [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
+
+To watch the agent work, or take over, open the desktop in your browser. Create the backend before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run), and get a link from it:
+
+```python {test="skip" lint="skip"}
+backend = DaytonaSandboxBackend(desktop=True)
+print(await backend.live_view_url())  # starts the sandbox and its desktop
+result = await agent.run('Open a terminal and find out which Python version is installed.', workspace=backend)
+```
+
+Anyone with the link can see and use the desktop until it expires, after an hour unless you pass `expires_in` seconds.
+
 ## Reattach later
 
 To come back to the sandbox without the message history, pass its ref back as `workspace=`:
@@ -191,6 +222,7 @@ A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed w
 | `allow_internet_access` | Whether a new sandbox can reach the internet. When `False`, what is blocked depends on your Daytona organization's tier: on Tier 3 and 4 everything, while lower tiers keep package registries, GitHub, and AI APIs reachable, so there it is not an exfiltration boundary. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/). Default: `True`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/daytona`, where commands run as non-root `daytona`); set a project directory, or use relative paths for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`, at least 1024x768. The size applies to a new sandbox. Default: `False`. |
 
 Daytona runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
 
