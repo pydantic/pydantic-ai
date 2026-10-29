@@ -75,6 +75,7 @@ from pydantic_ai_harness import (
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
+from pydantic_ai_harness.peers import InMemoryPeerNetwork
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.subagents import AgentOverride
@@ -378,6 +379,13 @@ COMBINE_POLICY: dict[str, Policy] = {
     'AskUser': Narrows(
         'one `ask_user_question` tool per id, and two answerers is a conflict, not one configuration stated twice',
         lambda cls: (cls(answerer=_decline), cls(answerer=None)),
+    ),
+    'Peers': Narrows(
+        'one peer network per id; merging two networks would widen who receives messages',
+        lambda cls: (
+            cls(network=InMemoryPeerNetwork().join(handle='a')),
+            cls(network=InMemoryPeerNetwork().join(handle='b')),
+        ),
     ),
     'Shell': Collides(
         'its toolset registers `run_command` and friends under fixed names',

@@ -1,8 +1,8 @@
 # Delegation and Planning
 
 Capabilities that structure long or multi-part work: `Planning` (a model-owned task list),
-`SubAgents` (one `delegate_task` tool over named child agents), `DynamicWorkflow` (the model
-scripts sub-agent calls in a sandbox), `Advisor` (consult a second model mid-run), and
+`SubAgents` (one `delegate_task` tool over named child agents), `Peers` (messages between
+independently run sessions), `DynamicWorkflow` (the model scripts sub-agent calls in a sandbox), `Advisor` (consult a second model mid-run), and
 `BackgroundTools` (slow tools run while the agent keeps going). All import from
 `pydantic_ai_harness`; only `DynamicWorkflow` needs an extra.
 
@@ -12,6 +12,7 @@ scripts sub-agent calls in a sandbox), `Advisor` (consult a second model mid-run
 | --- | --- |
 | Parent calls one specific agent from a tool it writes itself, full control over prompt and deps | Core agent delegation (`await other.run(..., usage=ctx.usage)` inside a tool; see the `building-pydantic-ai-agents` skill, ORCHESTRATION-AND-INTEGRATIONS.md) |
 | Model picks among several named specialists, occasionally, judging each result before the next | `SubAgents` |
+| Independently run sessions discover or message each other without starting another run | `Peers` |
 | Fan-out, chaining, voting, or retry loops over sub-agents, where intermediate results should not enter the parent context | `DynamicWorkflow` |
 | A second opinion from another (often stronger) model, not a task hand-off | `Advisor` |
 | Keep a checklist across a long run, or hand a plan from a planner run to an executor run | `Planning` |
@@ -236,6 +237,42 @@ reports = DelegationReports(tasks, conversation_id='conversation-1')
   the reports reach the first model request with no synthetic user prompt.
 - Reports are marked delivered once consumed and are not replayed. The host owns idle wake-up.
 
+## Peers
+
+Use `Peers` for independently run sessions, not delegated child runs. The host provides a
+`PeerNetwork` for discovery and delivery, and an optional `PeerInbox` for receiving messages.
+`InMemoryPeerNetwork` connects sessions within one application. Bind the same inbox to
+`network.join(handle=..., inbox=inbox)` and `Peers(network=view, inbox=inbox)` on the recipient.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import Peers
+from pydantic_ai_harness.peers import InMemoryPeerNetwork, PeerInbox
+
+network = InMemoryPeerNetwork()
+inbox = PeerInbox()
+view = network.join(handle='reviewer', inbox=inbox)
+agent = Agent('test', capabilities=[Peers(network=view, inbox=inbox)])
+```
+
+- Tools: `list_peers(query='')` lists other sessions, filtering handle, title, workspace,
+  or branch; `send_message(to, text, reply_to=None)` addresses a listed handle or ID.
+- `Peers` defaults: `max_messages_per_run=10`, `max_message_bytes=16384` UTF-8 bytes,
+  `max_listed=30`. `PeerInbox` defaults: `max_pending=50`, `max_message_bytes=16384`.
+  Set both byte limits when changing allowed message size.
+- An idle peer's inbox queues the message; the host must start its next turn. A running peer
+  reads the message at its next model request. Sending never waits for a reply.
+- Use `PeerInbox(path=...)` for pending messages across restarts. The host owns transport,
+  identity, authentication, and any cross-process coordination; the in-memory network
+  does not supply those. A receiver without `Peers(inbox=...)` does not attach its inbox to runs.
+- Peer text is untrusted data, not user approval. Use `read_peer_message(part)` to read typed
+  provenance from message metadata, not by parsing displayed text.
+- Joining `InMemoryPeerNetwork` without an inbox is send-only; incoming messages are rejected.
+  `PeerInbox(accepting=False)` refuses new messages and retains already-pending messages.
+- Do not combine `Peers` with durable-execution capabilities. Construction raises `UserError` because
+  live host state cannot be replayed.
+
 ## DynamicWorkflow
 
 The model gets one `run_workflow` tool and writes Python (Monty sandbox) in which each sub-agent is an
@@ -404,6 +441,7 @@ Gotchas:
 
 - https://pydantic.dev/docs/ai/harness/planning/
 - https://pydantic.dev/docs/ai/harness/subagents/
+- https://pydantic.dev/docs/ai/harness/peers/
 - https://pydantic.dev/docs/ai/harness/dynamic-workflow/
 - https://pydantic.dev/docs/ai/harness/advisor/
 - https://pydantic.dev/docs/ai/harness/background-tools/

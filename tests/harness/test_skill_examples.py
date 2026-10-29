@@ -195,6 +195,10 @@ def test_harness_skill_covers_every_capability_module():
     assert (missing_entries, missing_references, unlisted, without_section) == ([], [], [], [])
 
 
+# Independent examples share a process; a module-level import can follow another example's framing.
+@pytest.mark.filterwarnings(
+    r"ignore:Framing tag 'peer_message' was registered after.*:UserWarning:pydantic_ai_harness\.peers\._message"
+)
 @pytest.mark.parametrize('example', list(find_skill_examples()))
 def test_skill_examples(example: CodeExample, eval_example: EvalExample):
     # Lint every snippet to catch stale imports/syntax, and additionally execute the ones
