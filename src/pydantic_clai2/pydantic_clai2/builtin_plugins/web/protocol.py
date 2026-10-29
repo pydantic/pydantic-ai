@@ -133,7 +133,7 @@ class ApprovalInfo:
     """A tool call `/permissions` holds until the user approves it, which the browser shows as an approval card."""
 
     tool: str
-    action: Literal['command', 'write']
+    action: Literal['command', 'write', 'delegate']
     subject: str
     """The command, or the path the call writes."""
     reason: str

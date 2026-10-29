@@ -1793,8 +1793,8 @@ shows how to put a different one, a web form for instance, in its place.
 | `read-only` | ask | ask |
 
 A held call waits for your answer: the inline picker in the terminal, or an approval card in the web UI,
-showing the command or the file change; the terminal prints a command too long for its picker in full above
-it. **Approve** runs it once, **Approve for this session** also runs the
+showing the command or the file change; the terminal prints the command (or a path too long for the
+picker) in full above it. **Approve** runs it once, **Approve for this session** also runs the
 same tool on the same command (or the same file) without asking for the rest of the conversation, and **Deny** tells
 the model the call did not run, with the reason you type, if any. The web UI shows the mode as a chip by the
 prompt box and changes it there too. A change applies from the next tool call, also during a turn, except
@@ -1805,7 +1805,8 @@ and Settings, General edits it. It is harness [`Permissions`](../../../docs/harn
 the coding tools' file writes and commands only; other tools, such as MCP servers', run as before. File tools
 only reach files inside the session's folder, so `auto` lets them write. In `read-only`, code mode's sandbox
 gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
-can be asked in, such as `clai2 -p`, denies held calls.
+can be asked in, such as `clai2 -p`, denies held calls. With an agent you supply (`clai2 --agent`), `/permissions` is passed to
+each run rather than bound to the agent, so a delegation to `self` would run unchecked: outside `full` it asks first.
 
 ### Compacting the conversation
 

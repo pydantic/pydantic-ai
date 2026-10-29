@@ -34,7 +34,7 @@ export function ApprovalCard({ request, approval, asker, answer, onError }: Prop
     }
   }
 
-  const what = approval.action === 'command' ? 'run a command' : 'write a file'
+  const what = { command: 'run a command', write: 'write a file', delegate: 'start a delegate' }[approval.action]
   return (
     <div className="question-card approval-card" role="group" aria-label="Approval">
       <div className="question-title">

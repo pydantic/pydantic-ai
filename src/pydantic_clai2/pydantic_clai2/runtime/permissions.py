@@ -99,7 +99,7 @@ def approval_question(request: PermissionRequest) -> AskUserRequest:
     text = _question_text(request)
     if len(text) > _QUESTION_LENGTH:
         text = text[: _QUESTION_LENGTH - 1] + '…'
-    noun = 'command' if request.action == 'command' else 'file'
+    noun = {'command': 'command', 'write': 'file', 'delegate': 'task'}[request.action]
     return AskUserRequest(
         id=request.call.tool_call_id,
         questions=(
@@ -126,6 +126,8 @@ def shown_in_full(request: PermissionRequest) -> bool:
 def _question_text(request: PermissionRequest) -> str:
     if request.action == 'command':
         return _printable(f'{request.reason} Run this command?\n{request.subject}')
+    if request.action == 'delegate':
+        return _printable(f'{request.reason} Start this delegate anyway?\n{request.subject}')
     return _printable(f'{request.reason} Write {request.subject}?')
 
 

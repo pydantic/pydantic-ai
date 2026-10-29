@@ -220,10 +220,14 @@ class TerminalAnswerer:
         return await self._ask(request)
 
     async def ask_approval(self, request: PermissionRequest) -> AskUserResponse:
-        """Ask `approval_question` about a held call, first printing a command or path too long for the question."""
+        """Ask `approval_question` about a held call, first printing what it runs in full.
+
+        The picker cuts its question to the rows the terminal leaves it, which a resize can shrink while
+        it is open, so a command or task is always printed in full, and a path when the question cuts it.
+        """
         held = (
             None
-            if shown_in_full(request)
+            if request.action == 'write' and shown_in_full(request)
             else Text(f'{terminal_text(request.call.tool_name)} waits for approval to run:\n')
         )
         if held is not None:

@@ -11,7 +11,15 @@ import pytest
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 from pydantic_ai.capabilities import HandleDeferredToolCalls, LocalWorkspace
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolResults, RunContext, ToolApproved
 from pydantic_ai_harness.filesystem import FileSystem
@@ -25,6 +33,7 @@ from pydantic_ai_harness.permissions import (
     permission_requests,
 )
 from pydantic_ai_harness.shell import Shell
+from pydantic_ai_harness.subagents import SubAgents
 
 
 def _calls(*calls: tuple[str, Mapping[str, object]]) -> FunctionModel:
@@ -243,6 +252,55 @@ class TestPermissions:
         await agent.run('go')
 
         assert not (tmp_path / 'doomed').exists()
+
+    @pytest.mark.parametrize('bound', [False, True])
+    async def test_a_self_delegation_carries_the_check(self, tmp_path: Path, bound: bool) -> None:
+        """A delegate to `self` runs only what is bound to the agent, so a run-level `Permissions` holds the delegation."""
+        (tmp_path / 'doomed').mkdir()
+        person = _Person(PermissionDecision(approved=False))
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            prompt = next(
+                part.content
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, UserPromptPart)
+            )
+            last = messages[-1]
+            if isinstance(last, ModelRequest) and any(isinstance(part, ToolReturnPart) for part in last.parts):
+                return ModelResponse(parts=[TextPart('done')])
+            if prompt == 'go':
+                return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': 'clean up'})])
+            return ModelResponse(parts=[ToolCallPart('run_command', {'command': 'rm -rf doomed'})])
+
+        gate = [
+            Permissions[None]('read-only'),
+            HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person)),
+        ]
+        agent = Agent[None, str](
+            FunctionModel(respond),
+            deps_type=type(None),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Shell(denied_commands=[]),
+                SubAgents(include_self=True, agent_folders=None),
+                *(gate if bound else []),
+            ],
+        )
+
+        await agent.run('go', capabilities=[] if bound else gate)
+
+        assert (tmp_path / 'doomed').is_dir()
+        if bound:
+            assert [(request.action, request.subject) for request in person.asked] == [('command', 'rm -rf doomed')]
+        else:
+            [request] = person.asked
+            assert (request.action, request.subject, request.call.tool_name) == (
+                'delegate',
+                'clean up',
+                'delegate_task',
+            )
 
     def test_serialization_name(self) -> None:
         assert Permissions.get_serialization_name() == 'Permissions'

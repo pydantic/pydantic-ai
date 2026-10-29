@@ -14,6 +14,7 @@ from pydantic_ai.models.function import AgentInfo
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse
 from pydantic_ai_harness.permissions import PermissionDecision, PermissionRequest
 from pydantic_ai_harness.shell import Shell
+from pydantic_ai_harness.subagents import SubAgents
 from pydantic_clai2.builtin_plugins.ask_user_menu import QuestionMenu, TerminalAnswerer, terminal_approver
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer
@@ -180,27 +181,37 @@ def test_proposed_diff() -> None:
 
 
 @pytest.mark.parametrize(
-    ('subject', 'printed'),
+    ('held', 'printed'),
     [
-        pytest.param('ls', False, id='short'),
-        pytest.param('echo ' + 'x' * 600 + ' && rm -rf doomed', True, id='long'),
+        pytest.param(request(subject='ls'), 'ls', id='command'),
+        pytest.param(
+            request(subject='echo ready\n' + '# padding\n' * 12 + 'rm -rf valuable'),
+            'rm -rf valuable',
+            id='multi-line-command',
+        ),
+        pytest.param(request(subject='echo ' + 'x' * 600 + ' && rm -rf doomed'), 'rm -rf doomed', id='long-command'),
+        pytest.param(request('write', 'a.py', path='a.py', content='x'), None, id='path'),
+        pytest.param(request('write', 'd/' * 300 + 'a.py', path='a.py', content='x'), 'd/d/a.py', id='long-path'),
     ],
 )
-async def test_terminal_approver_prints_a_command_too_long_for_the_question(subject: str, printed: bool) -> None:
-    """The picker's question is cut at its limit, so a longer command is printed in full before it is approved."""
+async def test_terminal_approver_prints_what_the_picker_may_cut(held: PermissionRequest, printed: str | None) -> None:
+    """The picker cuts its question to the rows the terminal leaves it, so a command is always printed in full first."""
     output = io.StringIO()
-    asked: list[str] = []
+    frames: list[tuple[str, ...]] = []
 
     def pick(menu: QuestionMenu) -> tuple[str, ...]:
-        asked.append(menu.question.question)
+        frames.append(menu.frame(width=80, height=24))
         return (APPROVE_SESSION,)
 
     answerer = TerminalAnswerer(full_screen=bare_screen, console=Console(file=output, width=1000), runner=pick)
-    assert await terminal_approver(answerer)(request(subject=subject)) == PermissionDecision(
-        approved=True, remember=True
-    )
-    assert ('rm -rf doomed' in output.getvalue()) is printed
-    assert asked[0].endswith('…') is printed
+    assert await terminal_approver(answerer)(held) == PermissionDecision(approved=True, remember=True)
+    if printed is None:
+        assert output.getvalue() == ''
+    else:
+        assert printed in output.getvalue()
+    if held.subject.startswith('echo ready'):
+        # Why it must be printed: a 24-row terminal's picker shows the first rows only.
+        assert not any('rm -rf valuable' in row for row in frames[0])
 
 
 async def test_the_browser_shows_an_approval_card() -> None:
@@ -299,3 +310,35 @@ async def test_the_terminal_can_answer_the_browsers_approval_first() -> None:
     answerer = BrowserAnswerer(publish=lambda message, _: None, terminal=None, terminal_approval=terminal)
     assert await answerer.approve(request()) == PermissionDecision(approved=True)
     assert answerer.questions == []
+
+
+async def test_a_supplied_agents_self_delegation_is_held(tmp_path: Path) -> None:
+    """A supplied agent gets `/permissions` per run, which its delegate to `self` would not carry, so the delegation is held."""
+    ran: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        returned = [part for part in messages[-1].parts if isinstance(part, ToolReturnPart)]
+        if returned:
+            return ModelResponse(parts=[TextPart(f'Tool said: {returned[0].content}')])
+        if 'delegate_task' in [tool.name for tool in info.function_tools]:
+            return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': 'clean up'})])
+        return ModelResponse(parts=[ToolCallPart('run_command', {'command': COMMAND})])
+
+    def run_command(command: str) -> str:
+        ran.append(command)
+        return f'ran {command}'
+
+    tool = Tool(run_command, metadata={'code_arg_name': 'command', 'code_arg_language': 'shell'})
+    agent = Agent(
+        streamed(respond),
+        deps_type=type(None),
+        tools=[tool],
+        capabilities=[SubAgents[None](include_self=True, max_depth=2, agent_folders=None)],
+    )
+    shell, output = runtime(tmp_path, agent)
+    shell.send_input('/permissions auto')
+    shell.send_input('clean up')
+    shell.send_input('/exit')
+    assert await shell.run() == 'exit'
+    assert ran == []
+    assert f'The user denied this delegation, so it did not run. {UNANSWERED}' in output.getvalue()
