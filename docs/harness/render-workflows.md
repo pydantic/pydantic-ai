@@ -21,6 +21,8 @@ If you only need background execution, a native Render task around `agent.run(..
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Your application starts the support task with start_task and gets a run ID back at once. On Render, the root task run calls agent.run. RenderWorkflows sends each model request to a chained support__model.request task run and each tool call to a chained call_tool task run, each in its own instance with its own retries, timeout and compute plan. The application reads the result later with get_task_run. Nothing is checkpointed, so a retried root task run repeats finished calls.](../img/harness/render-workflows.svg)
+
 ## Prerequisites
 
 The example uses Pydantic AI's `TestModel` and a mock weather tool, so it needs no LLM API key or Render deployment.

@@ -197,6 +197,7 @@ _CAPABILITY_PAGE_META = {
     'github.md': ('github', 'GitHub'),
     'google-workspace.md': ('google_workspace', 'Google Workspace'),
     'prompt-injection-defender.md': ('prompt_injection_defender', 'Prompt Injection Defender'),
+    'artifact-scanning.md': ('artifact_scanning', 'Artifact Scanning'),
     'spend.md': ('spend', 'Spend'),
     'localstack.md': ('localstack', 'LocalStack'),
     'logfire-mcp.md': ('logfire_mcp', 'Logfire MCP'),

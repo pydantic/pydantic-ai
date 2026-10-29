@@ -9,6 +9,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import AdvisorTool, Agent, RunContext
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, ModelFallback, PrefixTools
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -678,6 +679,28 @@ class TestAdvisor:
             Advisor('anthropic:', mode='native')
         with pytest.raises(ValueError, match='not supported by OpenRouter'):
             Advisor('openrouter:anthropic/claude-opus-4.8', mode='native', max_uses=1)
+
+    def test_agent_spec_schema_publishes_its_fields(self) -> None:
+        definitions = AgentSpec.model_json_schema_with_capabilities([Advisor])['$defs']
+
+        assert set(definitions['spec_params_Advisor']['properties']) == {
+            'model',
+            'mode',
+            'max_uses',
+            'max_tokens',
+            'caching',
+            'forward_history',
+        }
+        assert definitions['short_spec_Advisor']['properties']['Advisor']['anyOf'][-1] == {'type': 'string'}
+
+    def test_agent_spec_passes_output_type_through(self) -> None:
+        agent = Agent.from_spec(
+            {'model': 'test', 'capabilities': [{'Advisor': {'model': 'test', 'mode': 'local', 'output_type': int}}]},
+            custom_capability_types=[Advisor],
+        )
+
+        [advisor] = [c for c in agent.root_capability.capabilities if isinstance(c, Advisor)]
+        assert advisor.output_type is int
 
     async def test_loads_string_model_from_agent_spec(self) -> None:
         agent = Agent.from_spec(

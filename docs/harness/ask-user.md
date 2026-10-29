@@ -11,6 +11,8 @@ Let the model ask the user multiple-choice questions mid-run and wait for the an
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls ask_user_question with one to ten multiple-choice questions. AskUser validates them, rejecting calls outside the limits or with control characters as a retry, then hands an AskUserRequest to the answerer you supply, such as a terminal menu or a web form. The answerer returns an AskUserResponse. The model gets the picked labels keyed by header, a sentence saying the user declined or did not answer in time, or, with answerer=None, the run pauses with DeferredToolRequests until you answer in a later run.](../img/harness/ask-user.svg)
+
 ## The problem
 
 An agent given an ambiguous task either guesses or buries a question in its output and stops.
@@ -76,6 +78,46 @@ An `Answerer` is one async callable: it takes an `AskUserRequest` and returns an
   `with Agent.parallel_tool_call_execution_mode('sequential'):`.
 - The model writes the questions, and a prompt injection can make it ask for a password or a
   token. Present the questions as coming from the model, not as a system or sign-in prompt.
+
+### Reading the asking run
+
+An answerer with two required positional parameters receives `(ctx, request)`, satisfying
+[`ContextAnswerer`][pydantic_ai_harness.ask_user.ContextAnswerer]. Request-only answerers keep
+receiving just the request. Both plain async functions and callable objects are supported,
+including two-argument lambdas.
+
+If a callable accepts both one and two positional arguments, annotate its first parameter as
+[`RunContext[DepsT]`][pydantic_ai.tools.RunContext] to select the context form; otherwise it receives
+only the request. Only the first annotation is inspected; an unresolved annotation naming
+`RunContext` also selects the context form. Use
+[`AnyAnswerer[DepsT]`][pydantic_ai_harness.ask_user.AnyAnswerer] to annotate a stored callback that
+may use either signature.
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness import AskUser
+from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse
+
+
+async def answer_for_session(ctx: RunContext[str], request: AskUserRequest) -> AskUserResponse:
+    for question in request.questions:
+        print(f'{ctx.deps}: {question.question}')
+    answers = [AskUserAnswer(header=q.header, selected=(q.options[0].label,)) for q in request.questions]
+    return AskUserResponse(answers=tuple(answers))
+
+
+agent = Agent('{{ anthropic:xlarge }}', deps_type=str, capabilities=[AskUser(answerer=answer_for_session)])
+```
+
+In an in-process run, `ctx.deps`, `ctx.model`, and `ctx.messages` belong to the run that called
+the tool. For a delegated agent, that is the child's run, not the parent's. The messages include the model response that
+asked the question, including thinking parts when the model provides them. Treat the history as
+read-only; other tools may still run while the answerer waits.
+
+The context reaches only the answerer; it is not part of the request, its events or deferred
+calls. With `answerer=None`, no answerer is called: deferred hosts supply context from their own
+state. Durable execution can restrict access to context fields; see
+[Temporal's run-context rules](../durable_execution/temporal.md#agent-run-context-and-dependencies).
 
 ## Bounding the wait
 
@@ -244,6 +286,10 @@ registers, and `ASK_USER_EVENTS`, the namespace of both events.
 ::: pydantic_ai_harness.ask_user.AskUser
 
 ::: pydantic_ai_harness.ask_user.Answerer
+
+::: pydantic_ai_harness.ask_user.ContextAnswerer
+
+::: pydantic_ai_harness.ask_user.AnyAnswerer
 
 ::: pydantic_ai_harness.ask_user.AskUserRequest
 

@@ -257,10 +257,10 @@ def test_install_pins_clai2_and_installs_spec_extra_for_yaml_agents() -> None:
         for line in step.run.splitlines()
         if line.strip().startswith('python3 -P -m pip install ')
         for argument in shlex.split(line)
-        if argument.startswith(('pydantic-ai-harness==', 'pydantic-clai2=='))
+        if argument.startswith(('pydantic-ai-harness[coder]==', 'pydantic-clai2=='))
     ]
     assert harness_requirements == [
-        'pydantic-ai-harness==${GH_AW_ENGINE_VERSION}',
+        'pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}',
         'pydantic-clai2==${GH_AW_ENGINE_VERSION}',
     ]
     assert requirement == 'pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0'

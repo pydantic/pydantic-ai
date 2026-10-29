@@ -11,6 +11,8 @@ description: Give an agent a tool that locates and returns Pydantic AI documenta
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls read_pyai_docs with one of six topics. The tool first looks for the page in a docs checkout inside the run workspace, and otherwise fetches it from the main branch on GitHub. It then replaces model aliases using model_aliases/aliases.json and returns the full page to the model. If neither source has the page, the tool returns an error naming the path and URL it tried.](../img/harness/pydantic-ai-docs.svg)
+
 ## The problem
 
 An agent that authors Pydantic AI capabilities, hooks, tools, or toolsets needs the current docs for those APIs. Preloading the docs into the system prompt spends context the agent rarely needs in full, and pins a snapshot that drifts from `main`.
