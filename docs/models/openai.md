@@ -410,7 +410,7 @@ print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
 
-A compatible encrypted [`CompactionPart`][pydantic_ai.messages.CompactionPart] ends the response-ID chain, including when another provider such as `openai-codex` produced it. The next request sends the compaction item and subsequent messages instead of restoring the older server-side context. This also applies to an explicit response-ID seed and to prompt-cache comparison IDs.
+An encrypted [`CompactionPart`][pydantic_ai.messages.CompactionPart] produced by another compatible provider, such as `openai-codex`, ends the response-ID chain. The next request sends the compaction item and subsequent messages instead of restoring the older server-side context. This also applies to an explicit response-ID seed and to prompt-cache comparison IDs.
 
 As an alternative to passing `message_history`, you can pass a concrete `provider_response_id` from an earlier run as the seed. Pydantic AI uses the seed for the first request in the new run, then automatically chains to the response returned for that request on any subsequent in-run calls — so the chain still extends correctly if the run includes tool-call continuations or retries.
 
