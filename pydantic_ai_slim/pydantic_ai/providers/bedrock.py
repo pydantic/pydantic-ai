@@ -365,6 +365,10 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             ),
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
+            # Claude takes no video. The direct Anthropic adapter declares that itself, but Converse has a
+            # `video` block, so without this a video is sent and Bedrock rejects it ("This model doesn't
+            # support the video content block") instead of the file becoming a note.
+            supports_video_input=False,
         ),
         # Converse compiles Claude's strict schemas with Anthropic's limits, verified live.
         AnthropicModelProfile(anthropic_enforces_strict_schema_limits=True),
