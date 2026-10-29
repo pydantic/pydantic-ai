@@ -505,6 +505,26 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.stat', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
     ('os.listdir', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
     ('io.TextIOWrapper.read', 'pydantic_ai_harness/youdotcom/_toolset.py', '_harness_version'),
+    # Building browser-use's `Agent` imports its LLM adapters, reads its prompt templates, and sets up its scratch
+    # file system and screenshot directory, once per `browse_web` call.
+    *(
+        (func, 'browser_use/agent/service.py', '__init__')
+        for func in (
+            'os.stat',
+            'os.mkdir',
+            'os.listdir',
+            'os.unlink',
+            'os.rmdir',
+            'io.TextIOWrapper.read',
+            'io.TextIOWrapper.write',
+            'io.BufferedReader.read',
+        )
+    ),
+    # browser-use creates its config directories the first time it reads one, and its PostHog telemetry client
+    # resolves the current directory when it's built; both happen once per process.
+    ('os.stat', 'browser_use/config.py', '_ensure_dirs'),
+    ('os.mkdir', 'browser_use/config.py', '_ensure_dirs'),
+    ('os.getcwd', 'posthog/client.py', '__init__'),
     # Starting a LocalStack container checks that the Docker socket it mounts exists, once per container.
     ('os.stat', 'pydantic_ai_harness/localstack/_container.py', '_run_argv'),
     # MCP clients' `pydantic-settings` read `.env` files when they're constructed, once per connection.
