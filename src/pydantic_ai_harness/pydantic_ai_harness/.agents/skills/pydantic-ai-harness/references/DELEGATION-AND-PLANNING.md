@@ -136,7 +136,8 @@ max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate control
   order) from the run's workspace. TOML needs `name`, `description`, and `developer_instructions`;
   unknown keys, including sandbox or permission settings, skip the file with a warning. A run without
   a workspace skips it. A sequence of paths reads exactly those (and fails at run start without a workspace).
-  Pass `workspace=LocalWorkspaceBackend('/app')` to read definitions from elsewhere.
+  Pass `workspace=LocalWorkspaceBackend('/app')` to read definitions from elsewhere. Definitions in a workspace
+  with `trusted=False` are skipped with a warning; read operator-owned ones through `workspace=`.
 - `forward_usage=True`: children share the parent's usage, so a parent `usage_limits` bounds the tree.
   A `SubAgent.usage_limits` gives that child isolated accounting (its tokens stop aggregating).
 - `inherit_tools=False`: `True` is deprecated. Bind tools directly to explicit child agents, use

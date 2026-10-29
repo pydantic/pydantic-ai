@@ -17,7 +17,13 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserProm
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceReadOnlyError
+from pydantic_ai.workspaces import (
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    UntrustedWorkspace,
+    Workspace,
+    WorkspaceReadOnlyError,
+)
 from pydantic_ai_harness.subagents import (
     DelegationTask,
     DelegationTasks,
@@ -56,9 +62,16 @@ async def test_directory_schema_is_opt_in(tmp_path: Path, enabled: bool) -> None
 
 
 @pytest.mark.parametrize('mode', ['plain', 'owned', 'controlled'])
-@pytest.mark.parametrize('parent_read_only,child_read_only', [(False, False), (True, False), (False, True)])
-async def test_selected_directory_and_read_only(
-    tmp_path: Path, mode: Literal['plain', 'owned', 'controlled'], parent_read_only: bool, child_read_only: bool
+@pytest.mark.parametrize(
+    'parent_read_only,child_read_only,parent_trusted',
+    [(False, False, True), (True, False, True), (False, True, True), (False, False, False)],
+)
+async def test_selected_directory_keeps_the_parents_policy(
+    tmp_path: Path,
+    mode: Literal['plain', 'owned', 'controlled'],
+    parent_read_only: bool,
+    child_read_only: bool,
+    parent_trusted: bool,
 ) -> None:
     parent_dir, child_dir = tmp_path / 'parent', tmp_path / 'policy'
     parent_dir.mkdir()
@@ -68,6 +81,8 @@ async def test_selected_directory_and_read_only(
     workspace = Workspace(LocalWorkspaceBackend(parent_dir))
     if parent_read_only:
         workspace = ReadOnlyWorkspace(workspace)
+    if not parent_trusted:
+        workspace = UntrustedWorkspace(workspace)
     child: Agent[object, str] = Agent(TestModel(call_tools=['inspect']), name='worker')
 
     @child.tool
@@ -75,6 +90,7 @@ async def test_selected_directory_and_read_only(
         assert await ctx.workspace.working_dir() == str(child_dir)
         assert await ctx.workspace.read_text('marker') == 'policy'
         assert ctx.workspace.read_only is (parent_read_only or child_read_only)
+        assert ctx.workspace.trusted is parent_trusted
         if ctx.workspace.read_only:
             with pytest.raises(WorkspaceReadOnlyError):
                 await ctx.workspace.write_text('marker', 'changed')

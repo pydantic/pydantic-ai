@@ -154,7 +154,9 @@ Authoring executes arbitrary Python in-process at import, construction, and run 
 is the same trust boundary an agent that already runs shell commands and edits files
 operates under, which is the deliberate choice here. Do not point it at a directory whose
 contents you would not run yourself, and treat authored capabilities as code the agent is
-executing on your host.
+executing on your host. In particular, don't call `store.load_active()` on a `directory`
+inside an [untrusted workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/#untrusted-workspaces)
+(`trusted=False`): its files are code that workspace's authors could have written.
 
 Authored code first runs when the model calls `author_capability`, not on the next run:
 validation executes the module body, the constructor, and the static getters in the current
