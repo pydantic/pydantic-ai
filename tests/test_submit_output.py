@@ -744,7 +744,9 @@ async def test_submission_from_a_tool_execution_hook(hook: str):
                 await ctx.submit_output('final_result', {'order_id': 'wrap', 'total': 3})
             return result
 
-    agent = Agent(call_tool_then_reply('assemble'), output_type=Invoice, capabilities=[SubmitForTheTool()])
+    agent = Agent(
+        call_tool_then_reply('assemble'), output_type=Invoice, capabilities=[SubmitForTheTool()], deps_type=type(None)
+    )
 
     @agent.tool_plain
     def assemble() -> str:
@@ -799,6 +801,7 @@ async def test_submission_before_a_model_request_ends_the_run_without_sending_it
         FunctionModel(model, stream_function=stream_model),
         output_type=Invoice,
         capabilities=[SubmitBeforeModelRequest(2, in_prepare=in_prepare)],
+        deps_type=type(None),
     )
 
     @agent.tool_plain
@@ -830,7 +833,9 @@ async def test_submission_before_the_first_request_ends_the_run_without_one():
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise AssertionError('no request should be sent')  # pragma: no cover
 
-    agent = Agent(FunctionModel(model), output_type=Invoice, capabilities=[SubmitBeforeModelRequest(1)])
+    agent = Agent(
+        FunctionModel(model), output_type=Invoice, capabilities=[SubmitBeforeModelRequest(1)], deps_type=type(None)
+    )
 
     result = await agent.run('go')
 
@@ -864,7 +869,11 @@ async def test_submission_after_a_model_request_is_the_responses_first_output(
         )
 
     agent = Agent(
-        FunctionModel(model), output_type=Invoice, end_strategy=end_strategy, capabilities=[SubmitAfterResponse()]
+        FunctionModel(model),
+        output_type=Invoice,
+        end_strategy=end_strategy,
+        capabilities=[SubmitAfterResponse()],
+        deps_type=type(None),
     )
 
     @agent.tool_plain
@@ -893,6 +902,7 @@ async def test_submission_after_a_text_response_replaces_its_output():
         FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('not json')])),
         output_type=NativeOutput(Invoice),
         capabilities=[SubmitAfterResponse()],
+        deps_type=type(None),
     )
 
     result = await agent.run('go')
@@ -910,7 +920,9 @@ async def test_submission_from_a_node_hook_ends_the_run_before_the_next_request(
                 await ctx.submit_output('final_result', {'order_id': 'from_hook', 'total': 1})
             return result
 
-    agent = Agent(call_tool_then_reply('look_up'), output_type=Invoice, capabilities=[SubmitAfterTools()])
+    agent = Agent(
+        call_tool_then_reply('look_up'), output_type=Invoice, capabilities=[SubmitAfterTools()], deps_type=type(None)
+    )
 
     @agent.tool_plain
     def look_up() -> str:
@@ -962,7 +974,10 @@ async def test_rejected_submission_outside_a_tool_call_raises_model_retry(
             return request_context
 
     agent = Agent(
-        FunctionModel(lambda m, i: ModelResponse(parts=[])), output_type=output_type, capabilities=[SubmitFirst()]
+        FunctionModel(lambda m, i: ModelResponse(parts=[])),
+        output_type=output_type,
+        capabilities=[SubmitFirst()],
+        deps_type=type(None),
     )
 
     result = await agent.run('go')
@@ -982,7 +997,10 @@ async def test_run_level_submission_misuse():
             return request_context  # pragma: no cover
 
     agent = Agent(
-        FunctionModel(lambda m, i: ModelResponse(parts=[])), output_type=Invoice, capabilities=[SubmitTwice()]
+        FunctionModel(lambda m, i: ModelResponse(parts=[])),
+        output_type=Invoice,
+        capabilities=[SubmitTwice()],
+        deps_type=type(None),
     )
     with pytest.raises(UserError, match='already submitted an output with `submit_output` outside a tool call'):
         await agent.run('go')
@@ -999,6 +1017,7 @@ async def test_run_level_submission_misuse():
         FunctionModel(lambda m, i: ModelResponse(parts=[ToolCallPart('final_result', {'order_id': 'a', 'total': 1})])),
         output_type=Invoice,
         capabilities=[SubmitAfterEnd()],
+        deps_type=type(None),
     )
     with pytest.raises(UserError, match='after the run already had its final result'):
         await agent.run('go')
@@ -1019,6 +1038,7 @@ async def test_submission_is_refused_while_output_is_processed():
     agent = Agent(
         FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('{"order_id": "a", "total": 1}')])),
         output_type=NativeOutput(Invoice),
+        deps_type=type(None),
     )
 
     @agent.output_validator
@@ -1049,6 +1069,7 @@ async def test_run_level_submission_to_a_hidden_output_tool_is_rejected():
         ),
         output_type=[ToolOutput(Invoice, name='submit_invoice'), ToolOutput(Receipt, name='submit_receipt')],
         capabilities=[PrepareOutputTools(hide_receipts), SubmitReceipt()],
+        deps_type=type(None),
     )
 
     result = await agent.run('go')
