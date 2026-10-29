@@ -21,6 +21,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.groq import GroqModelName
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
+    from pydantic_ai.models.nace import NaceModelName
     from pydantic_ai.models.openai import DEPRECATED_OPENAI_MODELS, OpenAIModelName
     from pydantic_ai.models.openai_decisions import OpenAIDecisionsModelName
     from pydantic_ai.models.snowflake import SnowflakeModelName
@@ -41,7 +42,7 @@ if not imports_successful():  # pragma: lax no cover
     CrusoeModelName = None
     DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = SnowflakeModelName = None
     MetaModelName = None
-    TypeSafeModelName = None
+    NaceModelName = TypeSafeModelName = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -72,6 +73,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'meta': MetaModelName,
     'mistral': MistralModelName,
     'moonshotai': MoonshotAIModelName,
+    'nace': NaceModelName,
     'openai': OpenAIModelName,
     'openai-chat': OpenAIModelName,
     'openai-decisions': OpenAIDecisionsModelName,

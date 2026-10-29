@@ -33,6 +33,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.meta import MetaProvider
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+    from pydantic_ai.providers.nace import NaceProvider
     from pydantic_ai.providers.nebius import NebiusProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -73,6 +74,7 @@ with try_import() as imports_successful:
         ('nebius', NebiusProvider, 'NEBIUS_API_KEY'),
         ('ovhcloud', OVHcloudProvider, 'OVHCLOUD_API_KEY'),
         ('snowflake', SnowflakeProvider, 'SNOWFLAKE_ACCOUNT'),
+        ('nace', NaceProvider, 'NACE_API_KEY'),
         ('gateway/chat', OpenAIProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/groq', GroqProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/google', GoogleCloudProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),

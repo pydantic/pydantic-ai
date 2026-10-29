@@ -516,6 +516,8 @@ KnownModelName = TypeAliasType(
         'moonshotai:moonshot-v1-8k',
         'moonshotai:moonshot-v1-8k-vision-preview',
         'moonshotai:moonshot-v1-auto',
+        'nace:drex-max',
+        'nace:drex-v2.0',
         'openai-chat:computer-use-preview',
         'openai-chat:computer-use-preview-2025-03-11',
         'openai-chat:gpt-3.5-turbo',
