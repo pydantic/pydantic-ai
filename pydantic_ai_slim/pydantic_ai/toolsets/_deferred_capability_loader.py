@@ -160,13 +160,17 @@ async def resolve_loaded_capability_instructions(
 LoadPhase = Literal['before_run', 'before_model_request']
 """A capability hook that runs before a model request, where a load from code takes effect on that request."""
 
-_load_phase: ContextVar[tuple[LoadPhase, PendingMessageQueue] | None] = ContextVar('_load_phase', default=None)
+_load_phase: ContextVar[tuple[LoadPhase, object] | None] = ContextVar('_load_phase', default=None)
 """The hook running and the queue of the run it runs for: a run nested in the hook has its own queue, so its own rules."""
 
 
 @contextmanager
-def capability_load_phase(phase: LoadPhase, queue: PendingMessageQueue) -> Generator[None]:
-    """Mark the `before_run` or `before_model_request` hooks of the run with `queue` as a place `ctx.load_capability()` works."""
+def capability_load_phase(phase: LoadPhase, queue: object) -> Generator[None]:
+    """Mark the `before_run` or `before_model_request` hooks of the run with `queue` as a place `ctx.load_capability()` works.
+
+    `queue` is the run's `RunContext.pending_messages`, compared by identity: a realtime session's isn't a
+    `PendingMessageQueue`, and loading there raises its own error.
+    """
     token = _load_phase.set((phase, queue))
     try:
         yield
