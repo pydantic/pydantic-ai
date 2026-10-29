@@ -1541,6 +1541,19 @@ async def _prepare_request_parameters(
     )
 
 
+def _carry_frame_ref_forward(history: list[_messages.ModelMessage]) -> None:
+    """Store the conversation's frame ref on the request about to be sent, when an earlier request stores it.
+
+    Every request from the first one that needed the ref then carries it, so compaction or a history processor that
+    drops the opening turns still leaves it in history.
+    """
+    requests = [m for m in history if isinstance(m, _messages.ModelRequest)]
+    if not requests or stored_frame_ref(requests[-1]) is not None:
+        return
+    if (ref := next((r for m in reversed(requests) if (r := stored_frame_ref(m)) is not None), None)) is not None:
+        store_frame_ref(requests[-1], ref)
+
+
 def _keep_frame_ref(history: list[_messages.ModelMessage], prepared: list[_messages.ModelMessage]) -> None:
     """Store the frame ref `prepare_messages` put on the outgoing request on the stored request too.
 
@@ -2942,6 +2955,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         runs per attempt, in `_prepare_attempt`.
         """
         persistent_messages_before_processing = len(ctx.state.message_history)
+        # Before any hook or history processor can drop the requests that stored it.
+        _carry_frame_ref_forward(ctx.state.message_history)
         mirrored_messages = HistoryMirroringMessages(request_context.messages, ctx.state.message_history)
         request_context.messages = mirrored_messages
         try:

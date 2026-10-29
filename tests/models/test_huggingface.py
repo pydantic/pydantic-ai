@@ -420,6 +420,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '6467b9c7fc66'}},
             ),
             ModelResponse(
                 parts=[
@@ -457,6 +458,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '6467b9c7fc66'}},
             ),
             ModelResponse(
                 parts=[
@@ -492,6 +494,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '6467b9c7fc66'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -1016,6 +1019,7 @@ async def test_retry_feedback_without_inline_system_prompts(allow_model_requests
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '6467b9c7fc66'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='final-response')],
@@ -1046,7 +1050,7 @@ async def test_retry_feedback_without_inline_system_prompts(allow_model_requests
             'role': 'user',
             'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<retry_feedback ref="6467b9c7fc66">
 Response is invalid
 </retry_feedback>\
 """,

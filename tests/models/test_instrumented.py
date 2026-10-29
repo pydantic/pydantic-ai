@@ -1245,7 +1245,7 @@ async def test_run_records_retry_feedback_on_both_spans(capfire: CaptureLogfire)
                                 'type': 'text',
                                 'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<retry_feedback ref="b3b1fe0b3aa4">
 Answer in English.
 </retry_feedback>\
 """,
@@ -1284,7 +1284,7 @@ Answer in English.
                                 'type': 'text',
                                 'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<retry_feedback ref="b3b1fe0b3aa4">
 Answer in English.
 </retry_feedback>\
 """,
@@ -1323,7 +1323,7 @@ Answer in English.
                                 'type': 'text',
                                 'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<retry_feedback ref="b3b1fe0b3aa4">
 Answer in English.
 </retry_feedback>\
 """,
@@ -1362,7 +1362,7 @@ Answer in English.
                                 'type': 'text',
                                 'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<retry_feedback ref="b3b1fe0b3aa4">
 Answer in English.
 </retry_feedback>\
 """,

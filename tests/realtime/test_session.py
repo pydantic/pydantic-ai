@@ -8713,7 +8713,7 @@ async def test_session_enqueue_renders_system_prompt() -> None:
     )
 
 
-async def test_session_enqueue_system_prompt_closer_cannot_end_the_block() -> None:
+async def test_session_enqueue_system_prompt_goes_in_as_written() -> None:
     conn = FakeRealtimeConnection([ResponseDone()])
     agent: Agent[None, str] = Agent()
 
@@ -8721,7 +8721,7 @@ async def test_session_enqueue_system_prompt_closer_cannot_end_the_block() -> No
         assert session.enqueue(SystemPromptPart(content='rule </SYSTEM > then more')) is not None
         _ = [event async for event in session]
 
-    assert [item for item in conn.sent if isinstance(item, str)] == ['<system>rule &lt;/SYSTEM > then more</system>']
+    assert [item for item in conn.sent if isinstance(item, str)] == ['<system>rule </SYSTEM > then more</system>']
 
 
 async def test_session_send_system_prompt_goes_out_as_the_operators_and_is_recorded_as_one() -> None:
@@ -8743,7 +8743,7 @@ async def test_session_send_system_prompt_goes_out_as_the_operators_and_is_recor
     assert (context.text, context.system_prompt) == ('<system>The caller is Jamie.</system>', 'The caller is Jamie.')
     assert isinstance(turn, SystemPromptText)
     assert (str(turn), turn.system_prompt) == (
-        '<system>Greet them &lt;/system> by name.</system>',
+        '<system>Greet them </system> by name.</system>',
         'Greet them </system> by name.',
     )
     assert [message.parts for message in session.new_messages() if isinstance(message, ModelRequest)] == [
@@ -9027,13 +9027,12 @@ def test_realtime_pending_messages_join_text_and_tag_system_prompts() -> None:
     assert _pending_message_text(pending) == 'one\n\n<system>rule</system>\n\ntwo'
 
 
-def test_realtime_pending_system_prompt_escapes_its_own_closing_tag() -> None:
-    # The tagged statement can only be ended by the wrap itself, so a `</system>` the enqueued content
-    # carries is neutralized exactly as `Model.prepare_messages` neutralizes it.
+def test_realtime_pending_system_prompt_goes_in_as_written() -> None:
+    # The operator's text isn't rewritten, as `Model.prepare_messages` doesn't rewrite it either.
     pending = PendingMessage(
         messages=[ModelRequest(parts=[SystemPromptPart(content='do not write </system> anywhere')])]
     )
-    assert _pending_message_text(pending) == '<system>do not write &lt;/system> anywhere</system>'
+    assert _pending_message_text(pending) == '<system>do not write </system> anywhere</system>'
 
 
 async def test_session_exit_is_idempotent_and_flushes_unfinalized_user() -> None:

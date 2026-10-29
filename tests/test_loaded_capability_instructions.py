@@ -699,7 +699,7 @@ async def test_wire_shape_after_the_load_without_a_system_channel(
                 },
                 {
                     'text': """\
-<system><context id="capability:housekeeping">
+<system ref="4551eec3986e"><context id="capability:housekeeping">
 Use trash.
 </context></system>\
 """,

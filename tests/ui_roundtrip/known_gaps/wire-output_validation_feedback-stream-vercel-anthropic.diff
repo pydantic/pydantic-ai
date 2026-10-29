@@ -8,7 +8,7 @@
 -   "role": "user",
 -   "content": [
 -    {
--     "text": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nThat was a draft; answer for real.\n</retry_feedback>",
+-     "text": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback ref=\"40ad65b96846\">\nThat was a draft; answer for real.\n</retry_feedback>",
 -     "type": "text"
 -    }
 -   ]
@@ -25,7 +25,7 @@
 -   "role": "user",
 -   "content": [
 -    {
--     "text": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nThat was a draft; answer for real.\n</retry_feedback>",
+-     "text": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback ref=\"40ad65b96846\">\nThat was a draft; answer for real.\n</retry_feedback>",
 -     "type": "text"
 -    }
 -   ]

@@ -32,6 +32,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent, ToolsetTool, models
+from pydantic_ai._frame_ref import frame_ref
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.capabilities import MCP, Capability
@@ -881,10 +882,8 @@ A later <context> element with the same id replaces the earlier one and stays in
             assert current[: len(previous)] == previous
 
     @pytest.mark.parametrize('inline_system', [True, False])
-    async def test_server_instructions_cannot_forge_framing_tags(
-        self, fastmcp_server: FastMCP[None], inline_system: bool
-    ):
-        """A server's text can't close its `<context>` element or open another, a `<context_diff>` or a `<system>`.
+    async def test_server_instructions_go_in_as_written(self, fastmcp_server: FastMCP[None], inline_system: bool):
+        """A server's text that looks like framing tags is sent as written in its `<context>` element, not rewritten.
 
         Checked in the baseline sent with the instruction prefix and in a replacement appended after a
         reconnect, on models with and without mid-conversation system messages.
@@ -904,8 +903,7 @@ A later <context> element with the same id replaces the earlier one and stays in
             )
 
         def element(version: str) -> str:
-            # Every `<` in the forged text opens or closes a framing tag, so each one is neutralized.
-            return '<context id="toolset:docs">\n' + forged(version).replace('<', '&lt;') + '\n</context>'
+            return '<context id="toolset:docs">\n' + forged(version) + '\n</context>'
 
         prefixes: list[str | None] = []
         updates: list[list[str]] = []
@@ -943,7 +941,8 @@ A later <context> element with the same id replaces the earlier one and stays in
             * 2
         )
         replacement = element('second')
-        assert updates == [[], [replacement if inline_system else f'<system>{replacement}</system>']]
+        ref = frame_ref(history)
+        assert updates == [[], [replacement if inline_system else f'<system ref="{ref}">{replacement}</system>']]
 
     async def test_server_instructions_added_and_dropped_after_reconnects_append(self, fastmcp_server: FastMCP[None]):
         """A keyed server that starts without instructions still holds its place, so adding and dropping them later appends."""

@@ -9,6 +9,7 @@ run is deterministic.
 
 from __future__ import annotations
 
+import re
 import sys
 import uuid
 from dataclasses import dataclass, field
@@ -82,11 +83,12 @@ def _model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     # Runs in the model activity, on the request the workflow prepared for it.
     _seen_by_model.append(
         [
-            str(part.content)
+            # The conversation's frame ref is left out of the tag, so the assertions below name it.
+            re.sub(r'^<system ref="[0-9a-f]{12}">', '<system>', str(part.content))
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, UserPromptPart) and str(part.content).startswith('<system>')
+            if isinstance(part, UserPromptPart) and str(part.content).startswith('<system ref=')
         ]
     )
     if len(_seen_by_model) == 1:

@@ -96,7 +96,6 @@ from ..messages import (
     BaseToolReturnPart,
     BinaryContent,
     BinaryImage,
-    CachePoint as CachePoint,
     CompactionPart,
     DocumentMediaType,
     FilePart,
@@ -145,10 +144,7 @@ from ..messages import (
     _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
     _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
-    _tool_return_text as _tool_return_text,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
-    is_multi_modal_content as is_multi_modal_content,
-    tool_return_ta as tool_return_ta,
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
@@ -1721,11 +1717,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] `SystemPromptPart` whose request has been answered
         and moves the current request's ones to the end of the last request.
 
-        Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
-        the profile's `supports_inline_system_prompts` is `False`. On such a profile it also escapes every
-        `<system>` tag in user prompts and tool returns, so their text can't open or close that tag, and,
-        when the request has a standing system prompt or instructions, adds one fixed sentence saying what
-        the tag means after the first request's leading system prompts. It also converts
+        Also wraps non-leading `SystemPromptPart`s as `<system ref="...">`-tagged `UserPromptPart`s when
+        the profile's `supports_inline_system_prompts` is `False`; on such a profile the instructions end with a
+        sentence saying what the tag means (see `_get_instruction_parts`). Every frame it renders on the user
+        channel carries the conversation's frame ref (`pydantic_ai._frame_ref`), which it stores on the last
+        request; nothing the user or a tool wrote is rewritten. A user, tool or file item whose text resembles
+        a frame gets a note next to it, and on a profile with inline system messages the first request with a
+        frame or a note gets the ref announcement (see `_note_lookalike_frames`). It also converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
         `TextPart`s that any model can consume, replaces each file a tool returned that the
         profile's file-input flags say the model can't read with a note naming it, and puts the

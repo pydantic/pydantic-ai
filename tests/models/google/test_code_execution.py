@@ -85,6 +85,7 @@ async def test_code_execution_stream(
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '230b38d1845e'}},
             ),
             ModelResponse(
                 parts=[
@@ -232,6 +233,7 @@ async def test_code_execution(allow_model_requests: None, google_model: GoogleMo
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': 'c707286ab9f5'}},
             ),
             ModelResponse(
                 parts=[
@@ -333,6 +335,7 @@ print(datetime.datetime.now())
                 instructions='You are a helpful chatbot.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': 'c707286ab9f5'}},
             ),
             ModelResponse(
                 parts=[

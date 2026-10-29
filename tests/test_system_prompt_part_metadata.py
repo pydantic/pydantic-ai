@@ -25,6 +25,7 @@ from pydantic_ai import (
     ToolCallPart,
     UserPromptPart,
 )
+from pydantic_ai._frame_ref import frame_ref
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessagesTypeAdapter
@@ -113,7 +114,8 @@ async def test_metadata_survives_continuation_and_merge():
     merged_on_continuation = second.all_messages()[2]
     assert isinstance(merged_on_continuation, ModelRequest)
     assert [type(part).__name__ for part in merged_on_continuation.parts] == ['ToolReturnPart', 'SystemPromptPart']
-    assert merged_on_continuation.metadata is None
+    # Only the framework's own namespace, holding the conversation's frame ref, is kept on the merged request.
+    assert merged_on_continuation.metadata == {'__pydantic_ai__': {'frame_ref': frame_ref(second.all_messages())}}
     assert [part.content for part in marked_parts(second.all_messages())] == ['Noted.']
     assert [part.content for part in marked_parts(second_recorder.seen[0])] == ['Noted.']
 

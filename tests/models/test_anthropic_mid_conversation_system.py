@@ -41,7 +41,8 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._frame_ref import frame_ref
+from pydantic_ai._framing import frame_ref_announcement
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import ToolDefinition
 
@@ -173,7 +174,7 @@ class Case:
     id: str
     model: str
     expected_messages: list[dict[str, Any]]
-    expected_system: str = 'You are a code reviewer.'
+    expected_system: str | list[dict[str, str]] = 'You are a code reviewer.'
 
 
 CASES = [
@@ -200,8 +201,11 @@ CASES = [
     Case(
         id='inline-system-unsupported',
         model='claude-sonnet-5',
-        # The standing prompt also says what the `<system>` tag means, on every request from the first.
-        expected_system=f'You are a code reviewer.\n\n{SYSTEM_VOICE_ANNOUNCEMENT}',
+        # The instructions also end with what the `<system ref>` tag means, on every request from the first.
+        expected_system=[
+            {'text': 'You are a code reviewer.', 'type': 'text'},
+            {'text': frame_ref_announcement(frame_ref(message_history()), system_role=False), 'type': 'text'},
+        ],
         expected_messages=snapshot(
             [
                 {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
@@ -210,7 +214,7 @@ CASES = [
                     'role': 'user',
                     'content': [
                         {
-                            'text': '<system>From now on, every suggestion must include explicit type annotations.</system>',
+                            'text': '<system ref="e0afd99c65be">From now on, every suggestion must include explicit type annotations.</system>',
                             'type': 'text',
                         },
                         {'text': 'Review it again.', 'type': 'text'},
@@ -714,7 +718,10 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
     await Agent(model).run('Review it again.', message_history=message_history())
 
     call_kwargs = foundry_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['system'] == f'You are a code reviewer.\n\n{SYSTEM_VOICE_ANNOUNCEMENT}'
+    assert call_kwargs['system'] == [
+        {'text': 'You are a code reviewer.', 'type': 'text'},
+        {'text': frame_ref_announcement(frame_ref(message_history()), system_role=False), 'type': 'text'},
+    ]
     assert call_kwargs['messages'] == snapshot(
         [
             {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
@@ -723,7 +730,7 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
                 'role': 'user',
                 'content': [
                     {
-                        'text': '<system>From now on, every suggestion must include explicit type annotations.</system>',
+                        'text': '<system ref="e0afd99c65be">From now on, every suggestion must include explicit type annotations.</system>',
                         'type': 'text',
                     },
                     {'text': 'Review it again.', 'type': 'text'},

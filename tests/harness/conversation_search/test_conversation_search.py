@@ -15,6 +15,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -480,6 +481,18 @@ class TestSnapshotHistorySource:
         source = SnapshotHistorySource(store)
         assert (await _search(source, 'PELICAN', scope='conversation', conversation_id='c1')).count('[score:') == 1
         assert 'Todo status: done.' in await _search(source, 'done', scope='conversation', conversation_id='c1')
+
+    def test_a_stored_frame_ref_does_not_change_the_message_hash(self) -> None:
+        """Core stores the frame ref on a request just before sending it, which can be after a snapshot holds it."""
+        parts = [UserPromptPart('hi')]
+
+        def request(metadata: dict[str, Any] | None) -> ModelRequest:
+            return ModelRequest(parts=parts, metadata=metadata)
+
+        namespace = {'frame_ref': '0123456789ab'}
+        assert message_hash(request({'app': 1, '__pydantic_ai__': namespace})) == message_hash(request({'app': 1}))
+        assert message_hash(request({'__pydantic_ai__': namespace})) == message_hash(request(None))
+        assert message_hash(request({'__pydantic_ai__': {**namespace, 'other': True}})) != message_hash(request(None))
 
     async def test_a_new_instruction_window_does_not_duplicate_the_run(self) -> None:
         """Core records a new baseline on a request an earlier snapshot already holds."""

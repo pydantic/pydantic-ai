@@ -340,6 +340,7 @@ async def test_bedrock_mixed_strict_tool_run(
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '6f6820b92fc3'}},
             ),
             ModelResponse(
                 parts=[
@@ -369,6 +370,7 @@ async def test_bedrock_mixed_strict_tool_run(
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '6f6820b92fc3'}},
             ),
             ModelResponse(
                 parts=[
@@ -401,6 +403,7 @@ async def test_bedrock_mixed_strict_tool_run(
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '6f6820b92fc3'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='Capital: Tokyo')],

@@ -151,8 +151,10 @@ def _project_part(part: ModelRequestPart | ModelResponsePart) -> dict[str, Any]:
 
 
 # Keys in the reserved `__pydantic_ai__` message metadata that are the UI adapters' own bookkeeping, not state
-# that changes how later requests render.
-_UI_BOOKKEEPING_METADATA = frozenset({'ui_message_id'})
+# that changes how later requests render. The frame ref does change how they render, but a history that comes back
+# without it gets the same one again, derived from the conversation's first prompt, so it isn't compared message by
+# message: the wire property checks that every frame goes out with the ref the server-held history renders.
+_UI_BOOKKEEPING_METADATA = frozenset({'ui_message_id', 'frame_ref'})
 
 
 def _framework_metadata(message: ModelMessage) -> dict[str, Any]:

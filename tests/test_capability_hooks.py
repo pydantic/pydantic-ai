@@ -2668,6 +2668,7 @@ class TestModelRequestErrorHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'frame_ref': '1a6adf1a2cb8'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='second response')],
@@ -3690,10 +3691,11 @@ class TestModelRetryFromHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'frame_ref': '1a6adf1a2cb8'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
-                    usage=RequestUsage(input_tokens=76, output_tokens=4),
+                    usage=RequestUsage(input_tokens=79, output_tokens=4),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -3797,6 +3799,7 @@ class TestModelRetryFromHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'frame_ref': '1a6adf1a2cb8'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
@@ -3933,6 +3936,7 @@ class TestModelRetryFromHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'frame_ref': '1a6adf1a2cb8'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
@@ -4013,6 +4017,7 @@ class TestModelRetryFromHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'frame_ref': '1a6adf1a2cb8'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
@@ -4085,10 +4090,11 @@ class TestModelRetryFromHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'frame_ref': '1a6adf1a2cb8'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='second attempt')],
-                    usage=RequestUsage(input_tokens=73, output_tokens=4),
+                    usage=RequestUsage(input_tokens=76, output_tokens=4),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -4177,10 +4183,11 @@ class TestModelRetryFromHooks:
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                    metadata={'__pydantic_ai__': {'frame_ref': '1a6adf1a2cb8'}},
                 ),
                 ModelResponse(
                     parts=[TextPart(content='recovered response')],
-                    usage=RequestUsage(input_tokens=75, output_tokens=2),
+                    usage=RequestUsage(input_tokens=78, output_tokens=2),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),

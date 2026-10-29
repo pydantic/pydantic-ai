@@ -37,6 +37,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._frame_ref import frame_ref
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import (
     ModelAPIError,
@@ -2698,6 +2699,7 @@ async def test_image_as_binary_content_tool_response(
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '9d0d221aaae1'}},
             ),
             ModelResponse(
                 parts=[
@@ -4174,6 +4176,7 @@ async def test_mistral_tool_result_tags_name_the_rewritten_tool_call_id(
         for chunk in cast(list[dict[str, Any]], message['content'])
         if chunk['type'] == 'text' and chunk['text'].startswith('<tool_result')
     ]
-    assert tags == snapshot(
-        [f'<tool_result tool_name="get_image" tool_call_id="2pESUE4jw" file_id="{image_content.identifier}">']
-    )
+    ref = frame_ref(result.all_messages())
+    assert tags == [
+        f'<tool_result ref="{ref}" tool_name="get_image" tool_call_id="2pESUE4jw" file_id="{image_content.identifier}">'
+    ]

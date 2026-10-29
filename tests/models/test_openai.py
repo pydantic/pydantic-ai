@@ -1584,6 +1584,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '0196ce182cd8'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a potato.')],

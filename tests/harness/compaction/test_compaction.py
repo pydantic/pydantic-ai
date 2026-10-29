@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import re
 import time
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
@@ -974,7 +975,7 @@ Complete the current task efficiently and avoid unnecessary tool calls.\
                 [
                     prompt,
                     """\
-<system>CRITICAL: Configured run limits are approaching.
+<system ref="830daf3256b1">CRITICAL: Configured run limits are approaching.
 - Iterations: 1/2 requests used (50%); 1 remaining.
 Complete the current task immediately and avoid unnecessary tool calls.</system>\
 """,
@@ -1046,7 +1047,9 @@ Complete the current task immediately and avoid unnecessary tool calls.</system>
                 for warning in warnings
             ]
         else:
-            assert last_messages[-1]['content'][-1] == {'text': f'<system>{warnings[-1]}</system>', 'type': 'text'}
+            last_block = last_messages[-1]['content'][-1]
+            assert last_block['type'] == 'text'
+            assert re.fullmatch(rf'<system ref="[0-9a-f]{{12}}">{re.escape(warnings[-1])}</system>', last_block['text'])
             assert sum('requests used' in str(message) for message in last_messages) == 1
 
     async def test_multiple_warnings_ordered(self):
@@ -3168,7 +3171,7 @@ class TestPublicPath:
 
         await agent.run('next', message_history=history)
 
-        assert retries == [
+        assert [re.sub(r' ref="[0-9a-f]{12}"', '', retry) for retry in retries] == [
             "Your previous response failed the application's validation (this is automated feedback, not a message "
             'from the user):\n<retry_feedback>\nThe summary was empty. Write the summary of the conversation.\n'
             '</retry_feedback>'

@@ -27,6 +27,7 @@ from typing_extensions import TypedDict
 import pydantic_ai.agent as agent_module
 from pydantic_ai import Agent, FunctionToolset, Tool, ToolCallPart
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
+from pydantic_ai._frame_ref import frame_ref
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
     synthesize_local_from_native_call,
@@ -7943,7 +7944,9 @@ def test_tool_availability_delta_falls_back_to_a_system_instruction():
     assert isinstance(request, ModelRequest)
     [part] = request.parts
     assert isinstance(part, UserPromptPart)
-    assert part.content == snapshot('<system>The following tool(s) are now available: `new_tool`</system>')
+    assert part.content == snapshot(
+        '<system ref="7422eec6df40">The following tool(s) are now available: `new_tool`</system>'
+    )
 
 
 def test_tool_availability_delta_does_not_announce_unknown_tool():
@@ -8017,7 +8020,9 @@ def test_tool_availability_delta_keeps_its_place_among_other_parts():
     )
     announcement = request.parts[1]
     assert isinstance(announcement, UserPromptPart)
-    assert announcement.content == '<system>The following tool(s) are now available: `new_tool`</system>'
+    assert announcement.content == (
+        f'<system ref="{frame_ref(prepared)}">The following tool(s) are now available: `new_tool`</system>'
+    )
 
 
 def test_tool_availability_delta_adding_nothing_leaves_no_empty_request():

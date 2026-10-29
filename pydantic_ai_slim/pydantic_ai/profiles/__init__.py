@@ -155,10 +155,10 @@ class ModelProfile(TypedDict, total=False):
     """Whether the provider's API accepts `SystemPromptPart`s inline at any position. Default: `False`.
 
     When `False`, non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
-    `<system>...</system>` content in `Model.prepare_messages`. Leading ones still hoist to the
-    provider's top-level system parameter, and when there are any, or instructions, they're followed
-    by a sentence saying what the tag means. `<system>` tags in user prompts and tool returns are escaped,
-    so that text can't open or close the tag.
+    `<system ref="...">...</system>` content in `Model.prepare_messages`, carrying the conversation's frame
+    ref. Leading ones still hoist to the provider's top-level system parameter, and when there are any, or
+    instructions, the instructions end with a sentence saying what the tag means and which ref it carries.
+    User prompts and tool returns go out as written.
 
     APIs that only accept an inline system prompt in certain positions (e.g. Anthropic requires it
     to follow a user turn) still set this to `True`; it's on their model adapters to make the

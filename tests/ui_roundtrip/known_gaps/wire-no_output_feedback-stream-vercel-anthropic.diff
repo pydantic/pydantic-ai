@@ -4,7 +4,7 @@
 -   "role": "user",
 -   "content": [
 -    {
--     "text": "<system>Please return text.</system>",
+-     "text": "<system ref=\"40ad65b96846\">Please return text.</system>",
 -     "type": "text"
 -    }
 -   ]
@@ -19,4 +19,4 @@
 -   "role": "user",
 -   "content": [
 -    {
--     "text": "<system>Please return text.</system>",
+-     "text": "<system ref=\"40ad65b96846\">Please return text.</system>",

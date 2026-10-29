@@ -24,7 +24,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from pydantic_ai.messages import (
     InstructionBaselinePart,
@@ -113,16 +113,38 @@ def _canonical_message(message: ModelMessage) -> ModelMessage:
     bookkeeping to a request that an earlier snapshot already holds: an
     `InstructionDeltaPart` when an `on_change='append'` block changes, an
     `InstructionBaselinePart` when an instruction window opens or closes.
-    Clearing exactly those makes the dedup key stable across
-    the boundary; every other field keeps participating in the key, so two
-    genuinely distinct messages sharing parts stay distinct.
+    It also stores the conversation's frame ref in a request's reserved
+    `__pydantic_ai__` metadata when the request is about to be sent, which can be
+    after a snapshot already holds it. Clearing exactly those makes the dedup key
+    stable across the boundary; every other field keeps participating in the key,
+    so two genuinely distinct messages sharing parts stay distinct.
     """
     if isinstance(message, ModelRequest):
         parts = [part for part in message.parts if not isinstance(part, InstructionDeltaPart | InstructionBaselinePart)]
-        return replace(message, parts=parts, timestamp=None, run_id=None, conversation_id=None, instructions=None)
+        return replace(
+            message,
+            parts=parts,
+            timestamp=None,
+            run_id=None,
+            conversation_id=None,
+            instructions=None,
+            metadata=_without_frame_ref(message.metadata),
+        )
     # `ModelMessage` is exactly the `ModelRequest | ModelResponse` union, so any
     # other message is a `ModelResponse`.
     return replace(message, timestamp=None, run_id=None, conversation_id=None)
+
+
+def _without_frame_ref(metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+    """`metadata` without the frame ref pydantic-ai stores in its reserved namespace, and without the namespace if empty."""
+    namespace = (metadata or {}).get('__pydantic_ai__')
+    if metadata is None or not isinstance(namespace, dict) or 'frame_ref' not in namespace:
+        return metadata
+    rest = {key: value for key, value in cast('dict[str, Any]', namespace).items() if key != 'frame_ref'}
+    stripped = {key: value for key, value in metadata.items() if key != '__pydantic_ai__'}
+    if rest:
+        stripped['__pydantic_ai__'] = rest
+    return stripped or None
 
 
 def message_hash(message: ModelMessage) -> str:

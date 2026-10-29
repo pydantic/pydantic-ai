@@ -150,11 +150,12 @@ async def test_history_processor_run_replaces_message_history(
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content='<system>Processed answer</system>',
+                        content='<system ref="8fe1eebb20a6">Processed answer</system>',
                         timestamp=IsDatetime(),
                     ),
                 ],
                 timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {'frame_ref': '8fe1eebb20a6'}},
             )
         ]
     )
@@ -172,10 +173,11 @@ async def test_history_processor_run_replaces_message_history(
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '8fe1eebb20a6'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
-                usage=RequestUsage(input_tokens=54, output_tokens=2),
+                usage=RequestUsage(input_tokens=57, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -218,11 +220,12 @@ async def test_history_processor_streaming_replaces_message_history(
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content='<system>Processed answer</system>',
+                        content='<system ref="8fe1eebb20a6">Processed answer</system>',
                         timestamp=IsDatetime(),
                     ),
                 ],
                 timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {'frame_ref': '8fe1eebb20a6'}},
             )
         ]
     )
@@ -240,6 +243,7 @@ async def test_history_processor_streaming_replaces_message_history(
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '8fe1eebb20a6'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],

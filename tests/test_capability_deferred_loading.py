@@ -1135,10 +1135,11 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '54fa5d187346'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
-                usage=RequestUsage(input_tokens=87, output_tokens=11),
+                usage=RequestUsage(input_tokens=90, output_tokens=11),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1399,6 +1400,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': 'b87cd9b680db'}},
             ),
             ModelResponse(
                 parts=[
@@ -1406,7 +1408,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
                     )
                 ],
-                usage=RequestUsage(input_tokens=94, output_tokens=10),
+                usage=RequestUsage(input_tokens=100, output_tokens=10),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1439,10 +1441,11 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 """,
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': 'b87cd9b680db'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
-                usage=RequestUsage(input_tokens=121, output_tokens=17),
+                usage=RequestUsage(input_tokens=130, output_tokens=17),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),

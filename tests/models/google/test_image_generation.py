@@ -499,6 +499,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '32ccf695131c'}},
             ),
             ModelResponse(
                 parts=[

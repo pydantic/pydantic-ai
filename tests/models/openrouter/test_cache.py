@@ -26,7 +26,8 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._frame_ref import frame_ref
+from pydantic_ai._framing import frame_ref_announcement
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.models import ModelRequestParameters
@@ -347,10 +348,10 @@ async def test_openrouter_cache_instructions_system_prompt_dynamic_e2e(
 async def test_openrouter_cache_instructions_dynamic_only_e2e(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
-    """With only dynamic instructions on Anthropic, the one static block ahead of them gets the breakpoint.
+    """With only dynamic instructions on Anthropic, nothing static is ahead of them, so no breakpoint is placed.
 
-    OpenRouter routes take no mid-conversation system messages, so the standing prompt opens with the `<system>` tag
-    announcement, which every conversation shares. The dynamic instructions after it carry no `cache_control`.
+    OpenRouter routes take no mid-conversation system messages, so the instructions end with the frame ref
+    announcement. It differs from one conversation to the next, so it isn't a prefix to cache across them either.
     """
     model = openrouter_model('anthropic/claude-sonnet-5.5')
     agent = Agent(model, model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True))
@@ -362,14 +363,13 @@ async def test_openrouter_cache_instructions_dynamic_only_e2e(
     result = await agent.run('What do you specialize in? Answer in one sentence.')
 
     assert isinstance(result.output, str)
-    announcement, *rest = single_request_body(vcr)['messages']
-    assert announcement == {
+    messages = single_request_body(vcr)['messages']
+    system_messages = [m for m in messages if m['role'] == 'system']
+    assert system_messages[-1] == {
         'role': 'system',
-        'content': [
-            {'type': 'text', 'text': SYSTEM_VOICE_ANNOUNCEMENT, 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}
-        ],
+        'content': frame_ref_announcement(frame_ref(result.all_messages()), system_role=False),
     }
-    for m in rest:
+    for m in messages:
         content = m['content']
         assert isinstance(content, str) or all('cache_control' not in part for part in content)
 
@@ -627,6 +627,7 @@ async def test_openrouter_cache_instructions_e2e(
                 instructions=IsStr(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': 'd9f5d4db47c1'}},
             ),
             ModelResponse(
                 parts=[
@@ -696,6 +697,7 @@ async def test_openrouter_cache_messages_e2e(
                 instructions='Be helpful.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '78b319c9ee1e'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello!')],
@@ -928,6 +930,7 @@ async def test_openrouter_cache_streaming_e2e(
                 instructions=IsStr(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                metadata={'__pydantic_ai__': {'frame_ref': '78b319c9ee1e'}},
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello!')],

@@ -229,7 +229,7 @@ async def test_anthropic_agent_recovers_from_unconfigured_native_tool_call(allow
             {'role': 'user', 'content': [{'text': 'hello', 'type': 'text'}]},
             {
                 'role': 'user',
-                'content': [{'text': '<system>Please return text.</system>', 'type': 'text'}],
+                'content': [{'text': '<system ref="1a6adf1a2cb8">Please return text.</system>', 'type': 'text'}],
             },
         ]
     )

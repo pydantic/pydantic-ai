@@ -10898,8 +10898,9 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
         agent, create_input(user, *_reduce_events(events)), manage_system_prompt=manage_system_prompt
     )
     loaded = reloaded.sanitize_messages(reloaded.messages)
-    # Server history keeps the UI message id of the request the adapter loaded, in the reserved namespace.
-    with pytest.warns(UserWarning, match='`__pydantic_ai__` metadata was dropped from 1 client-submitted message'):
+    # Server history keeps the UI message id of the request the adapter loaded, and the frame ref the enqueued
+    # system prompt's `<system ref>` frame stored, in the reserved namespace.
+    with pytest.warns(UserWarning, match='`__pydantic_ai__` metadata was dropped from 2 client-submitted message'):
         if manage_system_prompt == 'server':
             # Server history keeps the enqueued system prompt (#10389), which the frontend was never sent.
             with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):

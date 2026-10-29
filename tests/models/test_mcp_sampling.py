@@ -14,6 +14,7 @@ from pydantic_ai import (
     TextPart,
     UserPromptPart,
 )
+from pydantic_ai._frame_ref import frame_ref
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -208,7 +209,8 @@ def test_assistant_text_history_complex():
     sampling_messages = create_message.call_args.args[0]
     assert create_message.call_args.kwargs['system_prompt'] == ''
     assert any(
-        isinstance(message.content, TextContent) and message.content.text == '<system>system content</system>'
+        isinstance(message.content, TextContent)
+        and message.content.text == f'<system ref="{frame_ref(history)}">system content</system>'
         for message in sampling_messages
     )
 
@@ -293,7 +295,7 @@ def test_output_retry_history():
                     'type': 'text',
                     'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<retry_feedback ref="6467b9c7fc66">
 Try again
 </retry_feedback>\
 """,
@@ -355,7 +357,7 @@ def test_framework_tool_history():
                 'content': {
                     'type': 'text',
                     'text': """\
-<system><context id="capability:forecast">
+<system ref="9623c5b50b78"><context id="capability:forecast">
 This context has been withdrawn, and the withdrawal stays in effect until replaced again.
 </context></system>\
 """,
