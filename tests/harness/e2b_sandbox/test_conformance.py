@@ -2,17 +2,19 @@
 
 `TestFakeE2BSandboxBackend` runs everywhere, over the fake E2B SDK in host mode, where
 commands and file operations act on a temporary host directory. `TestLiveE2BSandboxBackend`
-runs the same rules against a real sandbox and is gated like `test_e2b_live.py`.
+runs the same rules against a real sandbox and is gated like `test_e2b_live.py`, and
+`TestLiveE2BDesktop` against one with a display.
 """
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 
 import pytest
 
-from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import Click, PressKeys, TypeText, WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
@@ -97,3 +99,38 @@ class TestLiveE2BSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
     @pytest.fixture
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         return _kill
+
+
+@pytest.mark.e2b_live
+class TestLiveE2BDesktop(TestLiveE2BSandboxBackend):  # pragma: lax no cover
+    """The same rules, display rules included, against a sandbox of E2B's desktop template."""
+
+    @pytest.fixture(scope='class')
+    @classmethod
+    def backend(cls) -> Iterator[E2BSandboxBackend]:
+        backend = E2BSandboxBackend(sandbox_timeout=600, desktop=True)
+        yield backend
+        if backend.ref is not None:
+            import e2b
+
+            e2b.Sandbox.kill(backend.ref.id)
+
+    async def test_typed_text_reaches_the_focused_window(self, backend: WorkspaceBackend) -> None:
+        assert isinstance(backend, E2BSandboxBackend)
+        display = backend.display
+        assert display is not None
+        await display.display_size()  # starts the display
+        typed = f'/tmp/typed-{uuid.uuid4().hex}.txt'
+        await backend.run(
+            f'setsid xfce4-terminal --disable-server --geometry 60x10+100+100 -x sh -c "cat > {typed}" '
+            '>/dev/null 2>&1 &',
+            shell=True,
+        )
+        await backend.run(['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xfce4-terminal'])
+
+        await display.act(Click(x=300, y=180))
+        await display.act(TypeText(text='hello, desktop'))
+        await display.act(PressKeys(keys=('enter',)))
+
+        result = await backend.run(f'until [ -s {typed} ]; do sleep 0.1; done; cat {typed}', shell=True, timeout=30)
+        assert result.stdout == 'hello, desktop\n'

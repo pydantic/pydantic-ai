@@ -40,7 +40,7 @@ Each run leaves its container running; see [Clean up](docker-sandbox.md#clean-up
 usage limit, returns no ref to clean up with: remove its desktop in an `on_run_error` hook, as shown for
 [E2B](e2b-sandbox.md#clean-up).
 
-[`DaytonaSandbox(desktop=True)`](daytona-sandbox.md#give-the-agent-a-desktop) gives the agent a desktop in a Daytona cloud sandbox instead.
+For a desktop in a cloud sandbox instead, use [`DaytonaSandbox(desktop=True)`](daytona-sandbox.md#give-the-agent-a-desktop) or [`E2BSandbox(desktop=True)`](e2b-sandbox.md#give-the-agent-a-desktop).
 
 To give your own sandbox a display, implement [`SupportsDisplay`][pydantic_ai.workspaces.SupportsDisplay]; see
 [Controlling a display](../workspace.md#controlling-a-display). On a [read-only](../workspace.md#read-only-access)
@@ -99,6 +99,9 @@ Agents in one process on one screen, such as parallel sub-agents, take turns at 
 clicks and typing never land between another's. Agents in separate processes, or in separate durable workflows, don't.
 
 ## Watching a run
+
+To watch the desktop live, or take over, open the link a cloud desktop's `live_view_url()` returns; see
+[Daytona](daytona-sandbox.md#give-the-agent-a-desktop) and [E2B](e2b-sandbox.md#give-the-agent-a-desktop).
 
 Every screenshot arrives as a tool result event, so an [event stream handler](../agent.md#streaming-all-events) can save
 or show each one as the run goes:

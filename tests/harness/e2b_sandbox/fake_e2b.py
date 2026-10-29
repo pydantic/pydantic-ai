@@ -640,6 +640,9 @@ class FakeSandbox:
             self.commands = _HostCommands(self, control)
         self.killed = False
 
+    def get_host(self, port: int) -> str:
+        return f'{port}-{self.sandbox_id}.e2b.example'
+
     async def kill(self) -> bool:
         # Real `kill` is a DELETE on the control plane that returns once E2B has removed the
         # sandbox, and `False` when it was already gone (a 404). From then on the SDK's own
@@ -707,6 +710,12 @@ class FakeAsyncSandboxFactory:
         existing = next((sandbox for sandbox in self._control.sandboxes if sandbox.sandbox_id == id), None)
         return await existing.kill() if existing is not None else False
 
+    async def get_info(self, id: str) -> types.SimpleNamespace:
+        existing = next((sandbox for sandbox in self._control.sandboxes if sandbox.sandbox_id == id), None)
+        if existing is None or existing.killed:
+            raise SandboxNotFoundException(f'Sandbox {id} not found')
+        return types.SimpleNamespace(state='paused' if self._control.sandbox_paused else 'running')
+
     async def connect(self, id: str, timeout: int | None = None) -> FakeSandbox:
         self._control.connect_calls.append((id, timeout))
         await anyio.lowlevel.checkpoint()
@@ -744,6 +753,8 @@ class FakeE2B:
     read_error: Exception | None = None
     is_running_error: Exception | None = None
     sandbox_is_running: bool = True
+    # What `AsyncSandbox.get_info` reports for a sandbox that isn't killed.
+    sandbox_paused: bool = False
     # When set, sandboxes run commands and file operations on the host under this directory.
     host_root: Path | None = None
 

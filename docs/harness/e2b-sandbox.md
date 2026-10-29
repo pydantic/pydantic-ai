@@ -166,6 +166,39 @@ The `finally` kills the sandbox even when setup or the run fails. To keep it ins
 
 With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, get the sandbox with `sandbox = await capability.backend(ref).get_sandbox()`, where `capability` is the `E2BSandbox` the agent runs with, so its `sandbox_timeout` applies, and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). When done, call `stop_command` with the ID while the workspace is attached, then delete the sandbox with `await E2BSandbox().destroy(ref)`. Do not leave a public preview running longer than necessary.
 
+## Give the agent a desktop
+
+Pass `desktop=True` for a sandbox with a graphical display, which [`ComputerUse`](computer-use.md) lets the agent see and control:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness.e2b_sandbox import E2BSandbox
+
+agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(desktop=True), ComputerUse()])
+
+
+async def main():
+    result = await agent.run('Open the terminal from the dock, run `uname -a` and tell me what it printed.')
+    print(result.output)
+```
+
+A new sandbox runs E2B's `desktop` template: Ubuntu with the XFCE desktop, a terminal and Google Chrome. The display starts on first use and is 1280x800; pass a size, such as `desktop=(1440, 900)`, for another. The agent keeps the sandbox's shell and files too, so `Coder` and `ComputerUse` can work in the same sandbox.
+
+A custom `template` needs Xvfb, `xdotool`, `xmodmap`, `scrot` and `setsid`, plus whatever applications the agent should use; with `startxfce4` it also gets the XFCE desktop.
+
+`sandbox_timeout` is the sandbox's whole lifetime, an hour by default, not an idle timeout: a run still going when it runs out fails, so set it longer than your longest task.
+
+To watch the agent work, or take over, open the desktop in your browser. Create the backend before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run), and get a link from it:
+
+```python {test="skip" lint="skip"}
+backend = E2BSandboxBackend(desktop=True)
+print(await backend.live_view_url())  # starts the sandbox, its desktop and the template's noVNC viewer
+result = await agent.run('Open the terminal from the dock, run `uname -a` and tell me what it printed.', workspace=backend)
+```
+
+The link carries the viewer's password: anyone with it can see and use the desktop while the sandbox runs. A custom `template` needs `x11vnc` and noVNC in `/opt/noVNC` for it.
+
 ## Clean up
 
 The sandbox keeps running, and billing, after the run ends. Pydantic AI does not kill it. If a run is cancelled while E2B creates the sandbox, the ref is still recorded once E2B answers; the id is also logged (see [Telemetry](#telemetry)). If E2B's answer never arrives, the sandbox can exist with no ref or log entry; find and kill it in the E2B dashboard. Kill the others with the ref you stored:
@@ -214,6 +247,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder(), hook
 | `sandbox_timeout` | Seconds the sandbox lives before E2B pauses it, set on create and on reattach. Default: `3_600` (1 hour, the most E2B's Hobby plan allows). |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/user` on the default template, where commands run as `user`); prefer relative paths or set `working_dir` for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Output is decoded as UTF-8 either way; the default template's locale is POSIX, so pass `env={'LC_ALL': 'C.UTF-8'}` if a tool such as `wc -m` should count characters rather than bytes. Nothing from your machine's environment reaches the sandbox. The agent's commands can read these values, and a new sandbox keeps them for every process, so leave out secrets the agent should not see. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. Without a `template`, a new sandbox runs E2B's `desktop` template. The size applies when the display first starts; an attached sandbox whose display is running keeps its own. Default: `False`. |
 
 `E2BSandbox` needs asyncio: the E2B SDK runs every request on asyncio, so under Trio every operation, including `destroy`, raises `UserError` before it reaches E2B.
 

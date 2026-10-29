@@ -1,4 +1,4 @@
-"""Tests for `X11Computer`, which drives the desktop container's X server with `xdotool` and `scrot`."""
+"""Tests for `X11Computer`, which drives an X server with `xdotool` and `scrot`."""
 
 from __future__ import annotations
 
@@ -27,11 +27,9 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceUnsupportedActionError,
 )
-from pydantic_ai_harness.docker_sandbox._x11 import (
-    X11Computer,
-)
+from pydantic_ai_harness._x11 import X11Computer
 
-from ...workspace_fakes import FAKE_SCREENSHOT
+from ..workspace_fakes import FAKE_SCREENSHOT
 
 pytestmark = pytest.mark.anyio
 
