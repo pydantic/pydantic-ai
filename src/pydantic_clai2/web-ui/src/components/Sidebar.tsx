@@ -277,8 +277,11 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   // The row picked last is the selection, highlighted at once, before its session opens.
   const selected = opening ?? viewing ?? shown
 
-  // What the shown or previewed session says is read as it changes, unless the orchestrator or a worker covers it.
-  const readRow = orchestrating || worker !== null ? undefined : rows.find((row) => row.id === (viewing ?? shown))
+  // What the shown or previewed session says is read as it changes, unless the orchestrator, a worker, or an opening covers it.
+  const readRow =
+    orchestrating || worker !== null || opening !== null
+      ? undefined
+      : rows.find((row) => row.id === (viewing ?? shown))
   useEffect(() => {
     if (readRow) setSeen((current) => markSeen(current, [readRow]))
   }, [readRow])
@@ -305,16 +308,27 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const attention = useMemo(() => rows.filter((row) => !row.archived && needsYou(row)).length, [rows, needsYou])
 
   // Each running row's elapsed time: from its turn's start, which a turn saves, or else from when this page saw it run.
-  const started = useRef(new Map<string, number>())
+  // A queued prompt that starts its turn straight after the last one starts the count again, though the row never idled.
+  const started = useRef(new Map<string, { at: number; after: number }>())
+  const lastStates = useRef(new Map<string, Status>())
   const anyWorking = rows.some((row) => WORKING.includes(states[row.id] ?? null))
   const now = useNow(anyWorking)
   for (const row of rows) {
-    if (WORKING.includes(states[row.id] ?? null)) {
-      if (!started.current.has(row.id)) started.current.set(row.id, Date.now())
-      if (row.state === 'running' || row.state === 'busy') {
-        started.current.set(row.id, Math.min(started.current.get(row.id) ?? Infinity, Date.parse(row.updated_at)))
-      }
-    } else started.current.delete(row.id)
+    const state = states[row.id] ?? null
+    const last = lastStates.current.get(row.id)
+    lastStates.current.set(row.id, state)
+    if (!WORKING.includes(state)) {
+      started.current.delete(row.id)
+      continue
+    }
+    let turn = started.current.get(row.id)
+    if (turn === undefined || (last === 'queued' && state === 'running')) {
+      // Saves before `after` belong to an earlier turn.
+      turn = { at: Date.now(), after: turn?.at ?? -Infinity }
+      started.current.set(row.id, turn)
+    }
+    const saved = Date.parse(row.updated_at)
+    if ((row.state === 'running' || row.state === 'busy') && saved > turn.after) turn.at = Math.min(turn.at, saved)
   }
 
   const act = async (action: () => Promise<unknown>) => {
@@ -364,7 +378,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     const siblings = section.rows.filter(
       (other) => other.project === session.project && other.branch === session.branch && !other.archived,
     )
-    const begun = started.current.get(session.id)
+    const begun = started.current.get(session.id)?.at
     const time = working && begun !== undefined ? short(Math.max(0, (now - begun) / 1000)) : ago(session.updated_at)
     return (
       <div
@@ -395,6 +409,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
           <button
             className="session-main"
             onClick={() => {
+              // A row picked by hand wins over a search's first result still on its way.
+              openFirst.current = null
               pickedHere.current = view === 'attention' ? session.id : null
               onView(session)
             }}
