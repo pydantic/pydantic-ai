@@ -221,7 +221,7 @@ Each provider reads its key from an environment variable, such as `OPENAI_API_KE
 
 ## How do I see what happened? {#observability}
 
-Pydantic AI emits OpenTelemetry traces of every run: each model request with its tokens and cost, each tool call with its arguments and result, and the run around them. Send them to [Logfire](logfire.md) or to [any OpenTelemetry backend](logfire.md#otel-without-logfire):
+Pydantic AI emits OpenTelemetry traces of every run: each model request with its tokens and cost, each tool call with its arguments and result, and the run around them, to [Logfire](logfire.md) or [any OpenTelemetry backend](logfire.md#otel-without-logfire). For Logfire, run `uvx logfire-cli wizard --task pydantic-ai` once on your machine to [set up Logfire](logfire.md#using-logfire); it signs you in, picks or creates a project, and has your coding agent add this instrumentation:
 
 ```python {title="production_tracing.py"}
 import logfire
@@ -230,7 +230,7 @@ logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 ```
 
-With Logfire, getting there takes `uvx logfire-cli wizard --task pydantic-ai` on your machine, which also has your coding agent add the instrumentation, and a write token in production; the free tier covers getting started. The same SDK instruments [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/) and [the HTTP requests to the provider](logfire.md#monitoring-http-requests), so a run shows up inside the request that started it, with the raw prompt it sent. [Using Logfire](logfire.md#using-logfire) walks through it.
+In production, add a write token; the free tier covers getting started. The same SDK instruments [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/) and [the HTTP requests to the provider](logfire.md#monitoring-http-requests), so a run shows up inside the request that started it, with the raw prompt it sent.
 
 Without the Logfire SDK, [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all] or the [`Instrumentation`](capabilities/instrumentation.md) capability does the same against your own tracer provider; see [OTel without Logfire](logfire.md#otel-without-logfire). Every run carries its [`run_id` and `conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id), and [run metadata](agent.md#run-metadata) such as a tenant or user ID lands on the run span, so you can filter traces by it.
 
