@@ -5068,25 +5068,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return None
 
     def _is_compaction_boundary(self, response: ModelResponse) -> bool:
-        return bool(
-            (
-                response.provider_name == self.system
-                and response.provider_details
-                and response.provider_details.get('compaction')
+        """Keep inline same-provider state chainable while honoring stateless and foreign compactions."""
+        if response.provider_name == self.system:
+            return bool(response.provider_details and response.provider_details.get('compaction'))
+        return any(
+            isinstance(part, CompactionPart)
+            and _compaction_part_is_wire_boundary(
+                response,
+                part,
+                self.accepts_stateless_artifacts,
+                requires_encrypted_content=self.compaction_requires_encrypted_content,
             )
-            or (
-                response.provider_name != self.system
-                and any(
-                    isinstance(part, CompactionPart)
-                    and _compaction_part_is_wire_boundary(
-                        response,
-                        part,
-                        self.accepts_stateless_artifacts,
-                        requires_encrypted_content=self.compaction_requires_encrypted_content,
-                    )
-                    for part in response.parts
-                )
-            )
+            for part in response.parts
         )
 
     def _is_response_id_reachable(
