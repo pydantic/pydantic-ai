@@ -322,9 +322,10 @@ async def test_a_supplied_agents_self_delegation_is_held(tmp_path: Path) -> None
             return ModelResponse(parts=[TextPart(f'Tool said: {returned[0].content}')])
         if 'delegate_task' in [tool.name for tool in info.function_tools]:
             return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': 'clean up'})])
-        return ModelResponse(parts=[ToolCallPart('run_command', {'command': COMMAND})])
+        # The delegate, one level down, which only runs when the delegation is not held.
+        return ModelResponse(parts=[ToolCallPart('run_command', {'command': COMMAND})])  # pragma: no cover
 
-    def run_command(command: str) -> str:
+    def run_command(command: str) -> str:  # pragma: no cover - the delegation that would call it is held
         ran.append(command)
         return f'ran {command}'
 
