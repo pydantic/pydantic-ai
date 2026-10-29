@@ -389,6 +389,12 @@ class OpenAIChatGPTProvider(OAuthCredentialsProvider[OpenAIChatGPTCredentials]):
         return _PROVIDER_NAME
 
     @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing encrypted reasoning. Whether the OpenAI API
+        # accepts it from plan usage, and the other way round, hasn't been verified, so it's kept apart.
+        return _PROVIDER_NAME
+
+    @property
     def base_url(self) -> str:
         return _BASE_URL
 

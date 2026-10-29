@@ -770,6 +770,7 @@ def test_call_tool_result_carries_every_tool_manager_control_flow_exception() ->
                 'kind': 'response',
                 'provider_name': None,
                 'provider_url': None,
+                'canonical_system': None,
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,
@@ -880,7 +881,12 @@ def test_model_request_context_projection_payload_golden() -> None:
         },
         'model_id': 'restricted',
         'streaming': False,
+        'attempt': 1,
     }
+    # A payload recorded before `attempt` was projected is the first attempt.
+    recorded = JSON_CODEC.dump(ModelRequestContextProjection, projection)
+    del recorded['attempt']
+    assert JSON_CODEC.load(ModelRequestContextProjection, recorded) == projection
 
 
 def test_model_request_context_projection_is_exhaustive() -> None:
@@ -926,6 +932,7 @@ def test_model_request_context_projection_is_exhaustive() -> None:
         model_id='test:alias',
         streaming=True,
     )
+    context.attempt = 2
     default_context = ModelRequestContext(
         model=model, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
     )

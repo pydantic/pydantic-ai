@@ -62,6 +62,7 @@ with try_import() as cohere_available:
 
 with try_import() as bedrock_available:
     from botocore.hooks import HierarchicalEmitter
+    from botocore.session import get_session
 
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.providers.bedrock import BedrockProvider
@@ -369,7 +370,11 @@ async def test_bedrock_sends_the_summary_in_user_voice(allow_model_requests: Non
     sent: list[dict[str, Any]] = []
 
     class Client:
-        meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
+        meta = SimpleNamespace(
+            endpoint_url='https://bedrock.stub',
+            events=HierarchicalEmitter(),
+            service_model=get_session().get_service_model('bedrock-runtime'),
+        )
 
         def converse(self, **kwargs: Any) -> None:
             sent.append(kwargs)
