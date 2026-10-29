@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 import math
 import weakref
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Annotated, Any, Protocol, cast, runtime_checkable
 
@@ -12,7 +12,7 @@ import anyio
 import anyio.lowlevel
 from pydantic import Field, TypeAdapter, ValidationError
 
-from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     DISPLAY_SIZE,
@@ -50,7 +50,6 @@ from pydantic_ai.workspaces import (
     Region,
     Scroll,
     SupportsDisplay,
-    SupportsStartCount,
     WorkspaceError,
     WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
@@ -59,7 +58,6 @@ from pydantic_ai_harness._display import png_size
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
-    from pydantic_ai.agent import AgentRunResult
     from pydantic_ai.agent.abstract import AgentModelSettings
     from pydantic_ai.models import ModelRequestContext
 
@@ -116,8 +114,6 @@ response without the record, such as one from before it existed, is read in the 
 
 _ACTIONS = TypeAdapter(list[ComputerToolAction])
 
-_FRESH_SCREEN = 'The display restarted since your last screenshot, so the windows that were open are gone.'
-
 
 @runtime_checkable
 class _HasScreenKey(Protocol):
@@ -127,14 +123,6 @@ class _HasScreenKey(Protocol):
     def screen_key(self) -> object | None:
         """A hashable name for the screen, such as its X `DISPLAY`, or `None` to key on the workspace's ref."""
         ...
-
-
-@runtime_checkable
-class _CountsDisplayStarts(Protocol):
-    """A durable workspace in workflow code, which adds up the display starts its calls journaled."""
-
-    @property
-    def display_starts(self) -> int: ...
 
 
 def _models(model: Any) -> list[Model]:
@@ -296,12 +284,8 @@ async def _perform(
     actions: list[ComputerToolAction],
     call: _Call,
     settle_seconds: float,
-    restarted: Callable[[], bool],
 ) -> tuple[int, str | None, list[str | BinaryImage]]:
     """Run the actions in order until one fails: how many ran, why the next one failed, and what they returned.
-
-    An action that changes the screen doesn't run once the display `restarted`: it would land on whatever took the
-    place of the windows the model saw. The error is then `None` and fewer actions ran than were asked.
 
     The screen settles for `settle_seconds` before anything that looks at it after an action, so a page load or an
     animation can finish; a `wait` the model asks for comes on top of it.
@@ -330,8 +314,6 @@ async def _perform(
                 case Screenshot():
                     pass
                 case _:
-                    if restarted():
-                        break
                     unsettled = True
                     await ctx.workspace.act(action)
         except WorkspaceUnavailableError:
@@ -396,15 +378,6 @@ def _display(ctx: RunContext[Any]) -> object | None:
         # Durable workflow code can't reach the backend.
         return None
     return backend.display if isinstance(backend, SupportsDisplay) else None
-
-
-def _starts(ctx: RunContext[Any]) -> int | None:
-    """How many times the display started: as the display counts, or in durable workflow code as its calls journaled."""
-    display = _display(ctx)
-    if isinstance(display, SupportsStartCount):
-        return display.starts
-    workspace = ctx.workspace
-    return workspace.display_starts if display is None and isinstance(workspace, _CountsDisplayStarts) else None
 
 
 async def _read_size(ctx: RunContext[Any]) -> tuple[int, int] | WorkspaceError:
@@ -505,11 +478,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     """Stable capability ID: an agent controls one display."""
 
     _toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False, compare=False)
-    _shown_starts: dict[str | None, int | None] = field(
-        default_factory=dict[str | None, int | None], init=False, repr=False, compare=False
-    )
-    """For each run going on, how many times the display had started when its model last saw it. Kept by run rather
-    than on a `for_run` copy: a copy would bring a toolset of its own, which durable execution refuses."""
 
     def __post_init__(self) -> None:
         if self.keep_screenshots is not None and self.keep_screenshots < 1:
@@ -576,25 +544,14 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         *,
         limit: tuple[int, int] | None,
     ) -> ToolReturn:
-        # The model planned this call on its last screenshot, or on the screen as it is now if it has seen none.
-        seen = self._shown_starts.get(ctx.run_id) if _last_screenshot_size(ctx.messages) is not None else _starts(ctx)
-
-        def restarted() -> bool:
-            return _starts(ctx) != seen
-
-        performed, error, outputs = await _perform(ctx, actions, call, self.settle_seconds, restarted)
-        held = error is None and performed < len(actions)
+        performed, error, outputs = await _perform(ctx, actions, call, self.settle_seconds)
 
         result = ComputerResult(performed=performed)
         summary: list[str] = []
         if call.changed is not None:
             result['changed'] = True
             summary.append(f'Before it ran, this call was changed to: {_ACTIONS.dump_json(call.changed).decode()}.')
-        if held:
-            result['restarted'] = True
-            ran = 'No action ran' if not performed else f'Only {performed} of {len(actions)} actions ran'
-            summary.append(f'{_FRESH_SCREEN} {ran}, so check this screenshot before acting.')
-        elif error is None:
+        if error is None:
             summary.append(f'Ran {_plural(len(actions), "action")}.')
         else:
             result['error'] = error
@@ -614,10 +571,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if size is None:
             raise ToolFailed(' '.join([*summary, 'The screenshot was not a PNG.']))
         result['screenshot_size'] = size
-        if restarted() and not held:
-            result['restarted'] = True
-            summary.append(_FRESH_SCREEN)
-        self._shown_starts[ctx.run_id] = _starts(ctx)
         # A grid model points on its grid, so the size in pixels would only invite pixel coordinates.
         summary.append('Screenshot attached.' if call.grid else f'Screenshot attached ({size[0]}x{size[1]}).')
         content = [' '.join(summary), *outputs, BinaryImage(data=png, media_type='image/png')]
@@ -660,13 +613,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         """Drop old screenshots from what is sent, after every other capability has prepared the request."""
         return _DropOldScreenshots(model, self.keep_screenshots)
 
-    async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        """Forget the screen the run's model last saw once the run ends."""
-        try:
-            return await handler()
-        finally:
-            self._shown_starts.pop(ctx.run_id, None)
-
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail the run at its start when its workspace has no display."""
         if not ctx.workspace.has_display:
@@ -674,8 +620,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 "`ComputerUse` needs a workspace with a display, and this run's has none. Start a sandbox with "
                 'one, such as `DockerSandbox(desktop=True)`.'
             )
-        # The model saw any screenshot in its history before this run, so only a start from now on is new to it.
-        self._shown_starts[ctx.run_id] = _starts(ctx)
 
     async def before_tool_execute(
         self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
