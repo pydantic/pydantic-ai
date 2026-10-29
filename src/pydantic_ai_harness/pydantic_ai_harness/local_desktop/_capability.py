@@ -5,6 +5,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._display import DEFAULT_DESKTOP_SIZE
 from pydantic_ai_harness.local_desktop._backend import LocalDesktopBackend, VirtualScreen
 
 __all__ = ('LocalDesktop',)
@@ -27,7 +28,7 @@ class LocalDesktop(LocalWorkspace[AgentDepsT]):
 
     _: KW_ONLY
 
-    size: tuple[int, int] = (1280, 800)
+    size: tuple[int, int] = DEFAULT_DESKTOP_SIZE
     """The private screen's width and height in pixels."""
 
     real_screen: bool = False
@@ -42,7 +43,7 @@ class LocalDesktop(LocalWorkspace[AgentDepsT]):
         self._screen = None if self.real_screen else VirtualScreen(self.size)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        backend = LocalDesktopBackend(self.working_dir, env=self.env, screen=self._screen or 'real')
+        backend = LocalDesktopBackend(self.working_dir, env=self.env, real_screen=self.real_screen, screen=self._screen)
         if ref is not None and ref != backend.ref:
             return None
         return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend

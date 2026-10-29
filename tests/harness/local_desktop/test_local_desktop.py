@@ -16,6 +16,8 @@ import pytest
 
 from pydantic_ai.workspaces import Click, Point, ReadOnlyWorkspace, Region, WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai_harness import LocalDesktop, LocalDesktopBackend
+from pydantic_ai_harness.local_desktop import VirtualScreen
+from pydantic_ai_harness.local_desktop._backend import _shared_screen  # pyright: ignore[reportPrivateUsage]
 
 T = TypeVar('T')
 
@@ -240,13 +242,46 @@ async def test_a_backend_uses_a_private_screen_unless_asked_for_yours(
     monkeypatch.setenv('DISPLAY', ':0')
     monkeypatch.delenv('WAYLAND_DISPLAY', raising=False)
     monkeypatch.delenv('XDG_SESSION_TYPE', raising=False)
-    backend = LocalDesktopBackend(tmp_path)
+    screen = VirtualScreen((1280, 800))
+    backend = LocalDesktopBackend(tmp_path, screen=screen)
     try:
         assert (await backend.run('echo $DISPLAY', shell=True)).stdout == ':7\n'
     finally:
-        await backend._screen.stop()  # pyright: ignore[reportOptionalMemberAccess,reportPrivateUsage]
-    real = LocalDesktopBackend(tmp_path, screen='real')
+        await screen.stop()
+    real = LocalDesktopBackend(tmp_path, real_screen=True)
     assert (await real.run('echo $DISPLAY', shell=True)).stdout == ':0\n'
+
+
+@linux_only
+async def test_backends_given_no_screen_share_one_private_screen(fake_x: Path, tmp_path: Path):
+    """An application that builds a backend for each run starts one screen, not one per run."""
+    try:
+        for _ in range(3):
+            assert (await LocalDesktopBackend(tmp_path).run('echo $DISPLAY', shell=True)).stdout == ':7\n'
+    finally:
+        await _shared_screen().stop()
+    assert len(_lines(fake_x, 'Xvfb')) == 1
+
+
+@linux_only
+async def test_a_start_no_call_completed_on_is_counted_by_the_next_backend(fake_x: Path, tmp_path: Path):
+    """A durable engine retries a failed unit on a new backend, which finds the screen the failed one started."""
+    screen = VirtualScreen((1280, 800))
+    try:
+        await LocalDesktopBackend(tmp_path, screen=screen).run(['true'])  # starts the screen; no display call ran
+        retry = LocalDesktopBackend(tmp_path, screen=screen)
+        await retry.display.display_size()
+        assert retry.display.starts == 1
+        later = LocalDesktopBackend(tmp_path, screen=screen)
+        await later.display.display_size()
+        assert later.display.starts == 0
+    finally:
+        await screen.stop()
+
+
+def test_the_real_screen_and_a_private_one_are_one_or_the_other(tmp_path: Path):
+    with pytest.raises(ValueError, match='not both'):
+        LocalDesktopBackend(tmp_path, real_screen=True, screen=VirtualScreen((1280, 800)))
 
 
 @linux_only

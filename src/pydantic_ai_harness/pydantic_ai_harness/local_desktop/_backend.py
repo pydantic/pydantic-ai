@@ -12,7 +12,6 @@ import tempfile
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Literal
 
 import anyio
 import anyio.to_thread
@@ -72,13 +71,10 @@ class VirtualScreen:
         # Xvfb, then the window managers started on it.
         self._processes: list[subprocess.Popen[bytes]] = []
         self._cookie: str | None = None
-        self.starts = 0
+        self._starts = 0
         """How many times the screen started, each time without the windows it had."""
-
-    @property
-    def cookie_file(self) -> str | None:
-        """The file a program needs as `XAUTHORITY` to connect to the screen, while it's running."""
-        return self._cookie
+        self._unshown: int | None = None
+        """The start no display call has completed on yet, so every backend on the screen counts it until one does."""
 
     async def display(self) -> str:
         """The screen's `DISPLAY`, such as `:3`, once it's running."""
@@ -90,7 +86,8 @@ class VirtualScreen:
                 except BaseException:
                     await self.stop()
                     raise
-                self.starts += 1
+                self._starts += 1
+                self._unshown = self._starts
             elif self._processes[-1].poll() is not None:
                 # Only the window manager exited, such as from its menu's Exit: another keeps the screen's windows.
                 await self._start_window_manager(self._display)
@@ -122,11 +119,10 @@ class VirtualScreen:
 
     async def _start_window_manager(self, display: str) -> None:
         # Without a window manager, clicking a window doesn't focus or raise it.
-        env = self._env(display)
-        window_manager = await self._open(['fluxbox'], env=env)
+        window_manager = await self._open(['fluxbox'], env=self._env(display))
         with anyio.move_on_after(_START_TIMEOUT):
             while window_manager.poll() is None:
-                if await _has_window_manager(env):
+                if await _has_window_manager(_screen_env(self._env(display))):
                     return
                 await anyio.sleep(0.05)
         raise WorkspaceUnavailableError('The virtual screen did not start: its window manager did not start.')
@@ -143,14 +139,16 @@ class VirtualScreen:
             stderr=subprocess.DEVNULL,
             # What `LocalWorkspaceBackend` commands inherit: an app started from the window manager's menu must not see
             # the program's secrets.
-            env={name: os.environ[name] for name in _INHERITED_ENV if name in os.environ} | (env or {}),
+            env=_screen_env(env or {}),
         )
         process = await anyio.to_thread.run_sync(starting.result)
         self._processes.append(process)
         return process
 
     def _env(self, display: str) -> dict[str, str]:
-        return {'DISPLAY': display, **({'XAUTHORITY': self._cookie} if self._cookie else {})}
+        """What a program needs to connect to the screen."""
+        assert self._cookie is not None
+        return {'DISPLAY': display, 'XAUTHORITY': self._cookie}
 
     async def stop(self) -> None:
         """Stop the screen and its window manager; the next `display()` starts a new one."""
@@ -168,13 +166,26 @@ class VirtualScreen:
                 await anyio.to_thread.run_sync(functools.partial(Path(cookie).unlink, missing_ok=True))
 
 
+def _screen_env(extra: Mapping[str, str]) -> dict[str, str]:
+    """What `LocalWorkspaceBackend` commands inherit, and `extra`.
+
+    A program on the screen, such as an app started from the window manager's menu, must not see this program's
+    secrets.
+    """
+    return {name: os.environ[name] for name in _INHERITED_ENV if name in os.environ} | dict(extra)
+
+
 async def _has_window_manager(env: dict[str, str]) -> bool:
     result = await anyio.run_process(
-        ['xprop', '-display', env['DISPLAY'], '-root', '_NET_SUPPORTING_WM_CHECK'],
-        check=False,
-        env={**os.environ, **env},
+        ['xprop', '-display', env['DISPLAY'], '-root', '_NET_SUPPORTING_WM_CHECK'], check=False, env=env
     )
     return b'window id' in result.stdout
+
+
+@functools.cache
+def _shared_screen() -> VirtualScreen:
+    """The private screen every `LocalDesktopBackend` given none shares, so building one per run starts one screen."""
+    return VirtualScreen(DEFAULT_DESKTOP_SIZE)
 
 
 def _session_env() -> dict[str, str]:
@@ -199,9 +210,10 @@ class LocalDesktopBackend(LocalWorkspaceBackend):
     Args:
         working_dir: Where commands start and relative paths resolve.
         env: Environment variables for every command, on top of the inherited `PATH`, `HOME` and locale.
-        screen: The virtual screen to use, such as one several backends share; by default a new private one.
-            `'real'` uses the X screen you're logged in to: the agent then moves your mouse and types into your
+        real_screen: Use the X screen you're logged in to: the agent then moves your mouse and types into your
             windows.
+        screen: The private screen to use, such as one several backends share. By default every backend in this
+            process given none shares one 1280x800 screen, which stops when the process exits.
     """
 
     def __init__(
@@ -209,13 +221,14 @@ class LocalDesktopBackend(LocalWorkspaceBackend):
         working_dir: str | Path,
         *,
         env: Mapping[str, str] | None = None,
-        screen: VirtualScreen | Literal['real'] | None = None,
+        real_screen: bool = False,
+        screen: VirtualScreen | None = None,
     ):
+        if real_screen and screen is not None:
+            raise ValueError('pass either `real_screen=True` or a `screen`, not both')
         super().__init__(working_dir, env=env)
-        self._screen = None if screen == 'real' else screen or VirtualScreen(DEFAULT_DESKTOP_SIZE)
-        self._display = ManagedDisplay(self._start_display, screen_key=self._screen_key)
-        # A later start of the screen than this backend has seen started it without the windows it had.
-        self._screen_starts = None if self._screen is None else self._screen.starts
+        self._screen = None if real_screen else screen or _shared_screen()
+        self._display = ManagedDisplay(self._start_display, screen_key=self._screen_key, shown=self._shown)
 
     def _screen_key(self) -> object | None:
         # Every workspace on this machine that uses the session's screen shares its `DISPLAY`, whatever its directory.
@@ -232,10 +245,13 @@ class LocalDesktopBackend(LocalWorkspaceBackend):
         if self._screen is None:
             return _session_env()
         display = await self._screen.display()
-        if self._screen.starts != self._screen_starts:
-            self._screen_starts = self._screen.starts
-            self._display.started_fresh()
-        return {'DISPLAY': display, 'XAUTHORITY': self._screen.cookie_file or ''}
+        if (unshown := self._screen._unshown) is not None:  # pyright: ignore[reportPrivateUsage]
+            self._display.started_fresh(unshown)
+        return self._screen._env(display)  # pyright: ignore[reportPrivateUsage]
+
+    async def _shown(self, generation: int) -> None:
+        if self._screen is not None and self._screen._unshown == generation:  # pyright: ignore[reportPrivateUsage]
+            self._screen._unshown = None  # pyright: ignore[reportPrivateUsage]
 
     async def run(
         self,
