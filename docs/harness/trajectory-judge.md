@@ -11,6 +11,8 @@ Watch a live agent run with a second model, and steer it back on course mid-run.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![TrajectoryJudge starts an evaluation from the after_model_request hook every 20 model requests. The most recent window of the transcript goes to a judge model, which runs alongside the agent instead of blocking it. The judge returns AllGood, and nothing happens, or Steer(message=...), which is enqueued and delivered on the next model request as a framework note plus the message in a judge_feedback element.](../img/harness/trajectory-judge.svg)
+
 ## The problem
 
 Long-horizon runs drift. Instructions fade, unsupported claims compound, and the agent wanders away from the goal. [Guardrails](guardrails.md) catch policy violations at fixed boundaries, and evals score the run after it ends, when recovery costs a whole re-run. Neither watches the trajectory *as it unfolds* and intervenes while a correction is still cheap.

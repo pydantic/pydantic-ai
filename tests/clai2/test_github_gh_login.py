@@ -282,7 +282,14 @@ async def test_cancelling_as_the_code_arrives_still_stops_gh(
 async def test_a_stalled_check_after_sign_in_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_gh: FakeGh
 ) -> None:
-    monkeypatch.setattr('pydantic_clai2.gh_cli.TOKEN_TIMEOUT', 0.5)
+    def stalls_after_sign_in(hostname: str) -> str | None:
+        # Only the check after sign-in meets the hung `gh`; the one before keeps the usual timeout, since
+        # starting the fake `gh` can itself outlast a short one on a loaded runner.
+        if (fake_gh.state / 'token-hang').exists():
+            monkeypatch.setattr('pydantic_clai2.gh_cli.TOKEN_TIMEOUT', 0.5)
+        return gh_token(hostname)
+
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.github.gh_token', stalls_after_sign_in)
     fake_gh.next_login('stall-token')
     shell = Shell(tmp_path, {'login': 'key'})
     await shell.loader.enable('github')

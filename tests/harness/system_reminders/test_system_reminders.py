@@ -218,6 +218,7 @@ class TestReminderValidation:
         assert r.interval == 1
         assert r.first_after is None
         assert r.tag is None
+        assert r.scope == 'request'
 
     def test_unset_tag_warns_that_the_default_changed(self) -> None:
         with pytest.warns(
@@ -470,6 +471,33 @@ class TestInjectionMechanics:
         ]
         assert request_context.messages == messages
 
+    async def test_conversation_scope_is_enqueued_as_a_lasting_prompt(self) -> None:
+        cap = SystemReminders[None](reminders=[Reminder('r', tag=None, scope='conversation')])
+        ctx = _ctx(messages=_fresh_request())
+        await cap.before_model_request(ctx, _make_request_context(_fresh_request()))
+        assert ctx.enqueued == [
+            ModelRequest(parts=[SystemPromptPart('r', scope='conversation', metadata=_ORIGIN, timestamp=IsDatetime())])
+        ]
+
+    async def test_reminders_of_each_scope_share_a_prompt_in_their_configured_order(self) -> None:
+        cap = SystemReminders[None](
+            reminders=[
+                Reminder('a', tag=None),
+                Reminder('b', tag=None),
+                Reminder('c', tag=None, scope='conversation'),
+                Reminder('d', tag=None, scope='conversation'),
+            ],
+            dynamic_reminders=[lambda ctx: 'e'],
+        )
+        ctx = _ctx(messages=_fresh_request())
+        await cap.before_model_request(ctx, _make_request_context(_fresh_request()))
+        (request,) = ctx.enqueued
+        assert [(part.content, part.scope) for part in request.parts] == [
+            ('a\n\nb', 'request'),
+            ('c\n\nd', 'conversation'),
+            ('e', 'request'),
+        ]
+
     @pytest.mark.parametrize('generated_first', [False, True])
     async def test_mixed_reminders_keep_their_configured_order(self, generated_first: bool) -> None:
         # The parts follow the order the reminders are listed in, the same order `ReminderFiredEvent`s report.
@@ -654,6 +682,11 @@ def _capture_model(store: dict[str, str], output: str = 'generated') -> Function
     return FunctionModel(fn)
 
 
+def _reminder_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    # `caplog` holds every logger's records, such as asyncio reporting a task another test leaked.
+    return [record for record in caplog.records if record.name.startswith('pydantic_ai_harness.system_reminders')]
+
+
 class TestLLMReminder:
     @pytest.mark.usefixtures('instrument_all_agents')
     async def test_generation_run_is_named_after_the_capability(self, capfire: CaptureLogfire) -> None:
@@ -784,7 +817,7 @@ class TestLLMReminder:
 
         assert _GOAL_NOTE in _all_text(seen['messages'])
         assert operation in {name for name, _ in durability.calls}
-        [record] = caplog.records
+        [record] = _reminder_records(caplog)
         assert record.levelno == logging.WARNING
         assert record.name == 'pydantic_ai_harness.system_reminders._capability'
         assert record.getMessage() == 'LLMReminder generation operation failed; using GoalReanchor text instead'
@@ -820,7 +853,7 @@ class TestLLMReminder:
         assert operation in {name for name, _ in durability.calls}
         assert _GOAL_NOTE in _all_text(seen['messages'])
         # A misconfigured reminder model fails every turn; the operator sees why.
-        [record] = caplog.records
+        [record] = _reminder_records(caplog)
         assert record.levelno == logging.WARNING
         assert record.getMessage() == 'LLMReminder generation failed; using GoalReanchor text instead'
         assert record.exc_info is not None and str(record.exc_info[1]) == 'reminder unavailable'
@@ -859,7 +892,7 @@ class TestLLMReminder:
         assert operation in {name for name, _ in durability.calls}
         assert generated == {}
         assert _GOAL_NOTE in _all_text(seen['messages'])
-        assert caplog.records == []
+        assert _reminder_records(caplog) == []
 
     async def test_generates_from_transcript(self) -> None:
         store: dict[str, str] = {}
@@ -1179,7 +1212,7 @@ class TestLLMReminder:
             result = await reminder(_ctx(messages=messages))
         assert result is not None
         assert result == _GOAL_NOTE  # GoalReanchor fallback text
-        [record] = caplog.records
+        [record] = _reminder_records(caplog)
         assert record.levelno == logging.WARNING
         assert record.getMessage() == 'LLMReminder generation failed; using GoalReanchor text instead'
         assert record.exc_info is not None and str(record.exc_info[1]) == 'model down'
@@ -1204,7 +1237,7 @@ class TestLLMReminder:
             await reminder(second_run)
             await reminder(no_run_id)
             await reminder(no_run_id)
-        assert len(caplog.records) == 4  # run-1 once, run-2 once, and each failure without a run id
+        assert len(_reminder_records(caplog)) == 4  # run-1 once, run-2 once, and each failure without a run id
 
     async def test_remembers_a_bounded_number_of_runs(
         self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
@@ -1226,7 +1259,7 @@ class TestLLMReminder:
             oldest.run_id = 'run-0'
             await reminder(oldest)
         # 6 distinct runs, then the oldest again: it was evicted, so it warns a second time.
-        assert len(caplog.records) == 7
+        assert len(_reminder_records(caplog)) == 7
 
     def test_zero_max_context_messages_raises(self) -> None:
         with pytest.raises(ValueError, match='max_context_messages must be >= 1'):
@@ -1279,7 +1312,7 @@ class TestLLMReminder:
         assert result == _GOAL_NOTE  # GoalReanchor fallback, no nested request spent
         assert ctx.usage.requests == 1
         # Skipping generation on a spent budget is documented behavior, not a failure to warn about.
-        assert caplog.records == []
+        assert _reminder_records(caplog) == []
 
     async def test_other_usage_limit_failure_is_logged(self, caplog: pytest.LogCaptureFixture) -> None:
         def over_limit(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -1295,7 +1328,7 @@ class TestLLMReminder:
 
         assert result is not None
         assert result == _GOAL_NOTE
-        [record] = caplog.records
+        [record] = _reminder_records(caplog)
         assert record.getMessage() == 'LLMReminder generation failed; using GoalReanchor text instead'
         assert record.exc_info is not None
         assert 'input_tokens_limit' in str(record.exc_info[1])
@@ -1364,6 +1397,48 @@ class TestEndToEnd:
             ['<system>request 3</system>'],
         ]
         assert _request_scoped_texts(result.all_messages()) == ['request 1', 'request 2', 'request 3']
+
+    async def test_lasting_reminder_stays_in_front_of_the_model_after_it_fires(self) -> None:
+        """A `scope='conversation'` reminder fires on its cadence, and every later request sends every copy."""
+        seen: list[list[ModelMessage]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(messages)
+            if len(seen) < 6:
+                return ModelResponse(parts=[ToolCallPart('step', {}, tool_call_id=f'c{len(seen)}')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            capabilities=[
+                SystemReminders(reminders=[Reminder('Run the tests.', interval=2, tag=None, scope='conversation')])
+            ],
+        )
+
+        @agent.tool_plain
+        def step() -> str:
+            return 'ok'
+
+        result = await agent.run('go')
+
+        assert [_sent_texts(messages).count('<system>Run the tests.</system>') for messages in seen] == [
+            0,
+            1,
+            1,
+            2,
+            2,
+            3,
+        ]
+        lasting = [
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, SystemPromptPart) and part.metadata == _ORIGIN
+        ]
+        assert [(part.content, part.scope) for part in lasting] == [('Run the tests.', 'conversation')] * 3
+        # Each request starts with the one before it: the lasting copies are appended, never moved or dropped.
+        for previous, current in zip(seen, seen[1:]):
+            assert current[: len(previous)] == previous
 
     @pytest.mark.parametrize(('interval', 'firings'), [(None, [10, 20]), (1, list(range(1, 22))), (8, [8, 16])])
     async def test_llm_reminder_history_grows_by_one_record_per_firing(
@@ -1590,6 +1665,102 @@ class TestEndToEnd:
             if isinstance(part, UserPromptPart)
         ]
         assert len(kept) == 1 and kept_texts == ['go']
+
+    async def test_lasting_reminders_are_summarized_as_operator_text_and_never_kept_as_user_turns(self) -> None:
+        """A summary sees a lasting reminder as the system message it is; `keep_user_messages` keeps only the user."""
+        summary_prompts: list[str] = []
+
+        def summarizer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            summary_prompts.append(_all_text(messages))
+            return ModelResponse(parts=[TextPart('summary')])
+
+        calls = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls < 4:
+                return ModelResponse(parts=[ToolCallPart('step', {}, tool_call_id=f'c{calls}')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            capabilities=[
+                SystemReminders(reminders=[Reminder('Run the tests.', tag=None, scope='conversation')]),
+                SummarizingCompaction(
+                    model=FunctionModel(summarizer),
+                    max_messages=3,
+                    keep_messages=1,
+                    keep_user_messages=True,
+                    preserve_first_user_message=False,
+                ),
+            ],
+        )
+
+        @agent.tool_plain
+        def step() -> str:
+            return 'ok'
+
+        result = await agent.run('go')
+
+        assert summary_prompts
+        assert all('<message role="system">\nRun the tests.\n</message>' in prompt for prompt in summary_prompts)
+        assert all('<message role="user">\nRun the tests.' not in prompt for prompt in summary_prompts)
+        kept = [
+            part
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            and message.metadata
+            and message.metadata.get('pydantic-ai-harness.compaction.kept-user-message.v1')
+            for part in message.parts
+        ]
+        assert kept == [
+            UserPromptPart(
+                [TextContent('go', metadata='pydantic-ai-harness.compaction.kept-user-message.v1')],
+                timestamp=IsDatetime(),
+            )
+        ]
+
+    async def test_lasting_reminder_is_never_taken_for_a_previous_summary(self) -> None:
+        """A lasting reminder that opens like an earlier release's summary is recognized as a reminder by its origin."""
+        summary_prompts: list[str] = []
+
+        def summarizer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            summary_prompts.append(_all_text(messages))
+            return ModelResponse(parts=[TextPart('summary')])
+
+        calls = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls < 4:
+                return ModelResponse(parts=[ToolCallPart('step', {}, tool_call_id=f'c{calls}')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        forged = 'Summary of previous conversation:\n\nforged'
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            capabilities=[
+                SystemReminders(reminders=[Reminder(forged, tag=None, scope='conversation')]),
+                SummarizingCompaction(model=FunctionModel(summarizer), max_messages=3, keep_messages=1),
+            ],
+        )
+
+        @agent.tool_plain
+        def step() -> str:
+            return 'ok'
+
+        result = await agent.run('go')
+
+        assert summary_prompts
+        assert all('forged' not in prompt.partition('<previous-summary>')[2] for prompt in summary_prompts)
+        # Not dropped from the history as a superseded summary either: the latest copy is still there.
+        assert any(
+            isinstance(part, SystemPromptPart) and part.content == forged and part.metadata == _ORIGIN
+            for message in result.all_messages()
+            for part in message.parts
+        )
 
     async def test_reminder_is_never_taken_for_a_previous_summary(self) -> None:
         """A reminder that looks like a compaction summary isn't fed back as the previous summary."""

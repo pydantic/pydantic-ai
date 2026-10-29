@@ -539,6 +539,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     _capability: AbstractCapability[RunContextAgentDepsT] | None = field(default=None, repr=False)
     """The capability whose hook is currently being dispatched, if any."""
 
+    _dispatched_tool_name: str | None = field(default=None, repr=False, compare=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    The name the executing `ToolManager` holds the current tool under, set when it builds the tool
+    call's context. `tool_name` can differ: `PrefixedToolset` and `RenamedToolset` hand the wrapped
+    tool its own name. `emit` resolves the tool's owning capability by this name.
+    """
+
     _tool_name_path: ToolNamePath = field(default=(), repr=False, compare=False)
     """Private implementation detail — not part of the public API; do not read or write.
 
@@ -958,8 +966,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
             capability_id = next(
                 (run_id for run_id, cap in self.capabilities.items() if cap is capability), capability.id
             )
-        elif self.tool_name is not None and self.tool_manager is not None and self.tool_manager.tools is not None:
-            if (tool := self.tool_manager.tools.get(self.tool_name)) is not None:
+        elif (
+            (tool_name := self._dispatched_tool_name or self.tool_name) is not None
+            and self.tool_manager is not None
+            and self.tool_manager.tools is not None
+        ):
+            if (tool := self.tool_manager.tools.get(tool_name)) is not None:
                 # `CapabilityOwnedToolset` stamps the owning capability's run id on the tool definition,
                 # covering capabilities that rely on an implicit (derived) id as well as explicit ones.
                 tool_capability_id = tool.tool_def.capability_id
@@ -1036,7 +1048,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end). From a `before_model_request`
+                    or a redirect if the agent would otherwise end; at a deferred-tool pause the
+                    content is added to the history instead, unless every call in the paused step
+                    was deferred). From a `before_model_request`
                     hook, that's the request being prepared. In a realtime session, an active
                     assistant response is allowed to finish before the content is sent; otherwise it
                     is sent immediately.
