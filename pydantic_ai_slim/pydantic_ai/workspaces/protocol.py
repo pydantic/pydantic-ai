@@ -326,6 +326,22 @@ class SupportsCursorPosition(Protocol):
 
 
 @runtime_checkable
+class SupportsStartCount(Protocol):
+    """Optional on a [`Display`][pydantic_ai.workspaces.Display]: how many times the screen started afresh.
+
+    Each start loses the windows open before it. Durable execution journals how much the count grew during each
+    display call, so workflow code learns of a restart. An engine may retry a call on a new backend object, so count a
+    start an earlier object on the same screen made that no call has completed on since, such as by keeping a marker
+    in the environment.
+    """
+
+    @property
+    def starts(self) -> int:
+        """How many times the screen started afresh, as this display object has seen."""
+        ...
+
+
+@runtime_checkable
 class WorkspaceBackend(Protocol):
     """The environment an agent run works in; any object with these members conforms.
 

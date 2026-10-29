@@ -9,9 +9,8 @@ apart by `type`, not the `kind` Pydantic AI's own message types use, and named a
 A key is a single character or one of a fixed set of names; other names are refused when the action is validated.
 Common spellings, including X keysyms such as `KP_Enter` or `minus` and browser names such as `NumpadAdd`, are
 normalized to one lowercase name or character, and a combination written as one name, such as `ctrl+s`, is split into
-its keys. A character presses whatever the keyboard layout needs
-to type it, shift or AltGr included; an upper-case letter is its lower-case key. Names may be added only for keys no
-existing name covers.
+its keys. A character presses whatever the keyboard layout needs to type it, shift or AltGr included; an upper-case
+letter is its lower-case key. Names may be added only for keys no existing name covers.
 
 How these actions change, so backends written today keep doing what the model asked:
 
@@ -140,6 +139,7 @@ _KEY_ALIASES = {
     'shift_l': 'shift',
     'alt_l': 'alt',
     'super_l': 'super',
+    'meta_l': 'super',
     'print': 'printscreen',
     'caps_lock': 'capslock',
     'num_lock': 'numlock',
@@ -153,7 +153,6 @@ _KEY_ALIASES = {
     'xf86audioplay': 'mediaplay',
     'xf86audionext': 'medianext',
     'xf86audioprev': 'mediaprev',
-    'meta_l': 'super',
     # X keysyms for punctuation, as in `ctrl+plus`.
     'plus': '+',
     'minus': '-',
