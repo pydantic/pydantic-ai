@@ -1,7 +1,7 @@
 """Merge gates that a script answers from a pull request's metadata alone.
 
-`.github/workflows/pr-gates.yml` runs each subcommand as its own check. Everything a gate judges
-comes from the GitHub API. A gate fails closed, so anything it cannot read counts against the PR.
+`pr-gates.yml` runs the compatibility check with a read-only token.
+Everything the gate judges comes from the GitHub API. Unreadable metadata fails closed.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import subprocess
 import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Literal, Protocol, assert_never
+from typing import Literal, Protocol, TypeVar, assert_never
 
 from check_api_compatibility import Allowlist
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -35,7 +35,9 @@ class ChangedFile(BaseModel):
     previous_filename: str | None = None
 
 
-class _Label(BaseModel):
+class Label(BaseModel):
+    """A live PR label."""
+
     name: str
 
 
@@ -43,12 +45,14 @@ class _PullRequest(BaseModel):
     changed_files: int
 
 
-class _Commit(BaseModel):
+class Commit(BaseModel):
+    """A commit identified by SHA."""
+
     sha: str
 
 
 class _Comparison(BaseModel):
-    merge_base_commit: _Commit
+    merge_base_commit: Commit
 
 
 class GitHub(Protocol):
@@ -110,7 +114,8 @@ def _waivers(text: str | None) -> set[tuple[str, str]]:
 
 
 _FILE_PAGES = TypeAdapter(list[list[ChangedFile]])
-_LABEL_PAGES = TypeAdapter(list[list[_Label]])
+_LABEL_PAGES = TypeAdapter(list[list[Label]])
+FileT = TypeVar('FileT', bound=ChangedFile)
 
 
 class GhCli:
@@ -121,20 +126,26 @@ class GhCli:
         self._issue = f'repos/{repo}/issues/{number}'
         self._pull = f'repos/{repo}/pulls/{number}'
 
-    def _api(self, *args: str) -> str:
-        result = subprocess.run(['gh', 'api', *args], check=False, capture_output=True, text=True)
+    def _api(self, *args: str, input: str | None = None) -> str:
+        result = subprocess.run(['gh', 'api', *args], input=input, check=False, capture_output=True, text=True)
         if result.returncode != 0:
             raise GateError(f'`gh api {args[-1]}` failed: {result.stderr.strip()}')
         return result.stdout
 
     def changed_files(self) -> list[ChangedFile]:
         total = _PullRequest.model_validate_json(self._api(self._pull)).changed_files
-        pages = _FILE_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/files?per_page=100'))
-        files = [file for page in pages for file in page]
+        return self.file_pages(_FILE_PAGES, total, exact=False)
+
+    def file_pages(self, adapter: TypeAdapter[list[list[FileT]]], total: int, *, exact: bool) -> list[FileT]:
+        """Read the whole file list with the caller's snapshot-completeness requirement."""
+        pages = adapter.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/files?per_page=100'))
+        files: list[FileT] = [file for page in pages for file in page]
         # The endpoint caps at 3000 files and truncates silently; deciding on a partial list
         # could miss a changed allowlist.
         if len(files) < total:
             raise GateError(f'Retrieved only {len(files)} of {total} changed files (the PR files API caps at 3000).')
+        if exact and len(files) != total:
+            raise GateError('PR file count changed during review evaluation; retry the gate.')
         return files
 
     def labels(self) -> set[str]:
