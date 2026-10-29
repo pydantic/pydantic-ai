@@ -86,9 +86,10 @@ _HEX_PREVIEW_BYTES = 64
 def sniff_media_type(data: bytes, path: str) -> str | None:
     """The media type of a file `BinaryContent` can send, read from its leading bytes.
 
-    Images, PDFs, office documents, audio and video are returned as files. A model
-    that can't take one gets a note in its place, or a description from
-    `FileUnderstanding`, rather than a failed request. The bytes decide, not the
+    `read_file` returns a recognized file as itself unless it is in
+    `DESCRIBED_MEDIA_TYPES`. A model that can't take one gets a note in its place,
+    or a description from `FileUnderstanding`, rather than a failed request. A
+    described format is still named in `read_file`'s header. The bytes decide, not the
     extension, so a misnamed file is not sent under the wrong media type. The one
     exception is the legacy Office container, which Word and Excel files share:
     its bytes say it is one, and `path`'s extension says which.
@@ -119,7 +120,7 @@ def _image_or_document(data: bytes, path: str) -> str | None:
 
 
 _LEGACY_OFFICE = {'.doc': 'application/msword', '.xls': 'application/vnd.ms-excel'}
-"""The legacy Office formats Pydantic AI can send, by extension: their shared container doesn't say which it holds."""
+"""The legacy Office formats `BinaryContent` names, by extension: their shared container doesn't say which it holds."""
 
 
 def _office_open_xml(data: bytes) -> str | None:
@@ -143,12 +144,25 @@ def _office_open_xml(data: bytes) -> str | None:
     return None
 
 
-SENT_AUDIO_MEDIA_TYPES = frozenset({'audio/wav', 'audio/mpeg'})
-"""The audio formats `read_file` returns as files; the others it recognizes are described.
+DESCRIBED_MEDIA_TYPES = frozenset(
+    {
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/msword',
+        'application/vnd.ms-excel',
+        'audio/aiff',
+        'audio/ogg',
+        'audio/flac',
+        'audio/aac',
+        'video/x-matroska',
+    }
+)
+"""Formats `read_file` recognizes but describes instead of returning as files.
 
-Core judges audio by category, not format, and `OpenAIChatModel` takes audio but only WAV and MP3, so
-another format would fail the request there instead of becoming a note. Widen this once a model can
-report which audio formats it takes.
+A model's profile says whether it takes documents, audio or video, and core narrows documents per adapter
+for only some providers, so a model whose profile admits the category can still reject the format and fail
+the request instead of getting a note: Gemini takes no Office documents or Matroska, and `OpenAIChatModel`
+takes audio but only WAV and MP3. Send these once core can narrow them for every adapter.
 """
 
 

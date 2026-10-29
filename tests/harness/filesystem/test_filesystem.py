@@ -800,8 +800,6 @@ class TestReadFile:
             (b'RIFF\x24\x00\x00\x00WEBPVP8 ', 'image/webp'),
             # A PDF often has no null byte near the start, so it is recognized by its signature, not as binary.
             (b'%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n', 'application/pdf'),
-            (_zip_with('word/document.xml'), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
-            (_zip_with('xl/workbook.xml'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
             (b'RIFF\x24\x00\x00\x00WAVEfmt ', 'audio/wav'),
             (b'ID3\x04\x00\x00\x00\x00', 'audio/mpeg'),
             (b'\xff\xfb\x90\x64\x00', 'audio/mpeg'),
@@ -809,7 +807,6 @@ class TestReadFile:
             (b'\x00\x00\x00\x14ftypqt  ', 'video/quicktime'),
             (b'\x00\x00\x00\x14ftyp3gp4', 'video/3gpp'),
             (b'\x1a\x45\xdf\xa3\x9fB\x86\x81\x01B\x82\x84webm', 'video/webm'),
-            (b'\x1a\x45\xdf\xa3\x9fB\x82\x88matroska', 'video/x-matroska'),
             (b'FLV\x01\x05\x00', 'video/x-flv'),
             (b'\x00\x00\x01\xba\x44\x00', 'video/mpeg'),
             (bytes.fromhex('3026b2758e66cf11a6d900aa0062ce6c'), 'video/x-ms-wmv'),
@@ -834,13 +831,15 @@ class TestReadFile:
             (b'OggS\x00\x02\x00\x00', 'audio/ogg'),
             (b'fLaC\x00\x00\x00\x22', 'audio/flac'),
             (b'\xff\xf1\x50\x80\x00', 'audio/aac'),
+            (_zip_with('word/document.xml'), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+            (_zip_with('xl/workbook.xml'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+            (b'\x1a\x45\xdf\xa3\x9fB\x82\x88matroska', 'video/x-matroska'),
         ],
     )
-    async def test_audio_other_than_wav_and_mp3_is_described(
-        self, tmp_path: Path, data: bytes, media_type: str
-    ) -> None:
-        # `OpenAIChatModel` takes audio but only WAV and MP3, and core judges audio by category, so another
-        # format sent as a file would fail the request there rather than become a note.
+    async def test_a_format_some_models_reject_is_described(self, tmp_path: Path, data: bytes, media_type: str) -> None:
+        # A profile admits documents, audio or video as a whole, and some adapters take only some formats
+        # (Gemini no Office documents or Matroska, `OpenAIChatModel` only WAV and MP3 audio), so sending one
+        # would fail the request there rather than become a note. It is recognized and named all the same.
         (tmp_path / 'clip').write_bytes(data)
         result = await _unhashed_toolset().read_file('clip', workspace=LocalWorkspaceBackend(tmp_path))
         assert isinstance(result, str)
@@ -857,14 +856,13 @@ class TestReadFile:
         data = bytes.fromhex('d0cf11e0a1b11ae1') + bytes(8)
         (tmp_path / name).write_bytes(data)
         result = await _unhashed_toolset().read_file(name, workspace=LocalWorkspaceBackend(tmp_path))
+        # Described like the other Office formats, but under the media type its extension names.
+        assert isinstance(result, str)
+        assert 'Binary file; the first bytes in hex:' in result
         if media_type is None:
-            assert isinstance(result, str)
-            assert 'Binary file; the first bytes in hex:' in result
+            assert 'msword' not in result and 'ms-excel' not in result
         else:
-            assert result == [
-                f'[{name} | {media_type} | {len(data)} bytes]\n',
-                BinaryContent(data=data, media_type=media_type),
-            ]
+            assert result.startswith(f'[{name} | {media_type} | {len(data)} bytes]\n')
 
     @pytest.mark.parametrize(
         'data',

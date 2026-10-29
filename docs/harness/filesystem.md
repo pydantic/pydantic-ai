@@ -65,7 +65,7 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 | Tool | Purpose |
 |---|---|
-| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP), PDF, Word or Excel document, WAV or MP3 audio file or video (MP4, QuickTime, WebM, Matroska, FLV, MPEG, WMV, 3GP) up to 5 MB is returned as the file itself, so a model that takes that kind of file sees it, and a model that doesn't gets a note in its place; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
+| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP), PDF, WAV or MP3 audio file, or video (MP4, QuickTime, WebM, FLV, MPEG, WMV, 3GP) up to 5 MB is returned as the file itself, so a model that takes that kind of file sees it, and a model that doesn't gets a note in its place; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
@@ -344,17 +344,19 @@ applies the same rule to absolute symlink targets.
   directories or 100,000 entries and end their result with a
   `[... walk cut short ...]` line.
 - **Binary detection.** `read_file` does not decode binary bytes into the model
-  context. It returns an image, PDF, Word or Excel document, audio file or video
-  as `BinaryContent`, recognized by its leading bytes rather than its extension
-  (a legacy `.doc` or `.xls`, whose container Word and Excel share, is told apart
-  by its extension). Pydantic AI sends it [inside the tool result or on the user channel](../tools-advanced.md#tool-return-file-provenance)
+  context. It returns an image, PDF, WAV or MP3 audio file, or video as
+  `BinaryContent`, recognized by its leading bytes rather than its extension.
+  Pydantic AI sends it [inside the tool result or on the user channel](../tools-advanced.md#tool-return-file-provenance)
   depending on the model. If the model can't take that kind of file, as its
   profile's file-input flags say, the file is replaced by a note naming it, or
-  described first by [`FileUnderstanding`](../capabilities/file-understanding.md)
-  when that is on the agent ([input support by model](../input.md)).
-  Audio other than WAV and MP3 (OGG, FLAC, AIFF, AAC) is described rather than
-  sent: OpenAI Chat Completions takes only those two, and a model's profile says
-  whether it takes audio, not which formats. A file over 5 MB, the strictest mainstream per-image limit, is described instead, as is any
+  described first by [`FileUnderstanding`](../capabilities/file-understanding.md) when that is on the agent
+  ([input support by model](../input.md)). Word and Excel documents, other audio (OGG,
+  FLAC, AIFF, AAC) and Matroska video are recognized but described rather than
+  sent: a profile says whether a model takes documents, audio or video, not which
+  formats, and some models that take the kind reject these formats (Gemini takes
+  no Office documents or Matroska, OpenAI Chat Completions only WAV and MP3
+  audio), which would fail the request rather than become a note. A file over 5
+  MB, the strictest mainstream per-image limit, is described instead, as is any
   other binary file.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
