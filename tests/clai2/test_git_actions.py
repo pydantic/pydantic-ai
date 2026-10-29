@@ -156,6 +156,10 @@ async def test_a_conflict_is_unmerged(repo: Path) -> None:
     assert status is not None
     assert status.files == [ChangedFile(path='notes.txt', status='U')]
     assert status.ahead == 1, 'main is ahead of origin/main'
+    # Unresolved, nothing is committed: staging it would record the conflict markers.
+    with pytest.raises(ValueError, match=r'Resolve the merge conflict in notes.txt before committing'):
+        await commit(repo, message='Merge other')
+    assert len(git(repo, 'log', '-1', '--format=%P').split()) == 1
 
     # Resolved, the merge is finished only with every change, as Git allows.
     (repo / 'notes.txt').write_text('both\n')

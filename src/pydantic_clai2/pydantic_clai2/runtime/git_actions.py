@@ -353,8 +353,8 @@ async def commit(workspace: Path, *, message: str, files: Sequence[str] | None =
 
     Only these files are committed, whatever else is staged. Paths are relative to the repository's top
     directory, as `git_status` lists them. Raises `ValueError` for an empty message, for nothing to
-    commit, and for only some files while a merge is in progress, which Git finishes only with every
-    change; and `GitError` when Git refuses, as when a hook fails.
+    commit, for a file that still has a merge conflict, and for only some files while a merge is in
+    progress, which Git finishes only with every change; and `GitError` when Git refuses, as when a hook fails.
     """
     message = message.strip()
     if not message:
@@ -363,6 +363,10 @@ async def commit(workspace: Path, *, message: str, files: Sequence[str] | None =
     chosen = _selected(status, files)
     if not chosen:
         raise ValueError('There is nothing to commit.')
+    # Staging a conflicted file would commit its conflict markers as if it were resolved.
+    conflicted = [_shown(file.path) for file in chosen if file.status == 'U']
+    if conflicted:
+        raise ValueError(f'Resolve the merge conflict in {", ".join(conflicted)} before committing.')
     merging = await _try_git(root, 'rev-parse', '--quiet', '--verify', 'MERGE_HEAD') is not None
     if merging:
         if len(chosen) < len(status.files):
