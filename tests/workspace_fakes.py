@@ -389,21 +389,15 @@ class InMemoryProvider:
         self.log: list[str] = []
         self.actions: list[ComputerAction] = []
         # Faults the next display calls meet, on whichever backend serves them.
-        self.restart_display = False
         self.fail_next_screenshot = False
         self.lose_next_action = False
-        # The display's starts, kept in the environment as a real display keeps a marker there: how many there were,
-        # and how many a display call has completed on.
-        self.display_starts = 0
-        self.shown_starts = 0
 
     def reset(self) -> None:
         self.environments.clear()
         self.directories.clear()
         self.log.clear()
         self.actions.clear()
-        self.restart_display = self.fail_next_screenshot = self.lose_next_action = False
-        self.display_starts = self.shown_starts = 0
+        self.fail_next_screenshot = self.lose_next_action = False
 
     def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
         return ProviderBackend(self, ref)
@@ -421,15 +415,10 @@ class ProviderBackend(
     SupportsScaledScreenshot,
     SupportsCursorPosition,
 ):
-    starts = 0
-    """How many times the display started, as `SupportsStartCount` asks: including a start an earlier backend object
-    made that no display call completed on."""
-
     def __init__(self, provider: InMemoryProvider, ref: WorkspaceRef | None) -> None:
         self._provider = provider
         self._ref = ref
         self.attached = False
-        self._counted: int | None = None
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -437,18 +426,6 @@ class ProviderBackend(
 
     async def _display_call(self) -> None:
         await self._files()
-        provider = self._provider
-        if provider.restart_display:
-            provider.restart_display = False
-            provider.display_starts += 1
-        counted = provider.shown_starts if self._counted is None else self._counted
-        if provider.display_starts > counted:
-            self.starts += provider.display_starts - counted
-        self._counted = provider.display_starts
-
-    def _shown(self) -> None:
-        """A display call completed, so the starts before it are no longer new to another backend object."""
-        self._provider.shown_starts = self._provider.display_starts
 
     async def _files(self) -> dict[str, bytes]:
         await anyio.sleep(0)
@@ -535,7 +512,6 @@ class ProviderBackend(
 
     async def display_size(self) -> tuple[int, int]:
         await self._display_call()
-        self._shown()
         return FAKE_DISPLAY_SIZE
 
     async def screenshot(self) -> bytes:
@@ -543,7 +519,6 @@ class ProviderBackend(
             self._provider.fail_next_screenshot = False
             raise RuntimeError('the screenshot failed')
         await self._display_call()
-        self._shown()
         return FAKE_SCREENSHOT
 
     async def act(self, action: ComputerAction) -> None:
@@ -556,21 +531,17 @@ class ProviderBackend(
             # The action took effect, and then its worker was lost.
             self._provider.lose_next_action = False
             raise RuntimeError('the worker was lost')
-        self._shown()
 
     async def zoom(self, region: Region) -> bytes:
         await self._display_call()
-        self._shown()
         return _png(region.right - region.left, region.bottom - region.top)
 
     async def scaled_screenshot(self, width: int, height: int) -> bytes:
         await self._display_call()
-        self._shown()
         return _png(width, height)
 
     async def cursor_position(self) -> Point:
         await self._display_call()
-        self._shown()
         moves = [action for action in self._provider.actions if isinstance(action, MoveMouse)]
         return Point(x=moves[-1].x, y=moves[-1].y) if moves else Point(x=640, y=400)
 
