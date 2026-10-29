@@ -193,10 +193,7 @@ is called in the run:
   `directory` inside the working directory.
 - `RepoContext`'s inventory tool, when its asset roots are inside the working directory.
 
-A `FileSystem` tool can't be called under a new name yet, such as under `PrefixTools`, because
-Pydantic AI refuses its capability events ([#10927](https://github.com/pydantic/pydantic-ai/issues/10927)).
-The dedicated reader steps aside for a renamed `FileSystem` all the same, so keep `FileSystem` under
-its own names for now.
+The dedicated reader steps aside for a renamed `FileSystem` too, such as one under `PrefixTools`.
 
 The capability decides from its own configuration, not from `FileSystem`'s access rules. With
 `denied_patterns` that cover those files (`.pydantic-ai-harness/` for spills, the memory directory,
