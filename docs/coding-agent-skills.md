@@ -57,6 +57,10 @@ Add `--claude` to also install into `.claude/skills/` alongside the default `.ag
 
 This installation also includes [migration skills](framework-migration.md) for moving applications from other agent frameworks to Pydantic AI.
 
+## Next steps
+
+With the skill installed, ask your coding agent to build your first agent, or read the [Agents guide](agent.md) to see what it will write.
+
 ## See Also
 
 - [`pydantic/skills`](https://github.com/pydantic/skills): source repository
