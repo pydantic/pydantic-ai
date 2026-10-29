@@ -185,9 +185,9 @@ A process whose heap nears Node's limit, which defaults to about 4 GB on CI's ru
 whole type cache and re-evaluates what it still needs, which `--verbose` reports as `Emptying type
 cache`. A full run now does that dozens of times in a single process, and each of four workers at
 the default limit still does. CI raises the limit with `NODE_OPTIONS=--max-old-space-size=6144`,
-which every worker inherits, so each of its three workers stays below it. A single process still
-empties its cache with an 8 GB limit, so on a machine with the memory, raising the limit shortens a
-local full run without making it cheap.
+which every worker inherits, so each of its three workers stays below it. On CI's runners, a single
+process with an 8 GB limit still emptied its cache 22 times, against 54 to 98 at the default, and
+took 239 to 314 s against 334 to 468 s.
 
 ## Documentation Changes
 
