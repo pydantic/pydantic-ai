@@ -284,7 +284,10 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
 
 
 def _workspace_telemetry(params: object) -> AbstractContextManager[None]:
-    """Trace the task's workspace calls with the tracer its run context was rebuilt with, as its tools are."""
+    """Trace the task's workspace calls with the tracer and content setting its run context was rebuilt with.
+
+    The same ones its tools trace with, so a task's workspace and tool spans agree on content.
+    """
     ctx = operation_run_context(params)
     if ctx is None:
         return nullcontext()

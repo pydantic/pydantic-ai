@@ -29,10 +29,10 @@ __all__ = (
     'lifecycle_span',
     'operation_span',
     'publish_workspace_telemetry',
-    'workspace_telemetry_scope',
     'set_command',
     'set_content',
     'stop_span',
+    'workspace_telemetry_scope',
 )
 
 
