@@ -118,7 +118,7 @@ memory = Memory(FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/m
 limits = ToolOutputLimits(store=LocalFileStore())  # spills in this machine's temp directory
 ```
 
-By default, harness files (Shell's background job logs, tool-output spills) go in `.pydantic-ai-harness/` in the workspace's working directory, which is git-ignored.
+By default, harness files (Shell's background job logs, tool-output spills) go in `.pydantic-ai-harness/` in the workspace's working directory, which is git-ignored. When the workspace user cannot write to the working directory, Shell keeps its job files in a directory private to that user under the workspace's temp directory (`$TMPDIR` in its environment, or `/tmp`) instead.
 
 Step Persistence's file and SQLite stores, Media's disk and SQLite stores, and Code Mode mounts use paths on the machine running the agent, not the run's workspace.
 
