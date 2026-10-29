@@ -180,10 +180,17 @@ def host_budget_exhausted() -> bool:
 
 
 def _call_usage(result: AgentRunResult[Any]) -> RequestUsage:
-    """The tokens of this call alone; the run's own `usage` is the host total when the budget is shared."""
+    """The tokens of this call alone; the run's own `usage` is the host total when the budget is shared.
+
+    Includes attempts a `FallbackModel` rejected before a response: they were billed, but are not part
+    of the response's own `usage`.
+    """
     usage = RequestUsage()
     for message in result.new_messages():
         if isinstance(message, ModelResponse):
+            for attempt in message.failed_attempts or ():
+                if attempt.usage is not None:
+                    usage += attempt.usage
             usage += message.usage
     return usage
 
