@@ -43,7 +43,7 @@ classifiers = [
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
-dependencies = ["genai-prices>=0.0.71", "httpx>=0.28.1", "json-repair>=0.58.0", "pydantic-ai-slim=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+dependencies = ["genai-prices>=0.0.71", "httpx>=0.28.1", "pydantic-ai-slim=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 anthropic = ["pydantic-ai-slim[anthropic]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
@@ -63,6 +63,9 @@ render = ["render>=1.2.0"]
 modal = ["modal>=1.5.2"]
 e2b = ["e2b>=2.48.0"]
 sprites = ["sprites-py>=0.7.0,<0.8"]
+# boxd's SDK is on 0.x, where a minor release can change the API, so cap per minor. 0.2.20 added
+# `machines.fs` and an `AuthenticationError` that means only refused or missing credentials.
+boxd = ["boxd>=0.2.20,<0.3"]
 # Daytona's current SDK line is 0.x; the older 1.0.1 and the 2.0 pre-release are other APIs.
 daytona = ["daytona>=0.223.1,<1"]
 # smolmachines ships its microVM engine in platform wheels and has no sdist, so it installs only where a wheel exists.
@@ -102,7 +105,8 @@ prompt-injection-defender-ml = [
 ]
 github = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 slack = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-coder = ["ripgrep==14.1.0 ; sys_platform != 'android'"]
+coder = ["json-repair>=0.58.0", "ripgrep==14.1.0 ; sys_platform != 'android'"]
+repair-tool-arguments = ["json-repair>=0.58.0"]
 logfire-mcp = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 linear = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 notion = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]

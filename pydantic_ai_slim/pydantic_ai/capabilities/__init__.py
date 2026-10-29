@@ -50,6 +50,7 @@ from .include_return_schemas import IncludeToolReturnSchemas
 from .instrumentation import Instrumentation
 from .local_workspace import LocalWorkspace
 from .mcp import MCP, MCPAuthorizationTokenFunc
+from .model_fallback import ModelFallback
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
 from .prefix_tools import PrefixTools
@@ -90,6 +91,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         Instrumentation,
         LocalWorkspace,
         MCP,
+        ModelFallback,
         PrefixTools,
         PrepareTools,
         ProcessHistory,
@@ -156,6 +158,7 @@ __all__ = [
     'ProcessHistory',
     'ReinjectSystemPrompt',
     'ResolveModelId',
+    'ModelFallback',
     'SelectModel',
     'SetToolMetadata',
     'Thinking',
