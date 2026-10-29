@@ -83,19 +83,19 @@ _HEX_PREVIEW_BYTES = 64
 def sniff_media_type(data: bytes) -> str | None:
     """The media type of a file `read_file` returns as itself, read from its leading bytes.
 
-    Images, PDFs, WAV and MP3 audio and common video formats are returned as files. A
-    model that can't take one gets a note in its place, or a description from
-    `FileUnderstanding`, rather than a failed request. Other formats stay described:
-    a profile says whether a model takes documents, audio or video, not which formats,
-    and some models that take the kind reject them (Gemini takes no Office documents
-    or Matroska, `OpenAIChatModel` only WAV and MP3 audio). The bytes decide, not the
-    extension, so a misnamed file is not sent under the wrong media type.
+    Images, PDFs and common video formats are returned as files. A model that can't
+    take one gets a note in its place, or a description from `FileUnderstanding`,
+    rather than a failed request. Other formats stay described, because some models
+    whose profile admits the kind reject them: Gemini takes no Office documents or
+    Matroska, and OpenAI-compatible endpoints report audio input for models that
+    reject it. The bytes decide, not the extension, so a misnamed file is not sent
+    under the wrong media type.
 
     The image signatures duplicate core's `image_media_type_from_bytes`
     (`pydantic_ai/images/_media_type.py`), which is private and covers neither GIF
     nor PDF. Change both together until core offers a public helper to use here.
     """
-    return _image_or_pdf(data) or _audio(data) or _video(data)
+    return _image_or_pdf(data) or _video(data)
 
 
 def _image_or_pdf(data: bytes) -> str | None:
@@ -109,21 +109,6 @@ def _image_or_pdf(data: bytes) -> str | None:
         return 'image/webp'
     if data.startswith(b'%PDF-'):
         return 'application/pdf'
-    return None
-
-
-def _audio(data: bytes) -> str | None:
-    if data.startswith(b'RIFF') and data[8:12] == b'WAVE':
-        return 'audio/wav'
-    # `ID3` is plain ASCII, so it is checked with the version byte that follows it in a real file: a text file
-    # that happens to start with the same letters is read as text.
-    if data.startswith(b'ID3') and len(data) > 3 and data[3] in (2, 3, 4):
-        return 'audio/mpeg'
-    # An MPEG audio frame header: sync bits, then a layer, bitrate and sample rate that aren't reserved. Raw AAC
-    # (ADTS) has the same sync but layer 0, so it isn't taken for MP3.
-    if len(data) >= 3 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0 and data[1] & 0x06:
-        if data[2] >> 4 not in (0, 15) and (data[2] >> 2) & 3 != 3:
-            return 'audio/mpeg'
     return None
 
 

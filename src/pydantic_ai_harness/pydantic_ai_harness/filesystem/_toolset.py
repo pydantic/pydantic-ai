@@ -729,15 +729,15 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     ) -> str | list[str | BinaryContent]:
         """Read a file in `workspace` directly, outside an agent run.
 
-        An image, PDF, WAV or MP3 audio file, or video, recognized by its leading bytes,
-        comes back as its header followed by a `BinaryContent`; everything else is text.
+        An image, PDF or video, recognized by its leading bytes, comes back as its header
+        followed by a `BinaryContent`; everything else is text.
         """
         return await self._read_file(await self._scope(workspace), None, path, offset=offset, limit=limit)
 
     async def _read_file_tool(
         self, ctx: RunContext[AgentDepsT], path: str, *, offset: int = 0, limit: int | None = None
     ) -> str | list[str | BinaryContent]:
-        """Read a text file with line numbers, or view an image, PDF, WAV or MP3 audio file, or video.
+        """Read a text file with line numbers, or view an image, PDF or video.
 
         Args:
             ctx: The current agent run context.
@@ -746,9 +746,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             limit: Maximum number of lines to return; defaults to, and is capped at, the configured read limit.
 
         Returns:
-            File content with line numbers, plus metadata header. An image, PDF, WAV or
-            MP3 audio file, or video is returned as the file itself; other binary files as
-            their size, media type and leading bytes in hex.
+            File content with line numbers, plus metadata header. An image, PDF or video
+            is returned as the file itself; other binary files as their size, media type
+            and leading bytes in hex.
         """
         return await self._read_file(
             await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, offset=offset, limit=limit

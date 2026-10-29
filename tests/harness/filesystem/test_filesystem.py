@@ -801,9 +801,6 @@ class TestReadFile:
             (b'RIFF\x24\x00\x00\x00WEBPVP8 ', 'image/webp'),
             # A PDF often has no null byte near the start, so it is recognized by its signature, not as binary.
             (b'%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n', 'application/pdf'),
-            (b'RIFF\x24\x00\x00\x00WAVEfmt ', 'audio/wav'),
-            (b'ID3\x04\x00\x00\x00\x00', 'audio/mpeg'),
-            (b'\xff\xfb\x90\x64\x00', 'audio/mpeg'),
             (b'\x00\x00\x00\x18ftypisom', 'video/mp4'),
             (b'\x00\x00\x00\x14ftypqt  ', 'video/quicktime'),
             (b'\x00\x00\x00\x14ftyp3gp4', 'video/3gpp'),
@@ -828,6 +825,8 @@ class TestReadFile:
     @pytest.mark.parametrize(
         ('data', 'media_type'),
         [
+            (b'RIFF\x24\x00\x00\x00WAVEfmt ', 'audio/wav'),
+            (b'ID3\x04\x00\x00\x00\x00', 'audio/mpeg'),
             (b'FORM\x00\x00\x00\x00AIFFCOMM', 'audio/aiff'),
             (b'OggS\x00\x02\x00\x00', 'audio/ogg'),
             (b'fLaC\x00\x00\x00\x22', 'audio/flac'),
@@ -838,8 +837,8 @@ class TestReadFile:
         ],
     )
     async def test_a_format_some_models_reject_is_described(self, tmp_path: Path, data: bytes, media_type: str) -> None:
-        # A profile admits documents, audio or video as a whole, and some adapters take only some formats
-        # (Gemini no Office documents or Matroska, `OpenAIChatModel` only WAV and MP3 audio), so sending one
+        # Some models whose profile admits the kind reject the format (Gemini takes no Office documents or
+        # Matroska, and OpenAI-compatible endpoints report audio input for models that reject it), so sending one
         # would fail the request there rather than become a note. A correctly named file is still labelled.
         name = f'clip{mimetypes.guess_extension(media_type) or ".bin"}'
         (tmp_path / name).write_bytes(data)
@@ -866,7 +865,7 @@ class TestReadFile:
         assert isinstance(result, str)
         assert 'Binary file; the first bytes in hex:' in result
 
-    @pytest.mark.parametrize('text', ['ID3 tags hold the title.\n', 'RIFF notes, not a WAVE.\n'])
+    @pytest.mark.parametrize('text', ['RIFF notes, not a WEBP.\n', '%PDF is a prefix.\n'])
     async def test_text_that_starts_like_a_signature_is_read_as_text(self, tmp_path: Path, text: str) -> None:
         (tmp_path / 'notes.md').write_text(text)
         result = await _unhashed_toolset().read_file('notes.md', workspace=LocalWorkspaceBackend(tmp_path))
@@ -3023,28 +3022,28 @@ class TestUsedAsAToolset:
 
 class TestReadFileInARun:
     async def test_a_file_the_model_cannot_read_becomes_a_note(self, tmp_path: Path) -> None:
-        wav = b'RIFF\x24\x00\x00\x00WAVEfmt '
-        (tmp_path / 'memo.wav').write_bytes(wav)
+        mp4 = b'\x00\x00\x00\x18ftypisom\x00\x00\x02\x00'
+        (tmp_path / 'demo.mp4').write_bytes(mp4)
         sent: list[object] = []
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) == 1:
-                return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'memo.wav'})])
+                return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'demo.mp4'})])
             request = messages[-1]
             assert isinstance(request, ModelRequest)
             sent.extend(part.content for part in request.parts if isinstance(part, ToolReturnPart))
             return ModelResponse(parts=[TextPart('noted')])
 
         agent = Agent(
-            FunctionModel(model, profile=ModelProfile(supports_audio_file_input=False)),
+            FunctionModel(model, profile=ModelProfile(supports_video_input=False)),
             capabilities=[LocalWorkspace(tmp_path), FileSystem[object]()],
         )
-        result = await agent.run('play the memo')
+        result = await agent.run('watch the demo')
         assert result.output == 'noted'
         [content] = sent
         assert content == [
-            IsStr(regex=r'\[memo\.wav \| audio/wav \| 16 bytes.*\]\n'),
-            IsStr(regex=r'File .* \(audio/wav, 16 bytes\) was not sent: this model cannot read audio files\.'),
+            IsStr(regex=r'\[demo\.mp4 \| video/mp4 \| 16 bytes.*\]\n'),
+            IsStr(regex=r'File .* \(video/mp4, 16 bytes\) was not sent: this model cannot read video\.'),
         ]
 
     async def test_an_image_reaches_the_model_in_the_tool_result(self, tmp_path: Path) -> None:
