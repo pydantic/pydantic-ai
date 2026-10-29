@@ -18,6 +18,7 @@ from .protocol import (
 )
 from .readonly import ReadOnlyWorkspace
 from .unavailable import UnavailableWorkspace
+from .untrusted import UntrustedWorkspace
 from .workspace import Workspace, WrapperWorkspace
 
 __all__ = (
@@ -39,4 +40,5 @@ __all__ = (
     'SupportsFilesystem',
     'SupportsRealpath',
     'UnavailableWorkspace',
+    'UntrustedWorkspace',
 )

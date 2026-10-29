@@ -388,6 +388,14 @@ class Workspace(WorkspaceBackend):
         """Whether this workspace refuses commands and file changes, so tools can leave those out."""
         return isinstance(self._backend, Workspace) and self._backend.read_only
 
+    @property
+    def trusted(self) -> bool:
+        """Whether the operator controls this workspace's files, so capabilities may put their text in instructions.
+
+        `False` under an [`UntrustedWorkspace`][pydantic_ai.workspaces.UntrustedWorkspace]; tools work the same either way.
+        """
+        return not isinstance(self._backend, Workspace) or self._backend.trusted
+
     def durable_policy(self) -> tuple[object, ...]:
         """Configuration a durable unit must rebuild with this wrapper.
 

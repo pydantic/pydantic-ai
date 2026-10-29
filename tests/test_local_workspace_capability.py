@@ -18,9 +18,11 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
+    UntrustedWorkspace,
     WorkspaceReadOnlyError,
     WorkspaceRef,
 )
+from pydantic_ai.workspaces.workspace import workspace_layers
 
 pytestmark = [
     pytest.mark.skipif(os.name != 'posix', reason='`LocalWorkspaceBackend` only supports POSIX platforms'),
@@ -164,6 +166,21 @@ async def test_read_only_allows_reads_and_refuses_writes_and_commands(tmp_path: 
     assert (tmp_path / 'notes.txt').read_text() == 'read me'
 
 
+async def test_untrusted_marks_the_workspace_and_leaves_its_tools_working(tmp_path: Path) -> None:
+    agent = Agent(TestModel(call_tools=['probe']), capabilities=[LocalWorkspace(tmp_path, trusted=False)])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        await ctx.workspace.write_text('notes.txt', 'written')
+        listed = await ctx.workspace.run(['cat', 'notes.txt'])
+        return f'trusted={ctx.workspace.trusted} {listed.stdout}'
+
+    result = await agent.run('go')
+
+    assert result.output == '{"probe":"trusted=False written"}'
+    assert workspace_layers(result.workspace) == [UntrustedWorkspace, LocalWorkspaceBackend]
+
+
 async def test_foreign_ref_without_another_capability_raises(tmp_path: Path) -> None:
     agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path)])
 
@@ -243,3 +260,16 @@ async def test_agent_spec_builds_a_local_workspace(tmp_path: Path) -> None:
 
     assert isinstance(result.workspace, ReadOnlyWorkspace)
     assert await result.workspace.working_dir() == str(tmp_path.resolve())
+
+
+async def test_agent_spec_builds_an_untrusted_read_only_local_workspace(tmp_path: Path) -> None:
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [{'LocalWorkspace': {'working_dir': str(tmp_path), 'read_only': True, 'trusted': False}}],
+        }
+    )
+
+    result = await agent.run('go')
+
+    assert workspace_layers(result.workspace) == [UntrustedWorkspace, ReadOnlyWorkspace, LocalWorkspaceBackend]
