@@ -3941,7 +3941,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tool_choice = None
 
         # Collected before the history is trimmed to what the server doesn't hold: a call's output acknowledges its
-        # checks even when the call itself stays in the stored response or conversation.
+        # checks even when the call itself stays in the stored response or conversation, as OpenAI's guide shows.
         safety_checks = _computer_safety_checks(messages)
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
         if not sends_effort_changes:
@@ -4659,9 +4659,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # continuing would silently drop the change: resend everything instead.
                 if self._history_changed(m, messages[:index]):
                     return None, messages, True
-                # A computer call's safety checks are acknowledged from the call, so it has to be in the request.
-                if any(isinstance(p, ToolCallPart) and (p.provider_details or {}).get(SAFETY_CHECKS) for p in m.parts):
-                    return None, messages, True
                 previous_response_id = m.provider_response_id
                 break
             else:
@@ -4776,10 +4773,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # parts may name the same revealed tool (duplicated deltas from a UI round-trip, a delta
         # plus a replayed search return), and one declaration per request is enough.
         rendered_additional_tools: set[str] = set()
-        # Computer calls replayed as `computer_call` items, whose results must be `computer_call_output`s.
         computer_is_native = self._native_computer_name(model_request_parameters) is not None
-        # The safety checks of each replayed computer call, by call ID.
-        computer_calls: dict[str, Any] = {}
+        # Computer calls replayed as `computer_call` items, whose results must be `computer_call_output`s.
+        computer_call_ids: set[str] = set()
         replayed_call_ids: set[str] = set()
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message_index, message in enumerate(messages):
@@ -4837,14 +4833,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
                         call_id = _provider_response_tool_call_id(call_id, response_id)
-                        if call_id in computer_calls or (
+                        if call_id in computer_call_ids or (
                             # A call not replayed here is in the stored response (`previous_response_id` or a
                             # conversation), where this model made it as a `computer_call`.
                             computer_is_native
                             and part.tool_kind == COMPUTER_KIND.id
                             and call_id not in replayed_call_ids
                         ):
-                            checks = computer_calls.get(call_id) or (safety_checks or {}).get(part.tool_call_id)
+                            checks = (safety_checks or {}).get(part.tool_call_id)
                             openai_messages.extend(_map_computer_call_output(part, call_id, checks))
                         elif call_id in client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
                             # Replay the local `search_tools` result as a
@@ -4975,7 +4971,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             and (computer_call := item.provider_details.get('computer_call'))
                         ):
                             # Sent back as it came, so the API can pair its output and safety checks.
-                            computer_calls[call_id] = item.provider_details.get(SAFETY_CHECKS)
+                            computer_call_ids.add(call_id)
                             replayed_call = {k: v for k, v in computer_call.items() if k != 'id' or should_send_item_id}
                             openai_messages.append(cast(responses.ResponseComputerToolCallParam, replayed_call))
                         elif client_tool_search_active and isinstance(item, ToolSearchCallPart):

@@ -256,12 +256,15 @@ async def test_the_pointer_check_fails_a_display_that_ignores_actions() -> None:
 
 
 @pytest.mark.anyio
-async def test_the_scaled_screenshot_check_fails_a_display_that_ignores_the_size() -> None:
-    class FullSize(_ProviderFilesAndDisplay):
+@pytest.mark.parametrize('extra', [None, 1], ids=['full-size', 'one-pixel-over'])
+async def test_the_scaled_screenshot_check_fails_a_display_larger_than_asked(extra: int | None) -> None:
+    class TooLarge(_ProviderFilesAndDisplay):
         async def scaled_screenshot(self, width: int, height: int) -> bytes:
-            return await self.screenshot()
+            if extra is None:
+                return await self.screenshot()
+            return await super().scaled_screenshot(width + extra, height)
 
     with pytest.raises(AssertionError):
         await WorkspaceBackendSuite().test_a_scaled_screenshot_is_a_png_of_the_size_asked(
-            FullSize(InMemoryProvider().backend(None))
+            TooLarge(InMemoryProvider().backend(None))
         )

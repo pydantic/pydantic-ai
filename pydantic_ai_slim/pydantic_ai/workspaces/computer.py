@@ -64,7 +64,7 @@ def _require_type(schema: dict[str, Any]) -> None:
         schema['required'] = ['type', *schema.get('required', [])]
 
 
-_CONFIG = ConfigDict(extra='forbid', use_attribute_docstrings=True, json_schema_extra=_require_type)
+ACTION_CONFIG = ConfigDict(extra='forbid', use_attribute_docstrings=True, json_schema_extra=_require_type)
 
 _MODIFIER_NAMES = ('ctrl', 'shift', 'alt', 'super')
 _MODIFIERS = frozenset(_MODIFIER_NAMES)
@@ -272,7 +272,7 @@ def _check_position(x: int | None, y: int | None) -> None:
         raise ValueError('give both `x` and `y`, or neither to act at the pointer')
 
 
-@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class Point:
     """A position on the screenshot."""
 
@@ -280,7 +280,7 @@ class Point:
     y: _Coordinate
 
 
-@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class Region:
     """A rectangle on the screenshot, from its top left corner to its bottom right one."""
 
@@ -294,7 +294,7 @@ class Region:
             raise ValueError('a region needs `right` greater than `left` and `bottom` greater than `top`')
 
 
-@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class Click:
     """Click a mouse button, at a position or where the pointer is."""
 
@@ -313,7 +313,7 @@ class Click:
         _check_position(self.x, self.y)
 
 
-@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class MoveMouse:
     """Move the pointer, for example to reveal a hover menu."""
 
@@ -326,7 +326,7 @@ class MoveMouse:
     """Modifier keys held while moving: `ctrl`, `shift`, `alt` or `super`."""
 
 
-@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class Drag:
     """Press the left button at the first point, move through the rest, and release at the last."""
 
@@ -337,7 +337,7 @@ class Drag:
     """Modifier keys held during the drag: `ctrl`, `shift`, `alt` or `super`."""
 
 
-@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class MouseDown:
     """Press a mouse button and keep it pressed until a `mouse_up`."""
 
@@ -345,7 +345,7 @@ class MouseDown:
     button: MouseButton = 'left'
 
 
-@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class MouseUp:
     """Release a mouse button pressed with `mouse_down`."""
 
@@ -353,7 +353,7 @@ class MouseUp:
     button: MouseButton = 'left'
 
 
-@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class Scroll:
     """Scroll the content under a position, or under the pointer."""
 
@@ -373,7 +373,7 @@ class Scroll:
         _check_position(self.x, self.y)
 
 
-@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class TypeText:
     r"""Type text at the keyboard focus. Use `keypress` for shortcuts and special keys.
 
@@ -386,7 +386,7 @@ class TypeText:
     """Up to 2,000 characters; type longer text in several actions."""
 
 
-@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class PressKeys:
     """Press keys together as one combination, then release them."""
 
@@ -397,7 +397,7 @@ class PressKeys:
     """How many times to press the combination."""
 
 
-@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class HoldKeys:
     """Hold keys down for a while, then release them."""
 

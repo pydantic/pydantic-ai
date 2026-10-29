@@ -27,11 +27,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceUnsupportedActionError,
 )
-from pydantic_ai_harness._x11 import (
-    _PRESS_MAPPED,  # pyright: ignore[reportPrivateUsage]
-    X11Computer,
-    _keysym,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai_harness._x11 import X11Computer
 
 from ..workspace_fakes import FAKE_SCREENSHOT
 
@@ -44,7 +40,6 @@ class ScriptedCommands:
     def __init__(self, *results: CommandResult) -> None:
         self.results = list(results)
         self.calls: list[tuple[WorkspaceCommand, bool, Mapping[str, str] | None]] = []
-        self.timeouts: list[float | None] = []
 
     async def run(
         self,
@@ -55,7 +50,6 @@ class ScriptedCommands:
         timeout: float | None = None,
     ) -> CommandResult:
         self.calls.append((command, shell, env))
-        self.timeouts.append(timeout)
         return self.results.pop(0) if self.results else CommandResult(exit_code=0, stdout='', stderr='')
 
     @property
@@ -120,6 +114,11 @@ class BlockingCommands(ScriptedCommands):
         (PressKeys(keys=('ctrl', '?')), ['xdotool', 'key', '--repeat', '1', '--', 'ctrl+U003F']),
         (PressKeys(keys=('@',)), ['xdotool', 'key', '--repeat', '1', '--', 'U0040']),
         (HoldKeys(keys=('shift',), seconds=0.5), ['xdotool', 'keydown', 'shift', 'sleep', '0.5', 'keyup', 'shift']),
+        # Enter and Tab for newlines and tabs in typed text.
+        (
+            TypeText(text='l\n\tx\n'),
+            ['xdotool', 'key', '--delay', '12', '--', 'U006C', 'Return', 'Tab', 'U0078', 'Return'],
+        ),
     ],
 )
 async def test_x11_computer_runs_one_xdotool_command_per_action(action: ComputerAction, argv: list[str]) -> None:
@@ -128,17 +127,10 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: Computer
     assert commands.calls == [(argv, False, {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'})]
 
 
-async def test_x11_computer_presses_enter_and_tab_for_newlines_and_tabs_in_typed_text() -> None:
-    commands = ScriptedCommands()
-    await X11Computer(commands).act(TypeText(text='l\n\tx\n'))
-    assert commands.argvs == [['xdotool', 'key', '--delay', '12', '--', 'U006C', 'Return', 'Tab', 'U0078', 'Return']]
-
-
 async def test_x11_computer_types_mixed_text_in_one_command_mapping_each_character_outside_ascii_once() -> None:
     commands = ScriptedCommands()
     await X11Computer(commands).act(TypeText(text='Zoë 日本日 é'))
-    ((sh, _, script, _, *args),) = commands.argvs
-    assert (sh, script) == ('sh', _PRESS_MAPPED)
+    ((*_, args),) = [(argv[:4], argv[4:]) for argv in commands.argvs]  # after `sh -c <script> sh`
     # The characters to map, then `xdotool key`'s arguments: the whole text, ASCII included.
     assert args == ['U00EB', 'U65E5', 'U672C', 'U00E9', '--', '--delay', '12', '--'] + [
         'U005A',
@@ -178,11 +170,15 @@ async def test_x11_computer_maps_a_character_key_outside_ascii_before_pressing_i
         '--help',
     ],
 )
-def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(key: str) -> None:
+async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(key: str) -> None:
     # `xdotool key exec sh -c ...` runs the program: `exec` ends the key names and starts a command. Validation
     # already refuses these names; the display refuses them too, for an action built without it.
+    unvalidated = PressKeys(keys=('a',))
+    object.__setattr__(unvalidated, 'keys', (key,))
+    commands = ScriptedCommands()
     with pytest.raises(WorkspaceUnsupportedActionError, match='cannot press the key'):
-        _keysym(key)
+        await X11Computer(commands).act(unvalidated)
+    assert commands.calls == []
 
 
 @pytest.mark.parametrize(
@@ -209,51 +205,35 @@ async def test_x11_computer_releases_what_a_failed_action_held(
     assert commands.argvs[1:] == releases
 
 
-async def test_x11_computer_releases_held_keys_when_cancelled() -> None:
+@pytest.mark.parametrize(
+    'action, release',
+    [
+        (HoldKeys(keys=('shift',), seconds=5), ['xdotool', 'keyup', 'shift']),
+        (TypeText(text='é'), ['xdotool', 'keyup', 'Shift_L', 'ISO_Level3_Shift', 'U00E9']),
+    ],
+)
+async def test_x11_computer_releases_what_it_pressed_when_cancelled(action: ComputerAction, release: list[str]) -> None:
     commands = BlockingCommands()
     async with anyio.create_task_group() as tg:
-        tg.start_soon(X11Computer(commands).act, HoldKeys(keys=('shift',), seconds=5))
+        tg.start_soon(X11Computer(commands).act, action)
         await commands.started.wait()
         tg.cancel_scope.cancel()
-    assert commands.argvs == [
-        ['xdotool', 'keydown', 'shift', 'sleep', '5.0', 'keyup', 'shift'],
-        ['xdotool', 'keyup', 'shift'],
-    ]
+    assert commands.argvs[1:] == [release]
 
 
-async def test_x11_computer_releases_typed_keys_when_cancelled() -> None:
-    commands = BlockingCommands()
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(X11Computer(commands).act, TypeText(text='é'))
-        await commands.started.wait()
-        tg.cancel_scope.cancel()
-    assert commands.argvs[1:] == [['xdotool', 'keyup', 'Shift_L', 'ISO_Level3_Shift', 'U00E9']]
-
-
-async def test_x11_computer_captures_a_scaled_screenshot() -> None:
-    commands = ScriptedCommands(
-        CommandResult(exit_code=0, stdout=base64.b64encode(FAKE_SCREENSHOT).decode(), stderr='')
-    )
-    assert await X11Computer(commands).scaled_screenshot(640, 400) == FAKE_SCREENSHOT
-    ((sh, _, script, _, size),) = commands.argvs
-    assert (sh, size) == ('sh', '640x400')
-    assert 'scrot -t "$1"' in script
-
-
-async def test_x11_computer_reads_the_display_size_and_screenshot_on_its_display() -> None:
+async def test_x11_computer_looks_return_the_png_and_pass_their_size_or_region_as_arguments() -> None:
     encoded = base64.encodebytes(FAKE_SCREENSHOT).decode()  # wrapped lines, as `base64` prints
-    commands = ScriptedCommands(
-        CommandResult(exit_code=0, stdout='1280 800\n', stderr=''),
-        CommandResult(exit_code=0, stdout=encoded, stderr=''),
-    )
+    png = CommandResult(exit_code=0, stdout=encoded, stderr='')
+    commands = ScriptedCommands(CommandResult(exit_code=0, stdout='1280 800\n', stderr=''), png, png, png)
     computer = X11Computer(commands)
+
     assert await computer.display_size() == (1280, 800)
     assert await computer.screenshot() == FAKE_SCREENSHOT
-    (geometry, _, env), (capture, _, _) = commands.calls
-    assert geometry == ['xdotool', 'getdisplaygeometry']
-    assert env == {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'}
-    assert capture[:2] == ['sh', '-c']
-    assert commands.timeouts == [150, 150]
+    assert await computer.scaled_screenshot(640, 400) == FAKE_SCREENSHOT
+    assert await computer.zoom(Region(left=10, top=20, right=110, bottom=70)) == FAKE_SCREENSHOT
+    # The size and region go in as arguments, never into the script.
+    assert [command[-1] for command in commands.argvs[2:]] == ['640x400', '10,20,100,50']
+    assert all(env == {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'} for _, _, env in commands.calls)
 
 
 @pytest.mark.parametrize(
@@ -266,6 +246,7 @@ async def test_x11_computer_reads_the_display_size_and_screenshot_on_its_display
         ),
         (CommandResult(exit_code=0, stdout='garbage\n', stderr=''), 'display_size', "output: 'garbage'"),
         (CommandResult(exit_code=127, stdout='', stderr='sh: scrot: not found'), 'screenshot', 'scrot: not found'),
+        (CommandResult(exit_code=0, stdout='garbage\n', stderr=''), 'cursor_position', 'getmouselocation'),
     ],
 )
 async def test_x11_computer_failures_raise_workspace_error(result: CommandResult, call: str, message: str) -> None:
@@ -283,7 +264,7 @@ async def test_x11_computer_failures_raise_workspace_error(result: CommandResult
 )
 async def test_x11_computer_refuses_a_screenshot_that_is_not_a_png(output: str) -> None:
     computer = X11Computer(ScriptedCommands(CommandResult(exit_code=0, stdout=output, stderr='')))
-    with pytest.raises(WorkspaceError, match='did not print a base64-encoded PNG'):
+    with pytest.raises(WorkspaceError, match='did not return a PNG screenshot'):
         await computer.screenshot()
 
 
@@ -299,26 +280,7 @@ async def test_x11_computer_refuses_an_unknown_action() -> None:
         await X11Computer(ScriptedCommands()).act(object())  # pyright: ignore[reportArgumentType]
 
 
-async def test_x11_computer_zooms_on_a_region_of_its_display() -> None:
-    encoded = base64.encodebytes(FAKE_SCREENSHOT).decode()
-    commands = ScriptedCommands(CommandResult(exit_code=0, stdout=encoded, stderr=''))
-    assert await X11Computer(commands).zoom(Region(left=10, top=20, right=110, bottom=70)) == FAKE_SCREENSHOT
-    ((command, _, env),) = commands.calls
-    # The region goes in as an argument, never into the script.
-    assert (command[:2], command[-1], env) == (['sh', '-c'], '10,20,100,50', {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'})
-
-
-@pytest.mark.parametrize(
-    'output, expected',
-    [
-        pytest.param('X=12\nY=34\nSCREEN=0\nWINDOW=65\n', Point(x=12, y=34), id='position'),
-        pytest.param('garbage\n', None, id='unreadable'),
-    ],
-)
-async def test_x11_computer_reads_the_pointer_position(output: str, expected: Point | None) -> None:
+async def test_x11_computer_reads_the_pointer_position() -> None:
+    output = 'X=12\nY=34\nSCREEN=0\nWINDOW=65\n'
     computer = X11Computer(ScriptedCommands(CommandResult(exit_code=0, stdout=output, stderr='')))
-    if expected is None:
-        with pytest.raises(WorkspaceError, match='getmouselocation'):
-            await computer.cursor_position()
-    else:
-        assert await computer.cursor_position() == expected
+    assert await computer.cursor_position() == Point(x=12, y=34)

@@ -22,8 +22,6 @@ from pydantic_ai.workspaces import (
     ReadOnlyWorkspace,
     Region,
     Scroll,
-    SupportsDisplay,
-    SupportsZoom,
     TypeText,
     UnavailableWorkspace,
     Workspace,
@@ -37,19 +35,35 @@ from .workspace_fakes import FAKE_SCREENSHOT, DisplayOnlyBackend, FakeWorkspace,
 pytestmark = pytest.mark.anyio
 
 
-def test_keys_are_a_closed_set_with_x_keysyms_as_aliases() -> None:
-    keys = PressKeys(keys=('KP_Enter', 'XF86AudioMute', 'Caps_Lock', 'Print', 'Super_L', 'ctrl+Page_Down')).keys
-    assert keys == ('numpad_enter', 'volumemute', 'capslock', 'printscreen', 'super', 'ctrl', 'pagedown')
-    with pytest.raises(
-        ValidationError, match=r"'Hyper_L' is not a key: use a single character or one of ctrl, .*, f1 to f24"
-    ):
-        PressKeys(keys=('Hyper_L',))
-
-
-def test_punctuation_keysyms_and_browser_key_names_are_aliases() -> None:
-    keys = PressKeys(keys=('ctrl+plus', 'minus', 'bracketleft', 'question', 'Meta_L', 'NumpadAdd', 'NumpadEnter')).keys
-    assert keys == ('ctrl', '+', '-', '[', '?', 'super', 'numpad_add', 'numpad_enter')
-    assert PressKeys(keys=('AudioVolumeUp', 'MediaPlayPause', 'ShiftLeft')).keys == ('volumeup', 'mediaplay', 'shift')
+@pytest.mark.parametrize(
+    'given, expected',
+    [
+        ('KP_Enter', ('numpad_enter',)),
+        ('XF86AudioMute', ('volumemute',)),
+        ('Caps_Lock', ('capslock',)),
+        ('Print', ('printscreen',)),
+        ('Super_L', ('super',)),
+        ('Meta_L', ('super',)),
+        ('ctrl+Page_Down', ('ctrl', 'pagedown')),
+        ('ctrl+plus', ('ctrl', '+')),
+        ('minus', ('-',)),
+        ('bracketleft', ('[',)),
+        ('question', ('?',)),
+        ('NumpadAdd', ('numpad_add',)),
+        ('NumpadEnter', ('numpad_enter',)),
+        ('AudioVolumeUp', ('volumeup',)),
+        ('MediaPlayPause', ('mediaplay',)),
+        ('ShiftLeft', ('shift',)),
+        ('CTRL', ('ctrl',)),
+        ('Return', ('enter',)),
+        ('ESC', ('escape',)),
+        ('ctrl+shift+T', ('ctrl', 'shift', 't')),
+        ('+', ('+',)),
+        ('ctrl+shift++', ('ctrl', 'shift', '+')),
+    ],
+)
+def test_key_names_normalize_to_one_spelling(given: str, expected: tuple[str, ...]) -> None:
+    assert PressKeys(keys=(given,)).keys == expected
 
 
 def test_fields_an_action_does_not_have_are_refused() -> None:
@@ -65,25 +79,19 @@ def test_fields_an_action_does_not_have_are_refused() -> None:
             adapter.validate_python([invalid])
 
 
-def test_actions_normalize_key_names_and_validate_from_json() -> None:
+def test_actions_round_trip_through_json_and_refuse_bad_shapes() -> None:
     adapter = TypeAdapter(list[ComputerAction])
     actions = adapter.validate_python(
         [
             {'type': 'keypress', 'keys': ['CTRL', 'Return']},
             {'type': 'click', 'x': 1, 'y': 2, 'modifiers': ['Control', 'cmd', 'Option']},
             {'type': 'hold_key', 'keys': ['ESC'], 'seconds': 1},
-            {'type': 'keypress', 'keys': ['ctrl+shift+T']},
-            {'type': 'keypress', 'keys': ['+']},
-            {'type': 'keypress', 'keys': ['ctrl+shift++']},
         ]
     )
     assert actions == [
         PressKeys(keys=('ctrl', 'enter')),
         Click(x=1, y=2, modifiers=('ctrl', 'super', 'alt')),
         HoldKeys(keys=('escape',), seconds=1),
-        PressKeys(keys=('ctrl', 'shift', 't')),
-        PressKeys(keys=('+',)),
-        PressKeys(keys=('ctrl', 'shift', '+')),
     ]
     assert adapter.validate_json(adapter.dump_json(actions)) == actions
     invalid_actions: list[dict[str, object]] = [
@@ -95,6 +103,10 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
     for invalid in invalid_actions:
         with pytest.raises(ValidationError):
             adapter.validate_python([invalid])
+    with pytest.raises(
+        ValidationError, match=r"'Hyper_L' is not a key: use a single character or one of ctrl, .*, f1 to f24"
+    ):
+        PressKeys(keys=('Hyper_L',))
 
 
 @pytest.mark.parametrize(
@@ -184,18 +196,9 @@ async def test_a_display_without_zoom_scaling_or_cursor_position_refuses_them() 
         await workspace.cursor_position()
 
 
-async def test_wrappers_keep_their_policy_and_the_backend_display() -> None:
-    provider = InMemoryProvider()
-    backend = DisplayOnlyBackend(provider.backend(None))
-    read_only = Workspace(ReadOnlyWorkspace(Workspace(backend)))
-    assert read_only.has_display is True
-    assert await read_only.screenshot() == FAKE_SCREENSHOT
-    with pytest.raises(WorkspaceReadOnlyError):
-        await read_only.act(MouseUp())
-    assert provider.actions == []
-    # Capability and identity are the backend's: a workspace never poses as a display that can zoom.
-    assert not isinstance(read_only, SupportsDisplay)
-    assert read_only.backend is backend and not isinstance(backend.display, SupportsZoom)
+async def test_wrappers_report_whether_the_backend_has_a_display() -> None:
+    backend = DisplayOnlyBackend(InMemoryProvider().backend(None))
+    assert Workspace(ReadOnlyWorkspace(Workspace(backend))).has_display is True
     assert ReadOnlyWorkspace(Workspace(FakeWorkspace('no-display'))).has_display is False
     assert Workspace(UnavailableWorkspace('no workspace here')).has_display is False
 

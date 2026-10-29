@@ -109,8 +109,10 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
         [
             _turn(
                 _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6], 'text': 'shift'}),
-                _tool_use('toolu_2', 'hold_key', {'text': 'ctrl', 'duration': 1}),
-                _tool_use('toolu_3', 'type', {'text': 'never typed'}),
+                # One member, two presses, one result.
+                _tool_use('toolu_2', 'key', {'text': 'ctrl+a BackSpace'}),
+                _tool_use('toolu_3', 'hold_key', {'text': 'ctrl', 'duration': 1}),
+                _tool_use('toolu_4', 'type', {'text': 'never typed'}),
             ),
             _turn(BetaTextBlock(text='done', type='text')),
         ]
@@ -123,32 +125,37 @@ async def test_a_batch_is_one_call_and_its_result_is_split_per_member(allow_mode
     assert call.args_as_dict() == {
         'actions': [
             {'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'count': 1, 'modifiers': ['shift']},
+            {'type': 'keypress', 'keys': ['ctrl+a']},
+            {'type': 'keypress', 'keys': ['BackSpace']},
             {'type': 'hold_key', 'keys': ['ctrl'], 'seconds': 1},
             {'type': 'type', 'text': 'never typed'},
         ]
     }
-    assert provider.actions == [Click(x=5, y=6, modifiers=('shift',))]
+    assert provider.actions == [
+        Click(x=5, y=6, modifiers=('shift',)),
+        PressKeys(keys=('ctrl', 'a')),
+        PressKeys(keys=('backspace',)),
+    ]
 
     first, second = get_mock_chat_completion_kwargs(client)
-    assert first['tools'] == [
-        {
-            'type': 'computer_toolset_20260801',
-        }
-    ]
+    assert first['tools'] == [{'type': 'computer_toolset_20260801'}]
     # The member calls go back as they came, each answered by one result; both name the toolset.
     calls = second['messages'][-2]['content']
     assert [(c['id'], c['name'], c['toolset_name']) for c in calls] == [
         ('toolu_1', 'left_click', 'computer'),
-        ('toolu_2', 'hold_key', 'computer'),
-        ('toolu_3', 'type', 'computer'),
+        ('toolu_2', 'key', 'computer'),
+        ('toolu_3', 'hold_key', 'computer'),
+        ('toolu_4', 'type', 'computer'),
     ]
     results = second['messages'][-1]['content']
     assert [(r['tool_use_id'], r['is_error'], [block['type'] for block in r['content']]) for r in results] == [
-        ('toolu_1', False, ['text', 'image']),
-        ('toolu_2', True, ['text']),
+        ('toolu_1', False, ['text']),
+        ('toolu_2', False, ['text', 'image']),
         ('toolu_3', True, ['text']),
+        ('toolu_4', True, ['text']),
     ]
     assert [r['content'][0]['text'] for r in results] == [
+        'OK',
         'OK',
         "the fake display cannot perform 'hold_key'",
         NOT_EXECUTED,
@@ -200,32 +207,6 @@ async def test_zoom_and_cursor_position_answer_their_own_member_calls(allow_mode
         ['text', 'image'],
     ]
     assert results[1]['content'][1]['text'] == 'The pointer is at (640, 400).'
-
-
-async def test_a_key_sequence_is_one_member_however_many_presses(allow_model_requests: None) -> None:
-    provider = InMemoryProvider()
-    client = MockAnthropic.create_mock(
-        [
-            _turn(
-                _tool_use('toolu_1', 'key', {'text': 'ctrl+a BackSpace'}),
-                _tool_use('toolu_2', 'hold_key', {'text': 'shift', 'duration': 1}),
-                _tool_use('toolu_3', 'type', {'text': 'never typed'}),
-            ),
-            _turn(BetaTextBlock(text='done', type='text')),
-        ]
-    )
-    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    await _agent(model, provider).run('Go.')
-
-    assert provider.actions == [PressKeys(keys=('ctrl', 'a')), PressKeys(keys=('backspace',))]
-    _, second = get_mock_chat_completion_kwargs(client)
-    results = second['messages'][-1]['content']
-    assert [(r['tool_use_id'], r['is_error']) for r in results] == [
-        ('toolu_1', False),
-        ('toolu_2', True),
-        ('toolu_3', True),
-    ]
-    assert results[2]['content'][0]['text'] == NOT_EXECUTED
 
 
 @pytest.mark.parametrize(
@@ -622,98 +603,87 @@ async def test_forcing_the_computer_offers_the_toolset_alone(allow_model_request
     assert forced['tool_choice'] == {'type': 'any'}
 
 
-async def test_a_result_without_metadata_or_screenshot_runs_every_call_and_ends_with_its_text() -> None:
-    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='unused'))
-    blocks: list[dict[str, Any]] = [
-        {'id': 'toolu_1', 'name': 'left_click', 'input': {}},
-        {'id': 'toolu_2', 'name': 'type', 'input': {'text': 'hi'}},
-    ]
-    # As `keep_screenshots` leaves it: the summary, then the note in place of the screenshot.
-    part = ToolReturnPart('computer', ['Ran 2 actions.', '[Older screenshot removed.]'], tool_call_id='toolu_1')
-
-    results = await model._map_computer_results(part, blocks)  # pyright: ignore[reportPrivateUsage]
-
-    assert [(r['tool_use_id'], r.get('is_error'), r.get('content')) for r in results] == [
-        ('toolu_1', False, [{'text': 'OK', 'type': 'text'}]),
-        ('toolu_2', False, [{'text': 'Ran 2 actions. [Older screenshot removed.]', 'type': 'text'}]),
-    ]
+_CLICK_TYPE: list[dict[str, Any]] = [
+    {'id': 'toolu_1', 'name': 'left_click', 'input': {}},
+    {'id': 'toolu_2', 'name': 'type', 'input': {'text': 'hi'}},
+]
+_PNG = BinaryImage(data=b'png', media_type='image/png')
+_FAILED = 'Action 2 of 2 (type) failed: no keyboard. Screenshot attached (1280x800).'
+_REFUSED = 'Typing is not allowed here; nothing ran.'
+_CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
 
 
 @pytest.mark.parametrize(
-    'content,metadata',
+    'blocks,counts,content,metadata,results',
     [
-        pytest.param(['Typing is not allowed here; nothing ran.'], None, id='a-guardrail-refusal'),
+        # As `keep_screenshots` leaves it: the summary, then the note in place of the screenshot.
         pytest.param(
-            [
-                'Before it ran, this call was changed to: [...]. Ran 1 action.',
-                BinaryImage(data=b'png', media_type='image/png'),
-            ],
+            _CLICK_TYPE,
+            None,
+            ['Ran 2 actions.', '[Older screenshot removed.]'],
+            None,
+            [['OK'], ['Ran 2 actions. [Older screenshot removed.]']],
+            id='screenshot-dropped',
+        ),
+        # Not these calls' outcome: each call gets the text rather than `OK`, which would say its own call ran.
+        pytest.param(_CLICK_TYPE, None, [_REFUSED], None, [[_REFUSED], [_REFUSED]], id='a-guardrail-refusal'),
+        pytest.param(
+            _CLICK_TYPE,
+            None,
+            [_CHANGED, _PNG],
             {'performed': 1, 'changed': True},
+            [[_CHANGED], [_CHANGED, 'image']],
             id='changed-before-it-ran',
+        ),
+        # As a UI rebuilds it: the metadata that says which calls ran is gone, the summary still says.
+        pytest.param(_CLICK_TYPE, None, [_FAILED, _PNG], None, [['OK'], [_FAILED, 'image']], id='no-metadata'),
+        # What a zoom returned answers its own call; the screen goes with the last.
+        pytest.param(
+            [{'id': 'toolu_1', 'name': 'zoom', 'input': {'region': [0, 0, 4, 4]}}, _CLICK_TYPE[0] | {'id': 'toolu_2'}],
+            None,
+            ['Ran 2 actions.', _PNG, _PNG],
+            {'performed': 2},
+            [['OK', 'image'], ['OK', 'image']],
+            id='zoom-output',
+        ),
+        # The counts recorded with the call decide which calls ran, even where mapping again would split differently.
+        pytest.param(
+            [{'id': 'toolu_1', 'name': 'key', 'input': {'text': 'a b'}}, _CLICK_TYPE[1]],
+            [1, 1],
+            ['Action 2 of 2 (type) failed: no keyboard.', _PNG],
+            {'performed': 1, 'error': 'no keyboard'},
+            [['OK', 'image'], ['no keyboard']],
+            id='recorded-counts',
         ),
     ],
 )
-async def test_a_result_that_is_not_these_calls_outcome_gives_each_call_its_text(
-    content: list[Any], metadata: dict[str, Any] | None
+async def test_a_result_answers_each_member_call(
+    allow_model_requests: None,
+    blocks: list[dict[str, Any]],
+    counts: list[int] | None,
+    content: list[Any],
+    metadata: dict[str, Any] | None,
+    results: list[list[str]],
 ) -> None:
-    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='unused'))
-    blocks: list[dict[str, Any]] = [
-        {'id': 'toolu_1', 'name': 'left_click', 'input': {}},
-        {'id': 'toolu_2', 'name': 'type', 'input': {'text': 'hi'}},
-    ]
-    part = ToolReturnPart('computer', content, tool_call_id='toolu_1', metadata=metadata)
-
-    results = await model._map_computer_results(part, blocks)  # pyright: ignore[reportPrivateUsage]
-
-    # Rather than `OK`, which would tell Claude its own calls ran.
-    assert [(r['tool_use_id'], list(r.get('content', []))[0]) for r in results] == [
-        ('toolu_1', {'text': content[0], 'type': 'text'}),
-        ('toolu_2', {'text': content[0], 'type': 'text'}),
-    ]
-
-
-async def test_what_any_action_returned_answers_its_own_member_call() -> None:
-    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='unused'))
-    blocks: list[dict[str, Any]] = [
-        {'id': 'toolu_1', 'name': 'read_clipboard', 'input': {}},  # an action that returns something, added later
-        {'id': 'toolu_2', 'name': 'left_click', 'input': {}},
-    ]
-    part = ToolReturnPart(
-        'computer',
-        ['Ran 2 actions.', 'copied text', BinaryImage(data=b'png', media_type='image/png')],
-        tool_call_id='toolu_1',
-        metadata={'performed': 2},
+    client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    details: dict[str, Any] = {'computer_blocks': blocks, 'computer_tool': 'computer_toolset_20260801'}
+    if counts is not None:
+        details['computer_action_counts'] = counts
+    call = ToolCallPart(
+        'computer', {'actions': []}, tool_call_id='toolu_1', provider_name='anthropic', provider_details=details
     )
-
-    results = await model._map_computer_results(part, blocks)  # pyright: ignore[reportPrivateUsage]
-
-    assert [list(r.get('content', []))[:2] for r in results] == [
-        [{'text': 'OK', 'type': 'text'}, {'text': 'copied text', 'type': 'text'}],
-        [
-            {'text': 'OK', 'type': 'text'},
-            {'source': {'data': 'cG5n', 'media_type': 'image/png', 'type': 'base64'}, 'type': 'image'},
-        ],
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Go.'),
+        ModelResponse(parts=[call], provider_name='anthropic'),
+        ModelRequest(parts=[ToolReturnPart('computer', content, tool_call_id='toolu_1', metadata=metadata)]),
     ]
+    await model.request(history, None, ModelRequestParameters(function_tools=[COMPUTER], allow_text_output=True))
 
-
-async def test_a_result_without_metadata_tells_the_last_call_what_happened() -> None:
-    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='unused'))
-    blocks: list[dict[str, Any]] = [
-        {'id': 'toolu_1', 'name': 'left_click', 'input': {}},
-        {'id': 'toolu_2', 'name': 'type', 'input': {'text': 'hi'}},
-    ]
-    # As a UI rebuilds it: the metadata that says which calls ran is gone, the summary still says.
-    summary = 'Action 2 of 2 (type) failed: no keyboard. Screenshot attached (1280x800).'
-    part = ToolReturnPart(
-        'computer', [summary, BinaryImage(data=b'png', media_type='image/png')], tool_call_id='toolu_1'
-    )
-
-    results = await model._map_computer_results(part, blocks)  # pyright: ignore[reportPrivateUsage]
-
-    assert [(r['tool_use_id'], r.get('is_error'), list(r.get('content', []))[0]) for r in results] == [
-        ('toolu_1', False, {'text': 'OK', 'type': 'text'}),
-        ('toolu_2', False, {'text': summary, 'type': 'text'}),
-    ]
+    (body,) = get_mock_chat_completion_kwargs(client)
+    sent = body['messages'][-1]['content']
+    assert [r['tool_use_id'] for r in sent] == [block['id'] for block in blocks]
+    assert [[b['text'] if b['type'] == 'text' else b['type'] for b in r['content']] for r in sent] == results
 
 
 async def test_without_the_toolset_past_member_calls_replay_as_plain_calls(allow_model_requests: None) -> None:
