@@ -913,7 +913,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 call or, outside a tool call, the run already submitted an output, or if the run already has its
                 final result.
             ToolRetryError: If a submission from a tool call was rejected, carrying the feedback for the model.
-            UnexpectedModelBehavior: If a submission from a tool call was rejected and the output retries ran out.
+                If the output retries have run out, the run then fails with
+                [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], unless another output
+                in the same response becomes the final result.
             ModelRetry: If a submission from outside a tool call was rejected, carrying the feedback.
         """
         submitter = self._live_output_submitter
