@@ -8,7 +8,9 @@ thread gets afterwards is closed. A real endpoint can't be made to stall on cue.
 
 from __future__ import annotations
 
+import socket
 import threading
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -28,6 +30,8 @@ from pydantic_ai.settings import ModelSettings
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    import boto3
+    from botocore.config import Config
     from botocore.hooks import HierarchicalEmitter
 
     from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -162,3 +166,44 @@ async def test_cancellation_ends_a_blocked_request(allow_model_requests: None, b
     assert scope.cancelled_caught
     _assert_ended_while_blocked(client)
     await _assert_cleaned_up(client, blocks)
+
+
+async def test_request_timeout_ends_a_stream_read_blocked_on_a_real_connection(allow_model_requests: None):
+    """A real botocore event stream, reading from a real socket that stalls after the headers, ends on time.
+
+    Checks what the stubs above stand in for: that closing a real stream shuts down the connection its blocked
+    read is waiting on, rather than waiting for the read until botocore's `read_timeout` passes.
+    """
+    done = threading.Event()
+    server = socket.create_server(('127.0.0.1', 0))
+
+    def serve() -> None:
+        connection, _ = server.accept()
+        with connection:
+            connection.recv(65536)
+            connection.sendall(
+                b'HTTP/1.1 200 OK\r\nContent-Type: application/vnd.amazon.eventstream\r\n'
+                b'Transfer-Encoding: chunked\r\n\r\n'
+            )
+            done.wait(RELEASE_TIMEOUT)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    client = boto3.client(
+        'bedrock-runtime',
+        region_name='us-east-1',
+        endpoint_url=f'http://127.0.0.1:{server.getsockname()[1]}',
+        aws_access_key_id='test',
+        aws_secret_access_key='test',
+        config=Config(read_timeout=RELEASE_TIMEOUT, retries={'max_attempts': 1}),
+    )
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=BedrockProvider(bedrock_client=client))
+    start = time.monotonic()
+    try:
+        with pytest.raises(ModelRequestTimeout):
+            await _request(model, 'stream_read', request_timeout=SHORT_TIMEOUT)
+        # Well under botocore's `read_timeout`, which the read would otherwise have waited out.
+        assert time.monotonic() - start < RELEASE_TIMEOUT / 3
+    finally:
+        done.set()
+        server.close()
