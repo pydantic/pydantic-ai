@@ -59,6 +59,9 @@ _NAME_RE = re.compile(r'[A-Za-z0-9_-]{1,64}')
 _TEARDOWN_SECONDS = 5.0
 """How long a remote task's teardown may take to stop its worker and release its mailbox."""
 
+ASK_PARENT_TOOL_NAME = 'ask_parent'
+"""The tool a delegated run uses to ask the delegating agent a question."""
+
 _TASK_INSTRUCTIONS = (
     'You are working on a task another agent delegated to you. '
     'That agent may send you further messages about it while you work.'
@@ -296,7 +299,7 @@ class TaskLink(AbstractCapability[Any], ABC):
         if not self.can_ask:
             return None
         toolset = FunctionToolset[Any]()
-        toolset.add_function(self.ask_parent, takes_ctx=False, name='ask_parent')
+        toolset.add_function(self.ask_parent, takes_ctx=False, name=ASK_PARENT_TOOL_NAME)
         return toolset
 
     def get_instructions(self) -> AgentInstructions[Any] | None:

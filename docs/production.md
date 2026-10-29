@@ -202,13 +202,13 @@ The [`Caching`][pydantic_ai.capabilities.Caching] capability turns on [prompt ca
 
 ## What happens when a provider is down? {#outages}
 
-[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] tries the next model when a request fails with an API error, or when a non-streamed response fails a check you define (streamed responses, as a [frontend](#frontend) gets, are accepted as they are); see [Fallback Model](models/overview.md#fallback-model):
+The [`ModelFallback`](capabilities/model-fallback.md) capability tries the next model when a request fails with an API error, or when a non-streamed response fails a check you define (streamed responses, as a [frontend](#frontend) gets, are accepted as they are):
 
 ```python {title="production_fallback.py"}
 from pydantic_ai import Agent
-from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.capabilities import ModelFallback
 
-agent = Agent(FallbackModel('{{ anthropic:medium }}', '{{ openai:medium }}'))
+agent = Agent('{{ anthropic:medium }}', capabilities=[ModelFallback('{{ openai:medium }}')])
 ```
 
 [Provider SDK clients](retries.md#provider-sdk-retries) already retry some failures on their own. For rate limits and 5xx responses with backoff that respects `Retry-After`, install a [retrying transport](retries.md#transport-retries) on the HTTP client; nothing retries at that layer by default. [Retries](retries.md) explains how the layers multiply. The [Gateway](gateway.md) can do failover and load balancing between providers serving the same model on its side, configured as [gateway endpoints](gateway.md#gateway-endpoints).
