@@ -24,7 +24,7 @@ from typing_extensions import TypedDict
 
 from .messages import BinaryImage, ToolKind
 from .workspaces import Click, Drag, HoldKeys, MouseDown, MouseUp, MoveMouse, PressKeys, Region, Scroll, TypeText
-from .workspaces.computer import _CONFIG  # pyright: ignore[reportPrivateUsage]
+from .workspaces.computer import ACTION_CONFIG
 
 __all__ = (
     'COMPUTER_KIND',
@@ -39,7 +39,7 @@ __all__ = (
 )
 
 
-@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class Wait:
     """Pause, for example while a page or application loads."""
 
@@ -48,14 +48,14 @@ class Wait:
     """How long to wait, up to 30 seconds."""
 
 
-@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class Screenshot:
     """Look at the screen without acting. A call's result already ends with a screenshot."""
 
     type: Literal['screenshot'] = 'screenshot'
 
 
-@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class Zoom:
     """Look closely at part of the screen, to read small text or find a small target."""
 
@@ -64,7 +64,7 @@ class Zoom:
     """The part of the screen to look at. Positions in later actions are still on the full screen."""
 
 
-@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class CursorPosition:
     """Report where the pointer is."""
 
@@ -108,9 +108,6 @@ class ComputerResult(TypedDict):
     screenshot_size: NotRequired[tuple[int, int]]
     """The `(width, height)` of the screenshot in this result, as the model saw it: the space of the model's next
     coordinates, which may be smaller than the display."""
-
-    coordinate_grid: NotRequired[int]
-    """The grid the call's coordinates were on, when they weren't pixels, so history says which they were."""
 
     changed: NotRequired[bool]
     """Set when the actions that ran differ from the ones the model asked for, such as after an approval changed

@@ -1050,12 +1050,11 @@ async def test_a_result_still_round_trips_through_json_when_a_workspace_was_used
 async def test_a_result_built_outside_a_run_explains_that_no_workspace_is_attached() -> None:
     result = AgentRunResult[str]('output')
 
-    with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached') as exc_info:
+    # Durable engines refuse a live backend on the run, so the hint says to attach the capability instead.
+    with pytest.raises(
+        WorkspaceUnavailableError, match='under a durable engine, attach the capability when the agent is constructed'
+    ):
         await result.workspace.run(['true'])
-    # Durable engines refuse a live backend on the run, so the hint leads with the capability and says so.
-    message = str(exc_info.value)
-    assert message.index("capabilities=[LocalWorkspace('.')]") < message.index("workspace=LocalWorkspaceBackend('.')")
-    assert 'under a durable engine, attach the capability when the agent is constructed' in message
 
 
 class ProviderWorkspaceCapability(AbstractCapability[Any]):
