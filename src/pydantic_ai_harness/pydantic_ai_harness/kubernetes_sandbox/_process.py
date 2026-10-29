@@ -17,6 +17,7 @@ sandboxd behaviour relied on, verified 2026-10-19 against sandboxd from agent-sa
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
@@ -75,6 +76,13 @@ async def start_command(
                             stdout=stdout[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
                             stderr=stderr[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
                         )
+        except asyncio.CancelledError:
+            # Closing a channel cancels its calls, so another command's lost connection can end this
+            # one with a cancellation no one asked for. Raised as the connection error it is.
+            task = asyncio.current_task()
+            if task is not None and not task.cancelling():
+                raise ConnectionError('The connection to sandboxd closed while the command was running') from None
+            raise
         finally:
             # On timeout or cancellation this makes sandboxd kill the process group; after the exit
             # event it is a no-op.

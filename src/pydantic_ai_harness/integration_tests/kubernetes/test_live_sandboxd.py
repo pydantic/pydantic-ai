@@ -158,7 +158,8 @@ class Client:
     async def delete_sandbox_claim(self, name: str, namespace: str) -> None:
         daemon = self.cluster.claims.pop((namespace, name), None)
         if daemon is not None:
-            daemon.stop()
+            # Off the event loop: it waits for the daemon and its commands to exit.
+            await anyio.to_thread.run_sync(daemon.stop)
 
     async def close(self) -> None:
         for channel in self.channels:

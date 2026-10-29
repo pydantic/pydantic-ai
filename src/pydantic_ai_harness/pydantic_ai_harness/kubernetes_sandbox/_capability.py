@@ -46,8 +46,8 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
 
     A run with no reference claims a sandbox from `warm_pool` on first use; pass a `WorkspaceRef`
     to attach to an existing claim. Ending a run does not delete the sandbox; `destroy(ref)` does,
-    and `sandbox_timeout` deletes it in any case. Commands run in the sandbox pod's container that
-    runs sandboxd.
+    and `sandbox_timeout` deletes it in any case. Commands run in the pod's sandboxd container, so its
+    image decides which tools are available.
 
     This capability supplies the workspace only. Compose it with capabilities that use it, such
     as `Coder`, `Shell`, and `FileSystem`. See
@@ -61,11 +61,10 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
     """Kubernetes namespace of the warm pool and of the claims made from it."""
 
     connection: Connection = 'port-forward'
-    """How to reach a sandbox's sandboxd: `'port-forward'` runs `kubectl port-forward` to the pod
-    (from outside the cluster; not on gVisor or Kata), `'in-cluster-service'` and
-    `'in-cluster-pod-ip'` connect directly from inside the cluster. These use sandboxd's default ports
-    and the SDK's default timeouts; for others, pass the SDK's `SandboxdPodTunnelConnectionConfig` or
-    `SandboxdInClusterConnectionConfig`."""
+    """How to reach the sandbox. `'port-forward'` (default) runs `kubectl port-forward` from outside the
+    cluster and doesn't work on gVisor or Kata. `'in-cluster-pod-ip'` and `'in-cluster-service'` connect
+    directly from a pod in the cluster. For other ports or timeouts, pass the SDK's
+    `SandboxdPodTunnelConnectionConfig` or `SandboxdInClusterConnectionConfig`."""
 
     sandbox_timeout: int | None = DEFAULT_SANDBOX_TIMEOUT
     """Seconds after which a newly claimed sandbox is deleted, whether or not anyone still uses it;
@@ -73,7 +72,7 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
 
     working_dir: str | None = None
     """Absolute directory commands start in and relative paths resolve against; `None` is sandboxd's
-    root directory (its `--root-dir`, `/workspace` by default)."""
+    root directory (its `--root-dir`, `/workspace` by default). It must already exist."""
 
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, on top of the container's own; a command's `env` is layered on top."""

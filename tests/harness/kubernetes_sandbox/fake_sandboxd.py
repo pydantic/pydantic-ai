@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import anyio
 import grpc
 import grpc.aio
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
@@ -81,14 +82,6 @@ def _messages() -> dict[str, Any]:
 MESSAGES = _messages()
 
 
-_UNKNOWN_EVENT = bytes([15 << 3 | 2, 0])
-"""A `StartResponse` holding only an event field this schema lacks, as a newer sandboxd may send."""
-
-
-def _serialize(message: Any) -> bytes:
-    return message if isinstance(message, bytes) else message.SerializeToString()
-
-
 class FakeSandboxd:
     """A sandboxd `ProcessService` serving host processes in `root`."""
 
@@ -109,7 +102,9 @@ class FakeSandboxd:
     async def start(self) -> None:
         self.server = grpc.aio.server()
         handlers: dict[str, grpc.RpcMethodHandler[Any, Any]] = {
-            'Start': grpc.unary_stream_rpc_method_handler(self._start, MESSAGES['StartRequest'].FromString, _serialize),
+            'Start': grpc.unary_stream_rpc_method_handler(
+                self._start, MESSAGES['StartRequest'].FromString, lambda message: message.SerializeToString()
+            ),
         }
         self.server.add_generic_rpc_handlers(
             [grpc.method_handlers_generic_handler('process.v1.ProcessService', handlers)]
@@ -123,9 +118,8 @@ class FakeSandboxd:
             process.kill_group(signal.SIGTERM)
         # Each call reports its command's exit before the server goes. Stopping the server cancels a call
         # whose command ignored SIGTERM, which kills it, as the kubelet does after the grace period.
-        idle = asyncio.ensure_future(self._idle.wait())
-        await asyncio.wait([idle], timeout=5)
-        idle.cancel()
+        with anyio.move_on_after(5):
+            await self._idle.wait()
         assert self.server is not None
         await self.server.stop(grace=0)
 
@@ -166,7 +160,6 @@ class FakeSandboxd:
                 asyncio.ensure_future(pump(process.stderr, 'stderr')),
             ]
             tasks = [*pumps, asyncio.ensure_future(cut_off_after_exit(pumps))]
-            yield _UNKNOWN_EVENT
             yield Response(init={'process_id': process_id})
             ended = 0
             while ended < 2:
@@ -317,14 +310,16 @@ class FakeCluster:
         """When set, sandboxes report not Ready, as while the controller recreates a deleted pod."""
         self.channel_error: Exception | None = None
         self.create_error: Exception | None = None
-        self.create_gate: asyncio.Event | None = None
-        """When set, `create_sandbox` creates the claim, then waits for it (to test cancellation mid-create)."""
+        self.create_gate: anyio.Event | None = None
+        """When set, `create_sandbox` creates the claim, sets `create_started`, then waits for the gate."""
+        self.create_started = anyio.Event()
+        self.rolled_back: list[str] = []
+        """Claims whose cancelled `create_sandbox` finished deleting them."""
         self.lookup_error = False
         """When set, `get_sandbox` fails although the claim exists, as the SDK reports any failed lookup."""
         self.delete_error: Exception | None = None
         self.reconnect_fails = False
         self.invalidated: list[grpc.aio.Channel] = []
-        self.deleted: list[FakeSandboxd] = []
 
     def root(self, namespace: str, claim_name: str) -> Path:
         return (self.base / namespace / claim_name).resolve()
@@ -342,8 +337,6 @@ class FakeCluster:
     async def close(self) -> None:
         for key in list(self.claims):
             await self.delete(key)
-        for sandboxd in self.deleted:
-            await sandboxd.stop()
 
     def client(self, *, connection_config: Any, cleanup: bool) -> FakeClient:
         """Stands in for the `AsyncSandboxClient` class: the backend constructs clients through this."""
@@ -378,12 +371,13 @@ class FakeClient:
         self.cluster.claims[namespace, claim_name] = sandboxd
         self.cluster.created.append((warmpool, namespace, kwargs))
         if self.cluster.create_gate is not None:
+            self.cluster.create_started.set()
             try:
                 await self.cluster.create_gate.wait()
             except asyncio.CancelledError:
-                # The SDK deletes a claim it named when creating it fails or is cancelled; the
-                # server stops with the cluster, as awaiting here would be cancelled again.
-                self.cluster.deleted.append(self.cluster.claims.pop((namespace, claim_name)))
+                # As the SDK rolls back a claim it named.
+                await asyncio.shield(self.cluster.delete((namespace, claim_name)))
+                self.cluster.rolled_back.append(claim_name)
                 raise
         return self._handle(claim_name, namespace, sandboxd)
 
