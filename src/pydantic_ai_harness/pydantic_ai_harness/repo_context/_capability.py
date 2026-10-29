@@ -31,6 +31,7 @@ from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
     dir_context_file_path,
+    directories_up_to,
     discover_instruction_files,
     find_dir_context_file,
     render_context_file,
@@ -319,7 +320,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         """
         working_dir = await self._working_dir(ctx.workspace)
         in_history = self._sync_surfaced_dirs(ctx.messages)
-        for current in _directories_down_to(working_dir, directory):
+        for current in directories_up_to(directory, working_dir):
             await self._enqueue_directory(ctx, current, in_history)
 
     async def _enqueue_directory(self, ctx: RunContext[AgentDepsT], directory: Path, in_history: set[str]) -> None:
@@ -426,15 +427,3 @@ def _note_directory(metadata: object) -> str | None:
         return None
     directory = metadata.get('directory')
     return directory if isinstance(directory, str) else None
-
-
-def _directories_down_to(working_dir: Path, directory: Path) -> list[Path]:
-    """The working directory and each directory below it down to `directory`, or just `directory` outside it."""
-    try:
-        relative = directory.relative_to(working_dir)
-    except ValueError:
-        return [directory]
-    chain = [working_dir]
-    for part in relative.parts:
-        chain.append(chain[-1] / part)
-    return chain
