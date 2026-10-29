@@ -42,7 +42,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 # toolsets apart from the agent's own in `agent.toolsets`.
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, UntrustedWorkspace, Workspace
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
     cancel_pending_output,
@@ -691,7 +691,11 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if previous is not None and directory != previous.working_directory:
             # Reject before charging max_calls or publishing task-start events.
             raise ModelRetry(RESUME_DIRECTORY_MISMATCH)
-        return (ReadOnlyWorkspace(workspace) if ctx.workspace.read_only else workspace), directory
+        if ctx.workspace.read_only:
+            workspace = ReadOnlyWorkspace(workspace)
+        if not ctx.workspace.trusted:
+            workspace = UntrustedWorkspace(workspace)
+        return workspace, directory
 
     def _resolve_agent(self, ctx: RunContext[AgentDepsT], agent_name: str) -> SubAgent[AgentDepsT]:
         """The delegate `agent_name` names, with the running agent resolved at call time for `include_self`.

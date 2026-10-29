@@ -107,7 +107,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     Sub-agents can also be loaded from disk: each Markdown or standalone TOML definition under
     `agent_folders` in the run's workspace becomes a delegate, built with the
     parent's model. Folders are read at the start of every run, through
-    `ctx.workspace`, or through `workspace` when set. Disk delegates get no tools
+    `ctx.workspace`, or through `workspace` when set; definitions in a workspace with
+    `trusted=False` are skipped with a warning. Disk delegates get no tools
     by default; pass a `tool_resolver` to map their frontmatter tool names.
     Disk delegates coexist with explicitly-passed ones; explicitly-passed agents take
     precedence. Convention folders use `.agents/`, then `.claude/`, then `.codex/`; explicit folder sequences use
@@ -177,7 +178,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     """Where to load Markdown and standalone Codex TOML definitions from, in addition to `agents`.
     Off by default: only `agents` are exposed unless this is set. Every folder is
     read at the start of each run through the run's workspace (`ctx.workspace`),
-    or through `workspace` when set.
+    or through `workspace` when set. Definitions in a workspace with `trusted=False`
+    are skipped with a warning.
 
     - a folder-name `str` (`'agents'` is the conventional layout): load
       from `.agents/<name>/`, `.claude/<name>/`, and `.codex/<name>/` under the workspace's working
@@ -512,6 +514,14 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             workspace, folders if isinstance(folders, str) else [_folder_path(folder) for folder in folders]
         )
         if not definitions:
+            return
+        if not workspace.trusted:
+            warnings.warn(
+                f'`SubAgents` did not load the agent definitions in {folders!r}: their workspace is untrusted '
+                "(`trusted=False`), and a definition becomes a delegate's instructions. Define the delegates in "
+                'code, or pass `SubAgents(workspace=...)` to read the folders from a workspace the operator controls.',
+                stacklevel=2,
+            )
             return
         self._build_roster(self._disk_agents(definitions))
         self._run_toolset = self._make_toolset()
