@@ -123,6 +123,9 @@ async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, con
     docker.remove_display()
     with pytest.raises(WorkspaceError):
         await workspace.act(Click(x=1, y=1))
+    # The next action starts the display again, and doesn't run on the new screen.
+    with pytest.raises(WorkspaceError, match='The display restarted before this action'):
+        await workspace.act(Click(x=1, y=1))
     await workspace.act(Click(x=1, y=1))
 
     assert docker.xvfb_starts == 1

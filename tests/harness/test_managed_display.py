@@ -102,6 +102,23 @@ async def test_a_failed_action_is_not_retried_and_the_next_call_starts_the_displ
     assert (driver.starts, driver.acted) == (2, [Click(x=2, y=2)])
 
 
+async def test_an_action_does_not_run_on_a_display_that_started_for_it() -> None:
+    """A backend rebuilt for one action finds the display down: the screen the action was meant for is gone."""
+    driver = FakeDriver()
+
+    async def start() -> FakeDriver:
+        if not driver.starts:  # down until this start, running after it
+            display.started_fresh()
+        return await driver.start()
+
+    display = ManagedDisplay(start)
+    with pytest.raises(WorkspaceError, match='The display restarted before this action'):
+        await display.act(Click(x=1, y=1))
+    assert driver.acted == []
+    await display.act(Click(x=2, y=2))
+    assert driver.acted == [Click(x=2, y=2)]
+
+
 async def test_a_refused_action_keeps_the_display() -> None:
     driver = FakeDriver(refuse=PressKeys)
     display = ManagedDisplay(driver.start)

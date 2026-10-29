@@ -97,8 +97,7 @@ result says which action failed and why, ends with a screenshot as usual, and ha
 When the environment is gone, the run ends with [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
 When the display restarted since the model's last screenshot, such as after its sandbox was stopped, the call stops
 before its next action that would change the screen, which would land on whatever took the place of the windows the
-model saw, and its result tells the model those windows are gone. Under Temporal, Prefect and Render the tool runs in
-workflow code, which can't tell that the display restarted, so the model gets no such notice there. A restart is
+model saw, and its result tells the model those windows are gone. A restart is
 known to the sandbox object that started the display again: a run attached to the same sandbox by its ref, through
 another object, isn't told.
 
@@ -138,8 +137,10 @@ async def main():
   long tasks.
 - Under durable execution, use `TemporalDurability`, `PrefectDurability` or `DBOSDurability`: the deprecated
   `TemporalAgent`, `PrefectAgent` and `DBOSAgent` refuse a workspace, so they can't run `ComputerUse`.
-- Under [durable execution](../durable_execution/overview.md), a retried action may repeat a click that already
-  happened. Temporal, Prefect and Render retry each action on its own; DBOS, Absurd and pgtask retry the whole call.
+- Under [durable execution](../durable_execution/overview.md), an action runs at most once: when one fails, times
+  out or loses its worker, the result tells the model it may or may not have taken effect. Screenshots and other
+  looks retry. DBOS, and Prefect when a flow is run again, can repeat the action that was running when the process
+  crashed; Absurd and pgtask retry the whole call.
 - Every screenshot rides in each model request, so under Temporal a run passes the 2 MB payload limit after a few
   steps and then stops making progress. Configure Temporal's [external storage](../durable_execution/temporal.md#large-payloads),
   which keeps large payloads outside the history. `keep_screenshots` doesn't avoid this: it drops screenshots 25 at a
