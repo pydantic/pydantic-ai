@@ -15,6 +15,8 @@ the tools it already has -- this capability surfaces findings only.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls run_macroscope_review, which runs macroscope codereview --raw in the run's workspace. The CLI uploads the branch diff to Macroscope's service and streams findings back, and the tool returns them as a MacroscopeReview with a review id, a status and a list of MacroscopeIssue findings. The agent then checks each finding and fixes the real ones with its own file and shell tools. Setup problems, such as a missing or signed-out CLI, raise UserError and stop the run.](../img/harness/macroscope.svg)
+
 ## The problem
 
 Macroscope reviews the current branch's diff and streams findings, but it ships

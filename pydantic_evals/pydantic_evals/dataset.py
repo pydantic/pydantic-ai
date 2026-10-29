@@ -35,13 +35,14 @@ from pydantic_ai._utils import await_maybe, is_async_callable
 from pydantic_evals._utils import run_until_complete
 
 from . import _task_run
+from ._ci_provenance import ci_provenance_attributes
 from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._base import BaseEvaluator
-from .evaluators._run_evaluator import run_evaluator
+from .evaluators._run_evaluator import as_evaluator, run_evaluator
 from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
-from .evaluators.evaluator import EvaluatorFailure
+from .evaluators.evaluator import EvaluatorFailure, EvaluatorFunc
 from .evaluators.report_common import DEFAULT_REPORT_EVALUATORS
 from .evaluators.report_evaluator import ReportEvaluator, ReportEvaluatorContext
 from .evaluators.spec import EvaluatorSpec
@@ -149,8 +150,8 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
         expected_output: OutputT | None = None,
         # Not `Sequence`: with it, pyright infers narrower type parameters (like a `Literal` for
         # `inputs`) that then don't match the dataset's, so tuples and lists are spelled out instead.
-        evaluators: tuple[Evaluator[InputsT, OutputT, MetadataT], ...]
-        | list[Evaluator[InputsT, OutputT, MetadataT]] = (),
+        evaluators: tuple[Evaluator[InputsT, OutputT, MetadataT] | EvaluatorFunc[InputsT, OutputT, MetadataT], ...]
+        | list[Evaluator[InputsT, OutputT, MetadataT] | EvaluatorFunc[InputsT, OutputT, MetadataT]] = (),
     ):
         """Initialize a new test case.
 
@@ -160,14 +161,15 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
             metadata: Optional metadata for the case, which can be used by evaluators.
             expected_output: Optional expected output of the task, used for comparison in evaluators.
             evaluators: Evaluators specific to this case. These are in addition to any
-                dataset-level evaluators.
+                dataset-level evaluators. Plain functions are wrapped in a
+                [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator].
 
         """
         self.name = name
         self.inputs = inputs
         self.metadata = metadata
         self.expected_output = expected_output
-        self.evaluators = list(evaluators)
+        self.evaluators = [as_evaluator(evaluator) for evaluator in evaluators]
 
 
 class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', arbitrary_types_allowed=True):
@@ -236,7 +238,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         *,
         name: str,
         cases: Sequence[Case[InputsT, OutputT, MetadataT]],
-        evaluators: Sequence[Evaluator[InputsT, OutputT, MetadataT]] = (),
+        evaluators: Sequence[Evaluator[InputsT, OutputT, MetadataT] | EvaluatorFunc[InputsT, OutputT, MetadataT]] = (),
         report_evaluators: Sequence[ReportEvaluator[InputsT, OutputT, MetadataT]] = (),
     ):
         """Initialize a new dataset with test cases and optional evaluators.
@@ -244,7 +246,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Args:
             name: Name for the dataset.
             cases: Sequence of test cases to include in the dataset.
-            evaluators: Optional sequence of evaluators to apply to all cases in the dataset.
+            evaluators: Optional sequence of evaluators to apply to all cases in the dataset. Plain functions
+                are wrapped in a [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator].
             report_evaluators: Optional sequence of report evaluators that run on the full evaluation report.
         """
         case_names = set[str]()
@@ -258,7 +261,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         super().__init__(
             name=name,
             cases=cases,
-            evaluators=list(evaluators),
+            evaluators=[as_evaluator(evaluator) for evaluator in evaluators],
             report_evaluators=list(report_evaluators),
         )
 
@@ -348,6 +351,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             extra_attributes['metadata'] = metadata
         if repeat > 1:
             extra_attributes['logfire.experiment.repeat'] = repeat
+        # The OTel test semantic conventions: a dataset is a test suite, and each case a test case.
+        extra_attributes['test.suite.name'] = self.name
         with (
             logfire_span(
                 'evaluate {name}',
@@ -359,6 +364,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             ) as eval_span,
             progress_bar or nullcontext(),
         ):
+            if eval_span.is_recording():
+                # Only when the span is recording, since detection may read the GitHub Actions event payload file.
+                # It runs in a worker thread so it doesn't block the event loop.
+                eval_span.set_attributes(await to_thread.run_sync(ci_provenance_attributes))
             task_id = progress_bar.add_task(f'Evaluating {task_name}', total=total_tasks) if progress_bar else None
 
             async def _handle_case(
@@ -496,7 +505,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         inputs: InputsT,
         metadata: MetadataT | None = None,
         expected_output: OutputT | None = None,
-        evaluators: Sequence[Evaluator[InputsT, OutputT, MetadataT]] = (),
+        evaluators: Sequence[Evaluator[InputsT, OutputT, MetadataT] | EvaluatorFunc[InputsT, OutputT, MetadataT]] = (),
     ) -> None:
         """Adds a case to the dataset.
 
@@ -507,7 +516,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             inputs: The inputs to the task being evaluated.
             metadata: Optional metadata for the case, which can be used by evaluators.
             expected_output: The expected output of the task, used for comparison in evaluators.
-            evaluators: Evaluators specific to this case, in addition to dataset-level evaluators.
+            evaluators: Evaluators specific to this case, in addition to dataset-level evaluators. Plain functions
+                are wrapped in a [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator].
         """
         if name in {case.name for case in self.cases}:
             raise ValueError(f'Duplicate case name: {name!r}')
@@ -523,19 +533,21 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     def add_evaluator(
         self,
-        evaluator: Evaluator[InputsT, OutputT, MetadataT],
+        evaluator: Evaluator[InputsT, OutputT, MetadataT] | EvaluatorFunc[InputsT, OutputT, MetadataT],
         specific_case: str | None = None,
     ) -> None:
         """Adds an evaluator to the dataset or a specific case.
 
         Args:
-            evaluator: The evaluator to add.
+            evaluator: The evaluator to add. A plain function is wrapped in a
+                [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator].
             specific_case: If provided, the evaluator will only be added to the case with this name.
                 If None, the evaluator will be added to all cases in the dataset.
 
         Raises:
             ValueError: If `specific_case` is provided but no case with that name exists in the dataset.
         """
+        evaluator = as_evaluator(evaluator)
         if specific_case is None:
             self.evaluators.append(evaluator)
         else:
@@ -798,8 +810,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 schema_ref = str(_get_relative_path_reference(schema_path, path.parent))
             else:  # pragma: no cover
                 schema_ref = str(schema_path)
-            self._save_schema(schema_path, custom_evaluator_types, custom_report_evaluator_types)
 
+        # Dump before writing any file, so a dataset that can't be serialized doesn't leave a schema file behind.
         context: dict[str, Any] = {'use_short_form': True}
         if fmt == 'yaml':
             dumped_data = self.model_dump(mode='json', by_alias=True, context=context)
@@ -807,11 +819,13 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             if schema_ref:  # pragma: no branch
                 yaml_language_server_line = f'{_YAML_SCHEMA_LINE_PREFIX}{schema_ref}'
                 content = f'{yaml_language_server_line}\n{content}'
-            path.write_text(content, encoding='utf-8')
         else:
             context['$schema'] = schema_ref
-            json_data = self.model_dump_json(indent=2, by_alias=True, context=context)
-            path.write_text(json_data + '\n', encoding='utf-8')
+            content = self.model_dump_json(indent=2, by_alias=True, context=context) + '\n'
+
+        if schema_path is not None:  # pragma: no branch
+            self._save_schema(schema_path, custom_evaluator_types, custom_report_evaluator_types)
+        path.write_text(content, encoding='utf-8')
 
     @classmethod
     def model_json_schema_with_evaluators(
@@ -1163,6 +1177,8 @@ async def _run_task_and_evaluators(
             trace_id = f'{context.trace_id:032x}'
             span_id = f'{context.span_id:016x}'
 
+        # The OTel test semantic conventions. Repeats of one case share its name, as they run the same test case.
+        case_span.set_attribute('test.case.name', source_case_name or report_case_name)
         if source_case_name is not None:
             case_span.set_attribute('logfire.experiment.source_case_name', source_case_name)
 

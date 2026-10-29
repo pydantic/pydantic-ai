@@ -362,6 +362,9 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
         auto_install_chromium: bool = False,
         chromium_sandbox: bool = True,
         cdp_url: str | None = None,
+        id: str | None = 'playwright_browser',
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> PlaywrightBrowser[AgentDepsT]:
         """Construct the capability from serializable spec options (all fields are plain scalars/lists).
 
@@ -381,4 +384,7 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
             auto_install_chromium=auto_install_chromium,
             chromium_sandbox=chromium_sandbox,
             cdp_url=cdp_url,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
         )

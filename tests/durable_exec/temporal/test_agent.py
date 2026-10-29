@@ -3546,6 +3546,7 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
         [
             '_anchored_evidence',
             '_compaction_requests',
+            '_dispatched_tool_name',
             '_durable_operations',
             '_run_capabilities_by_id',
             '_run_held_toolsets',
