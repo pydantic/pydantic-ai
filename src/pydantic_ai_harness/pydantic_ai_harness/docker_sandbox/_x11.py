@@ -135,6 +135,12 @@ _SCROLL_TICK_DELAY_MS = '20'
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
 
+_DISPLAY_SIZE = 'if command -v xwininfo >/dev/null; then xwininfo -root; else xdotool getdisplaygeometry; fi'
+"""Prints the root window's size, which spans every monitor as a screenshot does. `xdotool getdisplaygeometry`, used
+where `xwininfo` is missing, gives only the first monitor's."""
+
+_ROOT_SIZE = re.compile(r'^\s*(Width|Height): (\d+)$', re.MULTILINE)
+
 _CAPTURE = 'd=$(mktemp -d) && scrot "$@" "$d/s.png" && base64 < "$d/s.png"; status=$?; rm -rf "$d"; exit $status'
 """Captures into a fresh directory (scrot picks the format from the `.png` name) and prints it as base64; arguments
 go to scrot, such as `-a x,y,width,height` for a region."""
@@ -297,12 +303,13 @@ class X11Computer:
         return png_from_base64((await self._run(['sh', '-c', script, 'sh', *args])).stdout, 'The screenshot command')
 
     async def display_size(self) -> tuple[int, int]:
-        output = (await self._run(['xdotool', 'getdisplaygeometry'])).stdout.split()
+        output = (await self._run(['sh', '-c', _DISPLAY_SIZE])).stdout
+        root = dict(_ROOT_SIZE.findall(output))
         try:
-            width, height = output
+            width, height = (root['Width'], root['Height']) if root else output.split()
             return int(width), int(height)
-        except ValueError:
-            raise WorkspaceError(f'Unexpected `xdotool getdisplaygeometry` output: {" ".join(output)!r}') from None
+        except (KeyError, ValueError):
+            raise WorkspaceError(f'Unexpected display size output: {output.strip()!r}') from None
 
     async def screenshot(self) -> bytes:
         return await self._capture(_CAPTURE)

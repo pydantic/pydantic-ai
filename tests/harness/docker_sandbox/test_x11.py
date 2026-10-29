@@ -248,6 +248,15 @@ async def test_x11_computer_looks_return_the_png_and_pass_their_size_or_region_a
     assert all(env == {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'} for _, _, env in commands.calls)
 
 
+async def test_x11_display_size_is_the_root_window_spanning_every_monitor() -> None:
+    # Two 1920x1080 monitors side by side: a screenshot is 3840x1080, and so must the reported size be.
+    xwininfo = (
+        'xwininfo: Window id: 0x3c5 (the root window) (has no name)\n\n  Width: 3840\n  Height: 1080\n  Depth: 24\n'
+    )
+    commands = ScriptedCommands(CommandResult(exit_code=0, stdout=xwininfo, stderr=''))
+    assert await X11Computer(commands).display_size() == (3840, 1080)
+
+
 @pytest.mark.parametrize(
     'result, call, message',
     [
