@@ -417,13 +417,14 @@ class ProviderBackend(
     SupportsScaledScreenshot,
     SupportsCursorPosition,
 ):
+    starts = 0
+    """How many times the display started, as `SupportsStartCount` asks: including a start an earlier backend object
+    made that no display call completed on."""
+
     def __init__(self, provider: InMemoryProvider, ref: WorkspaceRef | None) -> None:
         self._provider = provider
         self._ref = ref
         self.attached = False
-        self.starts = 0
-        """How many times the display started, as `SupportsStartCount` asks: including a start an earlier backend
-        object made that no display call completed on."""
         self._counted: int | None = None
 
     @property
@@ -437,7 +438,8 @@ class ProviderBackend(
             provider.restart_display = False
             provider.display_starts += 1
         counted = provider.shown_starts if self._counted is None else self._counted
-        self.starts += provider.display_starts - counted
+        if provider.display_starts > counted:
+            self.starts += provider.display_starts - counted
         self._counted = provider.display_starts
 
     def _shown(self) -> None:
