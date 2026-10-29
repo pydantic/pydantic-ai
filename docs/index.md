@@ -255,7 +255,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
 - **Coming from another framework?** The [comparisons](comparisons/index.md) show where Pydantic AI differs from LangChain, Google ADK, the Claude Agent SDK and seven more, and the [migration skills](framework-migration.md) let your coding agent port an existing application over.
 
-Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](https://pydantic.dev/docs/) is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem (and the foundation FastAPI was built on). Pydantic AI brings that same feeling to agents.
+Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](https://pydantic.dev/docs/) is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem (and the foundation FastAPI was built on). Pydantic AI brings that same feeling to agents. [Built with Pydantic AI](built-with.md) lists open source projects and organizations that run on it.
 
 **Sign up for our newsletter, *The Pydantic Stack*, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:**
 
