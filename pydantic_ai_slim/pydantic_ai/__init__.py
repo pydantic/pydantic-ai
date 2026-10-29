@@ -510,5 +510,6 @@ BANNER_ENABLED = True
 Set it to `False` before the first agent run; `PYDANTIC_AI_NO_BANNER` does the same from the
 environment. Neither is needed to keep the banner out of an application's way: it is only ever shown
 once per process, to a terminal or a coding agent, and never at all once instrumentation is
-configured, under `pytest`, or in CI.
+configured, under `pytest`, in CI, or for a run started by an installed package (a library or
+platform built on Pydantic AI), so library authors don't need to set it on their users' behalf.
 """
