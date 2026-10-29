@@ -4,7 +4,9 @@ description: "Open source applications, developer tools, domain agents, data int
 
 # Built with Pydantic AI
 
-Open source projects that use Pydantic AI, [Pydantic AI Harness](harness/index.md) or [Pydantic Evals](evals.md), grouped by what they built. Each entry links to the project's repository and says what part of it runs on Pydantic AI, so you can find a system shaped like yours and read how it is put together. Organizations using Pydantic AI in production whose code isn't public, such as the UK Ministry of Justice's Justice AI Unit, are in [Case studies](#case-studies).
+Pydantic AI is used by individual developers, startups, large enterprises and governments. The projects below come from organizations such as Microsoft, Google, Walmart, Meta, Tencent, McKinsey, Point72, Lightricks and CERN, and from the French, German and UK governments.
+
+This page lists open source projects that use Pydantic AI, [Pydantic AI Harness](harness/index.md) or [Pydantic Evals](evals.md), grouped by what they built. Each entry links to the project's repository and says what part of it runs on Pydantic AI, so you can find a system shaped like yours and read how it is put together. Organizations using Pydantic AI in production whose code isn't public, such as the UK Ministry of Justice's Justice AI Unit, are in [Case studies](#case-studies).
 
 - [Applications and platforms](#applications-and-platforms): products where agents are one part of a larger system.
 - [Coding agents and developer tools](#coding-agents-and-developer-tools): agents and tools for writing, running and analysing code.
@@ -37,10 +39,10 @@ Open source projects that use Pydantic AI, [Pydantic AI Harness](harness/index.m
 
 - [Conductor](https://github.com/microsoft/conductor) by **Microsoft**: a CLI for defining and running multi-agent workflows. Pydantic AI is one of its agent providers, with Harness compaction.
 - [OSS-Fuzz MCP](https://github.com/google/oss-fuzz/tree/master/infra/experimental/mcp) by **Google**: OSS-Fuzz's experimental agent tooling for fuzzing tasks, such as fixing builds, kept apart from its production fuzzing infrastructure. Its MCP client agent runs on Pydantic AI.
+- [Code Puppy](https://github.com/mpfaffenberger/code_puppy) by **Walmart**: a coding agent for the terminal, built at Walmart Global Tech on Pydantic AI and the Harness and used across the company. Its creator has since joined Pydantic.
 - [moyai](https://github.com/BerriAI/moyai) by **BerriAI**: a self-hosted coding agent for background work. It runs on Pydantic AI, with Harness capabilities such as planning, ask-user questions and conversation search.
 - [Colin](https://github.com/PrefectHQ/colin) by **Prefect**: a context engine that compiles agent skills from live sources and rebuilds them when they go stale. Its LLM blocks run on Pydantic AI agents.
 - [Tiger Agents for Work](https://github.com/timescale/tiger-agents-for-work) by **Tiger Data**: a library and CLI for Slack-native agents, which runs Tiger Data's own internal Slack agent. Its agents run on Pydantic AI, with MCP servers and Harness subagents.
-- [Code Puppy](https://github.com/mpfaffenberger/code_puppy): a coding agent for the terminal, built on Pydantic AI and the Harness.
 - [oterm](https://github.com/ggozad/oterm): a terminal client for LLMs. Its agents run on Pydantic AI, with Harness file system access, compaction and memory.
 - [angr](https://github.com/angr/angr): a binary analysis platform. Its optional LLM-assisted decompiler uses Pydantic AI agents to suggest variable names, function names and types.
 - [Code-Graph-RAG](https://github.com/vitali87/code-graph-rag): a knowledge-graph RAG system for querying and editing multi-language codebases. Its query and editing agents run on Pydantic AI.
