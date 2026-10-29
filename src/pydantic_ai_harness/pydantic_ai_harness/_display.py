@@ -70,8 +70,8 @@ class ManagedDisplay:
     call, start included, such as to map a provider's errors.
 
     A call that only looks, such as a screenshot, is retried once after a failure, which starts a display that was
-    lost; an action isn't, so nothing is done twice. The backend calls `started_fresh` when `start` launched a new
-    display, and an action whose own call launched one refuses to run: the windows it was meant for are gone.
+    lost; an action isn't, so nothing is done twice. The backend calls `started_fresh` when a new display started, and
+    `starts` counts those starts. An action refuses to run on a display that restarted during its call, losing windows.
 
     `screen_key` names the screen it shows, so `ComputerUse` runs in one process on one screen take turns at it,
     whichever workspace they reach it through, such as a sandbox's ref.
@@ -83,22 +83,50 @@ class ManagedDisplay:
         *,
         scope: Callable[[], AbstractAsyncContextManager[object]] = nullcontext,
         screen_key: Callable[[], object | None] = lambda: None,
+        shown: Callable[[int], Awaitable[None]] | None = None,
     ):
         self._start = start
         self._scope = scope
         self._screen_key = screen_key
+        self._shown = shown
         self._driver: DisplayDriver | None = None
         self._lock = anyio.Lock()
         self._starts = 0
+        self._restarts = 0
+        self._seen = False
+        self._counted: int | None = None
+        self._unshown: int | None = None
 
     @property
     def screen_key(self) -> object | None:
         """A hashable name for the screen this display shows, or `None` until it's known."""
         return self._screen_key()
 
-    def started_fresh(self) -> None:
-        """Record that `start` launched a new display, without the windows that were open before."""
+    @property
+    def starts(self) -> int:
+        """How many new displays started, each without the windows that were open before.
+
+        This is [`SupportsStartCount`][pydantic_ai.workspaces.SupportsStartCount].
+        """
+        return self._starts
+
+    def started_fresh(self, generation: int | None = None) -> None:
+        """Record that a new display started, without the windows that were open before.
+
+        `generation` numbers the screen's starts, 1 for the first, when the environment keeps that count. A start is
+        then counted once by each display object that reaches it until a call completes on it, which `shown` records
+        in the environment, so a durable engine's retry on a new object still reports a start a failed attempt made.
+        An action isn't refused for the environment's first start, which lost no windows, unless this object had a
+        display before.
+        """
+        if generation is not None:
+            if generation == self._counted:
+                return
+            self._counted = self._unshown = generation
         self._starts += 1
+        # Windows were lost when this object had a display before, or the environment had one.
+        if self._seen or (generation or 0) > 1:
+            self._restarts += 1
 
     def reset(self) -> None:
         """Forget the running display, such as when the environment may have restarted: the next call starts it."""
@@ -110,7 +138,19 @@ class ManagedDisplay:
         async with self._lock:
             if self._driver is None:
                 self._driver = await self._start()
+                self._seen = True
             return self._driver
+
+    async def _mark_shown(self) -> None:
+        """Record in the environment that a call completed on the display that started, once."""
+        generation, self._unshown = self._unshown, None
+        if generation is None or self._shown is None:
+            return
+        try:
+            await self._shown(generation)
+        except Exception:
+            # Left unrecorded, another display object on the screen would only count this start again.
+            self._unshown = generation
 
     async def _call(self, call: Callable[[DisplayDriver], Awaitable[T]], *, observe: bool) -> T:
         retry = observe
@@ -133,6 +173,7 @@ class ManagedDisplay:
                     raise
                 retry = False
             else:
+                await self._mark_shown()
                 return result
 
     async def display_size(self) -> tuple[int, int]:
@@ -149,10 +190,10 @@ class ManagedDisplay:
         return await self._call(lambda driver: driver.scaled_screenshot(width, height), observe=True)
 
     async def act(self, action: ComputerAction) -> None:
-        starts = self._starts
+        restarts = self._restarts
 
         async def act(driver: DisplayDriver) -> bool:
-            if self._starts != starts:
+            if self._restarts != restarts:
                 return False
             await driver.act(action)
             return True
@@ -160,7 +201,7 @@ class ManagedDisplay:
         if not await self._call(act, observe=False):
             # The display was down and started for this action: the windows it was meant for are gone. Refused outside
             # the call, so the display that just started stays and the next action doesn't start it again.
-            raise WorkspaceError('The display was not running and started for this action, so it did not run.')
+            raise WorkspaceError('The display restarted before this action, so it did not run.')
 
     async def zoom(self, region: Region) -> bytes:
         return await self._call(lambda driver: driver.zoom(region), observe=True)

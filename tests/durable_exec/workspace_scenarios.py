@@ -313,7 +313,7 @@ async def display_faults(agents: ScenarioAgents, arg: str | None, engine_id: str
         acted = str(error)
     else:
         acted = 'acted'
-    return {'screenshot': screenshot == FAKE_SCREENSHOT, 'act': acted}
+    return {'screenshot': screenshot == FAKE_SCREENSHOT, 'act': acted, 'starts': workspace.display_starts}
 
 
 async def local(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dict[str, Any]:
@@ -433,13 +433,14 @@ async def check_binary(run: Runner, agents: ScenarioAgents) -> None:
 async def check_display_faults(run: Runner, agents: ScenarioAgents) -> None:
     """An action whose unit failed after it took effect isn't run again, and is reported as possibly done.
 
-    A screenshot that failed is retried where the engine retries.
+    A screenshot that failed is retried where the engine retries. The display restarted during the screenshot, on a
+    backend that may be gone by the next call: the start still counts.
     """
-    agents.provider.lose_next_action = True
+    agents.provider.restart_display = agents.provider.lose_next_action = True
     agents.provider.fail_next_screenshot = agents.retries
     result = await run('display_faults', None)
     assert result['act'].startswith('The act call did not finish, so it may or may not have taken effect')
-    assert result['screenshot'] is True
+    assert {**result, 'act': ...} == {'screenshot': True, 'act': ..., 'starts': 1}
     assert agents.provider.actions == [Click(x=1, y=2)]
 
 

@@ -658,8 +658,11 @@ def test_display_calls_round_trip_through_json_and_pickle() -> None:
     for result in (
         WorkspaceCallResult(size=(1280, 800)),
         WorkspaceCallResult(point=Point(x=1, y=2)),
+        WorkspaceCallResult(starts=1),
     ):
         assert JSON_CODEC.load(WorkspaceCallResult, JSON_CODEC.dump(WorkspaceCallResult, result)) == result
+    # Left out while nothing started, so a version without the field still reads the result.
+    assert 'starts' not in JSON_CODEC.dump(WorkspaceCallResult, WorkspaceCallResult())
 
 
 @pytest.mark.parametrize(
@@ -730,6 +733,19 @@ async def test_a_backend_error_keeps_its_details_across_a_durable_call(error: Ex
     assert [getattr(raised.value, name, None) for name in ('errno', 'filename', 'filename2')] == [
         getattr(error, name, None) for name in ('errno', 'filename', 'filename2')
     ]
+
+
+async def test_a_display_start_in_a_failed_unit_is_reported_by_the_retry_on_a_new_workspace() -> None:
+    provider = InMemoryProvider()
+    ref = (await execute_call(Workspace(provider.backend(None)), WorkspaceCall(method='ensure'))).ref
+    # The display starts again, then the unit fails outside the error table, so the engine retries it. Temporal
+    # rebuilds the backend and workspace from the ref for every attempt.
+    provider.restart_display = provider.lose_next_action = True
+    with pytest.raises(RuntimeError, match='the worker was lost'):
+        await execute_call(Workspace(provider.backend(ref)), WorkspaceCall(method='act', action=PressKeys(keys=('a',))))
+    retried = await execute_call(Workspace(provider.backend(ref)), WorkspaceCall(method='screenshot'))
+    assert (retried.data, retried.starts) == (FAKE_SCREENSHOT, 1)
+    assert (await execute_call(Workspace(provider.backend(ref)), WorkspaceCall(method='screenshot'))).starts == 0
 
 
 async def test_a_configuration_error_reaches_workflow_code_as_it_is_for_display_calls() -> None:

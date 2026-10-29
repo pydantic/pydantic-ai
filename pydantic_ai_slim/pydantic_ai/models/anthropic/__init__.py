@@ -295,6 +295,7 @@ try:
     )
     from ._computer import (
         COMPUTER_ACTION_COUNTS,
+        COMPUTER_HELD_BACK,
         COMPUTER_NOT_EXECUTED,
         COMPUTER_TOOL_BETAS,
         RETURNS_OUTPUT,
@@ -3751,6 +3752,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         The calls that ran get `OK` and what their actions returned, such as a zoom's image, and the last of
         them the screenshot, since an error result can hold only text; the failed call gets its error and the rest
         Anthropic's not-executed text. A failed or denied result doesn't say which calls ran, so each gets its text.
+        When the display restarted, or actions were held back without an error, the summary saying so goes with the
+        screenshot to the last call that ran, or to the first when none did, and the calls held back are not run.
         """
 
         def result(block: dict[str, Any], is_error: bool, *content: beta_tool_result_block_param.Content):
@@ -3798,7 +3801,25 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 for index, block in enumerate(blocks)
             ]
         last_ran = max((index for index, end in enumerate(ends) if end <= performed), default=-1)
-        results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
+        # The display restarted, or actions were held back for that reason: `OK` alone would say they all ran.
+        held = known and error is None and performed < ends[-1]
+        if held or metadata.get('restarted'):
+            told = max(last_ran, 0)
+            results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
+            for index, block in enumerate(blocks):
+                ran = ends[index] <= performed
+                returned = (
+                    [await content_block(outputs.pop(0))] if ran and block['name'] in RETURNS_OUTPUT and outputs else []
+                )
+                if index == told:
+                    rest = [await content_block(screen)] if screen is not None else []
+                    results.append(result(block, False, await content_block(content[0]), *returned, *rest))
+                elif ran:
+                    results.append(result(block, False, BetaTextBlockParam(text='OK', type='text'), *returned))
+                else:
+                    results.append(result(block, True, BetaTextBlockParam(text=COMPUTER_HELD_BACK, type='text')))
+            return results
+        results = []
         for index, (block, count) in enumerate(zip(blocks, counts)):
             start = ends[index] - count
             if ends[index] <= performed:
