@@ -249,7 +249,7 @@ async def ask_permissions(requests: DeferredToolRequests, approver: Approver) ->
     asked = permission_requests(requests)
     if not asked:
         return None
-    approvals: dict[str, DeferredToolApprovalResult] = {}
+    approvals: dict[str, bool | DeferredToolApprovalResult] = {}
     metadata: dict[str, dict[str, Any]] = {}
     for request in asked:
         decision = await approver(request)
@@ -260,7 +260,7 @@ async def ask_permissions(requests: DeferredToolRequests, approver: Approver) ->
         approvals[call_id] = ToolApproved()
         if decision.remember:
             metadata[call_id] = _AnsweredMetadata(permissions=_Answered(remember=True)).model_dump()
-    return DeferredToolResults(approvals={**approvals}, metadata=metadata)
+    return DeferredToolResults(approvals=approvals, metadata=metadata)
 
 
 def denial_message(request: PermissionRequest, *, reason: str | None = None) -> str:

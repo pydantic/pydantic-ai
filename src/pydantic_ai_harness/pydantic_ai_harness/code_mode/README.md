@@ -108,10 +108,10 @@ surfaces count as code-execution tools: `Shell`'s `run_command` and `start_comma
 to quote a shell command inside a generated Python string. `CapabilityCreation`'s
 `author_capability` stays native for the same reason: its argument is a complete Python module.
 Their non-command tools (`read_file`, `check_command`, and so on) are folded into `run_code` like
-any other tool. You can control which eligible tools go through the sandbox:
-A host that wants one folded anyway sets `FOLD_INTO_CODE_MODE` (`'fold_into_code_mode'`, from
+any other tool. A host that wants one folded anyway sets `FOLD_INTO_CODE_MODE` (`'fold_into_code_mode'`, from
 `pydantic_ai_harness.code_mode`) to `True` in its metadata, for example from `prepare_tools`; the tool keeps
-its `code_arg_name`, so instrumentation and other capabilities still see it as code.
+its `code_arg_name`, so instrumentation and other capabilities still see it as code. You can control which
+eligible tools go through the sandbox:
 
 ```python
 from pydantic_ai_harness import CodeMode
