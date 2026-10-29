@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 
-import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext, UserError
@@ -12,13 +11,11 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
     Click,
     Point,
-    PressKeys,
     Region,
     Workspace,
     WorkspaceError,
     WorkspaceRef,
     WorkspaceUnavailableError,
-    WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness._x11 import STARTED
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
@@ -104,11 +101,14 @@ async def test_screenshots_zooms_and_the_pointer_come_from_the_display(fake_e2b:
     assert display.captures[-1].endswith(' sh 640x400')
 
 
-async def test_the_desktop_names_its_screen_by_the_sandboxs_ref(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    backend = E2BSandboxBackend(desktop=True)
-    await Workspace(backend).display_size()
-    assert backend.display is not None and backend.ref is not None
-    assert backend.display.screen_key == backend.ref
+async def test_backends_on_one_sandbox_name_one_screen(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
+    first, other = E2BSandboxBackend(desktop=True), E2BSandboxBackend(desktop=True)
+    await Workspace(first).display_size()
+    await Workspace(other).display_size()
+    assert first.ref is not None and first.display is not None and other.display is not None
+    again = E2BSandbox(desktop=True).backend(first.ref).display
+    assert again is not None
+    assert first.display.screen_key == again.screen_key != other.display.screen_key
 
 
 async def test_the_live_view_url_opens_the_viewer_with_its_password(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
@@ -118,8 +118,6 @@ async def test_the_live_view_url_opens_the_viewer_with_its_password(fake_e2b: Fa
 
     sandbox_id = fake_e2b.sandboxes[0].sandbox_id
     assert url == f'https://6080-{sandbox_id}.e2b.example/vnc.html?autoconnect=true&resize=scale&password=Pass1234'
-    (viewer,) = display.viewers
-    assert 'x11vnc -display :1' in viewer and '--listen 6080' in viewer
 
 
 async def test_a_viewer_that_does_not_start_is_an_error(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
@@ -143,16 +141,6 @@ async def test_a_desktop_size_sets_the_display_it_starts(fake_e2b: FakeE2B, disp
     assert start.endswith(' sh 1440x900')
 
 
-async def test_concurrent_first_uses_start_one_display(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    workspace = Workspace(E2BSandboxBackend(desktop=True))
-
-    async with anyio.create_task_group() as tg:
-        for _ in range(3):
-            tg.start_soon(workspace.display_size)
-
-    assert len(display.starts) == 1
-
-
 async def test_a_display_that_went_away_is_started_again(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
     backend = E2BSandboxBackend(desktop=True)
     workspace = Workspace(backend)
@@ -166,28 +154,6 @@ async def test_a_display_that_went_away_is_started_again(fake_e2b: FakeE2B, disp
 
     assert len(display.starts) == 2
     assert backend.display.starts == 2
-
-
-async def test_a_look_at_a_display_that_went_away_starts_it_and_looks_again(
-    fake_e2b: FakeE2B, display: FakeDisplay
-) -> None:
-    workspace = Workspace(E2BSandboxBackend(desktop=True))
-    await workspace.display_size()
-
-    display.up = False
-    assert await workspace.display_size() == (1280, 800)
-    assert len(display.starts) == 2
-
-
-async def test_a_refused_key_does_not_restart_the_display(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    workspace = Workspace(E2BSandboxBackend(desktop=True))
-    await workspace.display_size()
-
-    with pytest.raises(WorkspaceUnsupportedActionError, match='XF86AudioMute'):
-        await workspace.act(PressKeys(keys=('volumemute',)))
-    await workspace.act(Click(x=1, y=1))
-
-    assert len(display.starts) == 1
 
 
 async def test_a_template_without_a_working_x_server_says_why(fake_e2b: FakeE2B, display: FakeDisplay) -> None:

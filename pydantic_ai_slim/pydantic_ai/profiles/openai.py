@@ -669,11 +669,16 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     )
     if reasoning.efforts is not None:
         profile['openai_reasoning_efforts'] = reasoning.efforts
-    if supports_tool_search:
+    if _is_computer_use_model(profile):
         # The computer use models. Measured live on gpt-5.5 with the native `computer` tool: clicks land exactly up to
         # 2560x1440 and miss by hundreds of pixels at 3840x2160, so a larger screen is sent scaled down to fit.
         profile['computer_use_screenshot_limit'] = (2560, 2560 * 1440)
     return profile
+
+
+def _is_computer_use_model(profile: ModelProfile) -> bool:
+    """Whether OpenAI serves its native `computer` tool to the model: those with tool search do."""
+    return ToolSearchTool in profile.get('supported_native_tools', ())
 
 
 def is_openai_live_model(model_name: str) -> bool:

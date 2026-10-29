@@ -24,7 +24,6 @@ on the sandbox's display. Re-check these before changing the mapping, by running
 
 from __future__ import annotations as _annotations
 
-import base64
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING
@@ -48,6 +47,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceUnsupportedActionError,
 )
+from pydantic_ai_harness._display import png_from_base64
 from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
 
 if TYPE_CHECKING:
@@ -105,8 +105,6 @@ _UNSHIFTED = frozenset("abcdefghijklmnopqrstuvwxyz0123456789`-=[]\\;',./")
 _SHIFTED = dict(zip('~!@#$%^&*()_+{}|:"<>?', "`1234567890-=[]\\;',./"))
 """A symbol typed with shift, and the key it is on: Daytona's display has a US keyboard layout."""
 
-_PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
-
 
 def _button(button: str) -> str:
     if button not in _BUTTONS:
@@ -129,13 +127,6 @@ def _keys(keys: Sequence[str]) -> list[str]:
         else:
             raise WorkspaceUnsupportedActionError(f"Daytona's desktop cannot press the key {key!r}.")
     return list(dict.fromkeys(names))
-
-
-def _png(encoded: str | None) -> bytes:
-    data = base64.b64decode(encoded or '')
-    if not data.startswith(_PNG_SIGNATURE):
-        raise WorkspaceError('Daytona did not return a PNG screenshot.')
-    return data
 
 
 class DaytonaDesktop:
@@ -166,21 +157,27 @@ class DaytonaDesktop:
     async def screenshot(self) -> bytes:
         response = await self._computer_use.screenshot.take_full_screen(request_timeout=_REQUEST_TIMEOUT)
         self._check_before_acting = True
-        return _png(response.screenshot)
+        return png_from_base64(response.screenshot, 'Daytona')
 
     async def scaled_screenshot(self, width: int, height: int) -> bytes:
         screen_width, screen_height = await self.display_size()
-        options = ScreenshotOptions(fmt='png', scale=max(min(width / screen_width, height / screen_height, 1), 0.1))
+        scale = min(width / screen_width, height / screen_height, 1)
+        if scale < 0.1:
+            # Daytona scales by a tenth at the least, which would come back larger than asked.
+            raise WorkspaceUnsupportedActionError(
+                f"Daytona's desktop cannot scale its {screen_width}x{screen_height} screen down to {width}x{height}."
+            )
+        options = ScreenshotOptions(fmt='png', scale=scale)
         response = await self._computer_use.screenshot.take_compressed(options, request_timeout=_REQUEST_TIMEOUT)
         self._check_before_acting = True
-        return _png(response.screenshot)
+        return png_from_base64(response.screenshot, 'Daytona')
 
     async def zoom(self, region: Region) -> bytes:
         area = ScreenshotRegion(
             x=region.left, y=region.top, width=region.right - region.left, height=region.bottom - region.top
         )
         response = await self._computer_use.screenshot.take_region(area, request_timeout=_REQUEST_TIMEOUT)
-        return _png(response.screenshot)
+        return png_from_base64(response.screenshot, 'Daytona')
 
     async def cursor_position(self) -> Point:
         position = await self._computer_use.mouse.get_position(request_timeout=_REQUEST_TIMEOUT)

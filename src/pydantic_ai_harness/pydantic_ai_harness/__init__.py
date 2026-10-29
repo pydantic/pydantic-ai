@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
     from .detect_loops import DetectLoops
-    from .docker_sandbox import DESKTOP_DOCKERFILE, DockerSandbox, DockerSandboxBackend
+    from .docker_sandbox import DockerSandbox, DockerSandboxBackend
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
@@ -108,7 +108,6 @@ __all__ = [
     'ComputerUse',
     'ConversationSearch',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
-    'DESKTOP_DOCKERFILE',
     'DayAI',
     'DaytonaSandbox',
     'DaytonaSandboxBackend',
@@ -264,7 +263,6 @@ _CONSTANT_EXPORTS = {
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
-    'DESKTOP_DOCKERFILE': 'docker_sandbox',
     'DockerSandboxBackend': 'docker_sandbox',
     'E2BSandboxBackend': 'e2b_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',

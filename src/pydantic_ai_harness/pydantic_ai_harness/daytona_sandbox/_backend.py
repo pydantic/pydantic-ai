@@ -58,7 +58,7 @@ try:
 except ImportError as error:
     raise ImportError('Install `pydantic-ai-harness[daytona]` to use DaytonaSandbox.') from error
 
-from pydantic_ai_harness._display import ManagedDisplay
+from pydantic_ai_harness._display import ManagedDisplay, desktop_size
 from pydantic_ai_harness.daytona_sandbox._desktop import DaytonaDesktop
 
 _AUTH_MESSAGE = (
@@ -86,7 +86,6 @@ _PARTIAL_OUTPUT_LIMIT = 4096
 # A command's whole output is downloaded into memory.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_BYTES = 64 * 1024
-_DEFAULT_DESKTOP_SIZE = (1280, 800)
 
 logger = logging.getLogger(__name__)
 
@@ -479,7 +478,7 @@ class DaytonaSandboxBackend(
         self._create_name: str | None = None
         self._auto_stop_interval = auto_stop_interval
         self._allow_internet_access = allow_internet_access
-        self._desktop_size = _DEFAULT_DESKTOP_SIZE if desktop is True else desktop or None
+        self._desktop_size = desktop_size(desktop)
         # Commands see the desktop too, so a program the agent starts from the shell opens on it. Daytona's desktop
         # runs on display `:0` (checked live).
         self._env = {**({'DISPLAY': ':0'} if self._desktop_size else {}), **(env or {})}

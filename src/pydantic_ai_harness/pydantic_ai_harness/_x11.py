@@ -2,7 +2,6 @@
 
 from __future__ import annotations as _annotations
 
-import base64
 import re
 from collections.abc import Callable, Sequence
 from contextlib import suppress
@@ -28,6 +27,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
 )
+from pydantic_ai_harness._display import ManagedDisplay, png_from_base64
 from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
 
 _BUTTONS: dict[str, str] = {'left': '1', 'middle': '2', 'right': '3', 'back': '8', 'forward': '9'}
@@ -83,67 +83,13 @@ _KEYSYMS = {
     '[': 'bracketleft',
     ']': 'bracketright',
 }
-"""Key names whose X keysym is spelled differently; other names (`ctrl`, `space`, `a`, ...) are keysyms already."""
+"""Key names whose X keysym is spelled differently; `_PLAIN_KEYSYMS` and ASCII letters and digits are keysyms already."""
 
-_KEYSYM_PATTERN = re.compile(r'[A-Za-z0-9_]+')
+_PLAIN_KEYSYMS = frozenset({'ctrl', 'shift', 'alt', 'super', 'space'})
+"""Key names xdotool takes as they are."""
 
 _OUTSIDE_ASCII = re.compile(r'U(?!00[0-7])[0-9A-F]{4,}')
 """A keysym `_character` gives a character outside ASCII, which has no key until it's mapped to one."""
-
-_XDOTOOL_COMMANDS = frozenset(
-    {
-        'behave',
-        'behave_screen_edge',
-        'click',
-        'exec',
-        'get_desktop',
-        'get_desktop_for_window',
-        'get_desktop_viewport',
-        'get_num_desktops',
-        'getactivewindow',
-        'getdisplaygeometry',
-        'getmouselocation',
-        'getwindowclassname',
-        'getwindowfocus',
-        'getwindowgeometry',
-        'getwindowname',
-        'getwindowpid',
-        'help',
-        'key',
-        'keydown',
-        'keyup',
-        'mousedown',
-        'mousemove',
-        'mousemove_relative',
-        'mouseup',
-        'search',
-        'selectwindow',
-        'set_desktop',
-        'set_desktop_for_window',
-        'set_desktop_viewport',
-        'set_num_desktops',
-        'set_window',
-        'sleep',
-        'type',
-        'version',
-        'windowactivate',
-        'windowclose',
-        'windowfocus',
-        'windowkill',
-        'windowlower',
-        'windowmap',
-        'windowminimize',
-        'windowmove',
-        'windowquit',
-        'windowraise',
-        'windowreparent',
-        'windowsize',
-        'windowstate',
-        'windowunmap',
-    }
-)
-"""xdotool's command names, from its newest source: xdotool reads one among key names, in any case, as the start of the
-next command, such as `exec`."""
 
 _COMMAND_TIMEOUT = 150
 """Maximum time for one display command; holding keys for the longest wait, 30 s, is the longest bounded action."""
@@ -192,19 +138,18 @@ _CAPTURE_SCALED = (
 STARTED = 'pydantic-ai-display-started'
 """What a start script prints when it started a new X server, rather than finding one running."""
 
-_PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
-
 
 def _keysym(key: str) -> str:
     if key in _KEYSYMS:
         return _KEYSYMS[key]
-    if len(key) == 1 and not (key.isascii() and key.isalnum()):
+    if len(key) == 1:
         # A character such as `!` or `é`: xdotool presses shift or AltGr when the layout needs it.
-        return _character(key)
-    # xdotool reads any argument that names one of its commands, in any case, as that command.
-    if not _KEYSYM_PATTERN.fullmatch(key) or key.lower() in _XDOTOOL_COMMANDS:
-        raise WorkspaceUnsupportedActionError(f'The display cannot press the key {key!r}.')
-    return key
+        return key if key.isascii() and key.isalnum() else _character(key)
+    if key in _PLAIN_KEYSYMS:
+        return key
+    # Validation refuses other names; refusing them here too keeps out one xdotool would read as a command, such as
+    # `exec`.
+    raise WorkspaceUnsupportedActionError(f'The display cannot press the key {key!r}.')
 
 
 def _character(character: str) -> str:
@@ -220,16 +165,6 @@ def _press(keysyms: Sequence[str], args: list[str]) -> list[str]:
     """`xdotool key` with `args`, after mapping the characters outside ASCII among `keysyms` to keys of their own."""
     mapped = [keysym for keysym in dict.fromkeys(keysyms) if _OUTSIDE_ASCII.fullmatch(keysym)]
     return ['sh', '-c', _PRESS_MAPPED, 'sh', *mapped, '--', *args] if mapped else ['xdotool', 'key', *args]
-
-
-def _png(output: str) -> bytes:
-    try:
-        data = base64.b64decode(''.join(output.split()), validate=True)
-    except ValueError:  # includes `binascii.Error`
-        data = b''
-    if not data.startswith(_PNG_SIGNATURE):
-        raise WorkspaceError('The screenshot command did not print a base64-encoded PNG.')
-    return data
 
 
 def _drag_moves(path: Sequence[Point]) -> list[str]:
@@ -303,10 +238,30 @@ async def start_x11(
     result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], env={'DISPLAY': DISPLAY}, timeout=30)
     if result.exit_code != 0:
         raise WorkspaceUnavailableError(
-            f'could not start the display in {where()}: it needs Xvfb, xdotool, xmodmap, scrot and setsid '
+            f'Could not start the display in {where()}: it needs Xvfb, xdotool, xmodmap, scrot and setsid '
             f'({(result.stderr or result.stdout).strip()})'
         )
     return X11Computer(backend), STARTED in result.stdout.split()
+
+
+def x11_display(
+    backend: SupportsCommands,
+    size: tuple[int, int],
+    script: str,
+    where: Callable[[], str],
+    *,
+    screen_key: Callable[[], object | None],
+) -> ManagedDisplay:
+    """A backend's display on an X server that `script` starts, as `start_x11` runs it."""
+
+    async def start() -> X11Computer:
+        computer, started = await start_x11(backend, size, script, where)
+        if started:
+            display.started_fresh()
+        return computer
+
+    display = ManagedDisplay(start, screen_key=screen_key)
+    return display
 
 
 class X11Computer:
@@ -355,6 +310,10 @@ class X11Computer:
         if 'No such key name' in result.stderr:
             raise WorkspaceUnsupportedActionError(f'The display cannot press that key: {result.stderr.strip()}')
 
+    async def _capture(self, script: str, *args: str) -> bytes:
+        """Run a capture script with `args` and read the PNG it prints as base64."""
+        return png_from_base64((await self._run(['sh', '-c', script, 'sh', *args])).stdout, 'The screenshot command')
+
     async def display_size(self) -> tuple[int, int]:
         output = (await self._run(['xdotool', 'getdisplaygeometry'])).stdout.split()
         try:
@@ -364,15 +323,15 @@ class X11Computer:
             raise WorkspaceError(f'Unexpected `xdotool getdisplaygeometry` output: {" ".join(output)!r}') from None
 
     async def screenshot(self) -> bytes:
-        return _png((await self._run(['sh', '-c', _CAPTURE, 'sh'])).stdout)
+        return await self._capture(_CAPTURE)
 
     async def scaled_screenshot(self, width: int, height: int) -> bytes:
         """The whole display scaled to `width` by `height`."""
-        return _png((await self._run(['sh', '-c', _CAPTURE_SCALED, 'sh', f'{width}x{height}'])).stdout)
+        return await self._capture(_CAPTURE_SCALED, f'{width}x{height}')
 
     async def zoom(self, region: Region) -> bytes:
         geometry = f'{region.left},{region.top},{region.right - region.left},{region.bottom - region.top}'
-        return _png((await self._run(['sh', '-c', _CAPTURE, 'sh', '-a', geometry])).stdout)
+        return await self._capture(_CAPTURE, '-a', geometry)
 
     async def cursor_position(self) -> Point:
         output = (await self._run(['xdotool', 'getmouselocation', '--shell'])).stdout

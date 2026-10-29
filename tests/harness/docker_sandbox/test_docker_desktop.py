@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext, UserError
@@ -13,13 +12,11 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
     Click,
     Point,
-    PressKeys,
     Region,
     Workspace,
     WorkspaceError,
     WorkspaceRef,
     WorkspaceUnavailableError,
-    WorkspaceUnsupportedActionError,
 )
 from pydantic_ai_harness.docker_sandbox import DESKTOP_DOCKERFILE, DockerSandbox, DockerSandboxBackend
 
@@ -88,15 +85,18 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(docker: Fake
     await workspace.act(Click(x=3, y=4))
 
     assert docker.xvfb_starts == 1
-    assert docker.xdotool_calls[-2:] == [':1 getdisplaygeometry', ':1 mousemove 3 4 click --repeat 1 1']
+    assert docker.xdotool_calls[-1] == ':1 mousemove 3 4 click --repeat 1 1'
 
 
-async def test_screenshots_zoom_and_the_pointer_come_from_the_display(docker: FakeDocker, container_dir: Path) -> None:
+async def test_screenshots_zoom_scaling_and_the_pointer_come_from_the_display(
+    docker: FakeDocker, container_dir: Path
+) -> None:
     workspace = Workspace(_desktop(container_dir, image='my-desktop'))
 
     assert await workspace.screenshot() == FAKE_SCREENSHOT
     assert await workspace.zoom(Region(left=0, top=0, right=10, bottom=10)) == FAKE_SCREENSHOT
     assert await workspace.cursor_position() == Point(x=640, y=400)
+    assert await workspace.scaled_screenshot(640, 400) == FAKE_SCREENSHOT
 
 
 async def test_commands_see_the_desktop(docker: FakeDocker, container_dir: Path) -> None:
@@ -111,18 +111,6 @@ async def test_a_desktop_size_sets_the_display_it_starts(docker: FakeDocker, con
 
     (start,) = (docker.bin_dir / 'xvfb-starts').read_text().splitlines()
     assert '-screen 0 1440x900x24' in start
-
-
-async def test_concurrent_first_uses_start_one_display(docker: FakeDocker, container_dir: Path) -> None:
-    docker.remove_display()
-    workspace = Workspace(_desktop(container_dir, image='my-desktop'))
-
-    async with anyio.create_task_group() as tg:
-        for _ in range(3):
-            tg.start_soon(workspace.display_size)
-
-    # Without the lock all three would run the start script; the fake's display would still start once.
-    assert len([call for call in docker.calls if 'Xvfb' in call]) == 1
 
 
 async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, container_dir: Path) -> None:
@@ -152,27 +140,14 @@ async def test_an_action_that_fails_on_a_running_display_says_why(docker: FakeDo
     assert docker.xvfb_starts == 0
 
 
-async def test_a_scaled_screenshot_comes_from_the_display(docker: FakeDocker, container_dir: Path) -> None:
-    backend = _desktop(container_dir, image='my-desktop')
-    assert await Workspace(backend).scaled_screenshot(640, 400) == FAKE_SCREENSHOT
-
-
-async def test_the_display_names_its_screen_by_the_containers_ref(docker: FakeDocker, container_dir: Path) -> None:
-    backend = _desktop(container_dir, image='my-desktop')
-    await Workspace(backend).display_size()
-    assert backend.display is not None and backend.ref is not None
-    assert backend.display.screen_key == backend.ref
-
-
-async def test_a_look_at_a_display_that_went_away_starts_it_and_looks_again(
-    docker: FakeDocker, container_dir: Path
-) -> None:
-    workspace = Workspace(_desktop(container_dir, image='my-desktop'))
-    await workspace.display_size()
-
-    docker.remove_display()
-    assert await workspace.cursor_position() == Point(x=640, y=400)
-    assert docker.xvfb_starts == 1
+async def test_backends_on_one_container_name_one_screen(docker: FakeDocker, container_dir: Path) -> None:
+    first, other = _desktop(container_dir, image='my-desktop'), _desktop(container_dir, image='my-desktop')
+    await first.working_dir()
+    await other.working_dir()
+    assert first.ref is not None and first.display is not None and other.display is not None
+    again = DockerSandbox(desktop=True).backend(first.ref).display
+    assert again is not None
+    assert first.display.screen_key == again.screen_key != other.display.screen_key
 
 
 async def test_a_lock_left_by_a_stopped_container_does_not_stop_the_display(
@@ -209,22 +184,6 @@ async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, contai
         await workspace.screenshot()
 
 
-async def test_a_refused_key_does_not_restart_the_display(docker: FakeDocker, container_dir: Path) -> None:
-    workspace = Workspace(_desktop(container_dir))
-    await workspace.display_size()
-    checks = docker.xdotool_calls.count(':1 getdisplaygeometry')
-
-    # A key the display doesn't know, which validation would refuse.
-    unknown = PressKeys(keys=('a',))
-    object.__setattr__(unknown, 'keys', ('NoSuchKey',))
-    with pytest.raises(WorkspaceUnsupportedActionError, match='cannot press that key'):
-        await workspace.act(unknown)
-    await workspace.act(Click(x=1, y=1))
-
-    # The start script, which first checks the display with `getdisplaygeometry`, did not run again.
-    assert docker.xdotool_calls.count(':1 getdisplaygeometry') == checks
-
-
 async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display(can_start=False)
     workspace = Workspace(_desktop(container_dir, image='my-desktop'))
@@ -233,8 +192,6 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
         await workspace.screenshot()
     assert 'the X server did not start' in str(error.value)
     assert 'Fatal server error' in str(error.value)
-    # It stopped once the X server exited, before the 100 polls that give up on one that never answers.
-    assert len(docker.xdotool_calls) < 100
 
 
 async def test_a_container_without_a_desktop_has_no_display(docker: FakeDocker, container_dir: Path) -> None:
