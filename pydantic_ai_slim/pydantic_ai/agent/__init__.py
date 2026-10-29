@@ -2230,17 +2230,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # process that has shown one has nothing left to decide. (`run_stream_events()` runs the agent in
         # a task of its own, so it decides in its caller's stack before instrumentation is known; see
         # `AgentRunEvents._ensure_started`.)
-        display_banner = (
-            None
-            if instrumentation_settings is None
+        started_by_installed_package = (
+            instrumentation_settings is None
             and _display.banner_pending()
             and (
                 binding.started_by_installed_package
                 if binding is not None
                 else _display.started_by_installed_package(inspect.currentframe())
             )
-            else display_agent_banner
         )
+        display_banner = None if started_by_installed_package else display_agent_banner
 
         model_resources = _RunModelResources(
             self._entered_model_ids.copy(),

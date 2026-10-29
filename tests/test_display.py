@@ -856,22 +856,29 @@ def test_banner_is_shown_by_agent_run(monkeypatch: pytest.MonkeyPatch, stderr: T
     assert 'agent: support_agent • model: test:test • tools: 0 • capabilities: 0' in stderr.getvalue()
 
 
-def _package_runner(filename: str, *, run_async: bool = False) -> Callable[..., Any]:
-    """A function that runs an agent, compiled as if it lived at `filename`, like an installed library's code."""
-    source = (
-        'async def run(agent):\n    return await agent.run("hello")\n'
-        if run_async
-        else 'def run(agent):\n    return agent.run_sync("hello")\n'
-    )
-    namespace: dict[str, Any] = {'__name__': 'some_library.runner'}
+_LIBRARY_FILE = '/venv/lib/python3.13/site-packages/some_library/runner.py'
+
+_RUN_SYNC_SOURCE = 'def run(agent):\n    return agent.run_sync("hello")\n'
+_RUN_SOURCE = 'async def run(agent):\n    return await agent.run("hello")\n'
+_STREAM_EVENTS_SOURCE = (
+    'async def run(agent):\n'
+    '    async with agent.run_stream_events("hello") as events:\n'
+    '        async for _ in events:\n'
+    '            pass\n'
+)
+
+
+def _compiled_as(source: str, filename: str, module: str = 'some_library.runner') -> dict[str, Any]:
+    """The namespace of `source` compiled as if it were `module` living at `filename`, like an installed package."""
+    namespace: dict[str, Any] = {'__name__': module}
     exec(compile(source, filename, 'exec'), namespace)
-    return namespace['run']
+    return namespace
 
 
 @pytest.mark.parametrize(
     'filename',
     [
-        '/venv/lib/python3.13/site-packages/some_library/runner.py',
+        _LIBRARY_FILE,
         '/usr/lib/python3/dist-packages/some_library/runner.py',
         # A system Python keeps `site-packages` inside its standard library directory.
         os.path.join(sysconfig.get_paths()['stdlib'], 'site-packages', 'some_library', 'runner.py'),
@@ -884,7 +891,7 @@ def test_banner_is_not_shown_for_a_run_an_installed_package_started(
     monkeypatch.setattr(sys, 'stderr', stderr)
     agent = Agent(TestModel(), name='support_agent')
 
-    _package_runner(filename)(agent)
+    _compiled_as(_RUN_SYNC_SOURCE, filename)['run'](agent)
     assert stderr.getvalue() == ''
 
     # The claim is left for the user's own agent.
@@ -892,36 +899,21 @@ def test_banner_is_not_shown_for_a_run_an_installed_package_started(
     assert 'agent: support_agent' in stderr.getvalue()
 
 
-async def test_banner_is_not_shown_for_an_async_run_an_installed_package_started(
-    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
-):
-    """An installed package's coroutine awaiting `run()` is on the same stack as the run, like a sync caller."""
-    monkeypatch.setattr(sys, 'stderr', stderr)
-    runner = _package_runner('/venv/lib/python3.13/site-packages/some_library/runner.py', run_async=True)
-
-    await runner(Agent(TestModel()))
-
-    assert stderr.getvalue() == ''
-    assert _display.banner_pending() is True
-
-
-_STREAM_EVENTS_SOURCE = (
-    'async def run(agent):\n'
-    '    async with agent.run_stream_events("hello") as events:\n'
-    '        async for _ in events:\n'
-    '            pass\n'
+@pytest.mark.parametrize(
+    'source',
+    [
+        pytest.param(_RUN_SOURCE, id='run'),
+        # `run_stream_events()` runs the agent in its own task, so the caller's stack is read before it starts.
+        pytest.param(_STREAM_EVENTS_SOURCE, id='run_stream_events'),
+    ],
 )
-
-
-async def test_banner_is_not_shown_for_run_stream_events_an_installed_package_iterates(
-    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
+async def test_banner_is_not_shown_for_an_async_run_an_installed_package_started(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream, source: str
 ):
-    """`run_stream_events()` runs the agent in its own task, so the caller's stack is read before it starts."""
+    """An installed package's coroutine starting a run is on the same stack as the run, like a sync caller."""
     monkeypatch.setattr(sys, 'stderr', stderr)
-    namespace: dict[str, Any] = {'__name__': 'some_library.runner'}
-    exec(compile(_STREAM_EVENTS_SOURCE, '/venv/lib/python3.13/site-packages/some_library/runner.py', 'exec'), namespace)
 
-    await namespace['run'](Agent(TestModel()))
+    await _compiled_as(source, _LIBRARY_FILE)['run'](Agent(TestModel()))
 
     assert stderr.getvalue() == ''
     assert _display.banner_pending() is True
@@ -932,11 +924,12 @@ async def test_banner_is_shown_for_a_run_a_ui_adapter_streams_to_an_installed_se
 ):
     """The web framework pulling a UI adapter's stream is installed, but the app serving it is the user's."""
     monkeypatch.setattr(sys, 'stderr', stderr)
-    adapter: dict[str, Any] = {'__name__': 'pydantic_ai.ui.some_adapter'}
-    exec(compile(_STREAM_EVENTS_SOURCE, 'pydantic_ai/ui/some_adapter.py', 'exec'), adapter)
-    server: dict[str, Any] = {'__name__': 'some_server.responses'}
-    source = 'async def respond(stream, agent):\n    await stream(agent)\n'
-    exec(compile(source, '/venv/lib/python3.13/site-packages/some_server/responses.py', 'exec'), server)
+    adapter = _compiled_as(_STREAM_EVENTS_SOURCE, 'pydantic_ai/ui/some_adapter.py', 'pydantic_ai.ui.some_adapter')
+    server = _compiled_as(
+        'async def respond(stream, agent):\n    await stream(agent)\n',
+        '/venv/lib/python3.13/site-packages/some_server/responses.py',
+        'some_server.responses',
+    )
 
     await server['respond'](adapter['run'], Agent(TestModel(), name='support_agent'))
 
@@ -948,11 +941,13 @@ def test_banner_is_shown_for_a_run_whose_starter_is_past_an_event_loop(
 ):
     """Below a loop the frames are whoever drives it, like `uvicorn` serving the user's app, so the banner stays."""
     monkeypatch.setattr(sys, 'stderr', stderr)
-    namespace: dict[str, Any] = {'__name__': 'some_server.loop'}
-    source = 'import asyncio\ndef serve(coroutine):\n    return asyncio.run(coroutine)\n'
-    exec(compile(source, '/venv/lib/python3.13/site-packages/some_server/loop.py', 'exec'), namespace)
+    server = _compiled_as(
+        'import asyncio\ndef serve(coroutine):\n    return asyncio.run(coroutine)\n',
+        '/venv/lib/python3.13/site-packages/some_server/loop.py',
+        'some_server.loop',
+    )
 
-    namespace['serve'](Agent(TestModel(), name='support_agent').run('hello'))
+    server['serve'](Agent(TestModel(), name='support_agent').run('hello'))
 
     assert 'agent: support_agent' in stderr.getvalue()
 
