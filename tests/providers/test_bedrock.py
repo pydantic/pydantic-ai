@@ -798,6 +798,7 @@ def test_strict_true_strips_unsupported_regex_patterns():
         backreference: Annotated[str, Field(pattern=r'^(a)\1$')]
         named_backreference: Annotated[str, Field(pattern=r'^(?P<x>a)(?P=x)$')]
         octal: Annotated[str, Field(pattern=r'^\123+$')]
+        escaped_zero: Annotated[str, Field(pattern=r'^a\0?$')]
         escaped: Annotated[str, Field(pattern=r'^\(?=\\1$')]
         character_class: Annotated[str, Field(pattern=r'^[A-Za-z(?=]+$')]
         plain: Annotated[str, Field(pattern=r'^[A-Z]{3}$')]
@@ -816,6 +817,7 @@ def test_strict_true_strips_unsupported_regex_patterns():
                 'backreference': {'type': 'string', 'description': 'pattern=^(a)\\1$'},
                 'named_backreference': {'type': 'string', 'description': 'pattern=^(?P<x>a)(?P=x)$'},
                 'octal': {'type': 'string', 'description': 'pattern=^\\123+$'},
+                'escaped_zero': {'type': 'string', 'description': 'pattern=^a\\0?$'},
                 'escaped': {'pattern': '^\\(?=\\\\1$', 'type': 'string'},
                 'character_class': {'pattern': '^[A-Za-z(?=]+$', 'type': 'string'},
                 'plain': {'pattern': '^[A-Z]{3}$', 'type': 'string'},
@@ -828,6 +830,7 @@ def test_strict_true_strips_unsupported_regex_patterns():
                 'backreference',
                 'named_backreference',
                 'octal',
+                'escaped_zero',
                 'escaped',
                 'character_class',
                 'plain',

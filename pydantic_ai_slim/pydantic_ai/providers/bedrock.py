@@ -76,7 +76,7 @@ def _regex_contains_unsupported_syntax(pattern: str) -> bool:
     escaped = in_class = False
     for i, char in enumerate(pattern):
         if escaped:
-            if char in '123456789':
+            if char in '0123456789':
                 return True
             escaped = False
         elif char == '\\':
