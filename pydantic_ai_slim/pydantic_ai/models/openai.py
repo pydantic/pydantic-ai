@@ -46,6 +46,7 @@ from .._utils import (
     number_to_datetime,
 )
 from ..capabilities.abstract import AbstractCapability
+from ..computer_use import COMPUTER_KIND, SAFETY_CHECKS, ComputerResult, computer_tool_name
 from ..exceptions import (
     ModelConnectionError,
     ModelRequestRejectedError,
@@ -236,6 +237,7 @@ try:
     )
     from openai.types.responses.tool_choice_allowed_param import ToolChoiceAllowedParam
     from openai.types.responses.tool_choice_function_param import ToolChoiceFunctionParam
+    from openai.types.responses.tool_choice_types_param import ToolChoiceTypesParam
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 
@@ -3283,6 +3285,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         instructions_override: str | None = None,
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
+        # Before trimming, as in `_build_responses_request_params`: an output acknowledges its call's checks.
+        calls = _tool_calls_by_id(messages)
         previous_response_id, messages = self._resolve_previous_response_id(
             model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
         )
@@ -3303,6 +3307,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
             previous_response_id=previous_response_id,
             standing_prompt_retained=False,
+            calls=calls,
         )
         if instructions_override is not None:
             instructions = instructions_override
@@ -3590,6 +3595,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and item.id in tool_search_output_call_ids
         }
         paired_tool_search_output_ids = {item.id for item in tool_search_outputs.values()}
+        call_id_scope = (
+            response.id if self.profile.get('openai_responses_tool_call_ids_are_response_scoped', False) else None
+        )
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 items.extend(_map_reasoning_item(item, self.system))
@@ -3632,12 +3640,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     ToolCallPart(
                         item.name,
                         item.arguments,
-                        tool_call_id=_response_tool_call_id(
-                            item.call_id,
-                            response.id
-                            if self.profile.get('openai_responses_tool_call_ids_are_response_scoped', False)
-                            else None,
-                        ),
+                        tool_call_id=_response_tool_call_id(item.call_id, call_id_scope),
                         id=item.id,
                         provider_name=self.system,
                         provider_details=fn_provider_details,
@@ -3675,9 +3678,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 items.append(return_part)
             elif isinstance(item, ResponseCompactionItem):
                 items.append(_map_compaction_item(item, self.system))
-            elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
-                # Pydantic AI doesn't yet support the ComputerUse built-in tool
-                pass
+            elif isinstance(item, responses.ResponseComputerToolCall):
+                if computer_name := computer_tool_name(model_request_parameters):
+                    call_id = _response_tool_call_id(item.call_id, call_id_scope)
+                    items.append(_map_computer_call(item, computer_name, call_id, self.system))
             elif isinstance(item, responses.ResponseCustomToolCall):  # pragma: no cover
                 # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
                 pass
@@ -3939,6 +3943,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if not tools and not history_declared_tool_names:
             tool_choice = None
 
+        # Collected before the history is trimmed to what the server doesn't hold: a call's output acknowledges its
+        # checks even when the call itself stays in the stored response or conversation, as OpenAI's guide shows.
+        calls = _tool_calls_by_id(messages)
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
         if not sends_effort_changes:
             messages = _without_model_settings_deltas(messages)
@@ -3948,6 +3955,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_settings,
             wire_request_parameters,
             previous_response_id=previous_response_id,
+            calls=calls,
         )
         reasoning = self._translate_thinking(model_settings, effort_request_parameters)
 
@@ -4380,7 +4388,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         resolved_tool_choice: ResolvedToolChoice,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[list[responses.FunctionToolParam], ResponsesToolChoice | None]:
+    ) -> tuple[list[responses.FunctionToolParam | responses.ComputerToolParam], ResponsesToolChoice | None]:
         """Determine which tools to send and the API tool_choice value.
 
         Returns:
@@ -4388,6 +4396,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             Note: builtin tools are handled separately and should be added to this list.
         """
         openai_profile = self.profile
+        # The `computer` tool is sent as OpenAI's native computer tool, whose calls `_map_computer_call` maps back.
+        computer_name = self._native_computer_name(model_request_parameters)
 
         tool_choice: ResponsesToolChoice | None
         if resolved_tool_choice in ('auto', 'none'):
@@ -4409,7 +4419,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 thinking=self._request_thinks(model_settings, model_request_parameters),
             )
             if tool_choice_mode == 'required' and len(tool_names) == 1 and supports:
-                tool_choice = ToolChoiceFunctionParam(type='function', name=next(iter(tool_names)))
+                name = next(iter(tool_names))
+                tool_choice = (
+                    ToolChoiceTypesParam(type='computer')
+                    if name == computer_name
+                    else ToolChoiceFunctionParam(type='function', name=name)
+                )
             else:
                 # `allowed_tools` filters via the API rather than the tools list,
                 # so caching is preserved. Used for the multi-tool case and as the
@@ -4424,7 +4439,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     # `allowed_tools`; for earlier models `_build_responses_request_params` redeclares it
                     # unless the request uses server-side state.
                     tools=[
-                        {'type': 'function', 'name': n} for n in model_request_parameters.tool_defs if n in tool_names
+                        {'type': 'computer'} if n == computer_name else {'type': 'function', 'name': n}
+                        for n in model_request_parameters.tool_defs
+                        if n in tool_names
                     ],
                 )
         else:
@@ -4437,12 +4454,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # function tool via `ModelRequestParameters.function_tools` (unaffected by this
         # filtering), so `_search_tools` continues to run normally.
         client_tool_search = _has_tool_search(model_request_parameters)
-        tools: list[responses.FunctionToolParam] = [
-            self._map_tool_definition(t, visibility=model_request_parameters.visibility_of(t.name))
+        tools: list[responses.FunctionToolParam | responses.ComputerToolParam] = [
+            responses.ComputerToolParam(type='computer')
+            if t.name == computer_name
+            else self._map_tool_definition(t, visibility=model_request_parameters.visibility_of(t.name))
             for t in model_request_parameters.declared_tool_defs.values()
             if not (client_tool_search and t.tool_kind == 'tool-search')
         ]
         return tools, tool_choice
+
+    def _native_computer_name(self, model_request_parameters: ModelRequestParameters) -> str | None:
+        """The `computer` tool's name when this model takes it as OpenAI's native computer tool."""
+        if not self.profile.get('openai_supports_computer_tool', False):
+            return None
+        return computer_tool_name(model_request_parameters)
 
     def _get_native_tools(  # noqa: C901
         self, model_request_parameters: ModelRequestParameters
@@ -4715,6 +4740,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         standing_prompt_retained: bool = True,
         previous_response_id: str | None = None,
+        calls: dict[str, ToolCallPart] | None = None,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -4750,6 +4776,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # parts may name the same revealed tool (duplicated deltas from a UI round-trip, a delta
         # plus a replayed search return), and one declaration per request is enough.
         rendered_additional_tools: set[str] = set()
+        computer_is_native = self._native_computer_name(model_request_parameters) is not None
+        # Computer calls replayed as `computer_call` items, whose results must be `computer_call_output`s.
+        computer_call_ids: set[str] = set()
+        replayed_call_ids: set[str] = set()
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message_index, message in enumerate(messages):
             if isinstance(message, ModelRequest):
@@ -4806,7 +4836,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
                         call_id = _provider_response_tool_call_id(call_id, response_id)
-                        if call_id in client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
+                        if call_id in computer_call_ids or (
+                            # A call not replayed here is in the stored response (`previous_response_id` or a
+                            # conversation), where this model made it as a `computer_call`.
+                            computer_is_native
+                            and part.tool_kind == COMPUTER_KIND.id
+                            and call_id not in replayed_call_ids
+                        ):
+                            openai_messages.extend(
+                                _map_computer_call_output(part, call_id, (calls or {}).get(part.tool_call_id))
+                            )
+                        elif call_id in client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
                             # Replay the local `search_tools` result as a
                             # `tool_search_output` so the provider rehydrates the
                             # discovered-tool state tied to the `tool_search_call`.
@@ -4926,8 +4966,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             else None,
                         )
                         id = id or item.id
+                        replayed_call_ids.add(call_id)
 
-                        if client_tool_search_active and isinstance(item, ToolSearchCallPart):
+                        if (
+                            computer_is_native
+                            and item.provider_name == self.system
+                            and item.provider_details
+                            and (computer_call := item.provider_details.get('computer_call'))
+                        ):
+                            # Sent back as it came, so the API can pair its output and safety checks.
+                            computer_call_ids.add(call_id)
+                            replayed_call = {k: v for k, v in computer_call.items() if k != 'id' or should_send_item_id}
+                            openai_messages.append(cast(responses.ResponseComputerToolCallParam, replayed_call))
+                        elif client_tool_search_active and isinstance(item, ToolSearchCallPart):
                             # Replay the local `search_tools` call as a `tool_search_call`
                             # with `execution='client'` so OpenAI re-attaches it to the
                             # builtin and unlocks the discovered tools' schemas. Fires for
@@ -4955,7 +5006,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             )
                             if profile.get('openai_responses_requires_function_call_status_none', False):
                                 param['status'] = None  # type: ignore[reportGeneralTypeIssues]
-                            if id and should_send_item_id:  # pragma: no branch
+                            # A native computer call's `cu_` id is refused on a function call.
+                            if id and should_send_item_id and 'computer_call' not in (item.provider_details or {}):
                                 param['id'] = id
                             # The Responses API attaches a `namespace` to function calls
                             # for discovered deferred tools (tool-search flow). Round-trip
@@ -6060,7 +6112,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
                     if isinstance(chunk.item, responses.ResponseFunctionToolCall):
                         yield handle_function_call_part(chunk.item)
-                    elif isinstance(chunk.item, responses.ResponseReasoningItem):
+                    elif isinstance(chunk.item, responses.ResponseReasoningItem | responses.ResponseComputerToolCall):
+                        # A computer call's actions arrive whole in its done event.
                         pass
                     elif isinstance(chunk.item, responses.ResponseOutputMessage):
                         if chunk.item.phase is not None:
@@ -6153,7 +6206,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         )
 
                 elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
-                    if isinstance(chunk.item, responses.ResponseFunctionToolCall) and (item_id := chunk.item.id):
+                    if isinstance(chunk.item, responses.ResponseComputerToolCall) and (
+                        computer_name := computer_tool_name(self.model_request_parameters)
+                    ):
+                        call_id = _response_tool_call_id(
+                            chunk.item.call_id,
+                            self.provider_response_id if self._tool_call_ids_are_response_scoped else None,
+                        )
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=chunk.item.id,
+                            part=_map_computer_call(chunk.item, computer_name, call_id, self.provider_name),
+                        )
+                    elif isinstance(chunk.item, responses.ResponseFunctionToolCall) and (item_id := chunk.item.id):
                         # The Codex backend can send a call's arguments only in the done events, without deltas.
                         if not isinstance(self._parts_manager.get_part_by_vendor_id(item_id), ToolCallPart):
                             yield handle_function_call_part(chunk.item)
@@ -7596,3 +7660,182 @@ def _map_mcp_call(
             provider_name=provider_name,
         ),
     )
+
+
+_SCROLL_PIXELS_PER_CLICK = 100
+"""OpenAI scrolls by pixels and the `computer` tool by wheel clicks; one click scrolls about this far."""
+
+_BLANK_SCREENSHOT = (
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGP4DwABAQEAsTj2FAAAAABJRU5ErkJggg=='
+)
+"""A 1x1 PNG for a `computer_call_output` with no screenshot to send, since the API requires one."""
+
+
+_COMPUTER_ACTION_FIELDS: dict[str, frozenset[str]] = {
+    'click': frozenset({'type', 'x', 'y', 'button', 'keys'}),
+    'double_click': frozenset({'type', 'x', 'y', 'keys'}),
+    'drag': frozenset({'type', 'path', 'keys'}),
+    'move': frozenset({'type', 'x', 'y', 'keys'}),
+    'scroll': frozenset({'type', 'x', 'y', 'scroll_x', 'scroll_y', 'keys'}),
+    'keypress': frozenset({'type', 'keys'}),
+    'type': frozenset({'type', 'text'}),
+    'wait': frozenset({'type'}),
+    'screenshot': frozenset({'type'}),
+}
+"""The fields of each OpenAI computer action that map onto the `computer` tool."""
+
+
+def _unsupported_computer_fields(action: dict[str, Any]) -> list[str] | None:
+    """The fields of an OpenAI action that don't map onto the `computer` tool, or `None` when every one does."""
+    fields = _COMPUTER_ACTION_FIELDS.get(action.get('type', ''))
+    if fields is None:
+        return sorted(action.keys() - {'type'})
+    unsupported = action.keys() - fields
+    path: list[Any] = action.get('path') or []
+    if any(not isinstance(point, dict) or cast(dict[str, Any], point).keys() != {'x', 'y'} for point in path):
+        unsupported.add('path')
+    return sorted(unsupported) if unsupported else None
+
+
+def _map_computer_action(action: dict[str, Any]) -> list[dict[str, Any]]:
+    """One OpenAI computer action as `computer` tool actions, mapped field by field.
+
+    An action type or field that doesn't map fails validation, so the model retries; only the names of what didn't
+    map are kept, so the call never runs with part of what the model asked for.
+    """
+    if (unsupported := _unsupported_computer_fields(action)) is not None:
+        # Under the tool's own type, so the retry names the fields rather than refusing the type.
+        kind = action.get('type')
+        return [{'type': 'click' if kind == 'double_click' else kind, 'unsupported_fields': unsupported}]
+    modifiers: list[str] = action.get('keys') or []
+    position = {'x': action.get('x'), 'y': action.get('y')}
+    match action['type']:
+        case 'click':
+            button = action['button']
+            return [
+                {
+                    'type': 'click',
+                    **position,
+                    'button': 'middle' if button == 'wheel' else button,
+                    'modifiers': modifiers,
+                }
+            ]
+        case 'double_click':
+            return [{'type': 'click', **position, 'count': 2, 'modifiers': modifiers}]
+        case 'drag':
+            path = [{'x': point['x'], 'y': point['y']} for point in action['path']]
+            return [{'type': 'drag', 'path': path, 'modifiers': modifiers}]
+        case 'move':
+            return [{'type': 'move', **position, 'modifiers': modifiers}]
+        case 'scroll':
+            # OpenAI scrolls by pixels on both axes at once; the tool scrolls one way at a time, in wheel clicks.
+            scrolls: list[dict[str, Any]] = []
+            for pixels, direction in (
+                (action['scroll_x'], 'right' if action['scroll_x'] > 0 else 'left'),
+                (action['scroll_y'], 'down' if action['scroll_y'] > 0 else 'up'),
+            ):
+                if pixels:
+                    amount = min(50, max(1, round(abs(pixels) / _SCROLL_PIXELS_PER_CLICK)))
+                    scrolls.append(
+                        {'type': 'scroll', **position, 'direction': direction, 'amount': amount, 'modifiers': modifiers}
+                    )
+            # A scroll by nothing only moves the pointer there.
+            return scrolls or [{'type': 'move', **position, 'modifiers': modifiers}]
+        case 'keypress':
+            return [{'type': 'keypress', 'keys': action['keys']}]
+        case 'type':
+            return [{'type': 'type', 'text': action['text']}]
+        case 'wait':
+            return [{'type': 'wait'}]
+        case _:  # `screenshot`, the only type left
+            return [{'type': 'screenshot'}]
+
+
+def _map_computer_call(
+    item: responses.ResponseComputerToolCall, tool_name: str, tool_call_id: str, provider_name: str
+) -> ToolCallPart:
+    """A `computer_call` as a call of the `computer` tool, keeping the item to send back as it was."""
+    actions = item.actions if item.actions is not None else ([item.action] if item.action else [])
+    provider_details: dict[str, Any] = {'computer_call': item.model_dump(mode='json', exclude_none=True)}
+    if item.pending_safety_checks:
+        provider_details[SAFETY_CHECKS] = [
+            check.model_dump(mode='json', exclude_none=True) for check in item.pending_safety_checks
+        ]
+    # Cut off mid-generation: like a truncated function call, its arguments don't parse, so none of it runs.
+    args: dict[str, Any] | str = (
+        '{"actions": ['
+        if item.status == 'incomplete'
+        else {
+            'actions': [
+                mapped
+                for action in actions
+                for mapped in _map_computer_action(action.model_dump(mode='json', exclude_none=True))
+            ]
+            # A call with no actions only asks to look.
+            or [{'type': 'screenshot'}]
+        }
+    )
+    return ToolCallPart(
+        tool_name,
+        args,
+        tool_call_id=tool_call_id,
+        id=item.id,
+        provider_name=provider_name,
+        provider_details=provider_details,
+    )
+
+
+def _tool_calls_by_id(messages: list[ModelMessage]) -> dict[str, ToolCallPart]:
+    """Each tool call in the history, by tool call ID, so a `computer` output can read its call."""
+    return {
+        part.tool_call_id: part
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    }
+
+
+def _needs_summary(metadata: Any) -> bool:
+    """Whether a `computer` result needs its text beside the screenshot: the image alone would say the call ran.
+
+    A result without metadata, such as one a UI rebuilt, may describe a failure. A call that failed or was changed
+    before it ran says so in its text.
+    """
+    if not isinstance(metadata, dict):
+        return True
+    result = cast(ComputerResult, metadata)
+    return 'error' in result or bool(result.get('changed'))
+
+
+def _map_computer_call_output(
+    part: ToolReturnPart, call_id: str, call: ToolCallPart | None
+) -> list[responses.ResponseInputItemParam]:
+    """A `computer` result as a `computer_call_output`, followed by a user message when it needs more than an image.
+
+    The API needs a screenshot in every output, so a result without one sends a blank image instead. The call's
+    safety checks are acknowledged only when it ran, which means it was approved.
+    """
+    # The last image is the screen after the call.
+    image = next((file for file in reversed(part.files) if isinstance(file, BinaryImage)), None)
+    output: responses.response_input_param.ComputerCallOutput = {
+        'type': 'computer_call_output',
+        'call_id': call_id,
+        'output': {
+            'type': 'computer_screenshot',
+            'image_url': image.data_uri if image else _BLANK_SCREENSHOT,
+            # `original` keeps every pixel the model clicks on (OpenAI's advice for computer use); `auto` may
+            # downscale. The SDK's types don't list `detail` yet, though the API accepts it.
+            'detail': 'original',  # pyright: ignore[reportAssignmentType]
+        },
+    }
+    details = (call.provider_details if call else None) or {}
+    if part.outcome == 'success' and (safety_checks := details.get(SAFETY_CHECKS)):
+        output['acknowledged_safety_checks'] = safety_checks
+    items: list[responses.ResponseInputItemParam] = [output]
+    if image is None or part.outcome != 'success' or _needs_summary(part.metadata):
+        # The output can only carry an image: say what didn't run, or why the image is blank.
+        texts = [item for item in part.content_items() if isinstance(item, str)]
+        note = ' '.join(texts) if texts else part.model_response_str(wrap_if_error=False)
+        items.append(responses.EasyInputMessageParam(role='user', content=note))
+    return items

@@ -351,27 +351,12 @@ The Responses API has native tools that you can use instead of building your own
 
 Web search, Code interpreter, Image generation, and File search are natively supported through the [Native tools](../native-tools.md) feature.
 
-Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_native_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. It doesn't currently generate [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] or [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this native tool.
-
-```python {title="computer_use_tool.py" test="skip"}
-from openai.types.responses import ComputerToolParam
-
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-
-model_settings = OpenAIResponsesModelSettings(
-    openai_native_tools=[
-        ComputerToolParam(
-            type='computer',
-        )
-    ],
-)
-model = OpenAIResponsesModel('{{ openai:medium.name }}')
-agent = Agent(model=model, model_settings=model_settings)
-
-result = agent.run_sync('Open a new browser tab')
-print(result.output)
-```
+Computer use is provided by the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability: on models
+that accept OpenAI's `computer` tool (GPT-5.4 and later, except GPT-5.4 nano), its `computer` tool is sent as that
+native tool through `OpenAIResponsesModel` on OpenAI, Azure OpenAI and Bedrock Mantle. Other models, or the same
+models through `OpenAIChatModel` or other providers, get it as a function tool. On Azure, set
+`openai_supports_computer_tool` in the [profile](compatible-apis.md#model-profile) of a deployment named differently
+from its model.
 
 #### Referencing earlier responses
 

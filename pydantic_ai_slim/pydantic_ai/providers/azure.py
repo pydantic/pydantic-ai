@@ -16,7 +16,12 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    OpenAIModelProfile,
+    _is_computer_use_model,  # pyright: ignore[reportPrivateUsage]
+    openai_model_profile,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.realtime import RealtimeModelProfile
@@ -152,6 +157,14 @@ class AzureProvider(_OpenAISDKProvider):
             # single honest boundary to record. Users pass `retention=` to `prompt_cache_outlook`.
             # https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/prompt-caching
             base = openai_model_profile(model_name)
+            # Azure documents the native `computer` tool on gpt-5.4 (limited access), the models OpenAI serves it on,
+            # which are the ones with tool search. Not verified live here. A deployment named other than its model
+            # sets `openai_supports_computer_tool` in its profile.
+            # https://learn.microsoft.com/en-us/azure/foundry-classic/openai/how-to/computer-use
+            base = merge_profile(
+                base,
+                OpenAIModelProfile(openai_supports_computer_tool=_is_computer_use_model(base)),
+            )
 
         # Azure Chat Completions API doesn't support document input.
         base = merge_profile(base, OpenAIModelProfile(openai_chat_supports_document_input=False))

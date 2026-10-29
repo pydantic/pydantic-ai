@@ -42,6 +42,8 @@ def openai_chatgpt_model_profile(model_name: str) -> ModelProfile:
             supported_cache_retentions=(),
             default_cache_retention=None,
             supported_native_tools=frozenset({WebSearchTool}),
+            # OpenAI lists native computer use among the features plan usage doesn't support.
+            openai_supports_computer_tool=False,
             tool_deferral_mode=None,
         ),
     )

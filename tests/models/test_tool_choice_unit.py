@@ -1215,7 +1215,7 @@ async def test_openai_responses_fallback_single_tool_uses_allowed_tools(allow_mo
     assert tool_choice['type'] == 'allowed_tools'
     assert tool_choice['mode'] == 'auto'
     assert tool_choice['tools'] == [{'type': 'function', 'name': 'tool_a'}]
-    assert {t['name'] for t in tools} == {'tool_a', 'tool_b'}
+    assert {t['name'] for t in tools if t['type'] == 'function'} == {'tool_a', 'tool_b'}
 
 
 def thinking_conditional_profile() -> OpenAIModelProfile:

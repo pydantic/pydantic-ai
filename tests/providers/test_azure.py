@@ -218,6 +218,15 @@ def test_azure_provider_model_profile(mocker: MockerFixture):
     assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
+@pytest.mark.parametrize('model_name,takes_it', [('gpt-5.5', True), ('gpt-5.2', False), ('o4-mini', False)])
+def test_azure_sends_the_native_computer_tool_to_the_models_openai_serves_it_to(model_name: str, takes_it: bool):
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/', api_version='2023-03-15-preview', api_key='1234567890'
+    )
+    profile = provider.model_profile(model_name)
+    assert profile is not None and profile.get('openai_supports_computer_tool') is takes_it
+
+
 async def test_azure_document_input_not_supported(allow_model_requests: None):
     provider = AzureProvider(
         azure_endpoint='https://project-id.openai.azure.com/',

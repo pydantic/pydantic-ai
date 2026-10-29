@@ -1,0 +1,290 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "299"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.5
+        stream: true
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: >-
+            Take a screenshot, then click at x=100 y=200, type "hello", and reply "done".
+            Do nothing else.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - type: computer
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "237"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0df2f108001ee1ef006adb928a36fc87d28f3c679b9fb74e30","object":"response","created_at":1792774794,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0df2f108001ee1ef006adb928a36fc87d28f3c679b9fb74e30","object":"response","created_at":1792774794,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"rs_0df2f108001ee1ef006adb928ade6487d29f50324e31feb363","type":"reasoning","content":[],"encrypted_content":"gAAAAABq25KKXIKo4Xk1vZ43WwsA0kbHhs1deTywL4VwBWUfhxTKRcz81dFM2I6cUs8mITfgXi9kOiSv7gPdpHAUVRvyH9i0A7cwwowhdjqrA-9YSaDqNRrh2wAvN551Tw4WZZcjoZyoeL-aqySxvW6fkxk15os7HXvqAh1nt1fXXx9JW0V50bpPs_pB9UBeCsQWmCN7ddasdz-a-QUzWTjDSKIdLL8xu8Ag1sGGgYeUezsmje3O4LT_56z0nnF5vyNUbUd9PO4eq3YinpTFDGRPmyX_63vGEP44UvOp_JZMIZTfGJVbEpNoHmDRBf48KOQDw31HDQad8Kfcs0xRYPz7ldvcuTQczuf4UDLRA_3tp3gLoX1XQqrqn7ScD4j_FNeK0ks4CAiPR0EHxSwnWGTmdBw48HF9pvobc4eKO7AzpKtkbV4t44VkUEtA7TxLcksDdyrGqvI5wlyNkA-kfF7jcUIupSMe3kmMHYlI9ZV_0OIHxS9LQITB51hDLDtUQvxaLLvboNR_FWzFlisYX6Qnf1LULaccdbvHr1uvQxID6UiGd-Y7YyTAN9eqcq9OBNh1Ym2wGxaLruBJSuMowm4FWYanObixvsBI5qUlLSLvov2orebPNnKGaDUMVY9nUPtFCwPIMmdcPltq1EH-9GZ9NhEVP-bDgon0OBUb-gLRHpzT53bOyRFGzu9JhZ-ZEfUHtRUPa2DoW_WzWcixRqb5A4DszssztP3Dbo9Y2Rk7sjSEZZCoydN_s-FA5RURGCGkqOYXgAoQfcx0IEVmnABg0ipz8TUz9hBXIp6sXybe1cDdCz-3dmhvuwgUz4co_jNp6bOBxhLerfmpUg4SHdUXAFYKxmXJB0nFy758ZrzxvcEPzD41AcjrL6ecijktMykPzrlR7aCRQEdt5nEEk6PlVXwlBbNoPYR-JGh5ycVfuS-byAZ2gzea3TGiuYOcUVmrvTD6WkYTBlm0cPxkQGa2MedCJw17tY7K6IYBgJK0lQJxn7WaQ82ehla4fSf82ySqMN3cMUr49HjDdwDZxDSHgILZf4wCDD1RoSWPfezq5DAFleoz1BUU080S_B-AZ9KGfT9R24AnCOmSvdvPlpSfFiBmK2wu7KXgJz65gHQf8UQwDHCY_Wo42gNfrHDKLj9uX2xIQqagpXfBcXqtrF2jlk-W32pM0jjqYLsfKjWUkHFQsQ2XlmV3Bbob0AujL3ceSzYZXL3Q","summary":[]},"output_index":0,"sequence_number":2}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"rs_0df2f108001ee1ef006adb928ade6487d29f50324e31feb363","type":"reasoning","content":[],"encrypted_content":"gAAAAABq25KL139K-mrqhbwdhGBSD_Jt-qUdC4V9Z5Y_1VBXqg7AJQwva3zGvVv1CCWvg94V26tY_Jqr7z6n_BPFG7o31gbUBzGP3CDqG6FijUcNGK0Z5xAD6LaybvoGs9ODezTqKHZHAjOWqOiwpBlKfrZgyJ0bnv1C8w__jG91Saht6Rr4QsDSKxo8ugtXY0saZG4dp2rFceVHQaZg1h4f9fcdUOzMLAC4z4h0iX0nM02bVC-R72zd2urcKaAB9fLX3-HFiBkYEW5uCmBBWmZfvz5t4D0mUDMMZO_c7YdH6ZiA2UyeHkbdI4MtF4Bfy-g1kY0BCATyOrPs0ysPcXvYjUgR0jD0TNbqo0iQnXodSZFvQdyDkRaziepejyyvbdCCBNeLXD8XF1LJUBky-7Lhpqmg3apDavWQG3n6n4XpFExXrSyNpvMqiFFQC1qD5ESlzmy_fZnyStmQMZJlokO3KuEaesynlkLqNqKy9rQxnXoKq3BJQy-_PuBgeGCqUsUyAb43uoBwxiMtGfsb92bvNxohx0epRT0NUzaBB__xbUuupLFTutqEabmiulevASoJTV8PzuuwH7KgtAlsNLfvnEUd-A4ejroyydSwwbf9_91_FHfLCjKw52q05U78J3rAeowoUJxOKfQIgmphf8ff7COq5lcmbyXd7lsZJVOdd4i0ZCRbDx3F2F1nzsUi4c-0UfInTvk8TLT4VCPBn7MjcZ1fDP34sa8OLvMA3XWUF1yOxPEEfRxIu7vsIR10dxamrM-NsCt94dWvH3zbEZOa9owYqtmvLGVaLnWHwFS8o8AjCDNMHjqYSkqJxQut2u-vnJVfN-EDixylKBfVXOUfGXJ7jE8kkXGG4W3moDrJom95CuxTQcjh0ihf2WnsTnYphFk53xaZmw7gRrq3ojRs8tAUwjHpYlkGgvfJiCmEl00af5yoGB94NDt0p2tc0ecHMXnpNkZF0uOFi2XACrKjkNXY1jGSTO_363fLAozYQyKGd-ozVK653GqvnUovslszezORQp2poSOQeN_6NADOd2Bbho1aLLHEF9WcnIWsCgh5bHMQPpk5kMFU0O0XvNhVLkDYsaBhjnMeuY5CKltG-Wy9TSR-DiuLyZL6kLQox_inbp0b3r65dU2PGxAQsOBDqA-qpZuW2Wd626GDT3Nqp51T__A5i2YagbwkSv4PC4yiQ7enp5A5219OSIGxW08BzCrCkrTk0Wke7GWOeDsrkXrYTAbXZBy5nT-Y4KLSas-3tz8Y6p3y7v7Q23NAFVJY1h1MuUG1ff9-YdF_QezXmU55UODf1faTDyiEHEGb8Zq-2cIKlyE2PiGKxrFMOkOlWwvjPrLrxdyIQNfV92P3HPZ_THFGOsEAeupo3T5z4JIMvGSFQaIW6eKURrRBYkcg673BW_GepGPYwvAki74u17RM7dwUulgYTbfE7x0T2YWPQ26u-ppB0wsHthfy4vVV9b3cclZCBFrG6-pQdY_Smy0jZU-mQTLyFUCRvJ_PY85eSEclcX2-oJ5dt1FariNVknMOChDzEhTgHRo6iyBN-nY1JsXenj4L7BLyKvstLPedpkT2DP1c99rQKwp9Vi1GpywgeT8GTxM8mwVjj6Us1c7BWCxyyvXJOozy3GmqFq2gOGo7Qe87EdtWrsyCTDDPKmIukAfNnFXSm6HCwyn1yMpw5pflGXfoQBG4-ak9bsOoGFV76Ptuhh8wrXgAd_fVdpq-iMJPLOPaBkQcSMlmVrGCYuRl_0pb5NgeukNY4OE7J18WZywT2F5_qAd0tyg7_OWDvFlK5Ye-7ihC7Is61kd12OlXSQ==","summary":[]},"output_index":0,"sequence_number":3}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"cu_0df2f108001ee1ef006adb928b526887d2810841e30586a401","type":"computer_call","status":"in_progress","call_id":"call_y8CbT7tXw5uMHUUt7Upfb29R"},"output_index":1,"sequence_number":4}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"cu_0df2f108001ee1ef006adb928b526887d2810841e30586a401","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_y8CbT7tXw5uMHUUt7Upfb29R"},"output_index":1,"sequence_number":5}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0df2f108001ee1ef006adb928a36fc87d28f3c679b9fb74e30","object":"response","created_at":1792774794,"status":"completed","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":1792774796,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[{"id":"rs_0df2f108001ee1ef006adb928ade6487d29f50324e31feb363","type":"reasoning","content":[],"encrypted_content":"gAAAAABq25KMv1xWIupUt-9fDQ56iG1zEAOXBSInT2433YsLPG4x39fNs0xt43SZv57k_48rmrEE5oWZtmd3LuWvBywV1vgPoiC3E70dZyOHKcKyMGjn80XdUcHEPUMhgUc9WW78z9HrF7QWvCsnT1OEjgKzJ00d5JE_TwWd9n52CHUc-gnAG5qQ0MpJaUoM_6tyN46vrYMogGtOcyKAxn-pfN1b6x3jRjePvp9XSC3o59N0O8JAkdcCkY2G--2HlwOk3fBFgoJk7JkixeIXf9uht3cE4sNlnLbeFLdISjVFXBPj4HPTZrmxFk9OV11ChSSSOpLVnGYQLTrU3Ciq7SogCMqTGC1mu1rwK-VbI0DIF6WQJFyz9LJBCZc9tDtFP9udgB9RvEkxuCNvP3AMkXv3ycbrsgwtkvpR5n0NFVxVKRLznS0reA2da9AscZzoEQL3i89NGuQtdiNpMIF-r5I1UJnBMguWOiMFwL3yqUzEsToyqhlKsJFgxl2NIbc0Vedy72vCgZ_qZJs6vUYGv4FGo3wxuS4OpxbtZJtM9qV5XJdQpf7wkC1KploOPvOIhI18qspbGxj4fCJLNpODCMQOKS1VbWtNf7bijnhDXdp7uBnBrdwckFwdJ6J2haA-g7a5pBEWnGmgkpd3b-fecVTjKImRhtf5f3awW-MBcxcrjuOCdD8hCBZNHy4jAonYPPx8sDUaGOCxvF3GchzbbH6d2sFVy2BgNaJ8Vr2P4LdfsfkoEF-GQMKTlNhWdGqukfQjr5kUw6jNC4OrYaW2ppmWRNqUDK7aEentb-HL0pf6AcoaTs-nivUIOuikPGN5gnY1ts19NZCPgBHrNsrF2iIsb_6BIymw-BnM4zGT3wloh-SHR5e6IRaYPklitHxQx4Zi6XbmKhXIbhAJQjfCNruQMAJboXOsLnyqIKD1yZulAk895PVSKVxyMcvT6xhmjfRWnk3C826IgUAncNozYLZfsxZyhtnFvglQllPrPTRBsgnP8iEOrGzJh6S2P-mcqaAvvb30ikBWHU8_4HgDAW7HWfFQXukGUvjflnXJ2nZr1dggYl3RdavTKAh6C-ZrAFPPClQqxp7SgMWj-VOdHaZTbvkz7Q4kNFyq3avHaUbfStdatTwEM3275vrQgld39YIGJZCO6u4VL4G35KK34ToY_1lSYLkM53h4NM4pKaGVOlntKGxXh64DRWPlpaqkUKUsGGgcOfP-py_kmlX_0u0PaTOpANXT02NhduKEbQ4xdz0LnjvnQDwDY2QB2y0tkYkGSL8GG2hYaYTwXgYu92Ze6Ojo2aphDy4NQxElMZiLCYPrJp44hdoNdtepBxkFrVydm_ZB5iNtNagWLBIR423EuHsLfXTuWhlRDq--tK1Tiu74C3E-6YDKqYnWMPGjhqOTwKfhJRE-_glXy_NYnzFrGkk-cf9cjamJolyUiVBXYSn8NiVC1qNTaXuTvE0MRxD8q2whUUXCJ6J00h3XbRQOjKcozFmyVnYh6GJkEB6TN7u2a0MsPx2yklD37k4haoySoDTLO7tQCtW7ivylRz5Uq-reNpxSZk8SgtTZFVQJ_08hqw19MRJpbnjqw_6G2rU-Apfftd3GTj1FIJVfczYexQwsV-vzACsjPtxPT73WhKF9Hl7QGONeQD6Xy4D-0ZwPBhXa3chkHFUqyFiHpVfLF2TBeReljfJjAn5qR_pFbYbSAd6kon5iL8YbAgSGaw8oevBx5y0xSoW1QmUGtuTNsFuauaxbe7u-jeSn69fKXznyJgVUn0QqHyrzbbIQDREDzOAeQ9brpnY2sezyNHdw8rfzNtfR9g==","summary":[]},{"id":"cu_0df2f108001ee1ef006adb928b526887d2810841e30586a401","type":"computer_call","status":"completed","actions":[{"type":"screenshot"}],"call_id":"call_y8CbT7tXw5uMHUUt7Upfb29R"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":844,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":57,"output_tokens_details":{"reasoning_tokens":30},"total_tokens":901},"user":null,"metadata":{}},"sequence_number":6}
+
+  recorded_at: 2026-10-23T16:59:56.180305+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "6655"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.5
+        stream: true
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: >-
+            Take a screenshot, then click at x=100 y=200, type "hello", and reply "done".
+            Do nothing else.
+        - id: rs_0df2f108001ee1ef006adb928ade6487d29f50324e31feb363
+          summary: []
+          encrypted_content: >-
+            gAAAAABq25KL139K-mrqhbwdhGBSD_Jt-qUdC4V9Z5Y_1VBXqg7AJQwva3zGvVv1CCWvg94V26tY_Jqr7z6n_BPFG7o31gbUBzGP3CDqG6FijUcNGK0Z5xAD6LaybvoGs9ODezTqKHZHAjOWqOiwpBlKfrZgyJ0bnv1C8w__jG91Saht6Rr4QsDSKxo8ugtXY0saZG4dp2rFceVHQaZg1h4f9fcdUOzMLAC4z4h0iX0nM02bVC-R72zd2urcKaAB9fLX3-HFiBkYEW5uCmBBWmZfvz5t4D0mUDMMZO_c7YdH6ZiA2UyeHkbdI4MtF4Bfy-g1kY0BCATyOrPs0ysPcXvYjUgR0jD0TNbqo0iQnXodSZFvQdyDkRaziepejyyvbdCCBNeLXD8XF1LJUBky-7Lhpqmg3apDavWQG3n6n4XpFExXrSyNpvMqiFFQC1qD5ESlzmy_fZnyStmQMZJlokO3KuEaesynlkLqNqKy9rQxnXoKq3BJQy-_PuBgeGCqUsUyAb43uoBwxiMtGfsb92bvNxohx0epRT0NUzaBB__xbUuupLFTutqEabmiulevASoJTV8PzuuwH7KgtAlsNLfvnEUd-A4ejroyydSwwbf9_91_FHfLCjKw52q05U78J3rAeowoUJxOKfQIgmphf8ff7COq5lcmbyXd7lsZJVOdd4i0ZCRbDx3F2F1nzsUi4c-0UfInTvk8TLT4VCPBn7MjcZ1fDP34sa8OLvMA3XWUF1yOxPEEfRxIu7vsIR10dxamrM-NsCt94dWvH3zbEZOa9owYqtmvLGVaLnWHwFS8o8AjCDNMHjqYSkqJxQut2u-vnJVfN-EDixylKBfVXOUfGXJ7jE8kkXGG4W3moDrJom95CuxTQcjh0ihf2WnsTnYphFk53xaZmw7gRrq3ojRs8tAUwjHpYlkGgvfJiCmEl00af5yoGB94NDt0p2tc0ecHMXnpNkZF0uOFi2XACrKjkNXY1jGSTO_363fLAozYQyKGd-ozVK653GqvnUovslszezORQp2poSOQeN_6NADOd2Bbho1aLLHEF9WcnIWsCgh5bHMQPpk5kMFU0O0XvNhVLkDYsaBhjnMeuY5CKltG-Wy9TSR-DiuLyZL6kLQox_inbp0b3r65dU2PGxAQsOBDqA-qpZuW2Wd626GDT3Nqp51T__A5i2YagbwkSv4PC4yiQ7enp5A5219OSIGxW08BzCrCkrTk0Wke7GWOeDsrkXrYTAbXZBy5nT-Y4KLSas-3tz8Y6p3y7v7Q23NAFVJY1h1MuUG1ff9-YdF_QezXmU55UODf1faTDyiEHEGb8Zq-2cIKlyE2PiGKxrFMOkOlWwvjPrLrxdyIQNfV92P3HPZ_THFGOsEAeupo3T5z4JIMvGSFQaIW6eKURrRBYkcg673BW_GepGPYwvAki74u17RM7dwUulgYTbfE7x0T2YWPQ26u-ppB0wsHthfy4vVV9b3cclZCBFrG6-pQdY_Smy0jZU-mQTLyFUCRvJ_PY85eSEclcX2-oJ5dt1FariNVknMOChDzEhTgHRo6iyBN-nY1JsXenj4L7BLyKvstLPedpkT2DP1c99rQKwp9Vi1GpywgeT8GTxM8mwVjj6Us1c7BWCxyyvXJOozy3GmqFq2gOGo7Qe87EdtWrsyCTDDPKmIukAfNnFXSm6HCwyn1yMpw5pflGXfoQBG4-ak9bsOoGFV76Ptuhh8wrXgAd_fVdpq-iMJPLOPaBkQcSMlmVrGCYuRl_0pb5NgeukNY4OE7J18WZywT2F5_qAd0tyg7_OWDvFlK5Ye-7ihC7Is61kd12OlXSQ==
+          type: reasoning
+        - id: cu_0df2f108001ee1ef006adb928b526887d2810841e30586a401
+          call_id: call_y8CbT7tXw5uMHUUt7Upfb29R
+          status: completed
+          type: computer_call
+          actions:
+          - type: screenshot
+        - type: computer_call_output
+          call_id: call_y8CbT7tXw5uMHUUt7Upfb29R
+          output:
+            type: computer_screenshot
+            image_url: >-
+              data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABQAAAAMgCAIAAADz+lisAAALuElEQVR4nO3BgQAAAADDoPlTH+AKVQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAG+XSAAFMvxSRAAAAAElFTkSuQmCC
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - type: computer
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "485"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0df2f108001ee1ef006adb928c689487d28c0c4076e51a8943","object":"response","created_at":1792774796,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0df2f108001ee1ef006adb928c689487d28c0c4076e51a8943","object":"response","created_at":1792774796,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"cu_0df2f108001ee1ef006adb928d765c87d2b4ef9954a3f9ac41","type":"computer_call","status":"in_progress","call_id":"call_ixRQnIoV6tWndoRCEtyKegrd"},"output_index":0,"sequence_number":2}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"cu_0df2f108001ee1ef006adb928d765c87d2b4ef9954a3f9ac41","type":"computer_call","status":"completed","actions":[{"type":"click","button":"left","keys":null,"x":100,"y":200},{"type":"type","text":"hello"}],"call_id":"call_ixRQnIoV6tWndoRCEtyKegrd"},"output_index":0,"sequence_number":3}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0df2f108001ee1ef006adb928c689487d28c0c4076e51a8943","object":"response","created_at":1792774796,"status":"completed","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":1792774797,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[{"id":"cu_0df2f108001ee1ef006adb928d765c87d2b4ef9954a3f9ac41","type":"computer_call","status":"completed","actions":[{"type":"click","button":"left","keys":null,"x":100,"y":200},{"type":"type","text":"hello"}],"call_id":"call_ixRQnIoV6tWndoRCEtyKegrd"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":2110,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":39,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":2149},"user":null,"metadata":{}},"sequence_number":4}
+
+  recorded_at: 2026-10-23T16:59:57.931952+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "11123"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.5
+        stream: true
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: >-
+            Take a screenshot, then click at x=100 y=200, type "hello", and reply "done".
+            Do nothing else.
+        - id: rs_0df2f108001ee1ef006adb928ade6487d29f50324e31feb363
+          summary: []
+          encrypted_content: >-
+            gAAAAABq25KL139K-mrqhbwdhGBSD_Jt-qUdC4V9Z5Y_1VBXqg7AJQwva3zGvVv1CCWvg94V26tY_Jqr7z6n_BPFG7o31gbUBzGP3CDqG6FijUcNGK0Z5xAD6LaybvoGs9ODezTqKHZHAjOWqOiwpBlKfrZgyJ0bnv1C8w__jG91Saht6Rr4QsDSKxo8ugtXY0saZG4dp2rFceVHQaZg1h4f9fcdUOzMLAC4z4h0iX0nM02bVC-R72zd2urcKaAB9fLX3-HFiBkYEW5uCmBBWmZfvz5t4D0mUDMMZO_c7YdH6ZiA2UyeHkbdI4MtF4Bfy-g1kY0BCATyOrPs0ysPcXvYjUgR0jD0TNbqo0iQnXodSZFvQdyDkRaziepejyyvbdCCBNeLXD8XF1LJUBky-7Lhpqmg3apDavWQG3n6n4XpFExXrSyNpvMqiFFQC1qD5ESlzmy_fZnyStmQMZJlokO3KuEaesynlkLqNqKy9rQxnXoKq3BJQy-_PuBgeGCqUsUyAb43uoBwxiMtGfsb92bvNxohx0epRT0NUzaBB__xbUuupLFTutqEabmiulevASoJTV8PzuuwH7KgtAlsNLfvnEUd-A4ejroyydSwwbf9_91_FHfLCjKw52q05U78J3rAeowoUJxOKfQIgmphf8ff7COq5lcmbyXd7lsZJVOdd4i0ZCRbDx3F2F1nzsUi4c-0UfInTvk8TLT4VCPBn7MjcZ1fDP34sa8OLvMA3XWUF1yOxPEEfRxIu7vsIR10dxamrM-NsCt94dWvH3zbEZOa9owYqtmvLGVaLnWHwFS8o8AjCDNMHjqYSkqJxQut2u-vnJVfN-EDixylKBfVXOUfGXJ7jE8kkXGG4W3moDrJom95CuxTQcjh0ihf2WnsTnYphFk53xaZmw7gRrq3ojRs8tAUwjHpYlkGgvfJiCmEl00af5yoGB94NDt0p2tc0ecHMXnpNkZF0uOFi2XACrKjkNXY1jGSTO_363fLAozYQyKGd-ozVK653GqvnUovslszezORQp2poSOQeN_6NADOd2Bbho1aLLHEF9WcnIWsCgh5bHMQPpk5kMFU0O0XvNhVLkDYsaBhjnMeuY5CKltG-Wy9TSR-DiuLyZL6kLQox_inbp0b3r65dU2PGxAQsOBDqA-qpZuW2Wd626GDT3Nqp51T__A5i2YagbwkSv4PC4yiQ7enp5A5219OSIGxW08BzCrCkrTk0Wke7GWOeDsrkXrYTAbXZBy5nT-Y4KLSas-3tz8Y6p3y7v7Q23NAFVJY1h1MuUG1ff9-YdF_QezXmU55UODf1faTDyiEHEGb8Zq-2cIKlyE2PiGKxrFMOkOlWwvjPrLrxdyIQNfV92P3HPZ_THFGOsEAeupo3T5z4JIMvGSFQaIW6eKURrRBYkcg673BW_GepGPYwvAki74u17RM7dwUulgYTbfE7x0T2YWPQ26u-ppB0wsHthfy4vVV9b3cclZCBFrG6-pQdY_Smy0jZU-mQTLyFUCRvJ_PY85eSEclcX2-oJ5dt1FariNVknMOChDzEhTgHRo6iyBN-nY1JsXenj4L7BLyKvstLPedpkT2DP1c99rQKwp9Vi1GpywgeT8GTxM8mwVjj6Us1c7BWCxyyvXJOozy3GmqFq2gOGo7Qe87EdtWrsyCTDDPKmIukAfNnFXSm6HCwyn1yMpw5pflGXfoQBG4-ak9bsOoGFV76Ptuhh8wrXgAd_fVdpq-iMJPLOPaBkQcSMlmVrGCYuRl_0pb5NgeukNY4OE7J18WZywT2F5_qAd0tyg7_OWDvFlK5Ye-7ihC7Is61kd12OlXSQ==
+          type: reasoning
+        - id: cu_0df2f108001ee1ef006adb928b526887d2810841e30586a401
+          call_id: call_y8CbT7tXw5uMHUUt7Upfb29R
+          status: completed
+          type: computer_call
+          actions:
+          - type: screenshot
+        - type: computer_call_output
+          call_id: call_y8CbT7tXw5uMHUUt7Upfb29R
+          output:
+            type: computer_screenshot
+            image_url: >-
+              data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABQAAAAMgCAIAAADz+lisAAALuElEQVR4nO3BgQAAAADDoPlTH+AKVQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAG+XSAAFMvxSRAAAAAElFTkSuQmCC
+        - id: cu_0df2f108001ee1ef006adb928d765c87d2b4ef9954a3f9ac41
+          call_id: call_ixRQnIoV6tWndoRCEtyKegrd
+          status: completed
+          type: computer_call
+          actions:
+          - button: left
+            type: click
+            x: 100
+            "y": 200
+          - text: hello
+            type: type
+        - type: computer_call_output
+          call_id: call_ixRQnIoV6tWndoRCEtyKegrd
+          output:
+            type: computer_screenshot
+            image_url: >-
+              data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABQAAAAMgCAIAAADz+lisAAALuElEQVR4nO3BgQAAAADDoPlTH+AKVQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAG+XSAAFMvxSRAAAAAElFTkSuQmCC
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - type: computer
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "416"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0df2f108001ee1ef006adb928e1bb487d29622d7c9d111f589","object":"response","created_at":1792774798,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0df2f108001ee1ef006adb928e1bb487d29622d7c9d111f589","object":"response","created_at":1792774798,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0df2f108001ee1ef006adb928f0d2c87d287049aaaeb0387f7","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0df2f108001ee1ef006adb928f0d2c87d287049aaaeb0387f7","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"done","item_id":"msg_0df2f108001ee1ef006adb928f0d2c87d287049aaaeb0387f7","logprobs":[],"obfuscation":"zeNR5eAGcXTO","output_index":0,"sequence_number":4}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0df2f108001ee1ef006adb928f0d2c87d287049aaaeb0387f7","logprobs":[],"output_index":0,"sequence_number":5,"text":"done"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0df2f108001ee1ef006adb928f0d2c87d287049aaaeb0387f7","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"done"},"sequence_number":6}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0df2f108001ee1ef006adb928f0d2c87d287049aaaeb0387f7","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"done"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":7}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0df2f108001ee1ef006adb928e1bb487d29622d7c9d111f589","object":"response","created_at":1792774798,"status":"completed","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":1792774799,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.5-2026-04-23","moderation":null,"output":[{"id":"msg_0df2f108001ee1ef006adb928f0d2c87d287049aaaeb0387f7","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"done"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"computer"}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":3359,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":1792},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":3364},"user":null,"metadata":{}},"sequence_number":8}
+
+  recorded_at: 2026-10-23T16:59:59.284167+00:00

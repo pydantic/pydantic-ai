@@ -383,6 +383,8 @@ def test_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_max_reasoning_effort': False,
+            'computer_use_screenshot_limit': (2560, 3686400),
+            'openai_supports_computer_tool': True,
             'openai_supports_phase': True,
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
@@ -397,10 +399,13 @@ def test_openai_gpt_5_4():
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-5.4-nano', 'gpt-5.4-nano-2026-03-17'])
 def test_openai_gpt_5_4_nano(model_name: str):
-    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400."""
+    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400, and
+    minus the native `computer` tool and its screenshot limit, which OpenAI doesn't offer on it."""
     expected = _normalize(OpenAIProvider.model_profile('gpt-5.4'))
     assert expected is not None
     expected['supported_native_tools'] -= {ToolSearchTool}
+    expected['openai_supports_computer_tool'] = False
+    del expected['computer_use_screenshot_limit']
     assert _normalize(OpenAIProvider.model_profile(model_name)) == expected
 
 
@@ -434,7 +439,9 @@ def test_openai_gpt_5_6():
             'openai_responses_supports_reasoning_context': True,
             'openai_responses_supports_reasoning_mode': True,
             'tool_addition_mode': 'with_definitions',
+            'openai_supports_computer_tool': True,
             'openai_supports_phase': True,
+            'computer_use_screenshot_limit': (2560, 3686400),
             'openai_responses_tool_choice_accepts_additional_tools': True,
             'openai_responses_supports_max_reasoning_effort': True,
             'openai_supports_prompt_cache_breakpoints': True,
@@ -478,8 +485,10 @@ def test_openai_gpt_6_astra():
             'openai_responses_supports_reasoning_context': True,
             'openai_responses_supports_reasoning_mode': True,
             'tool_addition_mode': 'with_definitions',
+            'openai_supports_computer_tool': True,
             'openai_supports_phase': True,
             'openai_responses_tool_choice_accepts_additional_tools': True,
+            'computer_use_screenshot_limit': (2560, 3686400),
             'openai_responses_supports_max_reasoning_effort': True,
             'openai_supports_prompt_cache_breakpoints': True,
             'openai_reasoning_efforts': frozenset({'high', 'low', 'max', 'medium', 'xhigh'}),
@@ -633,6 +642,7 @@ def test_openai_gpt_4o():
             'json_schema_transformer': _OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'openai_responses_supports_max_reasoning_effort': False,
+            'openai_supports_computer_tool': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -665,6 +675,7 @@ def test_openai_o3_mini():
             'thinking_enabled_by_default': True,
             'openai_supports_minimal_reasoning_effort': False,
             'openai_responses_supports_max_reasoning_effort': False,
+            'openai_supports_computer_tool': False,
             'openai_supports_reasoning': True,
             'openai_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
             'tool_addition_mode': 'with_definitions',
@@ -697,7 +708,9 @@ def test_openai_codex_gpt_5_6():
             'openai_responses_supports_reasoning_mode': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_phase': True,
+            'openai_supports_computer_tool': False,
             'openai_supports_minimal_reasoning_effort': False,
+            'computer_use_screenshot_limit': (2560, 3686400),
             'openai_responses_tool_choice_accepts_additional_tools': True,
             'openai_responses_supports_max_reasoning_effort': False,
             'supported_native_tools': frozenset(
@@ -1385,6 +1398,7 @@ def test_openrouter_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_chat_supports_file_urls': True,
             'openai_supports_encrypted_reasoning_content': True,
+            'computer_use_screenshot_limit': (2560, 3686400),
             'openai_supports_reasoning': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
@@ -1618,6 +1632,7 @@ def test_github_copilot_openai_gpt_5_4():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
+            'computer_use_screenshot_limit': (2560, 3686400),
             'openai_chat_supports_max_completion_tokens': True,
         }
     )
@@ -1858,6 +1873,8 @@ def test_azure_openai_gpt_5():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'computer_use_screenshot_limit': (2560, 3686400),
+            'openai_supports_computer_tool': True,
             'openai_chat_supports_document_input': False,
         }
     )
@@ -2234,6 +2251,7 @@ def test_litellm_openai_gpt():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'computer_use_screenshot_limit': (2560, 3686400),
         }
     )
 
@@ -2461,6 +2479,7 @@ def test_github_openai_bare_name():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'computer_use_screenshot_limit': (2560, 3686400),
         }
     )
 
@@ -2559,6 +2578,7 @@ def test_vercel_openai_gpt():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'computer_use_screenshot_limit': (2560, 3686400),
         }
     )
 

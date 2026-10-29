@@ -4,12 +4,15 @@ import posixpath
 import struct
 import zlib
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Protocol, Self
+from typing import Any, Protocol, Self, cast
 
 import anyio
 
-from pydantic_ai import RunContext
+from pydantic_ai import RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.computer_use import COMPUTER_KIND, ComputerResult, ComputerToolAction, Screenshot, Wait
+from pydantic_ai.messages import BinaryImage, ToolReturn
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import (
     CommandResult,
     ComputerAction,
@@ -27,6 +30,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
+    WorkspaceError,
     WorkspaceRef,
     WorkspaceUnavailableError,
     WorkspaceUnsupportedActionError,
@@ -554,3 +558,31 @@ class ProviderWorkspaces(AbstractCapability[Any]):
             return None
         backend = self.provider.backend(ref)
         return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend
+
+
+def computer_toolset(*, requires_approval: bool = False) -> FunctionToolset[Any]:
+    """A `computer` tool that keeps the tool's contract and nothing more, for testing model adapters.
+
+    It runs the actions on the workspace's display until one fails, then returns a summary and a screenshot, with
+    the outcome in the result's metadata.
+    """
+
+    async def computer(ctx: RunContext[Any], actions: list[ComputerToolAction]) -> ToolReturn:
+        result = ComputerResult(performed=0)
+        for action in actions:
+            if not isinstance(action, Wait | Screenshot):
+                try:
+                    # The display refuses what it can't do, such as zooming.
+                    await ctx.workspace.act(cast(ComputerAction, action))
+                except WorkspaceError as error:
+                    result['error'] = str(error)
+                    break
+            result['performed'] += 1
+        summary = f'Ran {result["performed"]} of {len(actions)} actions.'
+        if 'error' in result:
+            summary += f' The next one failed: {result["error"]}'
+        screenshot = BinaryImage(data=await ctx.workspace.screenshot(), media_type='image/png')
+        return ToolReturn([summary, screenshot], metadata=result)
+
+    tool = Tool(computer, name='computer', tool_kind=COMPUTER_KIND, requires_approval=requires_approval)
+    return FunctionToolset([tool])

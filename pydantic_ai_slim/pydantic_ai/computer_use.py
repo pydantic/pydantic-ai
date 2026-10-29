@@ -16,7 +16,7 @@ stable; [`ComputerResult`][pydantic_ai.computer_use.ComputerResult] in the resul
 
 from __future__ import annotations as _annotations
 
-from typing import Annotated, Literal, NotRequired, TypeAlias
+from typing import TYPE_CHECKING, Annotated, Literal, NotRequired, TypeAlias
 
 from pydantic import Field
 from pydantic.dataclasses import dataclass
@@ -25,6 +25,9 @@ from typing_extensions import TypedDict
 from .messages import BinaryImage, ToolKind
 from .workspaces import Click, Drag, HoldKeys, MouseDown, MouseUp, MoveMouse, PressKeys, Region, Scroll, TypeText
 from .workspaces.computer import ACTION_CONFIG
+
+if TYPE_CHECKING:
+    from .models import ModelRequestParameters
 
 __all__ = (
     'COMPUTER_KIND',
@@ -36,6 +39,7 @@ __all__ = (
     'Screenshot',
     'Wait',
     'Zoom',
+    'computer_tool_name',
 )
 
 
@@ -134,3 +138,14 @@ A provider whose native tool declares a display size, such as Claude's `computer
 
 COMPUTER_KIND = ToolKind._core('computer', args=_ComputerArgs, content=_ComputerContent)  # pyright: ignore[reportPrivateUsage]
 """The kind of the `computer` tool, which model adapters send as their provider's native computer tool."""
+
+
+def computer_tool_name(model_request_parameters: ModelRequestParameters) -> str | None:
+    """The name of the request's `computer` tool, which a model adapter may send as its provider's native tool.
+
+    `None` unless the tool is fully visible in this request: a deferred or withheld one stays a function tool.
+    """
+    tool = next((t for t in model_request_parameters.function_tools if t.tool_kind == COMPUTER_KIND.id), None)
+    if tool is None or model_request_parameters.visibility_of(tool.name) != 'visible':
+        return None
+    return tool.name
