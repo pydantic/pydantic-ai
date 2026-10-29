@@ -3454,7 +3454,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         request_context.model = prepared.model._with_serving_wrapper(wrap)  # pyright: ignore[reportPrivateUsage]
         self._serving_model = request_context.model
-        self._serving_model_id = processed_context.model_id or attempt_model.model_id
+        self._serving_model_id = prepared.model_id or prepared.model.model_id
         # The wrapper is entered around each call it serves for this attempt, like a model passed to the agent is
         # around a run. One applied on this side of a durable unit only answers questions like `continuation_delay`,
         # and the unit enters the one that sends the request.
