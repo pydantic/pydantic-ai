@@ -1267,7 +1267,6 @@ requires-dist = [
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.39.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=3.1.0" },
-    { name = "nace-sdk", marker = "extra == 'nace'", specifier = ">=0.2.0" },
     { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.31.0" },
     { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.31.0" },
     { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.31.0" },
@@ -1314,7 +1313,7 @@ requires-dist = [
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.16.0" },
     { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.16.0" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "nace", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
 
 [[package]]
 name = "pydantic-core"
