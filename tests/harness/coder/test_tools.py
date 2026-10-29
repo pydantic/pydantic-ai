@@ -240,7 +240,7 @@ class TestCoder:
         assert model.last_model_request_parameters is not None
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
         tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
-        assert ('instruction files (AGENTS.md, CLAUDE.md) in the project directory are' in text) is repo_context
+        assert ('instruction files (AGENTS.md, CLAUDE.md) that apply to the project' in text) is repo_context
         rule = (
             'spawn sub-agents with `delegate_task` unless the user or applicable AGENTS.md\ninstructions explicitly ask'
         )
@@ -277,6 +277,21 @@ class TestCoder:
         assert model.last_model_request_parameters is not None
         parts = model.last_model_request_parameters.instruction_parts or []
         assert sum('Your project is' in part.content for part in parts) == 1
+
+    @pytest.mark.parametrize(
+        ('repo_context', 'nested'),
+        [(True, True), (RepoContext[None](expose_inventory_tool=False), False)],
+    )
+    async def test_instructions_mention_nested_files_only_with_nested_traversal(
+        self, tmp_path: Path, repo_context: bool | RepoContext[None], nested: bool
+    ) -> None:
+        model = TestModel(call_tools=[])
+        await Agent(model, capabilities=[Coder(repo_context=repo_context)]).run(
+            'go', workspace=LocalWorkspaceBackend(tmp_path)
+        )
+        assert model.last_model_request_parameters is not None
+        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+        assert ("A subdirectory's instruction files are added to your context" in text) is nested
 
     @pytest.mark.parametrize('repo_context', [True, False])
     async def test_repo_context_is_optional(self, tmp_path: Path, repo_context: bool) -> None:
