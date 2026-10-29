@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -24,29 +24,29 @@ conflicts = [[
 ]]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-10-22T09:36:21.159172Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-boxd = "2026-10-27T23:56:00Z"
-boxlite = "2026-10-18T01:35:01Z"
-cassetter = false
-certifi = "2026-10-20T02:25:00Z"
-genai-prices = false
-listentome = false
-logfire = false
-logfire-api = false
 pillow = "2026-10-16T22:19:00Z"
 prefect = "2026-10-21T03:46:00Z"
-pydantic = false
-pydantic-ai-harness = false
-pydantic-core = false
-pydantic-extra-types = false
-pydantic-handlebars = false
-pydantic-monty = false
-pydantic-monty-client = false
 pydantic-monty-runtime = false
+pydantic-handlebars = false
+pydantic-extra-types = false
+pydantic = false
+pydantic-core = false
+pydantic-ai-harness = false
+logfire-api = false
+cassetter = false
+listentome = false
+boxlite = "2026-10-18T01:35:01Z"
+logfire = false
 pydantic-settings = false
+pydantic-monty-client = false
+genai-prices = false
+pydantic-monty = false
+certifi = "2026-10-20T02:25:00Z"
+boxd = "2026-10-27T23:56:00Z"
 
 [manifest]
 members = [
@@ -2327,7 +2327,7 @@ name = "fastmcp"
 version = "3.4.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "fastmcp-slim", version = "3.4.7", source = { registry = "https://pypi.org/simple" }, extra = ["client", "server"], marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
+    { name = "fastmcp-slim", version = "3.4.7", source = { registry = "https://pypi.org/simple" }, extra = ["client", "server"], marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/62/dd/fd444d94ae7afdaf5b6dd168799d34023f576b405872d6a27d5686a9d1f4/fastmcp-3.4.7.tar.gz", hash = "sha256:43117aca886f5ee2f6a569bba91cef02b59c339aad04ba29950ff18d251c822a", size = 28808982, upload-time = "2026-08-10T21:17:55.045Z" }
 wheels = [
@@ -2347,12 +2347,12 @@ resolution-markers = [
     "python_full_version < '3.11.5'",
 ]
 dependencies = [
-    { name = "platformdirs", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "pydantic", extra = ["email"], marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "pydantic-settings", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "python-dotenv", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "rich", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "typing-extensions", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
+    { name = "platformdirs", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "pydantic", extra = ["email"], marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "pydantic-settings", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "python-dotenv", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "rich", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "typing-extensions", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/12/ac/7924e803368d0758ee4d6b1259066550df78f58f0f9f8bfebd5a123e957d/fastmcp_slim-3.4.7.tar.gz", hash = "sha256:06b32a358320a7dc2b2ee040ba89ea55ddc20763dff2949f384f7974b13b5d8f", size = 594357, upload-time = "2026-08-10T21:17:28.723Z" }
 wheels = [
@@ -2361,13 +2361,13 @@ wheels = [
 
 [package.optional-dependencies]
 client = [
-    { name = "authlib", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "exceptiongroup", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "httpx", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "mcp", version = "1.30.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "opentelemetry-api", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "py-key-value-aio", extra = ["filetree", "keyring", "memory"], marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "starlette", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
+    { name = "authlib", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "exceptiongroup", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "httpx", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "mcp", version = "1.30.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "opentelemetry-api", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "py-key-value-aio", extra = ["filetree", "keyring", "memory"], marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "starlette", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
 ]
 server = [
     { name = "authlib" },
@@ -2382,7 +2382,7 @@ server = [
     { name = "openapi-pydantic" },
     { name = "opentelemetry-api" },
     { name = "packaging" },
-    { name = "py-key-value-aio", extra = ["filetree", "keyring", "memory"], marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
+    { name = "py-key-value-aio", extra = ["filetree", "keyring", "memory"], marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
     { name = "pyperclip" },
     { name = "python-multipart" },
     { name = "pyyaml" },
@@ -2406,13 +2406,13 @@ resolution-markers = [
     "python_full_version < '3.11.5'",
 ]
 dependencies = [
-    { name = "mcp-types", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "platformdirs", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "pydantic", extra = ["email"], marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "pydantic-settings", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "python-dotenv", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "rich", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "typing-extensions", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
+    { name = "mcp-types", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "platformdirs", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "pydantic", extra = ["email"], marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "pydantic-settings", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "python-dotenv", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "rich", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "typing-extensions", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7f/78/fa6a58bfc3d2b218f591f8e8c261639dd6fc56e2d6a70be0d1c42244ffa0/fastmcp_slim-4.0.5.tar.gz", hash = "sha256:5dc5395bcacb0eb405787393298891210c821d3f66334c2695e5e435d88fe575", size = 687868, upload-time = "2026-09-17T17:38:32.327Z" }
 wheels = [
@@ -2421,13 +2421,13 @@ wheels = [
 
 [package.optional-dependencies]
 client = [
-    { name = "authlib", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "exceptiongroup", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "httpx2", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "mcp", version = "2.2.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "opentelemetry-api", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "py-key-value-aio", extra = ["filetree", "keyring", "memory"], marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "starlette", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
+    { name = "authlib", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "exceptiongroup", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "httpx2", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "mcp", version = "2.2.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "opentelemetry-api", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "py-key-value-aio", extra = ["filetree", "keyring", "memory"], marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "starlette", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
 ]
 server = [
     { name = "authlib" },
@@ -4424,20 +4424,20 @@ resolution-markers = [
     "python_full_version < '3.11.5'",
 ]
 dependencies = [
-    { name = "anyio", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "httpx", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "httpx-sse", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "jsonschema", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "pydantic", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "pydantic-settings", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "pyjwt", extra = ["crypto"], marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "python-multipart", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "pywin32", marker = "(sys_platform == 'win32' and extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
-    { name = "sse-starlette", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "starlette", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "typing-extensions", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "typing-inspection", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "uvicorn", marker = "(sys_platform != 'emscripten' and extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "anyio", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "httpx", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "httpx-sse", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "jsonschema", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "pydantic", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "pydantic-settings", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "pyjwt", extra = ["crypto"], marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "python-multipart", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "pywin32", marker = "(sys_platform == 'win32' and extra == 'extra-19-pydantic-ai-harness-stackone') or (sys_platform == 'win32' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "sse-starlette", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "starlette", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "typing-extensions", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "typing-inspection", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "uvicorn", marker = "(sys_platform != 'emscripten' and extra == 'extra-19-pydantic-ai-harness-stackone') or (sys_platform != 'emscripten' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ba/93/0142dc84a666daf8ad51a34268f34c12fd6fda4f3810c4be2504eecc8212/mcp-1.30.0.tar.gz", hash = "sha256:445414625fce5c295faa505bb11bacece661ab6f4028d57c935db57820b7a3e4", size = 680511, upload-time = "2026-09-07T14:34:15.845Z" }
 wheels = [
@@ -4446,9 +4446,9 @@ wheels = [
 
 [package.optional-dependencies]
 cli = [
-    { name = "python-dotenv", marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "typer", version = "0.19.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.14' and extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
-    { name = "typer", version = "0.26.8", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.14' and extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "python-dotenv", marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "typer", version = "0.19.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.14' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version >= '3.14' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "typer", version = "0.26.8", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.14' and extra == 'extra-19-pydantic-ai-harness-stackone') or (python_full_version < '3.14' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
 ]
 
 [[package]]
@@ -4464,20 +4464,20 @@ resolution-markers = [
     "python_full_version < '3.11.5'",
 ]
 dependencies = [
-    { name = "anyio", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "httpx2", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "jsonschema", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "mcp-types", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "opentelemetry-api", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "pydantic", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "pyjwt", extra = ["crypto"], marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "python-multipart", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "pywin32", marker = "(sys_platform == 'win32' and extra == 'extra-11-pydantic-ai-mcp-tasks') or (sys_platform == 'win32' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
-    { name = "sse-starlette", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "starlette", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "typing-extensions", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "typing-inspection", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "uvicorn", marker = "(sys_platform != 'emscripten' and extra == 'extra-11-pydantic-ai-mcp-tasks') or (sys_platform != 'emscripten' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "anyio", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "httpx2", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "jsonschema", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "mcp-types", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "opentelemetry-api", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "pydantic", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "pyjwt", extra = ["crypto"], marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "python-multipart", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "pywin32", marker = "(sys_platform == 'win32' and extra == 'extra-11-pydantic-ai-mcp-tasks') or (sys_platform == 'win32' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (sys_platform == 'win32' and extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "sse-starlette", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "starlette", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "typing-extensions", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "typing-inspection", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "uvicorn", marker = "(sys_platform != 'emscripten' and extra == 'extra-11-pydantic-ai-mcp-tasks') or (sys_platform != 'emscripten' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (sys_platform != 'emscripten' and extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/76/31/ac54fb0fdd5b37de704486e288bba4fbbb463f24cfcfedbede407b854513/mcp-2.2.0.tar.gz", hash = "sha256:2dc37ecb1974becdcebdbf7561e7c15a07dbbf20ba21ba16c3593b3038b3afbd", size = 4084129, upload-time = "2026-09-07T16:06:23.439Z" }
 wheels = [
@@ -4486,9 +4486,9 @@ wheels = [
 
 [package.optional-dependencies]
 cli = [
-    { name = "python-dotenv", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
-    { name = "typer", version = "0.19.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.14' and extra == 'extra-11-pydantic-ai-mcp-tasks') or (python_full_version >= '3.14' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
-    { name = "typer", version = "0.26.8", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.14' and extra == 'extra-11-pydantic-ai-mcp-tasks') or (python_full_version < '3.14' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "python-dotenv", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
+    { name = "typer", version = "0.19.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.14' and extra == 'extra-11-pydantic-ai-mcp-tasks') or (python_full_version >= '3.14' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (python_full_version >= '3.14' and extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "typer", version = "0.26.8", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.14' and extra == 'extra-11-pydantic-ai-mcp-tasks') or (python_full_version < '3.14' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks') or (python_full_version < '3.14' and extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
 ]
 
 [[package]]
@@ -4496,8 +4496,8 @@ name = "mcp-types"
 version = "2.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pydantic", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or extra == 'group-11-pydantic-ai-dev'" },
-    { name = "typing-extensions", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "pydantic", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or extra != 'extra-19-pydantic-ai-harness-stackone' or (extra == 'extra-19-pydantic-ai-harness-stackone' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "typing-extensions", marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or extra != 'extra-19-pydantic-ai-harness-stackone' or (extra == 'extra-19-pydantic-ai-harness-stackone' and extra == 'group-11-pydantic-ai-dev')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ae/91/762d7755d971aff8a28d75f7961656148edf27875c8026e6385aaab08ae7/mcp_types-2.2.0.tar.gz", hash = "sha256:d3ed53703ddd10d9c6399f29d322bb66f3f67ab41348ac8556ba23e07fedefad", size = 65892, upload-time = "2026-09-07T16:06:25.187Z" }
 wheels = [
@@ -4976,6 +4976,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/6e/371856a3fb9d31ca8dac321cda606860fa4548858c0cc45d9d1d4ca2628b/mypy_extensions-1.1.0.tar.gz", hash = "sha256:52e68efc3284861e772bbcd66823fde5ae21fd2fdb51c62a211403730b916558", size = 6343, upload-time = "2025-04-22T14:54:24.164Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/79/7b/2c79738432f5c924bef5071f933bcc9efd0473bac3b4aa584a6f7c1c8df8/mypy_extensions-1.1.0-py3-none-any.whl", hash = "sha256:1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505", size = 4963, upload-time = "2025-04-22T14:54:22.983Z" },
+]
+
+[[package]]
+name = "nace-sdk"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/77/be/9d484f1dffad032599aa3e4194fabb2e0db0e9d9d26e64c3e7d8273dd5d3/nace_sdk-0.2.0.tar.gz", hash = "sha256:55bdabd025efce0986bc61614f921dcd181ac4aa71a90f2b5091f87218a85ccb", size = 72555, upload-time = "2026-10-20T00:16:37.778Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/97/408e078776cce769cb172d3ebd3d2a25b2ee2e04d20be9d54a405251a799/nace_sdk-0.2.0-py3-none-any.whl", hash = "sha256:c6b796bbcd324c63daee7659151a191a70db5b89cece47a1275438074e6efd84", size = 83000, upload-time = "2026-10-20T00:16:36.296Z" },
 ]
 
 [[package]]
@@ -6571,7 +6585,6 @@ email = [
 [[package]]
 name = "pydantic-ai"
 source = { editable = "." }
-default-groups = ["dev", "lint"]
 dependencies = [
     { name = "pydantic-ai-slim", extra = ["anthropic", "cli", "evals", "google", "logfire", "mcp", "openai", "web"] },
 ]
@@ -6621,6 +6634,9 @@ mcp-tasks = [
 ]
 mistral = [
     { name = "pydantic-ai-slim", extra = ["mistral"] },
+]
+nace = [
+    { name = "pydantic-ai-slim", extra = ["nace"] },
 ]
 openai-realtime = [
     { name = "pydantic-ai-slim", extra = ["openai-realtime"] },
@@ -6737,6 +6753,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["huggingface"], marker = "extra == 'huggingface'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["mcp-tasks"], marker = "extra == 'mcp-tasks'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["mistral"], marker = "extra == 'mistral'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["nace"], marker = "extra == 'nace'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["openai-realtime"], marker = "extra == 'openai-realtime'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["openrouter"], marker = "extra == 'openrouter'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["prefect"], marker = "extra == 'prefect'", editable = "pydantic_ai_slim" },
@@ -6753,7 +6770,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["xai"], marker = "extra == 'xai'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["xai-realtime"], marker = "extra == 'xai-realtime'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "exa", "examples", "google-realtime", "groq", "huggingface", "mcp-tasks", "mistral", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
+provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "exa", "examples", "google-realtime", "groq", "huggingface", "mcp-tasks", "mistral", "nace", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
 
 [package.metadata.requires-dev]
 clai2-browser = [{ name = "playwright", specifier = ">=1.45" }]
@@ -6814,8 +6831,8 @@ dependencies = [
     { name = "gradio" },
     { name = "listentome" },
     { name = "logfire", extra = ["asyncpg", "fastapi", "httpx", "sqlite3"] },
-    { name = "mcp", version = "1.30.0", source = { registry = "https://pypi.org/simple" }, extra = ["cli"], marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "mcp", version = "2.2.0", source = { registry = "https://pypi.org/simple" }, extra = ["cli"], marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
+    { name = "mcp", version = "1.30.0", source = { registry = "https://pypi.org/simple" }, extra = ["cli"], marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "mcp", version = "2.2.0", source = { registry = "https://pypi.org/simple" }, extra = ["cli"], marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
     { name = "modal" },
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "pandas" },
@@ -6991,7 +7008,7 @@ sprites = [
 stackone = [
     { name = "beartype", version = "0.23.0rc2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.15'" },
     { name = "fastmcp" },
-    { name = "pydantic-ai-slim", extra = ["mcp"], marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
+    { name = "pydantic-ai-slim", extra = ["mcp"], marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
 ]
 temporal = [
     { name = "pydantic-ai-slim", extra = ["temporal"] },
@@ -7147,8 +7164,8 @@ logfire = [
     { name = "opentelemetry-instrumentation-httpx" },
 ]
 mcp = [
-    { name = "fastmcp-slim", version = "3.4.7", source = { registry = "https://pypi.org/simple" }, extra = ["client"], marker = "(extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra != 'extra-11-pydantic-ai-mcp-tasks' and extra != 'extra-16-pydantic-ai-slim-mcp-tasks')" },
-    { name = "fastmcp-slim", version = "4.0.5", source = { registry = "https://pypi.org/simple" }, extra = ["client"], marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks'" },
+    { name = "fastmcp-slim", version = "3.4.7", source = { registry = "https://pypi.org/simple" }, extra = ["client"], marker = "extra == 'extra-19-pydantic-ai-harness-stackone' or extra == 'group-11-pydantic-ai-dev'" },
+    { name = "fastmcp-slim", version = "4.0.5", source = { registry = "https://pypi.org/simple" }, extra = ["client"], marker = "extra == 'extra-11-pydantic-ai-mcp-tasks' or extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra != 'extra-19-pydantic-ai-harness-stackone' and extra != 'group-11-pydantic-ai-dev')" },
 ]
 mcp-tasks = [
     { name = "fastmcp-slim", version = "4.0.5", source = { registry = "https://pypi.org/simple" }, extra = ["client"], marker = "extra == 'extra-16-pydantic-ai-slim-mcp-tasks' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
@@ -7156,6 +7173,9 @@ mcp-tasks = [
 ]
 mistral = [
     { name = "mistralai" },
+]
+nace = [
+    { name = "nace-sdk" },
 ]
 openai = [
     { name = "openai" },
@@ -7251,6 +7271,7 @@ requires-dist = [
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.39.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=3.1.0" },
+    { name = "nace-sdk", marker = "extra == 'nace'", specifier = ">=0.2.0" },
     { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.31.0" },
     { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.31.0" },
     { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.31.0" },
@@ -7297,7 +7318,7 @@ requires-dist = [
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.16.0" },
     { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.16.0" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "nace", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
 
 [[package]]
 name = "pydantic-clai2"

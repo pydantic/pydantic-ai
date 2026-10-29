@@ -7,6 +7,10 @@ import pytest
 from nace_sdk import (
     Choice,
     ChoiceAnswer,
+    NaceAPIConnectionError,
+    NaceAPIResponseValidationError,
+    NaceAPITimeoutError,
+    NaceError,
     NaceInsufficientCreditError,
     NaceOverloadedError,
     NaceRateLimitError,
@@ -22,10 +26,14 @@ from nace_sdk import (
 
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelConnectionError,
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
     ModelRequestRejectedError,
+    ModelTimeoutError,
+    UnexpectedModelBehavior,
+    UserError,
 )
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models.decision import (
@@ -43,8 +51,6 @@ from pydantic_ai.models.decision import (
 from pydantic_ai.models.nace import NaceModel
 from pydantic_ai.providers.nace import NaceProvider
 from pydantic_ai.usage import RequestUsage
-
-pytestmark = pytest.mark.anyio
 
 _PNG = bytes.fromhex(
     '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489'
@@ -321,7 +327,6 @@ async def test_a_profile_cannot_raise_the_drex_max_cap_or_enable_images_elsewher
 
 async def test_oversized_image_sets_are_refused_with_a_workspace_file_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     """The caps are patched down so the test does not build megabytes of images."""
-    from pydantic_ai.exceptions import UserError
     from pydantic_ai.models import nace as nace_module
 
     client = _Client()
@@ -333,6 +338,10 @@ async def test_oversized_image_sets_are_refused_with_a_workspace_file_hint(monke
     monkeypatch.setattr(nace_module, '_MAX_IMAGE_BODY_BYTES', 10)
     with pytest.raises(UserError, match='workspace_file'):
         await _model('drex-max', client).decide(_request(images=images), {})
+    monkeypatch.undo()
+    monkeypatch.setattr(nace_module, '_MAX_IMAGE_BYTES', len(_PNG) - 1)
+    with pytest.raises(UserError, match='workspace_file'):
+        await _model('drex-max', client).decide(_request(images=images), {})
     assert client.calls == []
 
 
@@ -342,3 +351,79 @@ async def test_omitted_instructions_stay_none_on_the_wire() -> None:
     question = client.calls[0]['questions']['billing']
     assert isinstance(question, Noul)
     assert question.instructions is None
+
+
+async def test_an_image_the_sdk_cannot_read_is_refused_before_the_client_is_called() -> None:
+    client = _Client()
+    with pytest.raises(UserError, match='could not accept this image'):
+        await _model('drex-max', client).decide(
+            _request(images=(BinaryContent(b'not an image', media_type='image/png'),)), {}
+        )
+    assert client.calls == []
+
+
+async def test_timeout_defaults_to_60_seconds_and_a_set_timeout_is_forwarded() -> None:
+    """Unit test: the timeout is a client argument, and a recording does not show it."""
+    client = _Client(_Response({'billing': NoulAnswer(noul=0.2)}, model='drex-v2.0'))
+    custom = httpx.Timeout(5.0, connect=2.0)
+    await _model('drex-v2.0', client).decide(_request(), {})
+    await _model('drex-v2.0', client).decide(_request(), {'timeout': custom})
+    assert [call['timeout'] for call in client.calls] == [60.0, custom]
+
+
+@pytest.mark.parametrize(
+    ('error', 'category'),
+    [
+        (NaceAPIResponseValidationError(200, {'answers': 1}, httpx.Headers(), 'answers'), UnexpectedModelBehavior),
+        (NaceAPIConnectionError('connection reset'), ModelConnectionError),
+        (NaceAPITimeoutError(60.0), ModelTimeoutError),
+        (NaceError('no API key'), UserError),
+    ],
+)
+async def test_sdk_errors_map_to_pydantic_ai_errors(error: Exception, category: type[Exception]) -> None:
+    """Unit test: these failures come from the SDK's own checks or the transport, which a recording cannot replay."""
+    with pytest.raises(category):
+        await _model('drex-v2.0', _Client(error=error)).decide(_request(), {})
+
+
+async def test_a_response_without_a_request_id_has_no_provider_response_id() -> None:
+    class _NoRequestId(_Response):
+        @property
+        def request_id(self) -> str:
+            raise NaceError('no x-request-id header')
+
+        @request_id.setter
+        def request_id(self, value: str) -> None:
+            pass
+
+    client = _Client(_NoRequestId({'billing': NoulAnswer(noul=0.2)}, model='drex-v2.0'))
+    response = await _model('drex-v2.0', client).decide(_request(), {})
+    assert response.provider_response_id is None
+
+
+async def test_non_text_instructions_are_sent_as_text_and_non_text_levels_are_refused() -> None:
+    client = _Client(
+        _Response(
+            {'tone': ScoreAnswer(score=1, confidence=0.9, probabilities={}, legend=('calm', 'angry'))},
+            model='drex-v2.0',
+        )
+    )
+    model = _model('drex-v2.0', client)
+    await model.decide(_request(questions={'tone': ScoreQuestion(criteria=['calm', 'angry'], instructions=3)}), {})
+    assert client.calls[0]['questions']['tone'].instructions == '3'
+    with pytest.raises(UserError, match='score level must be a string'):
+        await model.decide(_request(questions={'tone': ScoreQuestion(criteria=['calm', 2])}), {})
+
+
+async def test_an_unknown_answer_type_is_unexpected_model_behavior() -> None:
+    client = _Client(_Response({'billing': object()}, model='drex-v2.0'))
+    with pytest.raises(UnexpectedModelBehavior, match='Unexpected answer from Nace'):
+        await _model('drex-v2.0', client).decide(_request(), {})
+
+
+def test_the_nace_provider_is_inferred_from_its_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('NACE_API_KEY', 'test-key')
+    model = NaceModel('drex-max')
+    assert model.system == 'nace'
+    assert model.base_url == 'https://console.nace.ai'
+    assert model.model_name == 'drex-max'

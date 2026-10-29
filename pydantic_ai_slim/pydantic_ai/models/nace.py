@@ -5,11 +5,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import ClassVar, Literal, assert_never, cast
 
-import httpx
 from pydantic import JsonValue
 
 from .. import _model_errors
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from ..messages import BinaryContent
 from ..profiles import ModelProfileSpec
 from ..profiles.nace import DREX_MAX_QUESTIONS, NACE_MAX_QUESTIONS, NaceModelProfile
 from ..providers import Provider, infer_provider
@@ -73,6 +73,9 @@ Any other id, such as the moving alias `drex-latest`, is sent unchanged.
 
 _DREX_MAX_IMAGES = 8
 """Drex Max accepts at most this many images in one request. The endpoint shares the cap."""
+
+_DEFAULT_TIMEOUT = 60.0
+"""Seconds per request when `timeout` is not set, sent explicitly so a custom HTTP client cannot change it."""
 
 _MAX_IMAGE_BYTES = 16 * 1024 * 1024
 """One image above this is refused. This adapter does not upload a workspace_file."""
@@ -167,10 +170,8 @@ class NaceModel(DecisionModel[AsyncNaceClient]):
 
     def _question_limit(self) -> int:
         ceiling = DREX_MAX_QUESTIONS if self._model_name == 'drex-max' else NACE_MAX_QUESTIONS
-        profile = cast(NaceModelProfile, self.profile)
-        if 'nace_max_questions' in profile:
-            return min(profile['nace_max_questions'], ceiling)
-        return ceiling
+        # A profile may lower the cap, never raise it.
+        return min(cast(NaceModelProfile, self.profile).get('nace_max_questions', ceiling), ceiling)
 
     def _accepts_images(self) -> bool:
         return self._model_name == 'drex-max'
@@ -202,7 +203,7 @@ class NaceModel(DecisionModel[AsyncNaceClient]):
                 model=self._model_name,
                 images=images,
                 retry=_retry_policy(max_retries),
-                timeout=_timeout(timeout),
+                timeout=_DEFAULT_TIMEOUT if timeout is None else timeout,
                 extra_headers=model_settings.get('extra_headers'),
                 extra_body=cast('Mapping[str, JsonValue] | None', model_settings.get('extra_body')),
             )
@@ -252,17 +253,6 @@ def _retry_policy(max_retries: int | None) -> RetryPolicy:
         respect_retry_after=True,
         http_statuses=set(defaults.http_statuses) | {429, 529},
         timeout=180.0,
-    )
-
-
-def _timeout(timeout: object | None) -> float | httpx.Timeout | None:
-    if timeout is None or isinstance(timeout, int | float):
-        return timeout
-    return httpx.Timeout(
-        connect=getattr(timeout, 'connect', None),
-        read=getattr(timeout, 'read', None),
-        write=getattr(timeout, 'write', None),
-        pool=getattr(timeout, 'pool', None),
     )
 
 
@@ -339,13 +329,11 @@ def _image_refused(reason: str) -> UserError:
     return UserError(f'{reason} This adapter does not upload; pass a workspace_file instead.')
 
 
-def _encode_images(images: tuple[object, ...]) -> list[str | dict[str, str]]:
+def _encode_images(images: tuple[BinaryContent, ...]) -> list[str | dict[str, str]]:
     encoded: list[str | dict[str, str]] = []
     raw_total = 0
     for image in images:
-        data = getattr(image, 'data', None)
-        if not isinstance(data, bytes):
-            raise _image_refused(f'Nace images must be bytes; got {type(image).__name__}.')
+        data = image.data
         size = len(data)
         if size > _MAX_IMAGE_BYTES:
             raise _image_refused(f'Nace image is {size} bytes; the limit is {_MAX_IMAGE_BYTES}.')
