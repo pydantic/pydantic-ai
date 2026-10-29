@@ -620,9 +620,11 @@ can push a `MongoStepStore` message past MongoDB's 16 MiB document cap
 ([#440](https://github.com/pydantic/pydantic-ai-harness/issues/440)). The
 file/sqlite/mongo/postgres backends externalize any `BinaryContent.data`, and any
 part whose string `content` is at or above 64 KiB, through a configured
-`MediaStore`, leaving a URI reference in the snapshot. The same
-`media_threshold_bytes` governs both binary and text; there is no separate
-text knob. Round-trip is transparent -- `latest_snapshot(...).messages[*]`
+`MediaStore`, leaving a URI reference in the snapshot.
+`media_threshold_bytes` sets that threshold for binary and text alike, except
+that `FileStepStore` externalizes binary of any size: each of its snapshot files
+repeats the whole history, so an image left inline would be written again at
+every step. Round-trip is transparent -- `latest_snapshot(...).messages[*]`
 returns the original `BinaryContent` bytes and text.
 
 Text externalization is not Mongo-only and has no opt-out short of

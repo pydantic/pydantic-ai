@@ -43,7 +43,7 @@ marker.
 from __future__ import annotations
 
 import base64
-from typing import TypeGuard
+from typing import NamedTuple, TypeGuard
 
 from pydantic_ai_harness.media._store import MediaContext, MediaStore
 
@@ -197,8 +197,19 @@ def _is_json_scalar(node: object) -> bool:
     return node is None or isinstance(node, (str, int, float, bool))
 
 
-async def externalize_media(node: object, *, media_store: MediaStore, threshold_bytes: int) -> object:
+class _Thresholds(NamedTuple):
+    """The size from which text and binary parts go to the media store."""
+
+    text: int
+    binary: int
+
+
+async def externalize_media(
+    node: object, *, media_store: MediaStore, threshold_bytes: int, binary_threshold_bytes: int | None = None
+) -> object:
     """Walk `node` and replace inline binary/text parts >= threshold.
+
+    `binary_threshold_bytes` sets a different threshold for binary parts; by default `threshold_bytes` governs both.
 
     `node` must be a JSON-shaped tree, such as
     `json.loads(ModelMessagesTypeAdapter.dump_json(messages))` or
@@ -210,22 +221,27 @@ async def externalize_media(node: object, *, media_store: MediaStore, threshold_
     `media+sha256://` URI; the raw bytes are written to `media_store`. Returns
     a new tree -- input is not mutated.
     """
+    binary = threshold_bytes if binary_threshold_bytes is None else binary_threshold_bytes
+    return await _externalize(node, media_store, _Thresholds(text=threshold_bytes, binary=binary))
+
+
+async def _externalize(node: object, media_store: MediaStore, thresholds: _Thresholds) -> object:
     if _is_json_list(node):
         out_list: list[object] = []
         for item in node:
-            out_list.append(await externalize_media(item, media_store=media_store, threshold_bytes=threshold_bytes))
+            out_list.append(await _externalize(item, media_store, thresholds))
         return out_list
     if _is_json_dict(node):
         replaced: dict[str, object] | None = None
         if (data := _binary_data(node)) is not None:
-            replaced = await _maybe_externalize_binary(node, data, media_store, threshold_bytes)
+            replaced = await _maybe_externalize_binary(node, data, media_store, thresholds)
         elif (content := _text_content(node)) is not None:
-            replaced = await _maybe_externalize_text(node, content, media_store, threshold_bytes)
+            replaced = await _maybe_externalize_text(node, content, media_store, thresholds)
         if replaced is not None:
             return replaced
         out_dict: dict[str, object] = {}
         for key, value in node.items():
-            out_dict[key] = await externalize_media(value, media_store=media_store, threshold_bytes=threshold_bytes)
+            out_dict[key] = await _externalize(value, media_store, thresholds)
         if any(key in node for key in _LITERAL_TRIGGER_KEYS):
             return {_LITERAL_KEY: out_dict, _MARKER_FORMAT: _LITERAL_FORMAT}
         return out_dict
@@ -241,13 +257,13 @@ async def _maybe_externalize_binary(
     node: dict[str, object],
     data: str,
     media_store: MediaStore,
-    threshold_bytes: int,
+    thresholds: _Thresholds,
 ) -> dict[str, object] | None:
     decoded = _decode_base64(data)
     if decoded is None:
         return None
     raw, altchars = decoded
-    if len(raw) < threshold_bytes:
+    if len(raw) < thresholds.binary:
         return None
     # Non-canonical padding bits decode fine but would not re-encode to `data`,
     # so restoring them would change the caller's string.
@@ -259,7 +275,7 @@ async def _maybe_externalize_binary(
     # Preserve every field except the externalized `data`, so the round-trip
     # survives new `BinaryContent` fields added by pydantic_ai upstream. Fields
     # are recursively walked so any nested externalizable payload still goes out.
-    marker = await _preserve_fields(node, 'data', media_store, threshold_bytes)
+    marker = await _preserve_fields(node, 'data', media_store, thresholds)
     _escape_marker_metadata(marker)
     marker[_EXTERNAL_MARKER] = True
     if altchars is not None:
@@ -272,21 +288,21 @@ async def _maybe_externalize_text(
     node: dict[str, object],
     content_value: str,
     media_store: MediaStore,
-    threshold_bytes: int,
+    thresholds: _Thresholds,
 ) -> dict[str, object] | None:
     # `surrogatepass`: a JSON string can decode to an unpaired surrogate (e.g.
     # "\ud800"), which strict UTF-8 refuses to encode. Encoding it here would
     # raise even for below-threshold content that should pass through untouched.
     # `restore_media` decodes with the same handler, so the round-trip is exact.
     raw = content_value.encode('utf-8', errors='surrogatepass')
-    if len(raw) < threshold_bytes:
+    if len(raw) < thresholds.text:
         return None
     uri = await media_store.put(raw, context=MediaContext(media_type='text/plain'))
     # Preserve every field except the externalized `content`, recursively walked
     # so a nested payload (e.g. binary in `metadata`) still goes external too.
     # `_TEXT_MARKER` tells `restore_media` to decode UTF-8 back into `content`
     # rather than base64 into `data`.
-    marker = await _preserve_fields(node, 'content', media_store, threshold_bytes)
+    marker = await _preserve_fields(node, 'content', media_store, thresholds)
     _escape_marker_metadata(marker)
     marker[_EXTERNAL_MARKER] = True
     marker[_TEXT_MARKER] = True
@@ -348,14 +364,14 @@ async def _preserve_fields(
     node: dict[str, object],
     externalized_key: str,
     media_store: MediaStore,
-    threshold_bytes: int,
+    thresholds: _Thresholds,
 ) -> dict[str, object]:
     """Recursively externalize every field of `node` except `externalized_key`."""
     out: dict[str, object] = {}
     for key, value in node.items():
         if key == externalized_key:
             continue
-        out[key] = await externalize_media(value, media_store=media_store, threshold_bytes=threshold_bytes)
+        out[key] = await _externalize(value, media_store, thresholds)
     return out
 
 
