@@ -155,12 +155,18 @@ To let a run be compared with an earlier run of the same experiment, such as the
 
 Detection reads the CI's environment variables and, for GitHub Actions pull request events, the event payload file at `GITHUB_EVENT_PATH`. If the payload can't be read, the commit is left out rather than reported as the merge commit that the workflow builds. Detection runs only when the experiment span is recording, and it never fails the evaluation.
 
-On GitHub Actions, the commit and branch are recorded for `push`, `schedule`, `workflow_dispatch`, `release`, and pull request events. Other events, such as `issue_comment`, `workflow_run`, and `pull_request_target`, point `GITHUB_SHA` at the default branch, while the workflow usually checks out a pull request, so their commit and branch are left out. If your workflow checks out the pull request head on such an event, set the commit and branch yourself:
+On GitHub Actions, the commit and branch are recorded for `push`, `schedule`, `workflow_dispatch`, `release`, and pull request events. Other events, such as `issue_comment`, `workflow_run`, and `pull_request_target`, point `GITHUB_SHA` at the default branch, while the workflow usually checks out a pull request, so their commit and branch are left out. If your workflow checks out the pull request head on such an event, set the commit and branch yourself. On `pull_request_target`, take them from the event payload:
 
 ```yaml
 env:
   PYDANTIC_EVALS_GIT_COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
   PYDANTIC_EVALS_GIT_BRANCH: ${{ github.event.pull_request.head.ref }}
+```
+
+On other events, the payload has no `pull_request` object. Set the commit from the checkout in a step after `actions/checkout`, and set `PYDANTIC_EVALS_GIT_BRANCH` the same way if your workflow knows the branch:
+
+```yaml
+- run: echo "PYDANTIC_EVALS_GIT_COMMIT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 ```
 
 These environment variables control the provenance attributes:
