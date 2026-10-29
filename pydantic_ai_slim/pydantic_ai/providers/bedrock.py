@@ -67,22 +67,25 @@ _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE: dict[str, tuple[str, ...]] = {
 
 # Bedrock rejects a `pattern` using lookaround or backreferences with a 400. Source: AWS docs at
 # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html, verified against
-# `us.anthropic.claude-opus-4-7` and `qwen.qwen3-32b-v1:0` on 2026-10-29.
+# `us.anthropic.claude-opus-4-7` and `qwen.qwen3-32b-v1:0` on 2026-10-29. Every escaped digit counts as a
+# backreference, octal escapes and character classes included; `(?=` inside a character class is literal.
 _REGEX_UNSUPPORTED_TOKENS = ('(?=', '(?!', '(?<=', '(?<!', '(?P=')
 
 
 def _regex_contains_unsupported_syntax(pattern: str) -> bool:
-    escaped = False
+    escaped = in_class = False
     for i, char in enumerate(pattern):
         if escaped:
-            if char in '123456789':  # numbered backreference
+            if char in '123456789':
                 return True
             escaped = False
-            continue
-        if char == '\\':
+        elif char == '\\':
             escaped = True
-            continue
-        if pattern.startswith(_REGEX_UNSUPPORTED_TOKENS, i):
+        elif in_class:
+            in_class = char != ']'
+        elif char == '[':
+            in_class = True
+        elif pattern.startswith(_REGEX_UNSUPPORTED_TOKENS, i):
             return True
     return False
 
