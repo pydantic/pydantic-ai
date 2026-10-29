@@ -1963,6 +1963,20 @@ class TestCodeMode:
         assert 'load_capability' in tools
         assert tools['load_capability'].tool_def.tool_kind == 'capability-load'
 
+    async def test_computer_tool_not_sandboxed(self) -> None:
+        """`ComputerUse`'s `computer` tool stays native: providers map it to their own computer tool."""
+        td_computer = ToolDefinition(name='computer', description='Run actions on the screen.', tool_kind='computer')
+        static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_computer])
+        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        assert 'async def computer' not in description
+        assert tools['computer'].tool_def.tool_kind == 'computer'
+
     async def test_code_execution_tool_not_sandboxed(self) -> None:
         """A tool that is itself a code sandbox (carries `code_arg_name` metadata) stays native.
 

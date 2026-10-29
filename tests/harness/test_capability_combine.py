@@ -60,6 +60,7 @@ from pydantic_ai_harness import (
     BackgroundTools,
     Coder,
     CompactOnRequest,
+    ComputerUse,
     Planning,
     RelevanceCompaction,
     Researcher,
@@ -211,6 +212,11 @@ def _check_sub_agents(merged: Any) -> None:
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
 
 
+def _check_computer_use(merged: ComputerUse[Any]) -> None:
+    # The later settings win, but approval and the screenshot limit, which restrict, survive.
+    assert (merged.requires_approval, merged.settle_seconds, merged.keep_screenshots) == (True, 0, 2)
+
+
 def _check_ssh_workspace(merged: SSHWorkspace[Any]) -> None:
     assert (merged.destination, merged.env, merged.read_only) == ('second', None, False)
 
@@ -256,6 +262,14 @@ COMBINE_POLICY: dict[str, Policy] = {
             SummarizingCompaction[Any](max_messages=50, keep_messages=7),
         ),
         _check_summarizing,
+    ),
+    'ComputerUse': Combines(
+        'an agent has one display: the later configuration wins, but approval and the screenshot limit survive',
+        lambda: (
+            ComputerUse[Any](requires_approval=True, keep_screenshots=2),
+            ComputerUse[Any](settle_seconds=0, keep_screenshots=5),
+        ),
+        _check_computer_use,
     ),
     'SystemReminders': Combines(
         'reminders are additive, so both sides keep firing',

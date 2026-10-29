@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         TieredCompaction,
         WarnNearLimits,
     )
+    from .computer_use import ComputerUse
     from .conversation_search import ConversationSearch
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
@@ -103,6 +104,7 @@ __all__ = [
     'CodeMode',
     'Coder',
     'CompactOnRequest',
+    'ComputerUse',
     'ConversationSearch',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
     'DayAI',
@@ -195,6 +197,7 @@ _CAPABILITY_EXPORTS = {
     'CodeMode': 'code_mode',
     'Coder': 'coder',
     'CompactOnRequest': 'compaction',
+    'ComputerUse': 'computer_use',
     'ConversationSearch': 'conversation_search',
     'DayAI': 'day_ai',
     'DaytonaSandbox': 'daytona_sandbox',

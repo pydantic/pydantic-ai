@@ -491,6 +491,9 @@ navigation:
           - page: "Playwright Browser"
             path: "harness/playwright.md"
             slug: "harness/playwright"
+          - page: "Computer Use"
+            path: "harness/computer-use.md"
+            slug: "harness/computer-use"
       - section: "Reasoning, Planning & Delegation"
         slug: ""
         contents:
