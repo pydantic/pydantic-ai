@@ -85,7 +85,11 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(fake_e2b: Fa
     await workspace.act(Click(x=3, y=4))
 
     assert len(display.starts) == 1
-    assert display.xdotool[-2:] == ['xdotool getdisplaygeometry', 'xdotool mousemove 3 4 click --repeat 1 1']
+    assert display.xdotool[-2:] == [
+        'xdotool getdisplaygeometry',
+        'xdotool keyup Shift_L Shift_R Control_L Control_R Alt_L Alt_R Super_L Super_R ISO_Level3_Shift '
+        'mousemove 3 4 click --repeat 1 1',
+    ]
     # E2B's locale is POSIX, under which `xdotool type` stops at the first character outside ASCII.
     assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'}
 
@@ -155,8 +159,8 @@ async def test_a_display_that_went_away_is_started_again(fake_e2b: FakeE2B, disp
         await workspace.act(Click(x=1, y=1))
     await workspace.act(Click(x=1, y=1))
 
-    # The last action runs the start script too, and finds the display up.
-    assert len(display.starts) == 3
+    # The last action uses the display that started, without running the start script again.
+    assert len(display.starts) == 2
     assert backend.display.starts == 2
 
 

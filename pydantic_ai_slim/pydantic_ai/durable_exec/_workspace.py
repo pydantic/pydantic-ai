@@ -15,6 +15,7 @@ original type, so a hook can catch them and the engine only retries infrastructu
 from __future__ import annotations
 
 import dataclasses
+import weakref
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import (
@@ -241,6 +242,10 @@ def _counting_display(workspace: Workspace) -> _CountsStarts | None:
     return display if isinstance(display, _CountsStarts) else None
 
 
+_reported_starts: weakref.WeakKeyDictionary[Workspace, int] = weakref.WeakKeyDictionary()
+"""For each workspace whose display counts its starts, the count its last journaled display call reported."""
+
+
 @dataclass(frozen=True)
 class WorkspaceCallParams:
     """The workspace operation's parameters: the run context, the environment's ref, and the call."""
@@ -353,7 +358,8 @@ def raise_error(error: WorkspaceCallError) -> Never:
 async def execute_call(workspace: Workspace, call: WorkspaceCall) -> WorkspaceCallResult:
     """Run a call inside a durable unit; anything outside the error table fails the unit, so the engine retries it."""
     display = _counting_display(workspace) if call.method in _DISPLAY_METHODS else None
-    before = display.starts if display is not None else 0
+    if display is not None:
+        _reported_starts.setdefault(workspace, display.starts)
     try:
         result = await call.execute(workspace)
     except Exception as error:
@@ -362,10 +368,13 @@ async def execute_call(workspace: Workspace, call: WorkspaceCall) -> WorkspaceCa
         result = WorkspaceCallResult(error=data)
     if display is None:
         return result
-    # The starts during this call, not the display's count: a unit on another worker rebuilds the backend, and with it
-    # the count, so only these add up across units. An error carries them too: an action refused because the display
-    # restarted is how workflow code learns of the restart.
-    return dataclasses.replace(result, starts=display.starts - before)
+    # The starts since the last journaled call, not the display's count: a unit on another worker rebuilds the backend,
+    # and with it the count, so only these add up across units. They include starts during a unit that failed, which
+    # journaled nothing, so the engine's retry reports them. An error carries them too: an action refused because the
+    # display restarted is how workflow code learns of the restart.
+    starts = display.starts - _reported_starts[workspace]
+    _reported_starts[workspace] = display.starts
+    return dataclasses.replace(result, starts=starts)
 
 
 class DurableWorkspace(WrapperWorkspace):

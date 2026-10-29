@@ -116,7 +116,8 @@ async def test_an_action_does_not_run_on_a_display_that_started_for_it() -> None
         await display.act(Click(x=1, y=1))
     assert driver.acted == []
     await display.act(Click(x=2, y=2))
-    assert driver.acted == [Click(x=2, y=2)]
+    # The next action uses the display that started, without starting it again.
+    assert (driver.acted, driver.starts) == ([Click(x=2, y=2)], 1)
 
 
 async def test_a_refused_action_keeps_the_display() -> None:

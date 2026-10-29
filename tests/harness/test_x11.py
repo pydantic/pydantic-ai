@@ -33,6 +33,12 @@ from ..workspace_fakes import FAKE_SCREENSHOT
 
 pytestmark = pytest.mark.anyio
 
+RELEASE_MODIFIERS = [
+    *['keyup', 'Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R', 'Super_L', 'Super_R'],
+    'ISO_Level3_Shift',
+]
+"""What every acting `xdotool` chain starts with: letting go of modifiers an earlier action may have left down."""
+
 
 class ScriptedCommands:
     """Records each command and answers with the next scripted result (exit 0 and no output by default)."""
@@ -124,15 +130,17 @@ class BlockingCommands(ScriptedCommands):
 async def test_x11_computer_runs_one_xdotool_command_per_action(action: ComputerAction, argv: list[str]) -> None:
     commands = ScriptedCommands()
     await X11Computer(commands).act(action)
-    assert commands.calls == [(argv, False, {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'})]
+    assert commands.calls == [
+        (['xdotool', *RELEASE_MODIFIERS, *argv[1:]], False, {'DISPLAY': ':1', 'LC_ALL': 'C.UTF-8'})
+    ]
 
 
 async def test_x11_computer_types_mixed_text_in_one_command_mapping_each_character_outside_ascii_once() -> None:
     commands = ScriptedCommands()
     await X11Computer(commands).act(TypeText(text='Zoë 日本日 é'))
     ((*_, args),) = [(argv[:4], argv[4:]) for argv in commands.argvs]  # after `sh -c <script> sh`
-    # The characters to map, then `xdotool key`'s arguments: the whole text, ASCII included.
-    assert args == ['U00EB', 'U65E5', 'U672C', 'U00E9', '--', '--delay', '12', '--'] + [
+    # The characters to map, then `xdotool`'s arguments: the whole text, ASCII included.
+    assert args == ['U00EB', 'U65E5', 'U672C', 'U00E9', '--', *RELEASE_MODIFIERS, 'key', '--delay', '12', '--'] + [
         'U005A',
         'U006F',
         'U00EB',
@@ -151,13 +159,13 @@ async def test_x11_computer_maps_at_most_50_characters_a_command() -> None:
     await X11Computer(commands).act(TypeText(text=text))
     first, second = commands.argvs
     assert first[4 : first.index('--')] == [f'U{0x4E00 + n:04X}' for n in range(50)]
-    assert second[4:] == ['U4E32', '--', '--delay', '12', '--', 'U4E32']
+    assert second[4:] == ['U4E32', '--', *RELEASE_MODIFIERS, 'key', '--delay', '12', '--', 'U4E32']
 
 
 async def test_x11_computer_maps_a_character_key_outside_ascii_before_pressing_it() -> None:
     commands = ScriptedCommands()
     await X11Computer(commands).act(PressKeys(keys=('ctrl', 'é')))
-    assert commands.argvs[0][4:] == ['U00E9', '--', '--repeat', '1', '--', 'ctrl+U00E9']
+    assert commands.argvs[0][4:] == ['U00E9', '--', *RELEASE_MODIFIERS, 'key', '--repeat', '1', '--', 'ctrl+U00E9']
 
 
 @pytest.mark.parametrize(
