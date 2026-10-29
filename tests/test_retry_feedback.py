@@ -1150,11 +1150,11 @@ async def test_root_level_input_is_serialized_once_per_distinct_value():
 
 
 @pydantic_dataclass
-class PositiveOnly:
+class AlwaysInvalid:
     a: int
 
     def __post_init__(self):
-        raise ValueError('a must be positive')
+        raise ValueError('never valid')
 
 
 async def test_a_validation_error_whose_input_is_not_json_is_retried():
@@ -1170,7 +1170,7 @@ async def test_a_validation_error_whose_input_is_not_json_is_retried():
 
     @agent.tool_plain
     def check() -> str:
-        PositiveOnly(a=0)
+        AlwaysInvalid(a=0)
         return 'unreachable'  # pragma: no cover
 
     result = await agent.run('go')
@@ -1182,7 +1182,7 @@ async def test_a_validation_error_whose_input_is_not_json_is_retried():
             {
                 'type': 'value_error',
                 'loc': [],
-                'msg': 'Value error, a must be positive',
+                'msg': 'Value error, never valid',
                 'input': "ArgsKwargs((), {'a': 0})",
             }
         ]
