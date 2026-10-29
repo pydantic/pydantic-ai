@@ -192,7 +192,7 @@ def test_workflow_routes_events_and_cancellation_without_relying_on_label_presen
     """Review, cancellation, cleanup, and label jobs follow their intended events."""
     workflow = _workflow()
     trigger = workflow[True]['pull_request_target']
-    assert trigger['types'] == ['opened', 'synchronize', 'labeled', 'unlabeled']
+    assert trigger['types'] == ['opened', 'synchronize', 'edited', 'labeled', 'unlabeled']
 
     jobs = workflow['jobs']
     review = jobs['review']
@@ -200,10 +200,13 @@ def test_workflow_routes_events_and_cancellation_without_relying_on_label_presen
         "github.event.action == 'labeled' && (github.event.label.name == 'douwebot' "
         "|| github.event.label.name == 'douwebot:review-agent-config')"
     )
-    assert jobs['size-label']['if'] == "github.event.action == 'opened' || github.event.action == 'synchronize'"
+    assert jobs['size-label']['if'] == (
+        "github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'edited'"
+    )
     assert jobs['category-classify']['if'] == "github.event.action == 'opened' || github.event.action == 'synchronize'"
     assert workflow['concurrency']['group'] == (
-        "pr-bots-${{ github.event.pull_request.number }}${{ ((github.event.action == 'labeled' "
+        "pr-bots-${{ github.event.pull_request.number }}${{ github.event.action == 'edited' && '-size' "
+        "|| ((github.event.action == 'labeled' "
         "&& github.event.label.name != 'douwebot' && github.event.label.name != 'douwebot:review-agent-config') "
         "|| (github.event.action == 'unlabeled' && github.event.label.name != 'douwebot:review-agent-config')) "
         "&& format('-noop-{0}', github.run_id) || '' }}"
@@ -212,9 +215,14 @@ def test_workflow_routes_events_and_cancellation_without_relying_on_label_presen
     assert APPROVAL_LABEL in workflow['concurrency']['cancel-in-progress']
 
     steps = review['steps']
-    cleanup = next(step for step in steps if step.get('name') == 'Remove douwebot label')
+    publish_review = jobs['publish-review']
+    assert review['permissions']['pull-requests'] == 'read'
+    assert publish_review['needs'] == 'review'
+    assert publish_review['if'] == "always() && needs.review.result != 'skipped'"
+    assert publish_review['permissions']['pull-requests'] == 'write'
+    cleanup = next(step for step in publish_review['steps'] if step.get('name') == 'Remove douwebot label')
     assert cleanup['if'] == "always() && github.event.action == 'labeled' && github.event.label.name == 'douwebot'"
-    assert all(APPROVAL_LABEL not in step.get('run', '') for step in steps if step is cleanup)
+    assert APPROVAL_LABEL not in cleanup['run']
 
     claude_index = next(
         index for index, step in enumerate(steps) if step.get('uses', '').startswith('anthropics/claude-code-action@')

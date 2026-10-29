@@ -824,6 +824,16 @@ class _ElevenLabsSchemaTransformer(JsonSchemaTransformer):
     def __init__(self, schema: JsonSchema):
         super().__init__(schema, prefer_inlined_defs=True, simplify_nullable_unions=True)
 
+    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
+        # The dialect has no `propertyNames`, and walking it would refuse a recursive `$ref` the projection never reads.
+        schema.pop('propertyNames', None)
+        return super()._handle_object(schema)
+
+    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
+        # Nor `contains`: same reason as `_handle_object`.
+        schema.pop('contains', None)
+        return super()._handle_array(schema)
+
     def transform(self, schema: JsonSchema) -> JsonSchema:
         return schema
 
