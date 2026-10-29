@@ -579,7 +579,7 @@ class _HostFilesystem(FakeFilesystem):
         await self._check(path)
         assert depth == 1, f'unexpected list depth {depth!r}'
         with _host_errors(path):
-            children = await anyio.to_thread.run_sync(lambda: sorted(Path(path).iterdir()))
+            children = sorted(Path(path).iterdir())
         return [self._host_entry(posixpath.join(path, child.name)) for child in children]
 
     async def exists(self, path: str, user: str | None = None, request_timeout: float | None = None) -> bool:
