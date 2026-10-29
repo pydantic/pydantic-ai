@@ -1283,7 +1283,7 @@ def test_archived_sessions_leave_the_sidebar_until_it_lists_them(make_web: 'Make
     assert listed('/api/sessions') == {'New session': False, 'Stale': False}
 
 
-def test_sessions_list_in_the_order_they_were_created(make_web: 'MakeWeb') -> None:
+def test_sessions_carry_their_creation_time(make_web: 'MakeWeb') -> None:
     """Each row carries its creation time, which later saves keep, so the sidebar's order never changes."""
     web_ = make_web(Agent(TestModel()))
     store = web_.shell.sessions.store

@@ -21,6 +21,8 @@ follow `parallel_execution_mode`, which runs them one at a time by default (see
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![An agent named analyst runs inside a pgtask task. On the first attempt its model request and its tool call each finish and are saved to Postgres as pgtask steps, named analyst__model.request and analyst__function_toolset__{id}.call_tool:{tool}; then the worker crashes during the next model request, which is not saved. pgtask runs the task again: the two saved steps return their stored results without calling the model or the tool, and only the unfinished model request runs live.](../img/harness/pgtask.svg)
+
 ## Installation
 
 ```bash

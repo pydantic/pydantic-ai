@@ -188,6 +188,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   useEffect(() => {
     openFirst.current = null
     pickedHere.current = null
+    setMenu(null)
   }, [view])
 
   const pick = useCallback((next: View) => {
@@ -276,8 +277,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   // The row picked last is the selection, highlighted at once, before its session opens.
   const selected = opening ?? viewing ?? shown
 
-  // What the shown or previewed session says is read as it changes, unless the orchestrator covers it.
-  const readRow = orchestrating ? undefined : rows.find((row) => row.id === (viewing ?? shown))
+  // What the shown or previewed session says is read as it changes, unless the orchestrator or a worker covers it.
+  const readRow = orchestrating || worker !== null ? undefined : rows.find((row) => row.id === (viewing ?? shown))
   useEffect(() => {
     if (readRow) setSeen((current) => markSeen(current, [readRow]))
   }, [readRow])
