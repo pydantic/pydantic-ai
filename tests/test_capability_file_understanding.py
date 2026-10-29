@@ -366,7 +366,9 @@ async def test_the_same_file_twice_in_one_request_is_described_once():
 
     await capability.prepare_model_request(ctx, request_context)
     assert describer.calls == 1
-    assert ctx.usage.requests == 1
+    await capability.prepare_model_request(ctx, request_context)
+    assert describer.calls == 2, 'with no history to record in, the next call describes the file again'
+    assert ctx.usage.requests == 2
 
 
 async def test_a_file_only_in_the_request_is_recorded_on_the_latest_request():
@@ -579,7 +581,7 @@ async def test_a_real_adapter_that_cannot_read_a_video_gets_a_real_description(
 async def test_each_attempt_is_judged_by_the_model_serving_it():
     """With `ModelFallback`, a candidate that reads a file gets it, and only one that can't gets its description.
 
-    The description made for the fallback is recorded once the attempt returns, so the next turn reuses it.
+    The description made for the fallback is recorded in the history when it's made, so the next turn reuses it.
     """
     describer = Describer()
     item = ImageUrl('https://example.com/cat.png')
