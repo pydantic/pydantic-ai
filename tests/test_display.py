@@ -894,6 +894,7 @@ def test_banner_is_not_shown_for_a_run_an_installed_package_started(
 async def test_banner_is_not_shown_for_an_async_run_an_installed_package_started(
     monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
 ):
+    """An installed package's coroutine awaiting `run()` is on the same stack as the run, like a sync caller."""
     monkeypatch.setattr(sys, 'stderr', stderr)
     runner = _package_runner('/venv/lib/python3.13/site-packages/some_library/runner.py', run_async=True)
 
@@ -903,8 +904,29 @@ async def test_banner_is_not_shown_for_an_async_run_an_installed_package_started
     assert _display.banner_pending() is True
 
 
-def test_no_frame_is_not_an_installed_package():
-    assert _display.started_by_installed_package(None) is False
+def test_banner_is_shown_for_a_run_whose_starter_is_past_an_event_loop(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
+):
+    """Below a loop the frames are whoever drives it, like `uvicorn` serving the user's app, so the banner stays."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    namespace: dict[str, Any] = {'__name__': 'some_server.loop'}
+    source = 'import asyncio\ndef serve(coroutine):\n    return asyncio.run(coroutine)\n'
+    exec(compile(source, '/venv/lib/python3.13/site-packages/some_server/loop.py', 'exec'), namespace)
+
+    namespace['serve'](Agent(TestModel(), name='support_agent').run('hello'))
+
+    assert 'agent: support_agent' in stderr.getvalue()
+
+
+def test_banner_is_shown_for_a_run_on_its_own_thread(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """Nothing but `threading` sits above a thread's run, which says nothing about who started it."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    thread = threading.Thread(target=Agent(TestModel(), name='support_agent').run_sync, args=('hello',))
+
+    thread.start()
+    thread.join()
+
+    assert 'agent: support_agent' in stderr.getvalue()
 
 
 def test_banner_counts_every_tool_the_model_is_offered(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):

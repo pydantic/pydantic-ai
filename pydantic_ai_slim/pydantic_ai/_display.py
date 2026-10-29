@@ -228,19 +228,29 @@ def started_by_installed_package(frame: FrameType | None) -> bool:
     while an installed package runs from `site-packages`, so the first frame outside Pydantic AI and
     the standard library says which of the two started the run.
 
+    Below an event loop the frames belong to whatever drives the loop (`uvicorn`, `ipykernel`), not
+    to whoever started the run, unless Pydantic AI's own sync methods drive it. A run whose starter
+    lies past such a boundary is not attributed to a package: it keeps the banner, as before.
+
     Args:
         frame: The frame to start looking outwards from, inside Pydantic AI.
     """
     stdlib_dirs = _stdlib_dirs()
+    below_event_loop = False
     while frame is not None:
         filename = frame.f_code.co_filename
         module = frame.f_globals.get('__name__')
-        if not (isinstance(module, str) and module.partition('.')[0] in _OWN_PACKAGES):
-            # Checked before the standard library, which a system Python's `site-packages` sits inside.
-            if not _INSTALLED_PACKAGE_DIRS.isdisjoint(PurePath(filename).parts):
-                return True
-            if not filename.startswith(stdlib_dirs):
-                return False
+        package = module.partition('.')[0] if isinstance(module, str) else None
+        if package in _OWN_PACKAGES:
+            # `run_sync()` and friends drive the loop themselves, so their caller started the run.
+            below_event_loop = False
+        elif package == 'asyncio':
+            below_event_loop = True
+        # Checked before the standard library, which a system Python's `site-packages` sits inside.
+        elif not _INSTALLED_PACKAGE_DIRS.isdisjoint(PurePath(filename).parts):
+            return not below_event_loop
+        elif not filename.startswith(stdlib_dirs):
+            return False
         frame = frame.f_back
     return False
 

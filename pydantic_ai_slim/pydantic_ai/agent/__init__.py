@@ -2226,10 +2226,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # A run a library or platform started on its users' behalf gets no banner, and leaves the claim
         # for the user's own agents. Decided here, while the frames of whoever called `run()` are still
-        # on the stack.
+        # on the stack, and only when the run could show one: an instrumented run never does, and a
+        # process that has shown one has nothing left to decide.
         display_banner = (
             None
-            if _display.banner_pending() and _display.started_by_installed_package(inspect.currentframe())
+            if instrumentation_settings is None
+            and _display.banner_pending()
+            and _display.started_by_installed_package(inspect.currentframe())
             else display_agent_banner
         )
 
