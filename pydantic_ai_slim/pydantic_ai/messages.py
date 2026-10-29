@@ -7117,18 +7117,24 @@ HandleResponseEvent = Annotated[
 """An event yielded when handling a model response, indicating tool calls and results."""
 
 
-CompactionReason: TypeAlias = Literal['threshold', 'cache_expiry', 'manual', 'model_switch', 'context_overflow'] | str
+CompactionReason: TypeAlias = (
+    Literal['threshold', 'cache_expiry', 'manual', 'model_requested', 'model_switch', 'context_overflow'] | str
+)
 """Why the message history is being compacted.
 
 - `'threshold'`: the history grew past a size threshold.
 - `'cache_expiry'`: the provider's prompt cache has expired, so the next request pays to write it anyway, or is
   about to expire, so compacting now can still read it.
 - `'manual'`: the user or the application asked for it, like a `/compact` command.
+- `'model_requested'`: the model asked for it, like with a tool that requests compaction.
 - `'model_switch'`: the model serving the next request can't use the history's existing compaction.
 - `'context_overflow'`: the model rejected the request for exceeding its context window, so it's compacted and
   sent to the same model once more.
 
-Any other string is passed through as is, for a reason of your own.
+Any other string is passed through as is, for a reason of your own. When a request is made while another is pending,
+they're merged, and the merged one keeps the more important reason: `'manual'`, then `'model_requested'`,
+`'context_overflow'`, `'model_switch'`, `'threshold'` and `'cache_expiry'`, then a reason of your own; see
+[`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction].
 """
 
 
