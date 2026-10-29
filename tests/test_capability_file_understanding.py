@@ -348,10 +348,10 @@ async def test_a_url_is_not_described_twice_within_a_run():
     assert describer.calls == 1
 
 
-async def test_a_file_is_described_once_per_run_without_a_history_to_record_it_in():
-    """With no request in the run's history, a description is still reused for the rest of the run, but not by another.
+async def test_the_same_file_twice_in_one_request_is_described_once():
+    """With no request in the history to record on, each call describes the file again, but only once per call.
 
-    An agent run always has its request in the history, so this calls the hooks directly with a bare `RunContext`.
+    An agent run always has its request in the history, so this calls the hook directly with a bare `RunContext`.
     """
     describer = Describer()
     capability: FileUnderstanding[None] = FileUnderstanding(fallback_subagent_model=FunctionModel(describer))
@@ -364,12 +364,9 @@ async def test_a_file_is_described_once_per_run_without_a_history_to_record_it_i
         model_request_parameters=ModelRequestParameters(),
     )
 
-    for _ in range(2):
-        run = await capability.for_run(ctx)
-        for _ in range(2):
-            await run.prepare_model_request(ctx, request_context)
-    assert describer.calls == 2, 'the same URL twice in one request is described once per run'
-    assert ctx.usage.requests == 2
+    await capability.prepare_model_request(ctx, request_context)
+    assert describer.calls == 1
+    assert ctx.usage.requests == 1
 
 
 async def test_a_file_only_in_the_request_is_recorded_on_the_latest_request():

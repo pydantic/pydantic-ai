@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterator
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, replace
 from typing import TYPE_CHECKING, TypeGuard, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
@@ -109,17 +109,6 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     which keeps the last. Pass a distinct `id` to keep both, or `id=None` for derived ids.
     """
 
-    _described: dict[str, str] = field(default_factory=lambda: {}, init=False, repr=False)
-    """Descriptions made in this run, by file identity.
-
-    They're also recorded in the history, which is what later turns read. This keeps them for the rest of the run
-    when there is no request in the history to record them on.
-    """
-
-    async def for_run(self, ctx: RunContext[AgentDepsT]) -> FileUnderstanding[AgentDepsT]:
-        """A copy for this run, so its descriptions don't reach another run except through a shared history."""
-        return replace(self)
-
     async def prepare_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -137,7 +126,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
             return request_context
 
         # Every file is found first, so the distinct ones can be described at once rather than one after another.
-        recorded = {**self._recorded_descriptions([*ctx.messages, *request_context.messages]), **self._described}
+        recorded = self._recorded_descriptions([*ctx.messages, *request_context.messages])
         descriptions: dict[str, str] = {}
         pending: dict[str, SendableFile] = {}
         unaccepted = False
@@ -161,7 +150,6 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         if pending:
             await self._describe_pending(ctx, pending, descriptions)
             new = {identity: descriptions[identity] for identity in pending}
-            self._described.update(new)
             # Through `ctx.messages`, which persists, unlike `request_context`: a description depends on the file and
             # `instructions`, not on the attempt, so a later attempt, request or turn reuses it.
             self._record(ctx.messages, new)
