@@ -305,7 +305,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
   const attention = useMemo(() => rows.filter((row) => !row.archived && needsYou(row)).length, [rows, needsYou])
 
   // Each running row's elapsed time: from its turn's start, which a turn saves, or else from when this page saw it run.
-  // A queued prompt that starts its turn straight after the last one starts the count again, though the row never idled.
+  // A queued prompt starting its turn, or an answer resuming one, starts the count again, though the row never idled.
   const started = useRef(new Map<string, { at: number; after: number }>())
   const lastStates = useRef(new Map<string, Status>())
   const anyWorking = rows.some((row) => WORKING.includes(states[row.id] ?? null))
@@ -319,7 +319,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
       continue
     }
     let turn = started.current.get(row.id)
-    if (turn === undefined || (last === 'queued' && state === 'running')) {
+    if (turn === undefined || ((last === 'queued' || last === 'asking') && state === 'running')) {
       // Saves before `after` belong to an earlier turn.
       turn = { at: Date.now(), after: turn?.at ?? -Infinity }
       started.current.set(row.id, turn)

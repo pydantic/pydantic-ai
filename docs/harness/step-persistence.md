@@ -584,7 +584,9 @@ media. It is not secure erasure. A local live PID marks an unfinished conversati
 as busy; this is not a distributed lease and the database must not be shared
 between hosts. On Linux, a process that started after the conversation was last
 saved has reused the recorded PID, so the conversation is not busy; elsewhere PID
-reuse is conservatively treated as busy.
+reuse is conservatively treated as busy. Linux times a process's start from the
+current wall clock, so if the clock jumps forward by more than the owner's age at
+its last save, a running conversation reads as not busy.
 
 `set_archived(conversation_id=..., archived=...)` archives or unarchives a
 conversation through `ConversationSummary.archived_at`, a metadata-only change that
