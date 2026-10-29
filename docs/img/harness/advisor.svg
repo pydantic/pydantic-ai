@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="638" viewBox="0 0 880 638" role="img" aria-labelledby="t d">
+<title id="t">Advisor: let the model consult a second model</title>
+<desc id="d">Advisor gives the executor model an advisor tool. On the local path, calling advisor(prompt) runs a separate agent with the advisor model, and its answer comes back as the tool result. When the executor and advisor are both on Anthropic, or both on OpenRouter, the provider&#x27;s native AdvisorTool runs the consultation inside the model request instead.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="637" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Advisor: let the model consult a second model</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">The executor model gets one advisor tool and decides when to ask. The advice comes back as a tool result, from a local</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">agent run or from the provider.</text>
+<text letter-spacing="1.3" x="32" y="130" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">WHERE IT RUNS IN THE AGENT LOOP</text>
+<rect x="32" y="152" width="128" height="44" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="96" y="168.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">messages</text>
+<text x="96" y="187.2" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">history + new parts</text>
+<rect x="212" y="156" width="96" height="36" rx="18" fill="#092224"/>
+<text x="260" y="179" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="360" y="152" width="128" height="44" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="424" y="168.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tool call</text>
+<text x="424" y="187.2" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">name + JSON args</text>
+<rect x="540" y="152" width="128" height="44" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="604" y="168.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">validate args</text>
+<text x="604" y="187.2" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">against the schema</text>
+<rect x="720" y="152" width="128" height="44" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="784" y="168.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">advisor</text>
+<text x="784" y="187.2" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">consult tool</text>
+<line x1="163" y1="174" x2="209" y2="174" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="311" y1="174" x2="357" y2="174" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="491" y1="174" x2="537" y2="174" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="671" y1="174" x2="717" y2="174" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<path d="M 784 198 L 784 212 Q 784 222 774 222 L 106 222 Q 96 222 96 212 L 96 200" stroke="#55726A" stroke-width="1.6" fill="none" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<text x="110" y="240" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tool result goes into the next request</text>
+<line x1="32" y1="270" x2="848" y2="270" stroke="#E6EAEA" stroke-width="1"/>
+<text letter-spacing="1.3" x="32" y="296" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">ONE ADVISOR TOOL, TWO WAYS TO RUN IT</text>
+<text letter-spacing="1.3" x="208" y="318" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">LOCAL FALLBACK: ANY OTHER PAIRING</text>
+<text letter-spacing="1.3" x="208" y="450" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">NATIVE: SAME PROVIDER</text>
+<rect x="32" y="406" width="132" height="36" rx="18" fill="#092224"/>
+<text x="98" y="429" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">executor model</text>
+<path d="M 136 405 L 136 368 Q 136 358 146 358 L 205 358" stroke="#092224" stroke-width="1.6" fill="none" marker-end="url(#ai)"/>
+<path d="M 136 443 L 136 480 Q 136 490 146 490 L 205 490" stroke="#092224" stroke-width="1.6" fill="none" marker-end="url(#ai)"/>
+<rect x="208" y="346" width="127.8" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="271.9" y="362.3" font-size="12" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">advisor(prompt)</text>
+<line x1="338.8" y1="358" x2="368.8" y2="358" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="371.8" y="332" width="262" height="52" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="502.8" y="352.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">advisor agent run</text>
+<text x="502.8" y="371.2" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">own instructions, no access to your tools</text>
+<line x1="636.8" y1="358" x2="713" y2="358" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="716" y="340" width="132" height="36" rx="18" fill="#092224"/>
+<text x="782" y="363" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">advisor model</text>
+<path d="M 782 377 L 782 394 Q 782 404 772 404 L 281.9 404 Q 271.9 404 271.9 394 L 271.9 372" stroke="#55726A" stroke-width="1.6" fill="none" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<text x="379.8" y="422" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the answer (str or output_type) is the tool result</text>
+<rect x="208" y="464" width="640" height="52" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="528" y="484.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">AdvisorTool (provider-native)</text>
+<text x="528" y="503.2" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">executor and advisor both on Anthropic or both on OpenRouter: the provider runs it inside the model request</text>
+<text x="32" y="550" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">max_uses caps consultations per executor request and max_tokens caps each answer. forward_history=True also sends the local</text>
+<text x="32" y="567.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">advisor the completed message history.</text>
+<rect x="32" y="590.5" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="601.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="590.5" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="601.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by Advisor</text>
+<rect x="245.6" y="590.5" width="14" height="14" rx="4" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="265.6" y="601.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model provider</text>
+<rect x="373.5" y="590.5" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="393.5" y="601.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">your agent and tools</text>
+</svg>

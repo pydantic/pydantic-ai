@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     SystemPromptPart,
 )
+from pydantic_ai_harness._provenance import harness_origin
 from pydantic_ai_harness.compaction._summary import without_summaries
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord
 
@@ -45,9 +46,10 @@ Summaries are now a `CompactionPart`; this only recognizes ones in histories sav
 
 Byte-for-byte mirror of `pydantic_ai_harness.compaction._summarizing_compaction.SUMMARY_PREFIX`,
 including the blank line: that is the marker compaction itself matches on to recognize its own
-prior summaries (`extract_previous_summary`), and `SystemPromptPart` carries no metadata field
-to mark artifacts with instead. Matching the full literal keeps a user-authored system prompt
-that merely opens with the same sentence inside the corpus.
+prior summaries (`extract_previous_summary`), and the releases that wrote them set no metadata
+to mark them with instead. Matching the full literal keeps a user-authored system prompt that
+merely opens with the same sentence inside the corpus, and a system prompt with a harness `origin`
+(such as a lasting `SystemReminders` reminder) is never taken for one.
 
 Kept as a local literal rather than an import so this capability does not couple to compaction
 internals: the corpus holds the originals a summary replaced, never the derived summary, so
@@ -166,8 +168,16 @@ def without_summary_artifacts(messages: Sequence[ModelMessage]) -> list[ModelMes
 
 
 def _is_legacy_summary(part: ModelRequestPart) -> bool:
-    """Whether *part* is the summary system prompt an earlier `SummarizingCompaction` wrote."""
-    return isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX)
+    """Whether *part* is the summary system prompt an earlier `SummarizingCompaction` wrote.
+
+    Those summaries carry no metadata, so a system prompt a harness capability marked with its `origin` is
+    that capability's, whatever its text.
+    """
+    return (
+        isinstance(part, SystemPromptPart)
+        and part.content.startswith(SUMMARY_PREFIX)
+        and harness_origin(part.metadata) is None
+    )
 
 
 class SnapshotHistorySource:

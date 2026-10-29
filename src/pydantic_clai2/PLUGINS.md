@@ -168,6 +168,12 @@ whether to load the server from it. `/mcp tools NAME` lists the tools either way
 Keep a server eager (the default) when most prompts use it: loading it costs
 the agent an extra step.
 
+A CLAI build older than these keys rejects a `mcp.json` or project file that uses
+them. When servers given as plugin settings use them, `/plugins add`, `enable`, or
+`disable` in a session saves the `mcp` settings with the `mcp-defer-loading` feature
+tag, so an older build ignores every server saved in those settings, with a notice,
+instead of failing to load `mcp`.
+
 ### Project servers and trust
 
 A repository can commit either or both of these project files. Each is found by
@@ -1452,8 +1458,10 @@ each session plugin, so the coding tools, `repo_context`, skills, and MCP projec
 it. **New session** does the same in the folder the user picks (`POST /api/sessions/new`, which
 calls `host.live.new`), offering the sidebar's checkouts and every other worktree Git lists for
 their repositories (`GET /api/sessions?include_worktrees=true`), and the directories a typed path
-completes to (`GET /api/directories?path=…`, the first 12, each repository with its worktrees).
-The page watches the session it
+completes to (`GET /api/directories?path=…`, the first 12, each repository with its worktrees). Its
+**New worktree of …** first checks out a new branch of the highlighted folder's repository
+(`POST /api/worktrees`, which places it as `clai2 --worktree` does and answers its folder). The page
+watches the session it
 shows (`LiveSession.watch`), so that one is never closed for being idle; any other live session
 closes after an idle hour, and clicking it again resumes it. The sidebar marks each live session
 that runs a turn, has input queued behind one, or waits for an answer, from the `live` message. Esc

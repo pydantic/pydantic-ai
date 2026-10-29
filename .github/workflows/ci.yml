@@ -694,7 +694,15 @@ jobs:
           uv run --no-sync python -c "
           import importlib.util
           assert importlib.util.find_spec('pymongo') is None, 'the base install must not include pymongo'
+          assert importlib.util.find_spec('json_repair') is None, 'json-repair belongs to the coder and repair-tool-arguments extras'
           import pydantic_ai_harness, pydantic_ai_harness.media, pydantic_ai_harness.step_persistence
+          import pydantic_ai_harness.filesystem, pydantic_ai_harness.shell
+          try:
+              import pydantic_ai_harness.coder
+          except ImportError as error:
+              assert 'pydantic-ai-harness[coder]' in str(error), error
+          else:
+              raise AssertionError('Coder imported without the coder extra')
           "
 
       - run: uv sync --only-dev

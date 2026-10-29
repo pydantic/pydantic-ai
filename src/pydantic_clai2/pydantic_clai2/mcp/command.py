@@ -192,8 +192,11 @@ class MCPCommand:
         """`on demand (loaded)` or `on demand (not loaded)` for an on-demand server; `None` for an eager one."""
         if not entry.server.defer_loading:
             return None
-        loaded = capability_id(entry.name) in parse_loaded_capabilities(self.history())
-        return f'on demand ({"loaded" if loaded else "not loaded"})'
+        return f'on demand ({"loaded" if self.loaded(entry) else "not loaded"})'
+
+    def loaded(self, entry: ServerEntry) -> bool:
+        """Whether the agent has loaded this server's tools in the current conversation."""
+        return capability_id(entry.name) in parse_loaded_capabilities(self.history())
 
     def _summary(self, entry: ServerEntry, state: State) -> str:
         loading = self.loading(entry)
