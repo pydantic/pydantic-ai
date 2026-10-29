@@ -14,7 +14,7 @@ from typing import Any, cast
 
 import pytest
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, TextPart
+from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, RunUsage, TextPart, capture_run_messages
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CapabilityOrdering,
@@ -24,12 +24,14 @@ from pydantic_ai.capabilities import (
     WrapperCapability,
 )
 from pydantic_ai.exceptions import ModelAPIError, ModelRetry, RetryModelRequest, UserError
-from pydantic_ai.messages import AgentStreamEvent, ModelRequestAttempt
+from pydantic_ai.messages import AgentStreamEvent, ModelRequest, ModelRequestAttempt, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
+
+from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 
 def success(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -400,6 +402,99 @@ async def test_primed_stream_the_consumer_never_iterates_is_closed():
                     pass
                 break
     assert closed == [True]
+
+
+async def test_a_primed_stream_the_consumer_never_iterates_keeps_what_it_produced():
+    """The response committed for a primed stream the consumer left without iterating has what priming received.
+
+    Priming opened the stream and read its first event, so the provider billed the request and the response
+    has its id, as when the consumer iterates.
+    """
+    hooks = Hooks[None]()
+
+    @hooks.on.model_request_error
+    async def passthrough(
+        ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        raise error  # pragma: no cover
+
+    model = ScriptedContinuationModel(
+        segments=[
+            StreamSegment(
+                texts=['hello'], state='complete', provider_response_id='resp-1', input_tokens=7, output_tokens=3
+            )
+        ]
+    )
+    agent = Agent(model, deps_type=type(None), capabilities=[hooks])
+    usage = RunUsage()
+    with capture_run_messages() as messages:
+        async with agent.iter('x', usage=usage) as run:
+            async for node in run:  # pragma: no branch
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx):
+                        pass
+                    break
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert (response.provider_response_id, response.usage) == ('resp-1', RequestUsage(input_tokens=7, output_tokens=3))
+    assert usage == RunUsage(input_tokens=7, output_tokens=3, requests=1)
+
+
+@pytest.mark.parametrize('iterate', [False, True])
+async def test_a_resumed_primed_stream_the_consumer_never_iterates_keeps_the_resumed_response(iterate: bool):
+    """A primed stream resuming a suspended response from history keeps that response's parts when left un-iterated.
+
+    And counts only what the continuation billed beyond it, which the run that suspended it already counted: the same
+    as when the consumer iterates the stream.
+    """
+    hooks = Hooks[None]()
+
+    @hooks.on.model_request_error
+    async def passthrough(
+        ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        raise error  # pragma: no cover
+
+    model = ScriptedContinuationModel(
+        segments=[
+            StreamSegment(
+                texts=['is 42.'], state='complete', provider_response_id='job-2', input_tokens=3, output_tokens=4
+            )
+        ]
+    )
+    agent = Agent(model, deps_type=type(None), capabilities=[hooks])
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('go')]),
+        scripted_response(
+            texts=['The answer '], state='suspended', provider_response_id='job-1', input_tokens=5, output_tokens=2
+        ),
+    ]
+    usage = RunUsage()
+    with capture_run_messages() as messages:
+        async with agent.iter(message_history=history, usage=usage) as run:
+            async for node in run:  # pragma: no branch
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        if iterate:
+                            async for _ in stream:
+                                pass
+                    break
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    # The continuation merged onto the response it resumes: unread, priming has only seen its part start.
+    assert (
+        [part.content for part in response.parts if isinstance(part, TextPart)],
+        response.provider_response_id,
+        response.state,
+        response.usage,
+    ) == (
+        ['The answer ', 'is 42.' if iterate else ''],
+        'job-2',
+        'complete' if iterate else 'incomplete',
+        RequestUsage(input_tokens=8, output_tokens=6),
+    )
+    # The resumed response's usage was counted by the run that suspended it.
+    assert usage == RunUsage(input_tokens=3, output_tokens=4, requests=1)
 
 
 async def test_open_failure_is_raised_when_the_consumer_never_iterates_the_stream():
