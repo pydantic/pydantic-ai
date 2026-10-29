@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from functools import partial
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
 from dbos import DBOS
@@ -91,6 +92,12 @@ class DBOSBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic
         return self._operation
 
     async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
+        policy = self._operation.policy(params)
+        if policy is not None and not policy.repeatable and self._step_options.get('retries_allowed'):
+            # The same step name without retries, so a recorded step replays whichever way it ran. DBOS steps have
+            # no timeout, so `policy.timeout` doesn't apply.
+            options: StepOptions = {**self._step_options, 'retries_allowed': False}
+            return await self._dispatch(partial(DBOS.run_step_async, options, self._step_function), params)
         return await self._dispatch(self.step, params)
 
     async def call_reserved(self, step_ctx: DBOSContext, params: ParamsT) -> ResultT:

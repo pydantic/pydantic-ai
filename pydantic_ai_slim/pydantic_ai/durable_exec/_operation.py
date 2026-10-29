@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Awaitable, Callable
-from dataclasses import KW_ONLY, dataclass
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeAlias, TypeVar, cast
 
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
@@ -304,6 +304,23 @@ def resolve_tool_operation_config(
 
 
 @dataclass(frozen=True, kw_only=True)
+class StepPolicy:
+    """How an engine may repeat one kind of durable step, on top of its config for the operation.
+
+    Each engine maps it onto its own config: a Temporal activity's retry policy and timeouts, a Prefect task's retries
+    and timeout, a DBOS step's retries (DBOS steps have no timeout), a Render task's retry and timeout.
+    """
+
+    repeatable: bool = True
+    """Whether running the step again is safe. When it isn't, the step runs at most once: a failure, a timeout or a
+    lost worker reaches the caller instead of a second attempt. An engine that resumes a step cut off before it
+    recorded its outcome (DBOS after a crash, Prefect when the flow runs again) can still run it a second time."""
+
+    timeout: float | None = None
+    """Seconds one attempt may take, when the engine's default for the operation doesn't fit."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class DurableOperation(Generic[ParamsT, WireT, ResultT]):
     """A complete semantic declaration that an engine backend can bind.
 
@@ -315,6 +332,9 @@ class DurableOperation(Generic[ParamsT, WireT, ResultT]):
         result_codec: Codec for the handler result.
         config_role: Coarse configuration category for the operation.
         invocation_label: Optional per-call display or naming label.
+        policies: Step policies by kind of invocation, the kind being what `policy_key` returns for one. An
+            invocation of a kind without one runs under the engine's config unchanged.
+        policy_key: The kind of one invocation, for `policies`.
     """
 
     operation_id: DurableOperationId
@@ -324,6 +344,12 @@ class DurableOperation(Generic[ParamsT, WireT, ResultT]):
     result_codec: ResultCodec[ResultT]
     config_role: OperationConfigRole
     invocation_label: Callable[[ParamsT], str] | None = None
+    policies: Mapping[str, StepPolicy] = field(default_factory=dict[str, StepPolicy])
+    policy_key: Callable[[ParamsT], str] | None = None
+
+    def policy(self, params: ParamsT) -> StepPolicy | None:
+        """The step policy of one invocation, or `None` to run it under the engine's config unchanged."""
+        return self.policies.get(self.policy_key(params)) if self.policy_key is not None else None
 
 
 class IdentityParameterTransport(ParameterTransport[ParamsT, ParamsT], Generic[ParamsT]):
