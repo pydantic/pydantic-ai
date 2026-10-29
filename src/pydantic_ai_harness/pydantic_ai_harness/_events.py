@@ -27,10 +27,11 @@ def event_ctx(ctx: RunContext[AgentDepsT], capability: str) -> RunContext[AgentD
         # The test core's `emit` applies: the running tool must be stamped with one of this run's
         # capabilities. A bare toolset's tools are not. Like core, look the tool up under the name
         # the tool manager dispatched it by, which differs from `tool_name` under `PrefixTools`.
-        tool = tools.get(ctx._dispatched_tool_name or ctx.tool_name)  # pyright: ignore[reportPrivateUsage]
+        name = ctx._dispatched_tool_name or ctx.tool_name  # pyright: ignore[reportPrivateUsage]
+        tool = tools.get(name)
         if tool is None or tool.tool_def.capability_id not in ctx.capabilities:
             raise UserError(
-                f'The `{ctx.tool_name}` tool emits capability events, which Pydantic AI accepts only from '
+                f'The `{name}` tool emits capability events, which Pydantic AI accepts only from '
                 f'tools a capability contributes. Pass `capabilities=[{capability}()]` rather than its '
                 'toolset in `toolsets=`.'
             )

@@ -228,7 +228,9 @@ class TestFileSystemEvents:
         await agent.run('go', event_stream_handler=handler, workspace=LocalWorkspaceBackend(tmp_path))
 
         assert (tmp_path / 'notes' / 'new.md').read_text() == 'hi'
-        assert [event for event in events if isinstance(event, (FileReadEvent, FileWrittenEvent))] == [
+        # The two calls run concurrently, so their events can arrive in either order.
+        emitted = [event for event in events if isinstance(event, (FileReadEvent, FileWrittenEvent))]
+        assert sorted(emitted, key=lambda event: event.tool_call_id or '') == [
             FileReadEvent(
                 path='wiki/page.md',
                 root_dir=_root(tmp_path),
