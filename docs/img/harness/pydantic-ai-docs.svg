@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="636" viewBox="0 0 880 636" role="img" aria-labelledby="t d">
+<title id="t">Pydantic AI Docs: read the current docs page on demand</title>
+<desc id="d">The model calls read_pyai_docs with one of six topics. The tool first looks for the page in a docs checkout inside the run workspace, and otherwise fetches it from the main branch on GitHub. It then replaces model aliases using model_aliases/aliases.json and returns the full page to the model. If neither source has the page, the tool returns an error naming the path and URL it tried.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="635" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Pydantic AI Docs: read the current docs page on demand</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Nothing is preloaded into the prompt. read_pyai_docs returns one full page when the model asks for it, from a local</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">checkout if there is one, otherwise from main on GitHub.</text>
+<rect x="228" y="170" width="171.7" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="313.9" y="186.3" font-size="12" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">read_pyai_docs(topic)</text>
+<text x="228" y="222" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">topic:</text>
+<rect x="272" y="208" width="98.5" height="20" rx="6" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1.2"/>
+<text x="321.3" y="222" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">capabilities</text>
+<rect x="376.5" y="208" width="51.5" height="20" rx="6" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1.2"/>
+<text x="402.3" y="222" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">hooks</text>
+<rect x="434.1" y="208" width="51.5" height="20" rx="6" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1.2"/>
+<text x="459.8" y="222" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">tools</text>
+<rect x="272" y="234" width="111.9" height="20" rx="6" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1.2"/>
+<text x="328" y="248" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">tools-advanced</text>
+<rect x="389.9" y="234" width="71.7" height="20" rx="6" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1.2"/>
+<text x="425.8" y="248" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">toolsets</text>
+<rect x="467.6" y="234" width="51.5" height="20" rx="6" fill="#F2F4EA" stroke="#C8CCB9" stroke-width="1.2"/>
+<text x="493.4" y="248" font-size="11" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">agent</text>
+<circle cx="242" cy="286" r="11" fill="#B417B7"/>
+<text x="242" y="290.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">1</text>
+<text x="264" y="290.5" font-size="13.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Workspace checkout</text>
+<text x="264" y="309" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">{local_docs_path}/{topic}.md, when it exists</text>
+<line x1="242" y1="299" x2="242" y2="333" stroke="#B417B7" stroke-width="1.4" marker-end="url(#al)"/>
+<circle cx="242" cy="346" r="11" fill="#B417B7"/>
+<text x="242" y="350.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">2</text>
+<text x="264" y="350.5" font-size="13.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Remote fetch</text>
+<text x="264" y="369" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">otherwise the same path under docs/ on main</text>
+<line x1="242" y1="359" x2="242" y2="393" stroke="#B417B7" stroke-width="1.4" marker-end="url(#al)"/>
+<circle cx="242" cy="406" r="11" fill="#B417B7"/>
+<text x="242" y="410.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">3</text>
+<text x="264" y="410.5" font-size="13.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Replace model aliases</text>
+<text x="264" y="429" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">using model_aliases/aliases.json</text>
+<rect x="212" y="140" width="336" height="300" rx="14" fill="none" stroke="#B417B7" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="226" y="132" width="138.4" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="233" y="144" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">PYDANTICAIDOCS</text>
+<rect x="32" y="164" width="112" height="36" rx="18" fill="#092224"/>
+<text x="88" y="187" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="32" y="234" width="112" height="124" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="88" y="257" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">instructions</text>
+<text x="88" y="275.9" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">read the</text>
+<text x="88" y="292.4" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">relevant topic</text>
+<text x="88" y="309" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">before writing a</text>
+<text x="88" y="325.5" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">capability, hook,</text>
+<text x="88" y="342.1" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tool or toolset</text>
+<line x1="88" y1="232" x2="88" y2="202" stroke="#B417B7" stroke-width="1.6" marker-end="url(#al)"/>
+<line x1="148" y1="176" x2="225" y2="176" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="225" y1="188" x2="148" y2="188" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<rect x="598" y="252" width="250" height="56" rx="10" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.4"/>
+<text x="610" y="266.1" font-size="13.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">run workspace</text>
+<text x="610" y="285.3" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">local_docs_path or</text>
+<text x="610" y="301.9" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">PYDANTIC_AI_HARNESS_DOCS_PATH</text>
+<line x1="408.8" y1="286" x2="594" y2="286" stroke="#7B57E8" stroke-width="1.6" marker-end="url(#ap)"/>
+<rect x="598" y="328" width="250" height="64" rx="10" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.4"/>
+<text x="610" y="349" font-size="13.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">GitHub, main branch</text>
+<text x="610" y="368" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">raw.githubusercontent.com/</text>
+<text x="610" y="384" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">pydantic/pydantic-ai/main/docs/</text>
+<line x1="357" y1="346" x2="594" y2="346" stroke="#0E9C86" stroke-width="1.6" marker-end="url(#aa)"/>
+<text x="598" y="414" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">needs network access; the capability never</text>
+<text x="598" y="431" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">runs git</text>
+<text letter-spacing="1.3" x="32" y="480" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">WHAT READ_PYAI_DOCS RETURNS</text>
+<rect x="32" y="496" width="816" height="32" rx="8" fill="#FFFFFF" stroke="#092224" stroke-width="1.3"/>
+<text x="44" y="516.5" font-size="12" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">the full page</text>
+<text x="153.2" y="516.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">markdown with aliases replaced; cache=True reads each topic once per run</text>
+<rect x="32" y="538" width="816" height="32" rx="8" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.3"/>
+<text x="44" y="558.5" font-size="12" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">neither resolves</text>
+<text x="175.1" y="558.5" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">an error naming the local path and the URL it tried</text>
+<rect x="32" y="589" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="600" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="589" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="600" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by PydanticAIDocs</text>
+<rect x="287.6" y="589" width="14" height="14" rx="4" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="307.6" y="600" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">your workspace</text>
+<rect x="421.3" y="589" width="14" height="14" rx="4" fill="#DDF8F0" stroke="#0E9C86" stroke-width="1.2"/>
+<text x="441.3" y="600" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">GitHub</text>
+<rect x="498.8" y="589" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="518.8" y="600" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">returned to the model</text>
+<rect x="660.6" y="589" width="14" height="14" rx="4" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="680.6" y="600" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">error</text>
+</svg>

@@ -11,6 +11,8 @@ Run your agent's commands and file edits in a local [Docker](https://www.docker.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. DockerSandbox's get_workspace hook gives the run a Docker container on your machine as ctx.workspace, and each command and file operation runs in it through docker exec; output comes back to the tool. The first use creates the container with docker run and the ai.pydantic.workspace=true label, its WorkspaceRef holds the container name, a later run reattaches with it, and destroy(ref) removes it. A project directory mounted with docker_args is the only part of your files the commands can change. A container shares your kernel, a weaker boundary than a VM.](../img/harness/docker-sandbox.svg)
+
 ## Install
 
 ```bash
