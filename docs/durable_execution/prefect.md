@@ -167,8 +167,8 @@ Custom [`@durable_operation`][pydantic_ai.capabilities.durable_operation] calls 
 [`run_id`][pydantic_ai.tools.RunContext.run_id] and a per-operation call sequence in their task cache
 keys. Distinct, stable explicit `run_id=` values keep each run's results attached to that run even
 when runs arrive in a different order on a flow retry. Repeated identical calls within one run
-keep separate recorded results. Automatically derived run IDs still depend on
-arrival order, so pass explicit IDs for branches that can reorder.
+keep separate recorded results. Automatically derived run IDs are stable for distinct projected
+inputs; pass explicit IDs for branches with identical projected inputs that can reorder.
 
 !!! warning "Upgrading custom capability task cache keys"
 
@@ -188,7 +188,8 @@ you deploy the change.
 Workspace task cache keys include the run's [`run_id`][pydantic_ai.tools.RunContext.run_id] and a
 per-run call sequence. With distinct, stable explicit `run_id=` values, concurrent runs keep their
 own environments even when their arrival order changes on flow retry. Automatically derived run
-IDs still depend on arrival order, so pass explicit IDs for concurrent branches that can reorder.
+IDs are stable for distinct projected inputs; pass explicit IDs for concurrent branches with
+identical projected inputs that can reorder.
 
 !!! warning "Upgrading workspace task cache keys"
 
