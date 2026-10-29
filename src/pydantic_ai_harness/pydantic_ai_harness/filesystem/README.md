@@ -4,6 +4,8 @@ Give an agent bounded, pattern-filtered access to a directory tree.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/filesystem/)
 
+![The model calls FileSystem tools such as read_file, write_file and edit_file. Before any I/O, each path is resolved with symlinks, checked to stay inside root_dir, and matched against the allowed, denied and read-only patterns; only then does the tool touch the workspace. Four example calls show a read that succeeds, a write to .env rejected as read-only, a read of /etc/passwd rejected as outside root_dir, and an edit announced as a FileChangeRequestEvent that a listener can cancel.](https://pydantic.dev/docs/ai/img/harness/filesystem.svg)
+
 ## The problem
 
 Letting an agent touch the filesystem directly is risky: path traversal

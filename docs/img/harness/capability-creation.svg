@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="631" viewBox="0 0 880 631" role="img" aria-labelledby="t d">
+<title id="t">Capability Creation: the agent writes capabilities for its next run</title>
+<desc id="d">In one run the model calls author_capability with a name and Python source. CapabilityCreation writes it to &lt;directory&gt;/&lt;name&gt;.py, imports it, checks that it holds exactly one AbstractCapability subclass that constructs with no arguments, calls its static getters, and records it in manifest.json. The capability is not live in that run. Your loop calls creation.store.load_active() and passes the result to the next agent.run as capabilities, so its tools, hooks and instructions take effect there. The authored code runs in the agent process, so a run requires a writable LocalWorkspace.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="630" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Capability Creation: the agent writes capabilities for its next run</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">The model writes a capability class as Python. It is validated and saved now, and your loop loads it into the next run.</text>
+<text letter-spacing="1.3" x="32" y="114" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">THIS RUN</text>
+<rect x="152" y="128" width="296" height="240" rx="12" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.3"/>
+<text letter-spacing="1.3" x="166" y="150" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">CAPABILITYCREATION TOOLS</text>
+<rect x="166" y="162" width="221.4" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="276.7" y="178.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">author_capability(name, code)</text>
+<rect x="166" y="194" width="200.4" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="266.2" y="210.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">list_authored_capabilities</text>
+<rect x="166" y="226" width="207.4" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="269.7" y="242.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">disable_authored_capability</text>
+<rect x="166" y="264" width="268" height="86" rx="10" fill="#092224"/>
+<text x="178" y="286" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#F07CF3">class </tspan><tspan fill="#FBFFEA">BlockRm(AbstractCapability):</tspan></text>
+<text x="178" y="303" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#F07CF3">  async def </tspan><tspan fill="#77FFD8">before_tool_execute</tspan><tspan fill="#FBFFEA">(</tspan></text>
+<text x="178" y="320" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">      self, ctx, *, call, tool_def,</tspan></text>
+<text x="178" y="337" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">      args): </tspan><tspan fill="#8FA8A3">...</tspan></text>
+<rect x="34" y="230" width="88" height="36" rx="18" fill="#092224"/>
+<text x="78" y="253" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<line x1="124" y1="239" x2="148" y2="239" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="148" y1="257" x2="124" y2="257" stroke="#55726A" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<text letter-spacing="1.3" x="486" y="140" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">VALIDATE NOW</text>
+<rect x="486" y="154" width="176" height="64.7" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="574" y="180.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">import the module</text>
+<text x="574" y="199.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Its top-level code runs.</text>
+<rect x="486" y="228.7" width="176" height="64.7" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="574" y="247" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">one capability class</text>
+<text x="574" y="266" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">AbstractCapability, no-arg</text>
+<text x="574" y="282.6" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">constructor.</text>
+<line x1="574" y1="218.7" x2="574" y2="226.7" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="486" y="303.3" width="176" height="64.7" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="574" y="321.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">call static getters</text>
+<text x="574" y="340.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">get_toolset,</text>
+<text x="574" y="357.2" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">get_instructions and more.</text>
+<line x1="574" y1="293.3" x2="574" y2="301.3" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="452" y1="248" x2="482" y2="248" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="700" y="136" width="148" height="232" rx="14" fill="none" stroke="#7B57E8" stroke-width="1.3" stroke-dasharray="4 4"/>
+<rect x="714" y="128" width="71.8" height="16" rx="4" fill="#FFFFFF"/>
+<text letter-spacing="1.3" x="721" y="140" font-size="11" fill="#7B57E8" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">ON DISK</text>
+<text x="714" y="168" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">.authored/</text>
+<rect x="714" y="180" width="95.2" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="761.6" y="196.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">block_rm.py</text>
+<rect x="714" y="214" width="109.2" height="24" rx="6" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="768.6" y="230.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">manifest.json</text>
+<text x="714" y="264" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Status active or</text>
+<text x="714" y="281" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">disabled, and the last</text>
+<text x="714" y="298.1" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">validation error.</text>
+<line x1="666" y1="248" x2="696" y2="248" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="32" y1="398" x2="848" y2="398" stroke="#E6EAEA" stroke-width="1"/>
+<text letter-spacing="1.3" x="32" y="424" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">YOUR LOOP, THEN THE NEXT RUN</text>
+<rect x="32" y="444" width="360" height="117" rx="10" fill="#092224"/>
+<text x="46" y="468" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">extra = creation.store.</tspan><tspan fill="#77FFD8">load_active</tspan><tspan fill="#FBFFEA">()</tspan></text>
+<text x="46" y="487" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">result = </tspan><tspan fill="#F07CF3">await </tspan><tspan fill="#FBFFEA">agent.run(</tspan></text>
+<text x="46" y="506" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">    prompt, message_history=history,</tspan></text>
+<text x="46" y="525" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">    capabilities=extra,</tspan></text>
+<text x="46" y="544" font-size="12" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">)</tspan></text>
+<rect x="432" y="444" width="210" height="117" rx="12" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="446" y="468" font-size="13" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">next run</text>
+<rect x="446" y="482" width="88" height="36" rx="18" fill="#092224"/>
+<text x="490" y="505" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="552" y="488" width="74.1" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="589.1" y="504.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">block_rm</text>
+<text x="446" y="542" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Its tools, hooks and instructions</text>
+<text x="446" y="559" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">are live.</text>
+<line x1="396" y1="502.5" x2="428" y2="502.5" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="658" y="444" width="190" height="117" rx="10" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.4"/>
+<text x="753" y="463.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Runs in your process</text>
+<text x="753" y="482.7" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Needs a writable</text>
+<text x="753" y="499.2" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">LocalWorkspace. Gate</text>
+<text x="753" y="515.8" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">author_capability with</text>
+<text x="753" y="532.4" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">ToolGuardrail to approve</text>
+<text x="753" y="548.9" font-size="12" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">code first.</text>
+<rect x="32" y="584" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="595" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="584" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="595" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by CapabilityCreation</text>
+<rect x="303.7" y="584" width="14" height="14" rx="4" fill="#EFE8FF" stroke="#7B57E8" stroke-width="1.2"/>
+<text x="323.7" y="595" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">authored files</text>
+<rect x="422" y="584" width="14" height="14" rx="4" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="442" y="595" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">trust boundary</text>
+</svg>
