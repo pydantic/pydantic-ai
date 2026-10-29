@@ -222,7 +222,6 @@ RUN apt-get update \\
 RUN mkdir -p /usr/lib/firefox-esr/distribution /root/.fluxbox /root/.config/tint2 \\
     && printf '%s\\n' '{"policies": {"OverrideFirstRunPage": "", "OverridePostUpdatePage": "", "DontCheckDefaultBrowser": true, "DisableTelemetry": true, "DisplayBookmarksToolbar": "never", "UserMessaging": {"SkipOnboarding": true, "MoreFromMozilla": false, "FeatureRecommendations": false, "ExtensionRecommendations": false}, "FirefoxHome": {"SponsoredTopSites": false, "SponsoredPocket": false, "Pocket": false, "Highlights": false, "Snippets": false}, "Preferences": {"datareporting.policy.dataSubmissionPolicyBypassNotification": {"Value": true, "Status": "locked"}, "browser.newtabpage.activity-stream.showWeather": {"Value": false, "Status": "locked"}, "browser.sessionstore.resume_from_crash": {"Value": false, "Status": "locked"}}}}' > /usr/lib/firefox-esr/distribution/policies.json \\
     && printf '%s\\n' 'session.screen0.toolbar.visible: false' > /root/.fluxbox/init \\
-    && printf '%s\\n' 'background: none' > /root/.fluxbox/overlay \\
     && printf '%s\\n' '[app] (class=firefox-esr)' '  [Maximized] {yes}' '[end]' \\
         '[app] (class=XTerm)' '  [Maximized] {yes}' '[end]' > /root/.fluxbox/apps \\
     && printf '%s\\n' 'rounded = 0' 'border_width = 0' 'background_color = #2b2b2b 100' \\
@@ -233,6 +232,8 @@ RUN mkdir -p /usr/lib/firefox-esr/distribution /root/.fluxbox /root/.config/tint
         'launcher_item_app = /usr/share/applications/debian-xterm.desktop' \\
         'taskbar_padding = 2 2 4' 'task_text = 1' 'task_icon = 1' 'task_font_color = #ffffff 100' \\
         'task_maximum_size = 220 34' > /root/.config/tint2/tint2rc
+# fluxbox's wallpaper helper finds no wallpaper setter and says so in an `xmessage` window on every start.
+RUN rm -f /usr/bin/xmessage
 ENV LANG=C.UTF-8
 """
 """The image `DockerSandbox(desktop=True)` builds on first use: an X server, a window manager, a panel that launches
