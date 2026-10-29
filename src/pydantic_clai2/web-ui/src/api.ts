@@ -2,6 +2,7 @@ import { createContext } from 'react'
 import type { Snapshot } from './state'
 import { PROTOCOL } from './protocol'
 import type {
+  AddedWorktree,
   AnswerBody,
   ChangeScope,
   Changes,
@@ -173,6 +174,9 @@ export const api = {
   /** Start a live session, in `workspace` when given; it answers the new session's conversation ID. */
   newSession: (workspace?: string) =>
     call<Opened>('POST', '/api/sessions/new', workspace === undefined ? undefined : { workspace }),
+  /** Check out a new `branch` (empty: generated) from `base` (empty: `HEAD`) in `repo`'s repository, as `clai2 --worktree` does. */
+  addWorktree: (repo: string, branch: string, base: string) =>
+    call<AddedWorktree>('POST', '/api/worktrees', { repo, branch, base }),
   /** Make a saved session live, or find the live one; it answers its conversation ID. */
   open: (id: string) => call<Opened>('POST', `/api/sessions/${id}/open`),
   rename: (id: string, title: string) => call<void>('POST', `/api/sessions/${id}/rename`, { title }),

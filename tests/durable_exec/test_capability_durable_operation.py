@@ -22,15 +22,19 @@ from pydantic_ai.capabilities import (
     CombinedCapability,
     FileUnderstanding,
     Instrumentation,
+    ModelFallback,
     ProcessEventStream,
     ResolveModelId,
+    SelectModel,
     WrapperCapability,
     WrapRunHandler,
     durable_operation,
 )
+from pydantic_ai.capabilities.abstract import AgentModel
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
+    CapabilityMethodDeclaration,
     CapabilityOperationParams,
     CapabilityOperationResult,
     ModelRequestContextProjection,
@@ -44,7 +48,7 @@ from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOp
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import ToolConfig
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UserError
 from pydantic_ai.messages import (
     CapabilityEvent,
     DocumentUrl,
@@ -175,7 +179,7 @@ class RecordingDurability(BaseDurabilityCapability[Any]):
 
     replay_capability_operations = False
 
-    def __init__(self, *, models: Mapping[str, TestModel] | None = None) -> None:
+    def __init__(self, *, models: Mapping[str, Model] | None = None) -> None:
         super().__init__(models=models)
         self.calls: list[tuple[str, tuple[object, ...]]] = []
         self.recorded_results: dict[str, Any] = {}
@@ -460,6 +464,77 @@ async def test_capability_operation_registered_model_id_swap_does_not_manage_mod
 
     assert (await agent.run('test')).output == 'from-registered'
     assert events == ['request']
+
+
+async def test_fallback_attempts_dispatch_through_durable_operations() -> None:
+    """Each attempt `ModelFallback` moves to runs as a durable model operation, never inline in workflow code."""
+
+    def failing(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError(model_name='failing', message='boom')
+
+    durability = RecordingDurability(models={'registered': TestModel(custom_output_text='from-fallback')})
+    agent = Agent(
+        FunctionModel(failing),
+        name='fallback_durable',
+        capabilities=[ModelFallback('registered'), durability],
+    )
+
+    assert (await agent.run('test')).output == 'from-fallback'
+    assert [name for name, _ in durability.calls if '__model.' in name] == snapshot(
+        ['fallback_durable__model.request', 'fallback_durable__model.request.registered']
+    )
+
+
+async def test_model_fallback_supplies_the_model_of_a_durable_agent_without_one() -> None:
+    """An agent with no model of its own can be made durable when `ModelFallback` supplies its first candidate."""
+
+    def failing(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError(model_name='failing', message='boom')
+
+    models: dict[str, Model] = {
+        'primary': FunctionModel(failing),
+        'secondary': TestModel(custom_output_text='from-secondary'),
+    }
+    durability = RecordingDurability(models=models)
+    agent = Agent(name='model_less_durable', capabilities=[ModelFallback('primary', 'secondary'), durability])
+
+    assert (await agent.run('test')).output == 'from-secondary'
+    assert [name for name, _ in durability.calls if '__model.' in name] == snapshot(
+        ['model_less_durable__model.request.primary', 'model_less_durable__model.request.secondary']
+    )
+
+
+@dataclass
+class _SuppliesRegisteredModel(AbstractCapability[Any]):
+    """A capability of the user's own that supplies the agent's model."""
+
+    def get_model(self) -> AgentModel[Any] | None:
+        return 'registered'
+
+
+@pytest.mark.parametrize(
+    'supplier',
+    [
+        pytest.param(lambda: SelectModel(lambda ctx: 'registered'), id='select_model'),
+        pytest.param(_SuppliesRegisteredModel, id='custom_get_model'),
+        pytest.param(lambda: WrapperCapability(wrapped=SelectModel(lambda ctx: 'registered')), id='wrapped'),
+    ],
+)
+async def test_a_capability_supplies_the_model_of_a_durable_agent_without_one(
+    supplier: Callable[[], AbstractCapability[Any]],
+) -> None:
+    durability = RecordingDurability(models={'registered': TestModel(custom_output_text='from-registered')})
+    agent = Agent(name='capability_model_durable', capabilities=[supplier(), durability])
+
+    assert (await agent.run('test')).output == 'from-registered'
+    assert [name for name, _ in durability.calls if '__model.' in name] == [
+        'capability_model_durable__model.request.registered'
+    ]
+
+
+def test_a_durable_agent_without_a_model_or_a_capability_that_supplies_one_is_rejected() -> None:
+    with pytest.raises(UserError, match='needs to have a `model` in order to be used with recording'):
+        Agent(name='model_less', capabilities=[RecordingDurability()])
 
 
 async def test_resolved_request_model_records_are_released_with_their_models() -> None:
@@ -1939,6 +2014,67 @@ def test_before_model_request_context_parameter_can_have_any_name() -> None:
     assert declaration.ctx_parameter == 'run_context'
     assert declaration.model_request_hook
     assert not collect_capability_operations(Operations())['calculate'].model_request_hook
+
+
+def _define_prepare_capabilities() -> tuple[type[AbstractCapability[Any]], type[AbstractCapability[Any]]]:
+    """Define the classes afresh, as Temporal's sandbox does each time it re-imports a workflow module."""
+
+    class Prepare(AbstractCapability[Any]):
+        id = 'prepare'
+
+        @durable_operation('before_model_request')
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            request_context.messages = [ModelRequest(parts=[UserPromptPart('prepared')])]
+            return request_context
+
+    class PrepareWithNote(AbstractCapability[Any]):
+        id = 'prepare_with_note'
+
+        @durable_operation('rewrite')
+        async def rewrite(self, ctx: RunContext[Any], request: ModelRequestContext, note: str) -> ModelRequestContext:
+            raise NotImplementedError
+
+    return Prepare, PrepareWithNote
+
+
+async def test_model_request_operation_schema_is_reused_when_the_capability_is_redefined() -> None:
+    """Building an agent with a durable `before_model_request` reuses the request projection's schema.
+
+    Generating that schema covers every message type, and a module-level agent in a Temporal workflow
+    module is rebuilt on every workflow run.
+    """
+
+    def build_agent() -> Agent[None, str]:
+        prepare, _ = _define_prepare_capabilities()
+        return Agent(TestModel(), name='prepare', capabilities=[prepare(), RecordingDurability()])
+
+    def declaration(agent: Agent[None, str]) -> CapabilityMethodDeclaration:
+        durability = RecordingDurability.from_agent(agent)
+        assert durability is not None
+        return durability._capability_declarations[('prepare', 'before_model_request')]  # pyright: ignore[reportPrivateUsage]
+
+    first_agent = build_agent()
+    second_agent = build_agent()
+    first, second = declaration(first_agent), declaration(second_agent)
+
+    assert first.function is not second.function
+    assert second.schema.validator is first.schema.validator
+    assert second.schema.function is not first.schema.function
+
+    await second_agent.run('test')
+    durability = RecordingDurability.from_agent(second_agent)
+    assert durability is not None
+    model_call = next(cache_key for name, cache_key in durability.calls if name == 'prepare__model.request')
+    sent_request = cast(list[ModelMessage], model_call[1])[-1]
+    assert isinstance(sent_request, ModelRequest)
+    assert isinstance(sent_request.parts[0], UserPromptPart)
+    assert sent_request.parts[0].content == 'prepared'
+
+    # An operation that also takes a user-typed argument rebuilds its schema every time.
+    rewrites = [collect_capability_operations(_define_prepare_capabilities()[1]())['rewrite'] for _ in range(2)]
+    assert rewrites[0].schema.validator is not rewrites[1].schema.validator
 
 
 def test_recording_config_has_no_per_tool_override() -> None:

@@ -48,7 +48,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
-| `/pr [TITLE]` | Push the branch and open a GitHub pull request with `gh`; the model drafts its description |
+| `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer CLAI is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
 | `/reload` | Reload CLAI's own code without restarting |
 | `/exit` | Quit |
@@ -595,8 +595,9 @@ control say so. Like `/fast`, `/effort` waits for the current turn to finish.
 `/commit [MESSAGE]` stages and commits every change in the session's directory;
 without MESSAGE the session's model drafts one from the changes. `/push` runs
 `git push -u origin BRANCH`; on the default branch it asks for `/push confirm`.
-`/pr [TITLE]` pushes the branch and opens a GitHub pull request with `gh`, the
-model drafting its description (and title, without TITLE). The web UI's git chip
+`/pr` shows a pull request title and description the model drafts from the
+branch; `/pr confirm` then pushes the branch and opens exactly that with `gh`,
+and `/pr TITLE` does so with your title instead. The web UI's git chip
 does the same, with a file list and the drafts to edit first. A plugin's own
 `/commit`, `/push`, or `/pr` replaces these; a skill of the same name is hidden
 by them, and CLAI says so.
@@ -2499,8 +2500,13 @@ queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
 `.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
 asks which folder, offering every worktree of the repositories it has sessions in,
-and completing a typed path to any directory, with every worktree of each repository it finds;
-with `/web`, it starts in the folder of the session you are looking at.
+and completing a typed path to any directory, with every worktree of each repository it finds.
+**New worktree of …** checks out a new branch of the highlighted folder's repository
+first, from the base you name (by default its `HEAD`), in `.worktrees/` as
+[`--worktree`](#git-worktrees) does, and starts the session there; without a branch
+name, it makes `clai-NAME` with a generated NAME. The worktree stays when the
+session closes. With `/web`, New session starts in the folder of the session you are
+looking at.
 CLAI never changes its own working directory to do this. There is no limit on how
 many sessions run at once.
 
@@ -2523,8 +2529,9 @@ many sessions run at once.
   `README.md` for `@READ`. In a Git repository these are the files Git tracks or
   would add, so `.gitignore` applies; elsewhere, all but those in hidden folders,
   `node_modules`, and `__pycache__`. Up/down pick one, and Tab or Enter puts its
-  path in the prompt; a folder stays open to list what it holds. The path is sent
-  as you see it, and the agent reads the file with its tools.
+  path in the prompt; a folder stays open to list what it holds. Enter on a file
+  already typed in full sends the prompt as it is; Tab still takes the highlighted
+  one. The path is sent as you see it, and the agent reads the file with its tools.
 - **Idle closing.** A session closes after an hour with no turn, no queued input,
   no background fork or delegated task, and no browser or terminal showing it; a
   page counts as showing the last five sessions it showed. Its conversation stays saved: click it to resume it. The session `clai2 --web`
@@ -2687,7 +2694,10 @@ lists them all. Saved servers are available to the agent from the next prompt,
 with tool names prefixed by the server name. A server connects on the first
 prompt that needs it (or `/mcp start`) and stays connected; one that cannot
 connect is marked `error` and left out rather than failing the prompt. An OAuth
-server signs in only with `/mcp auth NAME`, never in the middle of a prompt. A
+server signs in only with `/mcp auth NAME`, never in the middle of a prompt.
+Switch on **On demand** (`"defer_loading": true`) to keep a server's tools out of
+prompts until the agent loads them by the server's description; see
+[Load a server's tools on demand](../PLUGINS.md#load-a-servers-tools-on-demand). A
 repository's Claude Code-style `.mcp.json` (or `.clai/mcp_servers.json`) loads
 once you review it and run `/mcp trust accept`. See
 [Connect MCP servers](../PLUGINS.md#connect-mcp-servers) for storage, secrets, OAuth,
@@ -2917,6 +2927,9 @@ leave content out by default, so the team gets UX telemetry and timing; turn on
 
 The plugin owns an isolated Logfire instance. Disable, reload, or exit flushes
 and shuts down that instance without shutting down application-global providers.
+CLAI waits at most three seconds for this, then warns that some telemetry may
+not have been sent and lets cleanup finish in the background. If an export is
+stuck, OpenTelemetry can still delay CLAI's exit.
 The existing global propagator is preserved. Logfire's SDK may install shared
 executor context-propagation helpers; those SDK hooks are not removed on unload.
 The plugin does not mutate a supplied agent. While enabled, its explicit per-run

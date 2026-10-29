@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="702" viewBox="0 0 880 702" role="img" aria-labelledby="t d">
+<title id="t">Detect Loops: interrupt an agent that repeats itself</title>
+<desc id="d">DetectLoops records each response in after_model_request and checks the run in before_model_request. Here the model called read_file(path=&#x27;missing.txt&#x27;) three times and got the same error each time, a repeated_result loop. With action=&#x27;nudge&#x27;, the default, a system prompt telling the model to change its approach joins the next request; with action=&#x27;error&#x27;, LoopDetectedError ends the run.</desc>
+<defs><marker id="ai" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#092224"/></marker><marker id="am" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#55726A"/></marker><marker id="al" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B417B7"/></marker><marker id="al2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E520E9"/></marker><marker id="ap" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7B57E8"/></marker><marker id="aa" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#0E9C86"/></marker><marker id="ac" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#E5533D"/></marker><marker id="af" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8FA8A3"/></marker><marker id="ao" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#97998B"/></marker></defs>
+<rect x="0.5" y="0.5" width="879" height="701" rx="16" fill="#FFFFFF" stroke="#E6EAEA"/>
+<text x="32" y="50" font-size="21" fill="#092224" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Detect Loops: interrupt an agent that repeats itself</text>
+<text x="32" y="78" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">It records every tool call and result, and when the run repeats the same actions without progress, it nudges the model</text>
+<text x="32" y="98" font-size="14.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">or stops the run.</text>
+<text letter-spacing="1.3" x="32" y="130" font-size="11" fill="#55726A" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">WHERE IT RUNS IN THE AGENT LOOP</text>
+<rect x="32" y="188" width="128" height="44" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="96" y="204.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">messages</text>
+<text x="96" y="223.2" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">history + new parts</text>
+<rect x="212" y="192" width="96" height="36" rx="18" fill="#092224"/>
+<text x="260" y="215" font-size="13.5" fill="#FBFFEA" text-anchor="middle" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="360" y="188" width="128" height="44" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="424" y="204.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tool call</text>
+<text x="424" y="223.2" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">name + JSON args</text>
+<rect x="540" y="188" width="128" height="44" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="604" y="204.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">validate args</text>
+<text x="604" y="223.2" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">against the schema</text>
+<rect x="720" y="188" width="128" height="44" rx="10" fill="#FFFFFF" stroke="#092224" stroke-width="1.4"/>
+<text x="784" y="204.6" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">your tool</text>
+<text x="784" y="223.2" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">runs the function</text>
+<line x1="163" y1="210" x2="209" y2="210" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="311" y1="210" x2="357" y2="210" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="491" y1="210" x2="537" y2="210" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<line x1="671" y1="210" x2="717" y2="210" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<path d="M 784 234 L 784 248 Q 784 258 774 258 L 106 258 Q 96 258 96 248 L 96 236" stroke="#55726A" stroke-width="1.6" fill="none" stroke-dasharray="5 4" marker-end="url(#am)"/>
+<text x="110" y="276" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">tool result goes into the next request</text>
+<line x1="186" y1="210" x2="186" y2="168" stroke="#B417B7" stroke-width="1.2"/>
+<circle cx="186" cy="210" r="4.5" fill="#E520E9" stroke="#FFFFFF" stroke-width="1.5"/>
+<rect x="66.9" y="144" width="158.3" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="146" y="160.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">before_model_request</text>
+<line x1="334" y1="210" x2="334" y2="168" stroke="#B417B7" stroke-width="1.2"/>
+<circle cx="334" cy="210" r="4.5" fill="#E520E9" stroke="#FFFFFF" stroke-width="1.5"/>
+<rect x="298.4" y="144" width="151.3" height="24" rx="6" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="374" y="160.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">after_model_request</text>
+<line x1="32" y1="306" x2="848" y2="306" stroke="#E6EAEA" stroke-width="1"/>
+<text letter-spacing="1.3" x="32" y="332" font-size="11" fill="#B417B7" text-anchor="start" font-weight="700" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">REPEATED_RESULT: SAME CALL, SAME RESULT, 3 TIMES</text>
+<text x="32" y="362" font-size="12.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">recorded calls</text>
+<rect x="32" y="376" width="221.4" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="142.7" y="392.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">read_file(path=&#x27;missing.txt&#x27;)</text>
+<text x="263.4" y="392.5" font-size="11.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">&#x27;Error: file not found&#x27;</text>
+<rect x="32" y="410" width="221.4" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="142.7" y="426.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">read_file(path=&#x27;missing.txt&#x27;)</text>
+<text x="263.4" y="426.5" font-size="11.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">&#x27;Error: file not found&#x27;</text>
+<rect x="32" y="444" width="221.4" height="24" rx="6" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="142.7" y="460.1" font-size="11.5" fill="#092224" text-anchor="middle" font-weight="500" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">read_file(path=&#x27;missing.txt&#x27;)</text>
+<text x="263.4" y="460.5" font-size="11.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">&#x27;Error: file not found&#x27;</text>
+<rect x="474" y="386" width="150" height="72" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="549" y="408.7" font-size="13" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">repeated_result</text>
+<text x="549" y="427.2" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">threshold 3, within the</text>
+<text x="549" y="443.1" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">last 10 calls</text>
+<line x1="436" y1="422" x2="471" y2="422" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
+<rect x="660" y="356" width="188" height="56" rx="10" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.4"/>
+<text x="754" y="370.5" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">action=&#x27;nudge&#x27;</text>
+<text x="754" y="388.9" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">default: a system prompt joins</text>
+<text x="754" y="404.8" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the next request</text>
+<rect x="660" y="432" width="188" height="56" rx="10" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.4"/>
+<text x="754" y="446.5" font-size="12.5" fill="#092224" text-anchor="middle" font-weight="600" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">action=&#x27;error&#x27;</text>
+<text x="754" y="464.9" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">raises LoopDetectedError,</text>
+<text x="754" y="480.8" font-size="11.5" fill="#55726A" text-anchor="middle" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">ending the run</text>
+<path d="M 627 414 L 634.5 414 Q 642 414 642 406.5 L 642 391.5 Q 642 384 649.5 384 L 657 384" stroke="#092224" stroke-width="1.6" fill="none" marker-end="url(#ai)"/>
+<path d="M 627 430 L 634.5 430 Q 642 430 642 437.5 L 642 452.5 Q 642 460 649.5 460 L 657 460" stroke="#E5533D" stroke-width="1.6" fill="none" marker-end="url(#ac)"/>
+<text x="32" y="514" font-size="12.5" fill="#092224" text-anchor="start" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">the nudge</text>
+<rect x="32" y="526" width="816" height="60" rx="10" fill="#092224"/>
+<text x="46" y="550" font-size="11.5" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">Your last 3 calls to `read_file` used the same arguments and returned the same result, so</tspan></text>
+<text x="46" y="569" font-size="11.5" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="start" xml:space="preserve"><tspan fill="#FBFFEA">calling it again will not change the outcome. Change your approach, or explain what is blocking you.</tspan></text>
+<text x="32" y="614" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Also checked: repeated_call (5 identical calls), alternating_calls (A-B-A-B, 3 cycles) and repeated_text (3 identical text responses). The</text>
+<text x="32" y="631.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">nudge stays in the history for later requests.</text>
+<rect x="32" y="654.5" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
+<text x="52" y="665.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>
+<rect x="107.4" y="654.5" width="14" height="14" rx="4" fill="#FDEAFD" stroke="#B417B7" stroke-width="1.2"/>
+<text x="127.4" y="665.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">added by Detect Loops</text>
+<rect x="273.4" y="654.5" width="14" height="14" rx="4" fill="#FDE6E1" stroke="#E5533D" stroke-width="1.2"/>
+<text x="293.4" y="665.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">run stopped</text>
+<rect x="381" y="654.5" width="14" height="14" rx="4" fill="#FFFFFF" stroke="#092224" stroke-width="1.2"/>
+<text x="401" y="665.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">your agent and tools</text>
+</svg>

@@ -4,6 +4,8 @@ Let one agent coordinate a whole team of sub-agents by writing a small Python sc
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/dynamic_workflow/)
 
+![The orchestrator agent has one tool, run_workflow. Its model writes a Python script that runs in the Monty sandbox, where each sub-agent is an async function: the script runs reviewer twice in parallel with asyncio.gather, then passes both reports to summarizer. Each call is a separate sub-agent run with its own model loop. Only the script's final value, the summary, goes back to the orchestrator's next model request.](https://pydantic.dev/docs/ai/img/harness/dynamic-workflow.svg)
+
 ## The idea
 
 Say you have a few specialist agents. One reviews code. One summarizes findings. One writes the
