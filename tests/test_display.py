@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import errno
 import importlib.util
+import json
 import os
 import signal
 import sys
@@ -9,13 +10,18 @@ import threading
 from collections.abc import Callable
 from importlib import metadata
 from io import StringIO
+from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
+import anyio
+import httpx2
 import pytest
 from pydantic import BaseModel
 
 import pydantic_ai
 import pydantic_ai._display as _display
+import pydantic_ai._version_check as _version_check
 from pydantic_ai import Agent, ModelMessage, ModelRequest, UserPromptPart, __version__
 from pydantic_ai.agent import _registered_capability_count  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation
@@ -23,8 +29,10 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 
 from ._inline_snapshot import snapshot
+from .coding_agent_utils import agent_env_vars_in_scope
 from .conftest import try_import
 from .continuation_utils import ScriptedContinuationModel, scripted_response
+from .version_check_utils import install_transport
 
 with try_import() as imports_successful:
     # What it takes to build a terminal of a known width, which only a POSIX platform has.
@@ -33,27 +41,12 @@ with try_import() as imports_successful:
     import termios
 
 _find_spec = importlib.util.find_spec
+_detect_coding_agent = _display.detect_coding_agent
 
 
 _CODING_AGENTS = _display._CODING_AGENTS  # pyright: ignore[reportPrivateUsage]
 _MIN_TEXT_WIDTH = _display._MIN_TEXT_WIDTH  # pyright: ignore[reportPrivateUsage]
 _MIN_WIDTH_FOR_LOGO = _display._MIN_WIDTH_FOR_LOGO  # pyright: ignore[reportPrivateUsage]
-
-
-def _agent_env_vars_in_scope() -> set[str]:
-    """Every variable `detect_coding_agent` would read, so the suite decides rather than the shell.
-
-    The agent running the tests sets some of these itself, so leaving any behind would make whether
-    a banner appears depend on who ran `pytest`.
-    """
-    names: set[str] = set(_display._NAMED_AGENT_ENV_VARS)  # pyright: ignore[reportPrivateUsage]
-    for _, signals in _CODING_AGENTS:
-        for env_signal in signals:
-            if env_signal.endswith('*'):
-                names.update(name for name in os.environ if name.startswith(env_signal[:-1]))
-            else:
-                names.add(env_signal.partition('=')[0])
-    return names
 
 
 def agent_env(env_signal: str) -> tuple[str, str]:
@@ -86,13 +79,18 @@ def reset_banner(monkeypatch: pytest.MonkeyPatch):
     _display._banner_displayed = False  # pyright: ignore[reportPrivateUsage]
     pydantic_ai.BANNER_ENABLED = True
     monkeypatch.delenv('PYDANTIC_AI_NO_BANNER', raising=False)
+    # Existing banner tests opt out so none can start a thread, touch a cache, or make a request.
+    # Tests for the version check remove this explicitly.
+    monkeypatch.setenv('PYDANTIC_AI_NO_VERSION_CHECK', '1')
+    # A test that turns the check on gets it on, whatever the developer's shell says.
+    monkeypatch.delenv('DO_NOT_TRACK', raising=False)
     monkeypatch.delenv('CI', raising=False)
     # This suite is the one place a test run may show a banner, and the only place that decides
     # whether an agent is watching — the agent running the suite doesn't get to answer that.
     monkeypatch.delenv('PYTEST_VERSION', raising=False)
     # Left in place, the width of the pane the suite happens to run in would decide the layout.
     monkeypatch.delenv('COLUMNS', raising=False)
-    for agent_var in _agent_env_vars_in_scope():
+    for agent_var in agent_env_vars_in_scope():
         monkeypatch.delenv(agent_var, raising=False)
     # Colour is asserted on its own; everywhere else it would only obscure what's being asserted.
     monkeypatch.setenv('NO_COLOR', '1')
@@ -408,6 +406,59 @@ def test_render_banner_colors_the_logo_and_identity(monkeypatch: pytest.MonkeyPa
     assert 'tools: 2 • capabilities: 0' in banner
 
 
+def test_render_banner_with_one_update(render: Callable[..., str]):
+    assert render(updates=[('pydantic-ai', '2.46.0')], observability=False) == snapshot("""\
+      / \\
+     /   \\       HEADING
+   /___.___\\       update available: pydantic-ai v2.46.0
+  /    |    \\
+/      |      \\  agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
+`---.._|_..---'\
+""")
+
+
+def test_render_banner_announcing_the_version_check(render: Callable[..., str]):
+    """Only a banner with nothing cached yet announces the check, so it never has an update to show too."""
+    assert render(announce_version_check=True, observability=False) == snapshot("""\
+      / \\        HEADING
+     /   \\
+   /___.___\\     agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
+  /    |    \\
+/      |      \\  checks for updates daily from the next run — or PYDANTIC_AI_NO_VERSION_CHECK=1
+`---.._|_..---'\
+""")
+
+
+def test_render_banner_with_two_colored_updates(render: Callable[..., str]):
+    banner = render(
+        updates=[('pydantic-ai', '2.46.0'), ('pydantic-ai-harness', '0.8.0')],
+        observability=False,
+        color=True,
+    )
+
+    assert 'update available: \x1b[32mpydantic-ai v2.46.0\x1b[0m' in banner
+    assert '• \x1b[32mpydantic-ai-harness v0.8.0\x1b[0m' in banner
+
+
+def test_render_banner_with_updates_at_a_narrow_width(render: Callable[..., str]):
+    banner = render(
+        updates=[('pydantic-ai', '2.46.0'), ('pydantic-ai-harness', '0.8.0')],
+        observability=False,
+        width=_MIN_TEXT_WIDTH,
+    )
+
+    assert banner == snapshot("""\
+HEADING
+  update available: pydantic-ai v2.46.0 •
+  pydantic-ai-harness v0.8.0
+
+agent: support_agent
+  model: openai:gpt-5.6-sol • tools: 2
+  capabilities: 0\
+""")
+    assert max(map(len, banner.splitlines())) <= _MIN_TEXT_WIDTH
+
+
 @pytest.mark.parametrize(
     ('output_type', 'expected'),
     [
@@ -465,6 +516,93 @@ def test_display_banner_with_harness_module_but_no_distribution(monkeypatch: pyt
     display_banner()
 
     assert 'pydantic-ai-harness' not in stderr.getvalue()
+
+
+def test_displayed_banner_shows_cached_updates_then_starts_the_check(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream
+):
+    started = False
+    cache: _version_check.VersionCache = {'checked_at': 0, 'latest': {'pydantic-ai': '2.46.0'}}
+
+    def start_version_check(received: _version_check.VersionCache | None) -> None:
+        nonlocal started
+        assert received is cache
+        started = True
+
+    monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK')
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    read_cache = Mock(return_value=cache)
+    cached_updates = Mock(return_value=[('pydantic-ai', '2.46.0')])
+    monkeypatch.setattr(_version_check, 'read_cache', read_cache)
+    monkeypatch.setattr(_version_check, 'cached_updates', cached_updates)
+    monkeypatch.setattr(_version_check, 'start_version_check', start_version_check)
+
+    display_banner()
+
+    assert 'update available: pydantic-ai v2.46.0' in stderr.getvalue()
+    # The check was announced by an earlier banner, which is what left a cache behind.
+    assert 'PYDANTIC_AI_NO_VERSION_CHECK' not in stderr.getvalue()
+    read_cache.assert_called_once_with()
+    cached_updates.assert_called_once_with(cache)
+    assert started is True
+
+
+def test_first_displayed_banner_announces_the_check(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK')
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setattr(_version_check, 'read_cache', Mock(return_value=None))
+    start_version_check = Mock()
+    monkeypatch.setattr(_version_check, 'start_version_check', start_version_check)
+
+    display_banner()
+
+    assert 'PYDANTIC_AI_NO_VERSION_CHECK=1' in stderr.getvalue()
+    start_version_check.assert_called_once_with(None)
+
+
+async def test_async_agent_run_shows_cached_update_and_starts_due_check(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream, tmp_path: Path
+):
+    monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK')
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
+    # Where the cache lives on Windows, so that no platform's run reaches the real one.
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    cache_file = tmp_path / 'pydantic-ai' / 'version-check.json'
+    cache_file.parent.mkdir()
+    cache_file.write_text(
+        json.dumps({'checked_at': 0, 'latest': {'pydantic-ai': '999.0.0'}}),
+        encoding='utf-8',
+    )
+    requests = install_transport(monkeypatch, lambda request: httpx2.Response(200, json={'pypi': {}}))
+    cache_reads = 0
+    read_cache = _version_check.read_cache
+
+    def record_cache_read() -> _version_check.VersionCache | None:
+        nonlocal cache_reads
+        cache_reads += 1
+        return read_cache()
+
+    monkeypatch.setattr(_version_check, 'read_cache', record_cache_read)
+    threads: list[threading.Thread | None] = []
+    start_version_check = _version_check.start_version_check
+
+    def record_thread(cache: _version_check.VersionCache | None) -> threading.Thread | None:
+        thread = start_version_check(cache)
+        threads.append(thread)
+        return thread
+
+    monkeypatch.setattr(_version_check, 'start_version_check', record_thread)
+
+    await Agent(TestModel()).run('hello')
+    assert len(threads) == 1
+    thread = threads[0]
+    assert thread is not None
+    await anyio.to_thread.run_sync(thread.join)
+
+    assert 'update available: pydantic-ai v999.0.0' in stderr.getvalue()
+    assert cache_reads == 1
+    assert len(requests) == 1
 
 
 @pytest.mark.parametrize(
@@ -535,6 +673,25 @@ def test_every_signal_in_the_table_names_its_agent(agent: str, env_signal: str, 
 
 def test_nothing_in_the_environment_means_no_agent():
     assert _display.detect_coding_agent() is None
+
+
+@pytest.mark.parametrize(
+    ('variable', 'value', 'expected'),
+    [
+        pytest.param('', '', None, id='none'),
+        pytest.param('CODEX_THREAD_ID', '123', 'codex', id='table-name'),
+        pytest.param('AI_AGENT', 'my secret project', 'agent', id='raw-name'),
+        pytest.param('AI_AGENT', '1', 'agent', id='generic-flag'),
+    ],
+)
+def test_known_coding_agent_reports_only_table_names(
+    variable: str, value: str, expected: str | None, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(_display, 'detect_coding_agent', _detect_coding_agent)
+    if variable:
+        monkeypatch.setenv(variable, value)
+
+    assert _display.known_coding_agent() == expected
 
 
 @pytest.mark.parametrize(
@@ -836,13 +993,17 @@ def test_display_banner_once_per_process(monkeypatch: pytest.MonkeyPatch, stderr
 
 def test_claimed_banner_is_not_displayed(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
     """How `clai` stops a run from printing a second banner over the answer to the first prompt."""
+    start_version_check = Mock()
+    monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK')
     monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setattr(_version_check, 'start_version_check', start_version_check)
     assert _display.claim_banner() is True
     assert _display.claim_banner() is False
 
     display_banner()
 
     assert stderr.getvalue() == ''
+    start_version_check.assert_not_called()
 
 
 def test_banner_is_shown_by_agent_run(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):

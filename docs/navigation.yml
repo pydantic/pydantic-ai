@@ -297,6 +297,11 @@ navigation:
           - "persistence"
           - "core-concepts/storage"
           - "capabilities/persistence"
+      - page: "Network Requests"
+        path: "network-requests.md"
+        slug: "production/network-requests"
+        aliases:
+          - "network-requests"
       - section: "Durable Execution"
         slug: ""
         contents:

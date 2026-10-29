@@ -14,7 +14,7 @@ from typing import Any
 import anyio
 from pydantic import ImportString, TypeAdapter, ValidationError
 
-from .. import __version__, _display, models, usage as _usage
+from .. import __version__, _display, _version_check, models, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
@@ -169,6 +169,7 @@ def _print_intro(
     details = agent._startup_banner_details(model, toolsets)  # pyright: ignore[reportPrivateUsage]
 
     try:
+        cache = _version_check.read_cache()
         banner = _display.render_banner(
             # A loaded agent doesn't always name itself, so fall back to how the user asked for it.
             name=agent.name or agent_path,
@@ -176,6 +177,8 @@ def _print_intro(
             output_type=agent.output_type,
             tools=details.tools,
             capabilities=details.capabilities,
+            updates=_version_check.cached_updates(cache),
+            announce_version_check=_version_check.announcing(cache),
             observability=not details.instrumented,
             logfire_cli_available=shutil.which('uvx') is not None,
             # The console already knows how wide the terminal is, `COLUMNS` and all, and re-asks it
@@ -190,6 +193,8 @@ def _print_intro(
             # rather than re-highlighting or re-wrapping it; `list[str]` as an output type isn't markup.
             console.print(Text.from_ansi(banner), soft_wrap=True)
         console.file.write(capture.get())
+        # Guards itself: does nothing when the check is turned off or not yet due.
+        _version_check.start_version_check(cache)
     except Exception:
         # Laying the banner out is inside the guard as well as writing it, the way the plain path
         # has it: `render_banner` reads an output type's own `repr` and the console's width, neither
