@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from .ask_user import AskUser
     from .azure_durable_task import AzureDurableTaskDurability
     from .background_tools import BackgroundTools
+    from .boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
     from .boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
     from .browser_use import BrowserUse
     from .bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
@@ -91,6 +92,8 @@ __all__ = [
     'AskUser',
     'AzureDurableTaskDurability',
     'BackgroundTools',
+    'BoxdSandbox',
+    'BoxdSandboxBackend',
     'BoxLiteSandbox',
     'BoxLiteSandboxBackend',
     'BrowserUse',
@@ -185,6 +188,7 @@ _CAPABILITY_EXPORTS = {
     'AskUser': 'ask_user',
     'AzureDurableTaskDurability': 'azure_durable_task',
     'BackgroundTools': 'background_tools',
+    'BoxdSandbox': 'boxd_sandbox',
     'BoxLiteSandbox': 'boxlite_sandbox',
     'BrowserUse': 'browser_use',
     'BubblewrapSandbox': 'bubblewrap_sandbox',
@@ -250,6 +254,7 @@ _CAPABILITY_EXPORTS = {
 }
 
 _CONSTANT_EXPORTS = {
+    'BoxdSandboxBackend': 'boxd_sandbox',
     'BoxLiteSandboxBackend': 'boxlite_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',
