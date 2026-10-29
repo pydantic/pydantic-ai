@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -24,7 +24,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebSearchTool
+from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 
 from ...conftest import RequestCapture, message, try_import
 from ..conftest import AnthropicModelFactory, cache_breakpoints, content_blocks, message_shape
@@ -456,6 +456,9 @@ HISTORY_CONTAINER_CASES = [
     HistoryContainerCase(
         'api-web-search', 'api', 'claude-sonnet-4-6', container_sent=True, native_tools=[WebSearchTool()]
     ),
+    HistoryContainerCase(
+        'api-web-fetch', 'api', 'claude-sonnet-4-6', container_sent=True, native_tools=[WebFetchTool()]
+    ),
     HistoryContainerCase('bedrock', 'bedrock', 'us.anthropic.claude-sonnet-4-6', container_sent=False),
     HistoryContainerCase('vertex', 'vertex', 'claude-sonnet-4-6', container_sent=False),
     HistoryContainerCase('mantle', 'mantle', 'anthropic.claude-sonnet-4-6', container_sent=True),
@@ -533,42 +536,7 @@ async def test_anthropic_history_container_without_code_execution_by_client(
         )
 
     [body] = bodies
-    assert ('container' in body) == case.container_sent
-
-
-def _pause_turn_segment(blocks: list[dict[str, Any]], stop_reason: str, stream: bool) -> httpx2.Response:
-    """One segment of a turn whose code execution container is `container_A`."""
-    container = {'id': 'container_A', 'expires_at': '2026-11-01T00:00:00Z'}
-    usage = {'input_tokens': 5, 'output_tokens': 1}
-    response_message = {
-        'id': f'msg_{stop_reason}',
-        'type': 'message',
-        'role': 'assistant',
-        'model': 'claude-sonnet-4-6',
-        'usage': usage,
-        'container': container,
-    }
-    if not stream:
-        return httpx2.Response(200, json={**response_message, 'content': blocks, 'stop_reason': stop_reason})
-    events: list[dict[str, Any]] = [
-        {'type': 'message_start', 'message': {**response_message, 'content': [], 'stop_reason': None}}
-    ]
-    for index, block in enumerate(blocks):
-        if block['type'] == 'text':
-            start: dict[str, Any] = {'type': 'text', 'text': ''}
-            delta: dict[str, Any] = {'type': 'text_delta', 'text': block['text']}
-        else:
-            start = {**block, 'input': {}}
-            delta = {'type': 'input_json_delta', 'partial_json': json.dumps(block['input'])}
-        events.append({'type': 'content_block_start', 'index': index, 'content_block': start})
-        events.append({'type': 'content_block_delta', 'index': index, 'delta': delta})
-        events.append({'type': 'content_block_stop', 'index': index})
-    events += [
-        {'type': 'message_delta', 'delta': {'stop_reason': stop_reason, 'stop_sequence': None}, 'usage': usage},
-        {'type': 'message_stop'},
-    ]
-    body = ''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events)
-    return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=body.encode())
+    assert body.get('container') == ('container_from_history' if case.container_sent else None)
 
 
 @pytest.mark.parametrize('stream', [pytest.param(False, id='request'), pytest.param(True, id='stream')])
@@ -583,7 +551,7 @@ async def test_anthropic_pause_turn_reconnect_keeps_extra_body_code_execution_co
     Unit test: a live `pause_turn` with a container can't be requested reliably, and the claim is the request shape.
     """
     bodies: list[dict[str, Any]] = []
-    segments = iter(
+    segments: Iterator[tuple[list[dict[str, Any]], str]] = iter(
         [
             (
                 [{'type': 'server_tool_use', 'id': 'srvtoolu_1', 'name': 'code_execution', 'input': {'code': '1'}}],
@@ -595,7 +563,37 @@ async def test_anthropic_pause_turn_reconnect_keeps_extra_body_code_execution_co
 
     def handle(request: httpx2.Request) -> httpx2.Response:
         bodies.append(json.loads(request.content))
-        return _pause_turn_segment(*next(segments), stream=stream)
+        blocks, stop_reason = next(segments)
+        usage = {'input_tokens': 5, 'output_tokens': 1}
+        response_message = {
+            'id': f'msg_{stop_reason}',
+            'type': 'message',
+            'role': 'assistant',
+            'model': 'claude-sonnet-4-6',
+            'usage': usage,
+            'container': {'id': 'container_A', 'expires_at': '2026-11-01T00:00:00Z'},
+        }
+        if not stream:
+            return httpx2.Response(200, json={**response_message, 'content': blocks, 'stop_reason': stop_reason})
+        events: list[dict[str, Any]] = [
+            {'type': 'message_start', 'message': {**response_message, 'content': [], 'stop_reason': None}}
+        ]
+        for index, block in enumerate(blocks):
+            if block['type'] == 'text':
+                start: dict[str, Any] = {'type': 'text', 'text': ''}
+                delta: dict[str, Any] = {'type': 'text_delta', 'text': block['text']}
+            else:
+                start = {**block, 'input': {}}
+                delta = {'type': 'input_json_delta', 'partial_json': json.dumps(block['input'])}
+            events.append({'type': 'content_block_start', 'index': index, 'content_block': start})
+            events.append({'type': 'content_block_delta', 'index': index, 'delta': delta})
+            events.append({'type': 'content_block_stop', 'index': index})
+        events += [
+            {'type': 'message_delta', 'delta': {'stop_reason': stop_reason, 'stop_sequence': None}, 'usage': usage},
+            {'type': 'message_stop'},
+        ]
+        body = ''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events)
+        return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=body.encode())
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http_client:
         model = AnthropicModel(
