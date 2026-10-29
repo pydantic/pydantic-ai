@@ -401,8 +401,14 @@ jobs:
         env:
           # The `Makefile` leaves pyright single-process by default, for laptops where a worker
           # per core swaps. A runner has the memory, and this step is the longest in the job, so
-          # CI opts back in.
-          PYRIGHT_THREADS: auto
+          # CI opts back in. Each worker is its own Node process holding most of the project's
+          # types, and empties its whole type cache whenever its heap passes 90% of Node's default
+          # limit (about 4 GB here), then re-evaluates everything it still needs. Four workers at
+          # that limit emptied it 7 to 33 times a run by 2026-10-28; three workers with a 6 GB heap
+          # never do and still fit in the runner's 16 GB, which took 9 to 14% (18 to 32 s) off
+          # every one of six paired runs on the same runner (see #8182).
+          PYRIGHT_THREADS: "3"
+          NODE_OPTIONS: --max-old-space-size=6144
           # Fail a passing pyright run that outlasts this many seconds, so a change that makes
           # pyright itself slow fails its own PR instead of `main`. #8077 made pyright slow and
           # nothing caught it (see #8177): pyright ran 328 to 490 s over the five `main` runs
@@ -415,7 +421,9 @@ jobs:
           # 490 s. Type-checking `pydantic-ai-harness` and `pydantic-clai2` took a passing run to
           # 156 s, so 200 kept the same headroom. By 2026-10-16 the step ran 117 to 206 s over 98 `main`
           # runs (median 184 s, p90 197 s) and failed four of them; 260 is about 1.25x that maximum and
-          # still fails a regression like #8077's.
+          # still fails a regression like #8077's. By 2026-10-28 the project's growth had the step at a
+          # median of 244 s, up to 327 s, over budget in about one `main` run in six; the worker and heap
+          # settings above cut it rather than this budget rising.
           # Only pull requests enforce it: that is where a slowdown has to fail, and by 2026-10-26 runner
           # variance alone spread 18 merge-queue and `main` runs over 149 to 279 s, so enforcing it there
           # bounced queued PRs and reddened `main` without catching anything their PR had not.
