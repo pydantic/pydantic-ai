@@ -4584,6 +4584,22 @@ class ModelResponse:
     model_name: str | None = None
     """The name of the model that generated the response."""
 
+    model_id: str | None = None
+    """The identifier of the model the agent sent the request to.
+
+    That's the string the model was selected by, like `'openai:gpt-5'` or an alias that a
+    [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] capability resolved, or
+    otherwise the model's [`model_id`][pydantic_ai.models.Model.model_id]. Unlike `model_name`, which is what the
+    provider reports, often a dated version, it identifies the model as you configured it, so a later step or run
+    can tell which of your models answered and send a request back to it, as
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] does to continue a suspended response.
+
+    Set by the agent on every response it commits to history from a model request, including one a capability moved
+    to another model, like a fallback; `None` on a response that didn't come from a request, like one a
+    [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest] returned before any was made. A response that
+    already has one keeps it.
+    """
+
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp when the response was received locally.
 
@@ -5509,6 +5525,10 @@ def sanitize_messages(
       otherwise offered to a capability's `get_workspace`, so a client that can set it could point a
       reconnecting capability at an environment it attaches to using server-side provider
       credentials. Reconnect explicitly by passing an authorized `workspace=` instead.
+    - [`ModelResponse.model_id`][pydantic_ai.messages.ModelResponse.model_id], resetting it to `None`.
+      Pydantic AI routes later requests by it, like a suspended response's continuation going back to the
+      [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] candidate that started it, so it is only honored on
+      trusted server-side `message_history`.
     - The framework-reserved `__pydantic_ai__` key from
       [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and
       [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata], keeping your own keys
@@ -5653,8 +5673,11 @@ def _sanitize_messages(
                 # capability at an environment it attaches to with server-side credentials.
                 workspace_ref = None if strip_workspace_refs else message.workspace_ref
                 metadata = _without_reserved_metadata(message, reserved_metadata_messages)
+                # Drop `model_id` too: Pydantic AI routes later requests by it.
                 sanitized.append(
-                    replace(message, parts=new_response_parts, workspace_ref=workspace_ref, metadata=metadata)
+                    replace(
+                        message, parts=new_response_parts, model_id=None, workspace_ref=workspace_ref, metadata=metadata
+                    )
                 )
                 sources.append(index)
             # Otherwise drop the response entirely so we don't leave an empty

@@ -58,6 +58,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _run_ctx: RunContext[AgentDepsT]
     _carried_workspace_ref: WorkspaceRef | None = field(default=None, repr=False)
+    _model_id: str | None = field(default=None, repr=False)
+    """The identifier of the model the stream came from, which its response records as `model_id`."""
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
     _root_capability: AbstractCapability[AgentDepsT]
@@ -217,6 +219,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     def response(self) -> _messages.ModelResponse:
         """Get the current state of the response."""
         response = self._raw_stream_response.get()
+        response.model_id = response.model_id or self._model_id
         response.workspace_ref = recorded_workspace_ref(self._run_ctx.workspace, self._carried_workspace_ref)
         return response
 

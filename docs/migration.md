@@ -135,7 +135,7 @@ The serialized `part_kind` wire values and the old field names' validation alias
 
 | V1 | V2 |
 | --- | --- |
-| `result.usage()`, `result.timestamp()` | `result.usage`, `result.timestamp` (properties) |
+| `result.usage()`, `result.timestamp()` | `result.usage`, `result.timestamp` (properties); `result.usage()` still works, with a deprecation warning, until V3 |
 | `stream.get()` | `stream.response` |
 | `StreamedRunResult.stream` | [`stream_output`][pydantic_ai.result.StreamedRunResult.stream_output] |
 | `StreamedRunResult.stream_structured` | [`stream_response`][pydantic_ai.result.StreamedRunResult.stream_response] |

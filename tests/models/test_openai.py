@@ -225,6 +225,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
@@ -248,6 +249,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
@@ -334,6 +336,7 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
@@ -426,6 +429,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 ],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
@@ -536,6 +540,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     output_tokens=1,
                 ),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
@@ -579,6 +584,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     output_tokens=2,
                 ),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
@@ -610,6 +616,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[TextPart(content='final response')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
@@ -661,6 +668,38 @@ async def test_stream_text(allow_model_requests: None):
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+
+
+async def test_stream_text_from_list_content(allow_model_requests: None):
+    """Some OpenAI-compatible servers stream `delta.content` as a list of parts; only their text is kept."""
+
+    def list_chunk(content: list[Any]) -> chat.ChatCompletionChunk:
+        return chunk([ChoiceDelta.model_construct(content=content, role='assistant')])
+
+    stream = [
+        list_chunk(['hello ']),
+        list_chunk([{'type': 'text', 'text': 'world'}, {'type': 'reference', 'reference_ids': [1]}]),
+        list_chunk([{'type': 'reference', 'reference_ids': [2]}]),
+        chunk([]),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    async with agent.run_stream('') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+
+
+async def test_request_list_content(allow_model_requests: None):
+    """Some OpenAI-compatible servers return `message.content` as a list of parts; only their text is kept."""
+    message = ChatCompletionMessage.model_construct(
+        content=[{'type': 'text', 'text': 'hello '}, {'type': 'reference', 'reference_ids': [1]}, 'world'],
+        role='assistant',
+    )
+    mock_client = MockOpenAI.create_mock(completion_message(message))
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    result = await agent.run('hello')
+    assert result.output == 'hello world'
 
 
 def test_service_tier_comes_from_response(allow_model_requests: None) -> None:
@@ -734,6 +773,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
                     parts=[TextPart(content='hello world.')],
                     usage=RequestUsage(input_tokens=6, output_tokens=3),
                     model_name='gpt-4o-123',
+                    model_id='openai:gpt-4o',
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1',
@@ -770,6 +810,7 @@ async def test_stream_text_no_created_timestamp(allow_model_requests: None):
                 parts=[TextPart(content='hello world.')],
                 usage=RequestUsage(input_tokens=6, output_tokens=3),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
@@ -1556,6 +1597,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                     cost=Decimal('0.000225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -1600,6 +1642,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                     cost=Decimal('0.0013375'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -1739,6 +1782,7 @@ async def test_yaml_document_as_binary_content_input(allow_model_requests: None,
                     cost=Decimal('0.0009075'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -1815,6 +1859,7 @@ Each of these interpretations would depend on the broader context in which this 
                     cost=Decimal('0.0021625'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -1870,6 +1915,7 @@ async def test_yaml_document_url_input(
                     cost=Decimal('0.00806'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -2423,6 +2469,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                     cost=Decimal('0.0000252'),
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
+                model_id='openai:gpt-4.1-mini',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -3914,6 +3961,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                     cost=Decimal('0.00014'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -3974,6 +4022,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                     cost=Decimal('0.000044'),
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
+                model_id='openai:gpt-4.1-mini',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -4014,6 +4063,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                     cost=Decimal('0.000054'),
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
+                model_id='openai:gpt-4.1-mini',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -4074,6 +4124,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                     cost=Decimal('0.0084403'),
                 ),
                 model_name='o3-mini-2025-01-31',
+                model_id='openai:o3-mini',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -4124,6 +4175,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                     cost=Decimal('0.0108427'),
                 ),
                 model_name='o3-mini-2025-01-31',
+                model_id='openai:o3-mini',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -4976,6 +5028,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                     cost=Decimal('0.00029'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -5024,6 +5077,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                     cost=Decimal('0.0005825'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -5100,6 +5154,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                     cost=Decimal('0.000215'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -5142,6 +5197,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                     cost=Decimal('0.0002575'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -5208,6 +5264,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                     cost=Decimal('0.0002975'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -5250,6 +5307,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                     cost=Decimal('0.00038'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -5330,6 +5388,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                     cost=Decimal('0.00051'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -5376,6 +5435,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                     cost=Decimal('0.0007025'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -5440,6 +5500,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                     cost=Decimal('0.0003825'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -5482,6 +5543,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                     cost=Decimal('0.000435'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -5550,6 +5612,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                     cost=Decimal('0.0007925'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -5596,6 +5659,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                     cost=Decimal('0.000945'),
                 ),
                 model_name='gpt-4o-2024-08-06',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -5697,6 +5761,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
                 parts=[],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
@@ -5726,6 +5791,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
                 parts=[TextPart(content='hello back')],
                 usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
@@ -6829,6 +6895,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                     'cost': '0.000',
                 },
                 'model_name': 'gpt-5-mini',
+                'model_id': 'azure:gpt-5-mini',
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': 'azure',
@@ -7726,6 +7793,7 @@ async def test_stream_cancel(allow_model_requests: None):
                 parts=[TextPart(content='hello ')],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='gpt-4o-123',
+                model_id='openai:gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
