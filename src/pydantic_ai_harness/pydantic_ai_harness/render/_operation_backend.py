@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, TypeGuard, TypeVar
@@ -14,6 +15,7 @@ from pydantic_ai.durable_exec import (
     ParameterTransports,
     RegisteredOperationBackend,
     RoleBasedOperationConfig,
+    StepPolicy,
     ToolsetCallToolId,
     ToolsetValidateToolArgumentsId,
 )
@@ -67,6 +69,16 @@ def _snapshot_options(options: Options) -> Options:
     )
 
 
+def _policy_options(options: Options | None, policy: StepPolicy) -> Options:
+    """`options` under `policy`: a step that isn't repeatable gets no retries."""
+    options = _snapshot_options(options) if options is not None else Options()
+    return Options(
+        retry=Retry(max_retries=0, wait_duration_ms=0) if not policy.repeatable else options.retry,
+        timeout_seconds=math.ceil(policy.timeout) if policy.timeout is not None else options.timeout_seconds,
+        plan=options.plan,
+    )
+
+
 @dataclass
 class _RegisteredTask:
     """A task handle filled after core binding and its snapshotted options."""
@@ -103,10 +115,12 @@ class RenderBoundOperation(
         operation: DurableOperation[ParamsT, WireT, ResultT],
         *,
         registered: _RegisteredTask,
+        policy_tasks: dict[str, _RegisteredTask],
         runtime: RenderWorkflows[RuntimeDepsT],
     ) -> None:
         self._operation = operation
         self._registered = registered
+        self._policy_tasks = policy_tasks
         self._runtime = runtime
 
     @property
@@ -122,6 +136,8 @@ class RenderBoundOperation(
 
         registered = self._registered
         self._check_static_config(config, registered.options)
+        if config is None and self._operation.policy_key is not None:
+            registered = self._policy_tasks.get(self._operation.policy_key(params), registered)
         wire_params = dump_operation_params(self._operation, params)
         request = make_request(registered.name, wire_params)
         result = await context.run(registered.task, request)
@@ -171,6 +187,12 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
         bound = RenderBoundOperation(
             operation,
             registered=self._prepare_task(operation, name=name, config=config),
+            # Task options are fixed at registration, so each kind of invocation with its own policy gets a task.
+            policy_tasks={
+                key: self._prepare_task(operation, name=f'{name}.{key}', config=_policy_options(config, policy))
+                for key, policy in operation.policies.items()
+                if policy != StepPolicy()
+            },
             runtime=self._runtime,
         )
         # RenderWorkflows.for_agent registers the queued SDK definitions after core binding.

@@ -14,12 +14,24 @@ original type, so a hook can catch them and the engine only retries infrastructu
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Never, TypeAlias, assert_never, cast
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Literal,
+    Never,
+    Protocol,
+    TypeAlias,
+    assert_never,
+    cast,
+    runtime_checkable,
+)
 
 import anyio
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from pydantic_ai._run_context import get_current_run_context
@@ -33,6 +45,7 @@ from pydantic_ai.workspaces import (
     FileEntry,
     Point,
     Region,
+    SupportsDisplay,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -46,7 +59,7 @@ from pydantic_ai.workspaces import (
     WrapperWorkspace,
 )
 
-from ._operation import CacheIdentity, CapabilityOperationId
+from ._operation import CacheIdentity, CapabilityOperationId, StepPolicy
 from ._operation_backend import in_durable_unit
 
 if TYPE_CHECKING:
@@ -84,6 +97,26 @@ WorkspaceMethod: TypeAlias = Literal[
     'cursor_position',
 ]
 
+_DISPLAY_METHODS: frozenset[WorkspaceMethod] = frozenset(
+    {'display_size', 'screenshot', 'act', 'zoom', 'scaled_screenshot', 'cursor_position'}
+)
+
+WORKSPACE_CALL_POLICIES: Mapping[str, StepPolicy] = {
+    'display_size': StepPolicy(),
+    'screenshot': StepPolicy(),
+    'zoom': StepPolicy(),
+    'scaled_screenshot': StepPolicy(),
+    'cursor_position': StepPolicy(),
+    'act': StepPolicy(repeatable=False, timeout=180),
+}
+"""How an engine may repeat each kind of workspace call: a look at the display may run again, an action runs at most
+once, for up to 180 seconds (above the 150 the X11 displays allow one).
+
+A method not listed runs under the engine's config for capability operations unchanged, and a failure the engine
+gives up on reaches the caller as the engine raised it. Commands and file methods aren't listed: whether one may run
+again depends on which of its errors are transient, which isn't settled.
+"""
+
 
 @pydantic_dataclass(frozen=True, kw_only=True, config=_BYTES_CONFIG)
 class WorkspaceCallError:
@@ -120,6 +153,8 @@ class WorkspaceCallResult:
     point: Point | None = None
     ref: WorkspaceRef | None = None
     error: WorkspaceCallError | None = None
+    starts: Annotated[int, Field(exclude_if=lambda value: value == 0)] = 0
+    """For a display call, error or not: how many times the display started during it, when the display counts."""
 
 
 @pydantic_dataclass(frozen=True, kw_only=True, config=_JOURNAL_CONFIG)
@@ -190,6 +225,20 @@ class WorkspaceCall:
             case 'cursor_position':
                 return WorkspaceCallResult(point=await workspace.cursor_position())
         assert_never(self.method)
+
+
+@runtime_checkable
+class _CountsStarts(Protocol):
+    """A display that counts its starts, each without the windows that were open before."""
+
+    @property
+    def starts(self) -> int: ...
+
+
+def _counting_display(workspace: Workspace) -> _CountsStarts | None:
+    backend = workspace.backend
+    display = backend.display if isinstance(backend, SupportsDisplay) else None
+    return display if isinstance(display, _CountsStarts) else None
 
 
 @dataclass(frozen=True)
@@ -303,12 +352,20 @@ def raise_error(error: WorkspaceCallError) -> Never:
 
 async def execute_call(workspace: Workspace, call: WorkspaceCall) -> WorkspaceCallResult:
     """Run a call inside a durable unit; anything outside the error table fails the unit, so the engine retries it."""
+    display = _counting_display(workspace) if call.method in _DISPLAY_METHODS else None
+    before = display.starts if display is not None else 0
     try:
-        return await call.execute(workspace)
+        result = await call.execute(workspace)
     except Exception as error:
         if (data := error_as_data(error)) is None:
             raise
-        return WorkspaceCallResult(error=data)
+        result = WorkspaceCallResult(error=data)
+    if display is None:
+        return result
+    # The starts during this call, not the display's count: a unit on another worker rebuilds the backend, and with it
+    # the count, so only these add up across units. An error carries them too: an action refused because the display
+    # restarted is how workflow code learns of the restart.
+    return dataclasses.replace(result, starts=display.starts - before)
 
 
 class DurableWorkspace(WrapperWorkspace):
@@ -325,6 +382,12 @@ class DurableWorkspace(WrapperWorkspace):
         self._ref: WorkspaceRef | None = None
         self._working_dir: str | None = None
         self._ensure_lock = anyio.Lock()
+        self._display_starts = 0
+
+    @property
+    def display_starts(self) -> int:
+        """How many times the display started during this workspace's display calls from workflow code."""
+        return self._display_starts
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -458,9 +521,21 @@ class DurableWorkspace(WrapperWorkspace):
 
     async def _dispatch(self, call: WorkspaceCall, *, ref: WorkspaceRef | None) -> WorkspaceCallResult:
         ctx = self._run_context()
-        result = await self._durability._call_workspace(  # pyright: ignore[reportPrivateUsage]
-            WorkspaceCallParams(run_context=ctx, ref=ref, call=call)
-        )
+        try:
+            result = await self._durability._call_workspace(  # pyright: ignore[reportPrivateUsage]
+                WorkspaceCallParams(run_context=ctx, ref=ref, call=call)
+            )
+        except Exception as error:
+            # The engine gave up on a call with a policy: report it like any other failure of that call.
+            if (policy := WORKSPACE_CALL_POLICIES.get(call.method)) is None:
+                raise
+            if policy.repeatable:
+                raise WorkspaceError(f'The {call.method} call failed ({type(error).__name__}).') from error
+            raise WorkspaceError(
+                f'The {call.method} call did not finish, so it may or may not have taken effect '
+                f'({type(error).__name__}).'
+            ) from error
+        self._display_starts += result.starts
         if result.error is not None:
             raise_error(result.error)
         return result
