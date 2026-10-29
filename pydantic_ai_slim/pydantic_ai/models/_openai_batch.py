@@ -41,6 +41,7 @@ from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, BatchSta
 from .openai import (
     OpenAIResponsesModel,
     OpenAIResponsesModelSettings,
+    _has_per_request_api_key,  # pyright: ignore[reportPrivateUsage]
     _status_error,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -366,7 +367,7 @@ def _batch_client(model: OpenAIResponsesModel) -> AsyncOpenAI:
     # A batch is grouped, submitted and polled with one credential, which an API key callback could vary per request,
     # and which a workload identity keeps out of the client's headers, so clients of different identities would share
     # a group.
-    if getattr(client, '_api_key_provider', None) is not None or getattr(client, 'workload_identity', None) is not None:
+    if _has_per_request_api_key(client):
         raise UserError(
             'The OpenAI Batch API requires a static API key on the client, not an API key callback or workload identity.'
         )

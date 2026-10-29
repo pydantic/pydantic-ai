@@ -157,8 +157,9 @@ class RecordedResponses:
 def recorded_responses(
     request: SubRequest, monkeypatch: pytest.MonkeyPatch, openai_api_key: str
 ) -> Iterator[RecordedResponses]:
-    path = Path(__file__).parent / 'cassettes' / Path(__file__).stem / f'{request.node.name}.yaml'
-    multiple_connections = request.node.name == 'test_cross_socket_continuation_replays_history'
+    assert isinstance(request.node, pytest.Function)
+    path = Path(__file__).parent / 'cassettes' / Path(__file__).stem / f'{request.node.originalname}.yaml'
+    multiple_connections = getattr(request, 'param', False)
     mode = request.config.getoption('record_mode')
     assert mode is None or isinstance(mode, str)
     plan = realtime_cassette_plan(cassette_exists=path.exists(), record_mode=mode)
@@ -402,6 +403,7 @@ async def test_overlapping_runs_continue_on_their_own_lanes(
     )
 
 
+@pytest.mark.parametrize('recorded_responses', [True], indirect=True)
 async def test_cross_socket_continuation_replays_history(
     allow_model_requests: None, recorded_responses: RecordedResponses
 ):

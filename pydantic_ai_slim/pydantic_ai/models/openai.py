@@ -635,6 +635,21 @@ def _is_azure(client: AsyncOpenAI, system: str) -> bool:
     return system == 'azure' or isinstance(client, AsyncAzureOpenAI)
 
 
+def _has_per_request_api_key(client: AsyncOpenAI) -> bool:
+    return (
+        getattr(client, '_api_key_provider', None) is not None or getattr(client, 'workload_identity', None) is not None
+    )
+
+
+def _echoed_store(response: responses.Response, model_settings: OpenAIResponsesModelSettings) -> bool | None:
+    # Socket responses echo storage, which determines whether their IDs can be used outside that socket.
+    if model_settings.get('openai_transport') == 'websocket' and isinstance(
+        store := (response.model_extra or {}).get('store'), bool
+    ):
+        return store
+    return None
+
+
 def _check_azure_content_filter(
     e: APIStatusError, client: AsyncOpenAI, system: str, model_name: str
 ) -> ModelResponse | None:
@@ -3367,8 +3382,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Azure clients and lightweight SDK wrappers do not initialize every optional attribute.
         client = self._provider.client
         if (
-            getattr(client, '_api_key_provider', None) is not None
-            or getattr(client, 'workload_identity', None) is not None
+            _has_per_request_api_key(client)
             or callable(getattr(client, '_azure_ad_token_provider', None))
             or getattr(getattr(client, '_client', None), 'auth', None) is not None
         ):
@@ -4073,9 +4087,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] = dict(self._process_provider_details(response) or {})
-        if model_settings.get('openai_transport') == 'websocket' and isinstance(
-            store := (response.model_extra or {}).get('store'), bool
-        ):
+        if (store := _echoed_store(response, model_settings)) is not None:
             provider_details['store'] = store
         raw_finish_reason = details.reason if (details := response.incomplete_details) else response.status
         if raw_finish_reason:
@@ -4163,6 +4175,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         tool_call_ids_are_response_scoped = self.profile.get(
             'openai_responses_tool_call_ids_are_response_scoped', False
         )
+        is_websocket = False
+        if self._websocket_stream is not None:
+            from ._openai_responses_websocket import ResponsesWebSocketStream
+
+            # A retry can overflow to HTTP after this request copy reserved a socket lane.
+            is_websocket = isinstance(response, ResponsesWebSocketStream)
         streamed_response = OpenAIResponsesStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=model_name,
@@ -4173,8 +4191,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _provider_url=self._provider.base_url,
             _provider_timestamp=provider_timestamp,
             _history=history,
-            # A retry can overflow to HTTP after this request copy reserved a socket lane.
-            _is_websocket=self._websocket_stream is not None and isinstance(response, type(self._websocket_stream)),
+            _is_websocket=is_websocket,
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
             _process_provider_details=self._process_provider_details,
         )
@@ -6378,11 +6395,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 **(self.provider_details or {}),
                 'prompt_cache_diagnostics': diagnostics.model_dump(mode='json'),
             }
-        # A socket's response can be continued from outside the socket only if it was stored. The SDK's `Response` has
-        # no `store` field, but the socket echoes it, as `true` when the request left it out.
-        if self._model_settings.get('openai_transport') == 'websocket' and isinstance(
-            store := (response.model_extra or {}).get('store'), bool
-        ):
+        if (store := _echoed_store(response, self._model_settings)) is not None:
             self.provider_details = {**(self.provider_details or {}), 'store': store}
         # Merged last so built-in provider details win on collisions, as in `_process_response`; those set later in
         # the stream, like `finish_reason`, do too.
