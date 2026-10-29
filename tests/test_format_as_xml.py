@@ -792,6 +792,7 @@ def test_iterable_dataclass_formats_by_fields():
         def __next__(self) -> Any:
             raise StopIteration
 
+    assert list(IterData(3)) == []  # it really is an iterator, yet is formatted by its fields below
     list_data = ListData(x=5)
     list_data.append(i for i in range(2))
     assert format_as_xml(list_data, root_tag='r') == snapshot("""\
