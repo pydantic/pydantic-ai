@@ -110,7 +110,7 @@ When `trace` is set to `'enabled'` in the guardrail configuration (as in the exa
 
 ### Video input
 
-The Converse API takes video only on Amazon Nova. On every other family (Claude, Llama, Pixtral, Gemma and the rest), video in the prompt raises an error, and video a tool returns is replaced by a note saying the model can't read it. A model ID the provider doesn't recognize keeps the default and is sent video.
+The Converse API takes video only on Amazon Nova. On every other family, including models that read video on other platforms (Qwen3-VL, Kimi and Nemotron Nano VL reject it on Bedrock, as do Claude, Llama 4 and Pixtral), video in the prompt raises an error, and video a tool returns is replaced by a note saying the model can't read it. A model ID the provider doesn't recognize keeps the default and is sent video.
 
 ### Output token limit
 

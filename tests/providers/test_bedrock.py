@@ -1134,7 +1134,12 @@ def test_bedrock_boolean_defs_preserved(definition: bool):
     ],
 )
 def test_only_nova_takes_video(model_name: str, video: bool):
-    """Converse takes the `video` content block only on Amazon Nova, so every other family reports no video."""
+    """Converse takes the `video` content block only on Amazon Nova, so every other family reports no video.
+
+    Not a VCR test: this pins the provider-level profile resolution, including ARN and geo-prefix forms, against
+    drift, while the multimodal tool-return matrix cassettes cover the wire behavior. Nova Micro is text-only, so
+    it is the expected `False` among the Nova models.
+    """
     profile = BedrockProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('supports_video_input') is video
