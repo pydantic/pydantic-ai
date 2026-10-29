@@ -1522,11 +1522,12 @@ async def test_calling_usage_like_a_v1_method_warns_and_returns_the_usage():
     agent = Agent(TestModel())
     result = await agent.run('Hello')
 
-    with pytest.warns(PydanticAIDeprecationWarning, match=re.escape('use `result.usage` instead of `result.usage()`')):
+    with pytest.warns(PydanticAIDeprecationWarning, match=re.escape('use `.usage` instead of `.usage()`')):
         usage = result.usage()  # pyright: ignore[reportDeprecated]
     assert usage is result.usage
 
     async with agent.run_stream('Hello') as stream:
         await stream.get_output()
-    with pytest.warns(PydanticAIDeprecationWarning):
+    # A stream builds its usage on each access, so this compares values rather than identity.
+    with pytest.warns(PydanticAIDeprecationWarning, match=re.escape('use `.usage` instead of `.usage()`')):
         assert stream.usage() == stream.usage  # pyright: ignore[reportDeprecated]

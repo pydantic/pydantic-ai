@@ -487,7 +487,7 @@ class RunUsage(UsageBase):
         return new_usage
 
     @deprecated(
-        '`usage` is a property since Pydantic AI v2, not a method: use `result.usage` instead of `result.usage()`.',
+        '`usage` is a property, not a method: use `.usage` instead of `.usage()`.',
         category=PydanticAIDeprecationWarning,
     )
     def __call__(self) -> RunUsage:
