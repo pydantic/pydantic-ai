@@ -43,15 +43,12 @@ jobs:
               const {data: run} = await github.rest.actions.getWorkflowRun({
                 ...context.repo, run_id: context.payload.workflow_run.id
               });
-              const paths = {
-                'PR Bots': '.github/workflows/bots.yml',
-                'PR Review Gates Events': '.github/workflows/pr-review-gates-events.yml'
-              };
+              // REST name includes custom run-name titles; identify the workflow by path.
               const events = {
-                'PR Bots': ['pull_request_target'],
-                'PR Review Gates Events': ['pull_request_review', 'pull_request_review_comment']
+                '.github/workflows/bots.yml': ['pull_request_target'],
+                '.github/workflows/pr-review-gates-events.yml': ['pull_request_review', 'pull_request_review_comment']
               };
-              if (run.path !== paths[run.name] || !events[run.name]?.includes(run.event) ||
+              if (!events[run.path]?.includes(run.event) ||
                   run.repository.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
                 throw new Error('Unrecognized review gate wake-up');
               }

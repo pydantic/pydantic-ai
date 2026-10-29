@@ -227,7 +227,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     **Build this →** [Image Generation](image-generation.md)
 
 !!! tip "See your first run in Logfire"
-    Add two lines before any of these agents runs, and every model call and tool call shows up in [Pydantic Logfire](https://pydantic.dev/logfire). Logfire has a [free tier](https://pydantic.dev/pricing/) that needs no credit card, and you can sign up with just a GitHub account, so you can use it while you develop even if your team uses another tool in production. Run `uvx logfire auth` and `uvx logfire projects new` once first, or point your coding agent at the [Logfire setup skill](https://pydantic.dev/ai-setup.md) to do it for you. The [Logfire guide](logfire.md#using-logfire) has the details, and [any OpenTelemetry backend](logfire.md#using-opentelemetry) works instead.
+    Add two lines before any of these agents runs, and every model call and tool call shows up in [Pydantic Logfire](https://pydantic.dev/logfire). Logfire has a [free tier](https://pydantic.dev/pricing/) that needs no credit card, and you can sign up with just a GitHub account, so you can use it while you develop even if your team uses another tool in production. Run `uvx logfire-cli wizard --task pydantic-ai` once from your project: it signs you in, picks or creates a project, and has your coding agent add the instrumentation. The [Logfire guide](logfire.md#using-logfire) has the details, and [any OpenTelemetry backend](logfire.md#using-opentelemetry) works instead.
 
     ```python
     import logfire
@@ -255,7 +255,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
 - **Coming from another framework?** The [comparisons](comparisons/index.md) show where Pydantic AI differs from LangChain, Google ADK, the Claude Agent SDK and seven more, and the [migration skills](framework-migration.md) let your coding agent port an existing application over.
 
-Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](https://pydantic.dev/docs/) is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem (and the foundation FastAPI was built on). Pydantic AI brings that same feeling to agents.
+Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](https://pydantic.dev/docs/) is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem (and the foundation FastAPI was built on). Pydantic AI brings that same feeling to agents. [Built with Pydantic AI](built-with.md) lists open source projects and organizations that run on it.
 
 **Sign up for our newsletter, *The Pydantic Stack*, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:**
 
